@@ -1,5 +1,9 @@
 # Bayn deployment
 
+## Jev 1.14 cutover
+
+[The Box cutover](../../../docs/bayn/jev114-box-cutover.md) first settles the exact v39 PAPER identity through migration 186 and native OBSERVE recovery. The old mandate remains absent until the new protocol and verified immutable image have a reviewed same-account activation request.
+
 ## Current trading scope
 
 Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before
@@ -18,6 +22,60 @@ The API workload retains its existing CPU allocation and 256 MiB memory request;
 large immutable evidence cuts. Use a 3 GiB Node heap for that command and stream stdout to a private file.
 A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The native controller's resource limits,
 original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
+
+## Webull supplementary context
+
+The effective-entry pricing cutover first keeps the v38 runtime and removes the sealed activation request,
+its mandate annotation and all three activation inputs together. When the exact clear v38 PAPER authority
+needs restriction, migration 183 rechecks terminal cycles and
+intents, flat broker and ledger inventory, settled orders, complete accounting, fresh exact reconciliation
+covering the last mutation, and no unexpired unresolved inference claims under the existing writer lock.
+Only then does it restrict the exact clear v38 PAPER identity with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`.
+It preserves every generation and financial record; native settlement and a subsequent fresh reconciliation
+must create the clear OBSERVE successor. Removing configuration alone cannot change durable PAPER authority.
+An operator hold or different strategy identity remains unchanged and cannot be silently cleared.
+An already-OBSERVE or unrelated authority is a no-op, so missing or stale reconciliation cannot prevent its
+worker from starting to refresh evidence. The later v39 protocol migration still requires fresh, settled OBSERVE.
+
+Verify clear OBSERVE authority, naturally advancing controller passes, flat positions, no open orders,
+unchanged fill/accounting totals and fresh exact reconciliation before deploying v39. Keep the old mandate
+absent throughout that source cutover. After the immutable v39 image and native OBSERVE state are verified,
+construct a reviewed request for the same sandbox account with exactly the retained risk policy and limits.
+Restore its ciphertext, derived identity annotation and identical three runtime lineages in one GitOps change.
+Kargo continues to own every image/source binding and the native hook owns activation. A compatible image-only
+rollback retains its mandate; removing a realized mandate requires a guarded restriction for that exact
+protocol and another settled native OBSERVE transition. The v38 restriction is not a v39 deactivation path.
+
+Protocol v38 adds the latest completed Webull M1 bar to each candidate's numerical input v24 and final Jev evidence.
+The native Kafka arrival cut supplies the bar, with a ten-second availability limit and exact provider decimals.
+Missing, late or invalid data remains absent. Source labels distinguish Webull HTTP bars from the existing IEX chart,
+volume and execution prices; consolidated SIP/NBBO coverage and improved trading returns are not established.
+
+Migration 178 requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete
+accounting and no unexpired inference claims. It admits only v38 execution requests while preserving all original
+financial and provider evidence, including read-only v37 cost verification. The source cutover removes the old sealed
+mandate and its three runtime inputs, then runs OBSERVE. After verifying the published immutable image and native
+cutover, restore the same sandbox account's PAPER mandate through reviewed GitOps, bound to that image and the v38
+strategy. Broker credentials, risk limits, fees, funding, loss history and turnover remain unchanged.
+
+Migration 179 restricts a clear v37 PAPER generation with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. Native recovery then
+settles the prior generation and requires fresh exact reconciliation before creating clear OBSERVE authority.
+Existing operator holds, v38 grants and immutable financial history remain intact. Removing the sealed request alone
+does not change durable authority and cannot complete this handoff.
+
+The native OBSERVE cutover completed on 2026-11-05 against source
+`42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e` and image
+`sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a`.
+Migration 179, clear OBSERVE authority, advancing controller passes, flat inventory and fresh exact reconciliation
+were verified after Kargo promotion. The sealed v38 PAPER request
+`588976a7a41ea2b4d64d65597411634e0517cf31869c9051205c739add4c57ed` is authored against that verified build.
+It retains the existing sandbox account, broker credentials and risk policy. Its sealed identity, activation
+generation and all three runtime lineages move together; native PAPER activation still requires runtime verification.
+
+Both stages require the reviewed protocol-cutover approval. Do not merge this source cutover before that approval.
+After PAPER restoration, verify natural model requests contain source-bound Webull context, exact reconciliation,
+unchanged limits and successful native receipts. OBSERVE alone does not complete integration. Rollback follows the
+native deactivation and mandate-rotation procedure below; never restore the retired mandate by itself.
 
 ## Jev-only inference
 
@@ -353,8 +411,16 @@ volumes. PostgreSQL's required `ANY 1` synchronous durability replaces the depre
 commits require the other host's durable acknowledgement even when a replica is unavailable. Keep two instances,
 hard host anti-affinity, the 100G placement, `synchronous_commit=on`, fsync and full-page writes. Do not reduce Ceph
 scrubbing, disable synchronous commit or extend application deadlines to hide slow storage.
-The independent native-arrival archive adopts the same required synchronous durability while retaining its existing
-Ceph PGDATA/WAL layout, identities and backup configuration.
+The independent native-arrival archive uses the same separate 32Gi local NVMe WAL layout and required synchronous
+durability. Its Ceph PGDATA volumes, cluster identity and backup configuration remain in place. During the November 6
+investigation, 58 archive client WAL flushes averaged 623 ms over 44 seconds; active sessions waited on `WalSync` and
+`SyncRep`. This is a measured storage bottleneck, independent of decision CPU. Both verified local filesystems had
+more than 200 GiB free before allocating the archive WAL claims. Apply the same rollout and recovery procedure below
+to the archive, after its current backup completes and both peers are caught up. Compare native append spans,
+PostgreSQL WAL timings, synchronous replication and retained archive prefixes after the managed migration.
+The existing archive PGDATA claims expand from 100Gi to 200Gi: they were 88% occupied, with about 12Gi available.
+The Ceph pool reported more than 12TiB available. Expansion preserves retained evidence and is capacity protection;
+it is not evidence of a latency improvement.
 
 Rollout order:
 
@@ -392,10 +458,12 @@ See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime
 
 Bayn sets `monitoring.metricsQueriesTTL: 1s` so the existing five-second metrics scrape obtains fresh catalog
 observations. CNPG otherwise caches query results for thirty seconds, even when the exporter is scraped more often.
-The one-second cache still coalesces closely spaced scrapes; this setting applies only to `bayn-db` and changes no
+The one-second cache still coalesces closely spaced scrapes; both Bayn clusters use it, and it changes no
 database durability or application deadline. Verify the live Cluster field, both exporters' collection errors and
 scrape durations, and changes in the retained replication reply-age or active walsender query-age samples after
 GitOps reconciliation. A five-second scrape timestamp alone does not prove a fresh database observation.
+Both clusters share the catalog I/O, wait, replication and timing queries. They run against each cluster's configured
+application database; the generation-index query remains attached only to the financial database.
 See [CNPG output caching](https://cloudnative-pg.io/docs/1.28/monitoring/#output-caching).
 
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
@@ -551,7 +619,16 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
 The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
-validates the target against the latest worker before reading durable controller state. A pinned stale coordinator
+validates the target against the latest worker before reading durable controller state. Each current replica must
+first pass its HTTP/2 `/startup-ready` probe after completing its original Kafka history rebuild. TCP liveness stays
+independent. Startup readiness latches after the first successful rebuild, preserving the endpoint for broker
+observations and liquidation during later source recovery. Entry reads retain their current-history checks.
+The shared `prepareActivation` handler waits for current history without blocking predecessor ticks, using the
+consumer's original bootstrap deadline. It then performs the existing authority preflight. Before an OBSERVE successor
+can retire its predecessor, a bounded read-only preflight rejects untransitioned PAPER authority and unrelated holds.
+Absent or existing OBSERVE authority and recognized restricted-generation recovery remain admissible; the existing
+native settlement, reconciliation, identity and capital checks still apply afterward. The preflight does not rotate
+authority, restore a mandate or prove broker exposure. A pinned stale coordinator
 cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
 activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
 source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.

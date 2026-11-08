@@ -11,6 +11,15 @@ import { JevFundedExitPlanSchema, JevStrategyExitPlanSchema } from '../../jev/st
 import { Sha256Schema, strictParseOptions } from '../../schemas'
 import { priceNumberToMicros } from '../execution-model/fixed-point'
 import { momentumExitDefinition, type RepeatedMomentumPolicy } from './policy'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from '../../jev/protocol'
+
+export type MomentumPolicyMaterial = Omit<RepeatedMomentumPolicy, 'sharedProtocol'> & {
+  readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+}
+export type MomentumFundingObservation = Pick<
+  Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
+  'snapshot' | 'portfolio' | 'observedAt' | 'contentHash'
+>
 
 export const momentumRequiredTargetNet = (acquisitionCostMicros: bigint): bigint =>
   (acquisitionCostMicros * BigInt(10_000 + momentumExitDefinition.profitTargetNetBps) + 9999n) / 10_000n
@@ -53,8 +62,8 @@ export type MomentumFundedExitPlan = typeof MomentumFundedExitPlanSchema.Type
 
 /** A funded bracket is an admissible contingent order, not evidence of positive expected profit. */
 export const makeMomentumFundedExitPlan = (
-  policy: RepeatedMomentumPolicy,
-  observation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
+  policy: MomentumPolicyMaterial,
+  observation: MomentumFundingObservation,
   symbol: string,
 ) =>
   Result.gen(function* () {

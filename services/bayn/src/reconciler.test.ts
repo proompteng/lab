@@ -228,7 +228,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true, at = observ
       control.writes += 1
       return receipt
     }),
-  verifyCompleted: () => Effect.void,
+
   value: () =>
     Effect.sync(() => {
       control.writes += 1
@@ -479,7 +479,7 @@ describe('reconciliation pure decisions', () => {
     })
   })
 
-  test('validates the entire order page against the row budget before deferring its boundary', () => {
+  test('paginates orders beyond ten thousand without weakening timestamp boundaries', () => {
     const pageEvidence = evidence('order-row-budget')
     const existing = Array.from({ length: 9_999 }, (_, index) => ({
       ...order(index),
@@ -495,12 +495,14 @@ describe('reconciliation pure decisions', () => {
     const lastAllowed = { ...order(9_999), submittedAt: utcInstantFromEpochMillis(1) }
     const excess = { ...order(10_000), submittedAt: utcInstantFromEpochMillis(0) }
     const complete = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed], evidence: pageEvidence }))
-    if (complete._tag !== 'Complete') throw new Error('A short in-budget page completes the history')
+    if (complete._tag !== 'Complete') throw new Error('A short page completes the history')
     expect(complete.read.rows).toHaveLength(10_000)
-    expect(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence })).toMatchObject({
-      _tag: 'Failure',
-      failure: { failure: { _tag: 'Pagination', reason: 'OrderHistoryTooLarge' } },
-    })
+    const next = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence }))
+    expect(next._tag).toBe('Continue')
+    if (next._tag !== 'Continue') throw new Error('A full page retains its boundary for the next request')
+    const final = Result.getOrThrow(decideOrderPage(next.state, 2, { value: [excess], evidence: pageEvidence }))
+    if (final._tag !== 'Complete') throw new Error('The final short page must complete')
+    expect(final.read.rows).toHaveLength(10_001)
   })
 
   test('bracket history stays stable across reads while retaining child execution changes', () => {
@@ -1188,7 +1190,7 @@ describe('execution reconciliation loop', () => {
     expect(control.reconciliations[1]).toHaveProperty('ledgerPostingRequired', false)
   })
 
-  test('does not reconcile or reuse a completed fill when its accounting verification fails', async () => {
+  test('does not report a completed reconciliation when accounting verification fails', async () => {
     const brokerOrder = order(0)
     const read: BrokerReadShape = {
       ...emptyRead(),
@@ -1203,7 +1205,7 @@ describe('execution reconciliation loop', () => {
     })
     const store: TestStore = {
       ...makeStore(control),
-      verifyCompleted: (inputs) => (inputs.length > 0 ? Effect.fail(failure) : Effect.void),
+      reconcile: (_, snapshot) => snapshot.pipe(Effect.andThen(Effect.fail(failure))),
     }
 
     const exit = await Effect.runPromiseExit(provide(read, store))
@@ -1315,7 +1317,7 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
-  test.each([1, 101])(
+  test.each([1, 101, 10_001])(
     'retains %d available fee settlements excluded by the provider creation-time filter',
     async (count) => {
       const cut = '2026-10-15T08:00:00.000Z'
@@ -1329,7 +1331,8 @@ describe('execution reconciliation loop', () => {
       const read: BrokerReadShape = {
         ...emptyRead(),
         feeActivities: (query) => {
-          const start = query?.pageToken === undefined ? 0 : 100
+          const start =
+            query?.pageToken === undefined ? 0 : fees.findIndex((fee) => fee.activityId === query.pageToken) + 1
           const items = Object.hasOwn(query ?? {}, 'until') ? [] : fees.slice(start, start + 100)
           const last = items.at(-1)
           return Effect.succeed({
@@ -1525,35 +1528,26 @@ describe('execution reconciliation loop', () => {
     }
   })
 
-  test('rejects broker history beyond the hard row limit before persisting', async () => {
-    let offset = 0
+  test('reads complete fill history beyond ten thousand rows', async () => {
+    const fills = Array.from({ length: 10_001 }, (_, index) => fill(index))
     const read: BrokerReadShape = {
       ...emptyRead(),
       fillActivities: (query = {}) => {
-        const pageSize = query.pageSize ?? 100
-        const items = Array.from({ length: pageSize }, (_, index) => fill(offset + index))
-        offset += items.length
+        const offset =
+          query.pageToken === undefined ? 0 : fills.findIndex((row) => row.activityId === query.pageToken) + 1
+        const items = fills.slice(offset, offset + (query.pageSize ?? 100))
+        const last = items.at(-1)
         return Effect.succeed({
-          value: { items, nextPageToken: items[items.length - 1]?.activityId },
+          value: {
+            items,
+            ...(offset + items.length < fills.length && last !== undefined ? { nextPageToken: last.activityId } : {}),
+          },
           evidence: evidence(`fill-page-${offset}`),
         })
       },
     }
-    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-
-    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
-    expect(failure).toMatchObject({
-      _tag: 'ReconciliationError',
-      operation: 'pagination',
-      message: 'Alpaca fill history exceeds 10000 rows',
-      failure: {
-        _tag: 'Pagination',
-        reason: 'FillHistoryTooLarge',
-      },
-    })
-    expect(offset).toBe(10_001)
-    expect(control.writes).toBe(0)
-    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(observedAt)))
+    expect(snapshot.history.fills.map(({ value }) => value)).toEqual(fills)
   })
 
   test('keeps persistence and containment in distinct writer-fence transactions', async () => {
@@ -1593,7 +1587,6 @@ describe('execution reconciliation loop', () => {
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
       completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
-      verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
       hasAccountBaseline: (id) =>
         Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),

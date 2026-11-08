@@ -7,7 +7,11 @@ import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
 import { validateSystemRegistration, verifyStoredSystemRegistration, type ScheduledEvaluation } from './policy'
-import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
+import {
+  OperationalRegistrationSchema,
+  validateOperationalRegistration,
+  verifyStoredOperationalRegistration,
+} from './operational-period'
 import {
   evaluateOperationalAssessment,
   OperationalAssessmentInputSchema,
@@ -77,6 +81,13 @@ export const initializeQualificationHistory = (input: unknown, verifiedSources: 
 export const registerSystemQualification = (input: unknown, verifiedSources: ReadonlySet<string>) =>
   Effect.gen(function* () {
     const { registration, registrationHash } = yield* Effect.fromResult(validateSystemRegistration(input))
+    if (
+      registration.schemaVersion === 'bayn.system-registration.v4' &&
+      registration.statisticalPlan.supports.some((support) => !verifiedSources.has(support.sourceHash))
+    )
+      return yield* new SystemAssessmentError({
+        message: 'Registration requires verified statistical support sources before the first open',
+      })
     if (registration.costAllocationPlans.some((plan) => !verifiedSources.has(plan.basisSourceHash)))
       return yield* new SystemAssessmentError({
         message: 'Registration requires verified cost allocation basis artifacts before the first open',
@@ -158,7 +169,7 @@ export const readAssessmentRegistration = (hash: string) =>
     const row = rows[0]
     if (row === undefined) return yield* new SystemAssessmentError({ message: 'System registration does not exist' })
     const result = Schema.is(OperationalRegistrationSchema)(row.payload)
-      ? yield* Effect.fromResult(validateOperationalRegistration(row.payload))
+      ? yield* Effect.fromResult(verifyStoredOperationalRegistration(row.payload))
       : yield* Effect.fromResult(verifyStoredSystemRegistration(row.payload))
     if (result.registrationHash !== registrationHash)
       return yield* new SystemAssessmentError({ message: 'Stored registration hash differs from its contents' })

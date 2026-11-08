@@ -1,3 +1,15 @@
+import nativeProtectionCancelReceipts from '../../migrations/0189_native_protection_cancel_receipts'
+import jevBoxInference from '../../migrations/0188_jev_box_inference'
+import inferenceRequestGenerationIndex from '../../migrations/0187_inference_request_generation_index'
+import jev114ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
+import chartPresenceSkip from '../../migrations/0185_chart_presence_skip'
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
+import effectiveEntryObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
+import conditionalStatisticalQualification from '../../migrations/0182_conditional_statistical_qualification'
+import webullObserveCutover from '../../migrations/0179_webull_observe_cutover'
+import jevEntryWindowIndex from '../../migrations/0180_jev_entry_window_index'
+import operationalSafetyBaseline from '../../migrations/0181_operational_safety_baseline'
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import riskClockRejection from '../../migrations/0177_risk_clock_rejection'
 import operationalSourceRecords from '../../migrations/0176_operational_source_records'
 import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
@@ -179,7 +191,19 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '189_native_protection_cancel_receipts': nativeProtectionCancelReceipts,
+  '188_jev_box_inference': jevBoxInference,
+  '187_inference_request_generation_index': inferenceRequestGenerationIndex,
+  '186_jev114_observe_cutover': jev114ObserveCutover,
+  '185_chart_presence_skip': chartPresenceSkip,
+  '184_effective_entry_allowance_input': effectiveEntryAllowanceInput,
+  '183_effective_entry_observe_cutover': effectiveEntryObserveCutover,
+  '179_webull_observe_cutover': webullObserveCutover,
+  '178_webull_entry_context': webullEntryContext,
   '176_operational_source_records': operationalSourceRecords,
+  '180_jev_entry_window_index': jevEntryWindowIndex,
+  '181_operational_safety_baseline': operationalSafetyBaseline,
+  '182_conditional_statistical_qualification': conditionalStatisticalQualification,
   '177_risk_clock_rejection': riskClockRejection,
   '175_operational_controller_evidence': operationalControllerEvidence,
   '164_focused_entry_evidence': focusedEntryEvidence,

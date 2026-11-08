@@ -21,7 +21,7 @@ import {
   type MessagesStream,
   type Offsets,
 } from '@platformatic/kafka'
-import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
+import { Cause, Clock, Context, Data, Duration, Effect, Redacted, Result, Schedule, Stream } from 'effect'
 import { makeKafkaArrivalEnvelope } from './arrival-envelope'
 import type { NativeArrivalCaptureFactory } from './native-arrival-journal'
 import {
@@ -38,6 +38,7 @@ import {
   type StreamingProjection,
 } from './projection'
 import { marketSourceForTopic, marketSourceKind, type KafkaMarketRecord, type MarketSources } from './raw-events'
+import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
 
 export interface KafkaMarketConfig {
   readonly webullBarsTopic?: string | undefined
@@ -324,12 +325,15 @@ export interface KafkaProjectionRead extends KafkaProjectionCut {
 export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
   {
-    readonly read: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
-    readonly readForLiquidation: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
+    readonly check: Effect.Effect<void, KafkaMarketFailure>
+    readonly read: (
+      query: IntradaySnapshotQuery,
+    ) => Effect.Effect<KafkaProjectionRead, KafkaMarketFailure | IntradaySnapshotFailure>
     readonly status: Effect.Effect<{
       readonly epoch: string
       readonly ready: boolean
       readonly sequence: number
+      readonly bootstrapDeadlineAtMs: number | null
       readonly failure?: string
     }>
   }
@@ -355,6 +359,7 @@ export const makeKafkaMarketProjection = (
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
+    let bootstrapDeadlineAtMs: number | null = null
     let lastFailure: KafkaMarketFailure | undefined
     let closeFailure: KafkaMarketFailure | undefined
     let recovery:
@@ -423,6 +428,7 @@ export const makeKafkaMarketProjection = (
             }),
           )
         const observedAtMs = yield* Clock.currentTimeMillis
+        bootstrapDeadlineAtMs = observedAtMs + config.bootstrapTimeoutMs
         const timestampForSource = (source: MarketSources[number]) =>
           diagnosticStartMs ??
           Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
@@ -677,13 +683,14 @@ export const makeKafkaMarketProjection = (
                 })
             }
             positions = canonicalPositions([...incorporated.values()])
-            ready = kafkaBootstrapComplete(evidence, positions)
-            if (!ready && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
+            const caughtUp = kafkaBootstrapComplete(evidence, positions)
+            if (!announced && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
               return yield* failure(
                 'bootstrap',
                 'Kafka bootstrap deadline exceeded',
                 new KafkaBootstrapDeadlineExceeded(),
               )
+            ready = caughtUp
             if (ready && !announced) {
               announced = true
 
@@ -835,19 +842,15 @@ export const makeKafkaMarketProjection = (
           : Effect.fail(lastFailure ?? failure('read', 'Kafka projection is rebuilding required history'))
       })
     return {
+      check: readCut(true).pipe(Effect.asVoid),
       read: readCut(true),
       readForLiquidation: readCut(false),
       status: Effect.sync(() => ({
         epoch: projection.epoch,
         ready: ready && lastFailure === undefined,
         sequence: projection.sequence,
+        bootstrapDeadlineAtMs,
         ...(lastFailure === undefined ? {} : { failure: lastFailure.message }),
       })),
     }
   })
-export const KafkaMarketProjectionLive = (
-  config: KafkaMarketConfig,
-  universe: MarketSources,
-  captureFactory: NativeArrivalCaptureFactory,
-) =>
-  Layer.effect(KafkaMarketProjection, makeKafkaMarketProjection(config, universe, undefined, undefined, captureFactory))

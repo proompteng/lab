@@ -28,7 +28,7 @@ suite without checked dumps; it does not replace `verify:tla`.
 | `EntryRecovery.tla`  | Inputs arriving or losing readiness between polls, initial/later missing inputs, consumed windows, source unavailability, binding, expiry and terminal closure. Short retries stay within the original admission; a modeled decision requires a ready input and precedes expiry.                                                                                     | `decisionReadinessContinuationDelayMs` in `src/observe-composition/recovery-driver.ts`, with the production cycle, window and binding shapes.                                                                    |
 | `MutationLedger.tla` | Authority/kill changes, submission or cancellation, uncertain outcomes and repeated recovery, worker restart, separate preflight reads and posting by two workers, partial posting in either order, metadata corruption and duplicate records. No second dispatch of the same mutation, unauthorized start, duplicate posting or incomplete accounting verification. | `decideMutationAuthority`, `decideMutationStartReplay` and `allowsOutcomeEvent` in `src/execution/mutations/decisions.ts`; `preflightTransfers` and `verifyExactTransfers` in `src/ledger-plan/verification.ts`. |
 
-`tla-conformance.test.ts` decodes every checked state's scalar view and invokes those production functions. Each view
+`../conformance/tla.test.ts` decodes every checked state's scalar view and invokes those production functions. Each view
 retains every model variable, so it does not merge distinct states. Reachability assertions require admitted and
 rejected paths, stale in-flight work, successful and expired cycles, uncertain submissions, killed bounded closes,
 both partial-posting orders, verified complete posting, corrupt metadata and duplicates. Malformed, missing and empty
@@ -38,6 +38,14 @@ The negative controls remove completion ownership, short continuation, clock fai
 deterministic-ID deduplication guards in isolated model copies. Each must produce its expected invariant or temporal violation.
 A parser error, checker crash or successful check does not count as detecting the defect. The reviewed model files
 remain unchanged.
+
+After the unchanged production code passes conformance, five child processes independently remove the controller
+completion guard, delay a short entry retry, bypass mutation start replay, remove maximum-authority enforcement and
+omit transfer amount comparison in the actual production modules.
+A Bun preload loader changes only the child's imported module; source files on disk remain unchanged. Each control
+must confirm its mutation loaded and fail the named conformance assertion. A surviving mutation, missing guard,
+parser error, timeout or unrelated failure fails verification. Retained results include each assertion failure and
+the original production module hash. These controls check the model-to-code comparison as well as the model's guards.
 
 ## Bounds, assumptions and limits
 

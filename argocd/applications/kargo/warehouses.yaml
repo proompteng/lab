@@ -256,8 +256,6 @@ spec:
         includePaths:
           - apps/froussard
           - packages/agent-contracts
-          - packages/codex
-          - packages/discord
           - packages/otel
           - nix/images/froussard.nix
           - nix/images/bun-workspace-service.nix
@@ -867,11 +865,7 @@ spec:
         strictSemvers: true
         includePaths:
           - services/restate
-          - packages/scripts/src/restate
-          - packages/scripts/src/shared/docker.ts
           - argocd/applications/restate
-          - argocd/applicationsets/platform.yaml
-          - bun.lock
     - image:
         repoURL: registry.ide-newton.ts.net/lab/restate
         imageSelectionStrategy: NewestBuild

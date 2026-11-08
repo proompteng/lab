@@ -36,7 +36,7 @@ import {
   accountConfigurationObservationSource,
 } from '../broker/alpaca/model'
 import { BrokerObservations, observationUnavailable } from '../broker/alpaca/observed-snapshot'
-import { captureBrokerObservation, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
+import { makeBrokerObservationCapture, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -1379,6 +1379,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const intentStore: IntentStoreService = {
     protectionForCycle: () => Effect.succeed([]),
     beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+    recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
     commit: () => Effect.die(new Error('unexpected commit')),
     read: (id) =>
       Effect.gen(function* () {
@@ -2456,8 +2457,13 @@ describe('execution coordinator', () => {
       await Effect.runPromise(
         harness.provideRecovery(
           Effect.gen(function* () {
+            const captureBrokerObservation = yield* makeBrokerObservationCapture
             let available = true
-            let snapshot = yield* captureBrokerObservation(fresh, yield* currentUtcInstant, 30_000)
+            let snapshot = yield* captureBrokerObservation(
+              fresh,
+              { generation: 1, startedAt: yield* currentUtcInstant },
+              30_000,
+            )
             const observed = Effect.suspend(() =>
               available ? Effect.succeed(snapshot) : Effect.fail(observationUnavailable('invalidated')),
             )
@@ -2504,7 +2510,11 @@ describe('execution coordinator', () => {
             yield* TestClock.adjust(999)
             expect(Result.isFailure(yield* Effect.result(cached.account))).toBe(true)
             yield* TestClock.adjust(1)
-            snapshot = yield* captureBrokerObservation(fresh, yield* currentUtcInstant, 30_000)
+            snapshot = yield* captureBrokerObservation(
+              fresh,
+              { generation: 3, startedAt: yield* currentUtcInstant },
+              30_000,
+            )
             available = true
             const published = yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))
             expect(published.history.orders.rows[0]?.value.brokerOrderId).toBe(orderId)

@@ -43,15 +43,6 @@ export const HistoryEventRow = Schema.Struct({
 })
 export type HistoryEventRow = typeof HistoryEventRow.Type
 
-export const CompletedAccountingRow = Schema.Struct({
-  ...AccountingTransactionRowSchema.fields,
-  source_event_id: NonEmptyString,
-  event_content_hash: Sha256,
-  prior_quantity_atoms: Schema.String,
-  prior_cost_micros: Schema.String,
-})
-export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
-
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
   Schema.Struct({ quantity_atoms: Schema.String, cost_micros: Schema.String }),
@@ -204,6 +195,9 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v35',
       'bayn.jev.protocol.v36',
       'bayn.jev.protocol.v37',
+      'bayn.jev.protocol.v38',
+      'bayn.jev.protocol.v39',
+      'bayn.jev.protocol.v40',
       'bayn.entry-ablation-policy.v1',
       'bayn.repeated-momentum-policy.v1',
     ]),
@@ -250,11 +244,6 @@ export const decodeValuationInput = Schema.decodeUnknownEffect(ValuationInputSch
 export const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
 export const decodeHistoryEventRows = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
-
-export const decodeCompletedAccountingRows = Schema.decodeUnknownEffect(
-  Schema.Array(CompletedAccountingRow),
-  strictParseOptions,
-)
 
 export const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 

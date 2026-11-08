@@ -955,9 +955,7 @@ impl MicroVmControlPlane for ControlPlane {
         let guest = self
             .guest(&principal, &request.agent_id, &request.thread_id)
             .await?;
-        if request.archived
-            && crate::runs::thread_active(self, &principal, &request.thread_id).await?
-        {
+        if request.archived && crate::runs::thread_active(&principal, &request.thread_id).await? {
             return Err(Status::failed_precondition(
                 "Wait for the response to finish before archiving this chat",
             ));
@@ -1022,13 +1020,11 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
-        let options = CodexOptions::parse(request.model, request.reasoning_effort)
-            .map_err(Status::invalid_argument)?;
         let (_, guest, access) = self
             .guest_access(&principal, &request.agent_id, &request.thread_id)
             .await?;
         let history = guest
-            .resume_codex_thread(&request.thread_id, &options)
+            .read_codex_thread(&request.thread_id)
             .await
             .map_err(map_guest_error)?;
         access.require().await?;
@@ -1076,7 +1072,6 @@ impl MicroVmControlPlane for ControlPlane {
         };
         if !request.images.is_empty() {
             match crate::runs::read(
-                self,
                 &principal,
                 &input.id,
                 Some(crate::runs::input_digest(&input)?),
@@ -1108,7 +1103,7 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         self.agent_access(&principal, &request.id, "").await?;
         let mut runs = Vec::new();
-        for snapshot in crate::runs::active(self, &principal, &request.thread_id).await? {
+        for snapshot in crate::runs::active(&principal, &request.thread_id).await? {
             if snapshot.agent_id != request.id {
                 return Err(Status::permission_denied("run unavailable"));
             }
@@ -1126,7 +1121,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_operation(&request.run_id)?;
         self.agent_access(&principal, &request.agent_id, &request.run_id)
             .await?;
-        let snapshot = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        let snapshot = crate::runs::read(&principal, &request.run_id, None).await?;
         if snapshot.agent_id != request.agent_id {
             return Err(Status::permission_denied("run unavailable"));
         }
@@ -1232,7 +1227,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_operation(&request.operation_id)?;
         self.agent_access(&principal, &request.agent_id, &request.run_id)
             .await?;
-        let run = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        let run = crate::runs::read(&principal, &request.run_id, None).await?;
         let mut params = json!({"threadId":run.thread_id,"approvalId":request.approval_id,"clientUserMessageId":request.operation_id});
         if !request.response_json.is_empty() {
             if request.decision != CodexApprovalDecision::Unspecified as i32
@@ -2967,7 +2962,6 @@ pub(crate) mod tests {
                                 ResumeCodexThreadRequest {
                                     agent_id: "agent-current".into(),
                                     thread_id: "thread-current".into(),
-                                    ..Default::default()
                                 },
                                 &principal,
                                 &path,

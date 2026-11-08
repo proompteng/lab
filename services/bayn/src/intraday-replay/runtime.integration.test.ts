@@ -11,15 +11,13 @@ import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
-import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
-import { decodeStagedCheckpoint, stageResponseIdentity } from '../jev/staged-checkpoint'
+import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
 
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
-import { intradayEntryRearmDelayMs } from '../cycle/runner/calendar-decisions'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config/model'
@@ -27,7 +25,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
+import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -49,6 +47,15 @@ import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
+import {
+  ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+} from '../execution/controller-status'
+import type { AdvanceExecutionCommand } from '../execution/advance'
+import { executionControllerPlanHash } from '../execution/controller'
+import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
@@ -102,10 +109,9 @@ import { Authority, KillState, ReconciliationStatus } from '../execution/contrac
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { makeTradingEngine } from '../composition/trading-engine'
-import { ownGenerationCycleDriver } from '../composition/generation-cycle'
+import { makeGenerationCycleDriver } from '../composition/generation-cycle'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { operationalError } from '../errors'
-import type { RecoveryFirstCycleDriver, RecoveryFirstRuntime } from '../observe-composition/model'
 import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
@@ -474,9 +480,7 @@ durableTest.each(
             coalesce((SELECT jsonb_agg(payload) FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb) AS skips
             FROM jev_evaluation_requests request`,
           )
-          const expectedBaseHashes: string[] = []
           const symbols: string[] = []
-          let skipped = 0
           for (const row of rows) {
             const request = Result.getOrThrow(decodeJevEvaluationRequest(row.request))
             symbols.push(request.symbol)
@@ -489,44 +493,15 @@ durableTest.each(
             expect(
               measuredCalls.filter((call) => call.stage === 'CHART' && call.requestHash === chartInference.requestHash),
             ).toHaveLength(1)
-            const next = Result.getOrThrow(
-              makeSelectedBaseStartStageRequest(
-                {
-                  chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
-                  protocol: request.request.protocol,
-                  funding: request.request.funding,
-                },
-                stageResponseIdentity(chart.outcome.inference),
-              ),
-            )
-            if (next.status === 'PREPARED') {
-              expectedBaseHashes.push(next.requestHash)
-              expect(checkpoint.claims.find((claim) => claim.stage === 'BASE_START')?.providerRequestHash).toBe(
-                next.requestHash,
-              )
-              expect(checkpoint.terminals.find((terminal) => terminal.stage === 'BASE_START')?.outcome.status).toBe(
-                'RECEIVED',
-              )
-              expect(checkpoint.skips).toEqual([])
-            } else {
-              skipped++
-              expect(checkpoint.skips).toHaveLength(1)
-              expect(checkpoint.skips[0]?.reason).toBe(next.reason)
-              expect(checkpoint.claims.some((claim) => claim.stage === 'BASE_START')).toBe(false)
-            }
+            expect(checkpoint.claims.map((claim) => claim.stage)).toEqual(['CHART'])
+            expect(checkpoint.terminals.map((terminal) => terminal.stage)).toEqual(['CHART'])
+            expect(checkpoint.skips).toEqual([])
           }
           expect(symbols.toSorted()).toEqual(eligibleEntrySymbols.toSorted())
-          expect(expectedBaseHashes.length).toBeGreaterThan(0)
-          expect(skipped).toBeGreaterThan(0)
-          expect(
-            measuredCalls
-              .filter((call) => call.stage === 'BASE_START')
-              .map((call) => call.requestHash)
-              .toSorted(),
-          ).toEqual(expectedBaseHashes.toSorted())
+          expect(measuredCalls.filter((call) => call.stage === 'BASE_START')).toEqual([])
           expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
           expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(eligibleEntrySymbols.length)
-          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length + expectedBaseHashes.length)
+          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
         })
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
@@ -1139,7 +1114,7 @@ durableTest.each(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
             { state: 'ACTIVE', count: 1 },
-            { state: 'BLOCKED', count: 1 },
+            { state: 'BLOCKED', count: 2 },
           ])
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
@@ -1148,8 +1123,11 @@ durableTest.each(
           yield* runtime.advance
           yield* advanceMarketTo(initialMs + 2)
           yield* runtime.advance
-          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+          expect(
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles ORDER BY created_at`,
+          ).toEqual([
             { state: 'NO_TRADE', bound: true },
+            { state: 'ACTIVE', bound: false },
           ])
           yield* advanceMarketTo(finalizationAtMs)
           const schedule = yield* driveReplaySession(
@@ -1171,10 +1149,12 @@ durableTest.each(
           expect(state.fills).toEqual([])
           expect(state.ledger.positions).toEqual([])
           expect(
-            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2'`,
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2' ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', bound: true },
+            { state: 'BLOCKED', bound: false },
             { state: 'NO_TRADE', bound: true },
+            { state: 'BLOCKED', bound: false },
           ])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
@@ -1182,19 +1162,21 @@ durableTest.each(
             result: 'SUCCESS',
             outcome: 'WINDOW_CLOSED',
           })
-          yield* advanceMarketTo(finalizationAtMs + 180_001 + intradayEntryRearmDelayMs - 1)
+          yield* advanceMarketTo(finalizationAtMs + 240_000)
           expect((yield* runtime.advance).observation).toMatchObject({
             result: 'SUCCESS',
             outcome: 'WINDOW_CLOSED',
           })
-          yield* advanceMarketTo(finalizationAtMs + 180_001 + intradayEntryRearmDelayMs)
+          yield* advanceMarketTo(finalizationAtMs + 240_001)
           const successor = yield* runtime.advance
           expect(successor.observation).toMatchObject({ result: 'SUCCESS', outcome: 'WINDOW_CLOSED' })
           expect(
             yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', ordinal: 1 },
-            { state: 'NO_TRADE', ordinal: 2 },
+            { state: 'BLOCKED', ordinal: 2 },
+            { state: 'NO_TRADE', ordinal: 3 },
+            { state: 'BLOCKED', ordinal: 4 },
           ])
           expect(
             yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles WHERE execution_calendar_schema_version='bayn.continuous-market-hours.v1'`,
@@ -1327,6 +1309,7 @@ durableTest.each(
             Context.add(IntentStore, intents),
             Context.add(MutationStore, mutations),
             Context.add(JevClient, yield* JevClient),
+            Context.add(CandidateObservationStore, yield* CandidateObservationStore),
 
             Context.add(EntryInferenceJournal, yield* EntryInferenceJournal),
             Context.add(JevEvaluationStore, yield* JevEvaluationStore),
@@ -1432,7 +1415,7 @@ durableTest.each(
           }
           let lostResponses = 0
           const submitResponseLost = yield* Deferred.make<void>()
-          const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
+          const openGeneration = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {
               const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
               if (generation === undefined || config.execution.brokerIdentity === undefined)
@@ -1505,24 +1488,24 @@ durableTest.each(
                 recordPass: runtimeInput.recordPass,
               })
               const driver = yield* startup.pipe(Effect.provideContext(resources))
-              const published = yield* Deferred.make<RecoveryFirstCycleDriver>()
-              const owner = yield* ownGenerationCycleDriver<RecoveryFirstRuntime>({
-                generationHash,
-                mode,
-                readAuthority: readAuthority.pipe(Effect.mapError(asOperational)),
-                reconcileWhenHeld: reconcile,
-                settle,
-                owner: (value) => Deferred.succeed(published, value).pipe(Effect.andThen(Effect.never)),
-              })(driver).pipe(Effect.provideContext(resources), Effect.forkChild({ startImmediately: true }))
-              const owned = yield* Deferred.await(published)
+              const owned = yield* makeGenerationCycleDriver(
+                {
+                  generationHash,
+                  mode,
+                  readAuthority: readAuthority.pipe(Effect.mapError(asOperational)),
+                  reconcileWhenHeld: reconcile,
+                  settle,
+                },
+                driver,
+              )
               return {
-                owner,
+                needsRebind: owned.needsRebind,
                 program: engine.executionProgram,
-                advance: owned.advance.pipe(Effect.provideContext(resources)),
+                advance: owned.driver.advance.pipe(Effect.provideContext(resources)),
               }
             })
           if (acceptedCancel) {
-            const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation')
+            const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation')
             for (let pass = 0; pass < 20 && cancelRecoveryCalls.submit === 0; pass++) {
               yield* advanceBy(1000)
               yield* healthy.advance
@@ -1563,9 +1546,9 @@ durableTest.each(
             })
             expect(yield* settle).toEqual({ _tag: 'NotRequired' })
             expect(yield* readAuthority).toEqual(restricted)
-            yield* Fiber.join(healthy.owner)
+            expect(yield* healthy.needsRebind).toBe(true)
 
-            const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+            const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
             const lookupBeforeRecovery = cancelRecoveryCalls.lookup
             // A lookup may resolve the intent, but it must not clear the restriction or grant a new generation.
             expect(yield* readAuthority).toEqual(restricted)
@@ -1585,7 +1568,7 @@ durableTest.each(
                 expect((yield* runtime.reconcile).riskContext.unknownMutationCount).toBe(1)
                 expect(yield* settle).toEqual({ _tag: 'NotRequired' })
               }
-              yield* Fiber.interrupt(recovery.owner)
+              expect(yield* recovery.needsRebind).toBe(false)
             } else {
               expect(
                 yield* sql`SELECT state, terminal_outcome FROM intents WHERE intent_id=${entry.intent_id}`,
@@ -1598,12 +1581,11 @@ durableTest.each(
               expect(exact.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
               expect(exact.riskContext.unknownMutationCount).toBe(0)
               expect(yield* readAuthority).toEqual(restricted)
-              for (let pass = 0; pass < 20 && recovery.owner.pollUnsafe() === undefined; pass++) {
+              for (let pass = 0; pass < 20 && !(yield* recovery.needsRebind); pass++) {
                 yield* advanceBy(1000)
                 yield* recovery.advance
               }
-              expect(recovery.owner.pollUnsafe()).toBeDefined()
-              yield* Fiber.join(recovery.owner)
+              expect(yield* recovery.needsRebind).toBe(true)
               expect(yield* readAuthority).toMatchObject({
                 maximum: Authority.Observe,
                 effective: Authority.Observe,
@@ -1630,18 +1612,117 @@ durableTest.each(
             Effect.andThen(deadlineClock.adjust(3000)),
             Effect.forkChild({ startImmediately: true }),
           )
-          const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation', true)
+          const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation', true)
+          const controllerStatuses = yield* ExecutionControllerStatusStore.pipe(
+            Effect.provide(ExecutionControllerStatusStoreLive),
+          )
+          const controllerKey = Result.getOrThrow(canonicalHashV1Result({ accountId }))
+          let sequence = 0
+          let abandoned: ExecutionControllerStatus | undefined
+          let crashedCommand: AdvanceExecutionCommand | undefined
+          const interruptedStatusStore = {
+            ...controllerStatuses,
+            project: (candidate: ExecutionControllerStatus) => {
+              if (lostResponses === 0) return controllerStatuses.project(candidate)
+              abandoned = candidate
+              return Effect.die('simulated worker loss before controller completion projection')
+            },
+          }
           const recoveryAdvances = []
           for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
             yield* advanceBy(1000)
-            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
-            recoveryAdvances.push(advance.observation)
+            const command: AdvanceExecutionCommand = {
+              controllerKey,
+              epoch: 1,
+              sequence,
+              issuedAt: yield* currentUtcInstant,
+              sourceRevision: config.build.sourceRevision,
+            }
+            const advance = yield* Effect.exit(
+              executeNativeExecutionAdvance(
+                command,
+                { advance: healthy.advance, nextDelayMs: 1000 },
+                interruptedStatusStore,
+                executionControllerPlanHash,
+              ).pipe(Effect.provideService(OperationDeadlineClock, deadlineClock)),
+            )
+            if (Exit.isFailure(advance)) {
+              expect(Cause.pretty(advance.cause)).toContain(
+                'simulated worker loss before controller completion projection',
+              )
+              crashedCommand = command
+            } else {
+              recoveryAdvances.push(advance.value.observation)
+              sequence += 1
+            }
           }
           expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
+          if (
+            crashedCommand === undefined ||
+            abandoned === undefined ||
+            !executionControllerStatusHasCompletion(abandoned)
+          )
+            throw new Error('Missing pre-projection crash')
+          const beforeProjection = yield* controllerStatuses.read(controllerKey)
+          expect(beforeProjection?.nextSequence ?? 0).toBe(crashedCommand.sequence)
+          const readCompletionObservations = sql<{ id: string; status: unknown }>`
+            SELECT observation_id::text AS id, status FROM execution_controller_observations
+            WHERE controller_key=${controllerKey} AND (status->>'epoch')::bigint=${crashedCommand.epoch}
+              AND (status->>'last_sequence')::bigint=${crashedCommand.sequence}
+            ORDER BY observation_id`
+          expect(yield* readCompletionObservations).toEqual([])
+          const originalMutations = yield* sql`SELECT intent_id, request_hash FROM mutation_events
+            WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`
+          expect(originalMutations).toHaveLength(1)
+          const originalOrderIds = (yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)
           yield* advanceBy(1000)
-          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
-          expect(healthy.owner.pollUnsafe()).toBeDefined()
-          yield* Fiber.join(healthy.owner)
+          const restarted = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation')
+          const replayCommand = { ...crashedCommand, issuedAt: yield* currentUtcInstant }
+          expect(replayCommand.issuedAt).not.toBe(crashedCommand.issuedAt)
+          const committed = yield* executeNativeExecutionAdvance(
+            replayCommand,
+            { advance: restarted.advance, nextDelayMs: 1000 },
+            controllerStatuses,
+            executionControllerPlanHash,
+          ).pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
+          expect(yield* restarted.needsRebind).toBe(true)
+          expect(
+            yield* sql`SELECT intent_id, request_hash FROM mutation_events
+            WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`,
+          ).toEqual(originalMutations)
+          expect((yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)).toEqual(originalOrderIds)
+          expect(committed.observation?.executionIssuedAt).toBe(replayCommand.issuedAt)
+          expect(committed.outcome.receiptHash).not.toBe(abandoned.lastReceiptHash)
+          const committedObservations = yield* readCompletionObservations
+          // The status trigger retains the completion; a fresh statement separately witnesses its commit.
+          expect(committedObservations).toHaveLength(2)
+          expect(committedObservations[0]?.status).toEqual(committedObservations[1]?.status)
+          expect(committedObservations[0]?.status).toEqual(
+            expect.objectContaining({
+              controller_key: controllerKey,
+              plan_hash: executionControllerPlanHash,
+              active: true,
+              epoch: crashedCommand.epoch,
+              next_sequence: crashedCommand.sequence + 1,
+              last_sequence: crashedCommand.sequence,
+              last_outcome: committed.outcome._tag,
+              last_receipt_hash: committed.outcome.receiptHash,
+              last_pass: committed.observation,
+            }),
+          )
+          expect(yield* controllerStatuses.project(abandoned).pipe(Effect.flip)).toMatchObject({ failure: 'conflict' })
+          expect(
+            yield* executeNativeExecutionAdvance(
+              { ...crashedCommand, issuedAt: utcInstantFromEpochMillis(Date.parse(replayCommand.issuedAt) + 60_000) },
+              {
+                advance: Effect.die('A committed receipt must replay without advancing the broker'),
+                nextDelayMs: 1000,
+              },
+              controllerStatuses,
+              executionControllerPlanHash,
+            ),
+          ).toEqual(committed)
+          expect(yield* readCompletionObservations).toEqual(committedObservations)
           const restricted = yield* readAuthority
           expect(restricted).toMatchObject({
             maximum: Authority.Execution,
@@ -1650,22 +1731,84 @@ durableTest.each(
           })
           expect((yield* broker.snapshot).fills).toHaveLength(scenario === 'recovery-filled' ? 1 : 0)
           const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
-          const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
-          const concurrentRecovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+          const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
+          const concurrentRecovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
           let lastRecovery
-          for (let attempt = 0; attempt < 20 && recovery.owner.pollUnsafe() === undefined; attempt++) {
-            yield* advanceBy(attempt === 3 ? closeAtMs - (yield* Clock.currentTimeMillis) : 1000)
-            if (attempt === 3)
+          let protectionRestored = scenario !== 'recovery-filled'
+          let closeWindowReached = false
+          for (let attempt = 0; attempt < 20 && !(yield* recovery.needsRebind); attempt++) {
+            // Concurrent controllers may need separate passes to recover, cancel, and reconcile the entry.
+            // Reach durable protection before moving the market to the liquidation window.
+            if (!closeWindowReached && attempt >= 3 && protectionRestored) {
+              yield* advanceBy(closeAtMs - (yield* Clock.currentTimeMillis))
               for (const arrival of closeArrivals)
                 cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+              closeWindowReached = true
+            } else {
+              if (!closeWindowReached && scenario === 'recovery-filled') {
+                const nextAt = (yield* Clock.currentTimeMillis) + 1000
+                const quote = observedQuoteAt(cursor.projection, 'AAPL', nextAt)
+                if (quote === undefined) throw new Error('Missing recovery protection quote')
+                expect(nextAt - Date.parse(quote.value.eventAt), JSON.stringify(lastRecovery)).toBeLessThanOrEqual(
+                  protocol.maximumQuoteAgeMs,
+                )
+              }
+              yield* advanceBy(1000)
+            }
             lastRecovery = yield* Effect.all([recovery.advance, concurrentRecovery.advance], { concurrency: 2 }).pipe(
               Effect.provideService(OperationDeadlineClock, liveClock),
             )
+            if (!closeWindowReached && scenario === 'recovery-filled') {
+              const acceptedProtection = yield* sql<{ intent_id: string }>`SELECT i.intent_id FROM intents i
+                JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+                WHERE i.account_id=${accountId} AND i.side='SELL' AND i.protection->>'_tag'='Oco'
+                  AND i.state='ACKNOWLEDGED' AND i.terminal_outcome IS NULL AND r.outcome='APPROVED'
+                  AND EXISTS (SELECT 1 FROM mutation_events e WHERE e.intent_id=i.intent_id
+                    AND e.event_type='SUBMIT_ACCEPTED')`
+              expect(acceptedProtection.length).toBeLessThanOrEqual(1)
+              protectionRestored = false
+              for (const accepted of acceptedProtection) {
+                const intent = Option.getOrThrow(yield* intents.read(accepted.intent_id)).intent
+                if (intent.protection?._tag !== 'Oco') throw new Error('Missing retained recovery Oco terms')
+                const protectedState = yield* broker.snapshot
+                expect(protectedState.fills).toHaveLength(1)
+                expect(protectedState.ledger.positions).toHaveLength(1)
+                const position = protectedState.ledger.positions[0]
+                const parent = protectedState.orders.find(
+                  ({ order }) => order.clientOrderId === intent.clientOrderId,
+                )?.order
+                if (position === undefined || parent === undefined) throw new Error('Missing recovery protection group')
+                expect(position.symbol).toBe(intent.symbol)
+                expect(position.quantityAtoms).toBe(intent.quantityAtoms)
+                expect(parent.accountId).toBe(accountId)
+                const children = protectedState.orders
+                  .filter(({ order }) => order.parentBrokerOrderId === parent.brokerOrderId)
+                  .map(({ order }) => order)
+                Result.getOrThrow(
+                  verifyProtectionGroup(
+                    { ...parent, legs: children },
+                    { symbol: position.symbol, quantityAtoms: position.quantityAtoms, protection: intent.protection },
+                  ),
+                )
+                expect(parent.status).toBe(OrderStatus.New)
+                expect(parent.filledQuantityAtoms).toBe('0')
+                expect(parent.firstArrivedAt).toBeDefined()
+                expect(children).toHaveLength(1)
+                const stop = children[0]
+                if (stop === undefined) throw new Error('Missing working recovery stop')
+                expect(stop.status).toBe(OrderStatus.New)
+                expect(stop.quantityAtoms).toBe(position.quantityAtoms)
+                expect(stop.filledQuantityAtoms).toBe('0')
+                expect(stop.firstArrivedAt).toBeDefined()
+                protectionRestored = true
+              }
+            }
           }
-          expect(recovery.owner.pollUnsafe(), JSON.stringify(lastRecovery)).toBeDefined()
-          yield* Fiber.join(recovery.owner)
+          expect(protectionRestored, JSON.stringify(lastRecovery)).toBe(true)
+          if (scenario === 'recovery-filled') expect(closeWindowReached, JSON.stringify(lastRecovery)).toBe(true)
+          expect(yield* recovery.needsRebind, JSON.stringify(lastRecovery)).toBe(true)
           yield* concurrentRecovery.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
-          yield* Fiber.join(concurrentRecovery.owner)
+          expect(yield* concurrentRecovery.needsRebind).toBe(true)
           const observed = yield* readAuthority
           expect(observed).toMatchObject({
             maximum: Authority.Observe,
@@ -1713,11 +1856,11 @@ durableTest.each(
             utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
           )
           const heldBefore = yield* readAuthority
-          const held = yield* openOwner(activated.generationHash, 'Mutation')
+          const held = yield* openGeneration(activated.generationHash, 'Mutation')
           const holds = yield* Effect.all([held.advance, held.advance], { concurrency: 2 })
           expect(holds.every((item) => item.observation.result === 'FAILURE')).toBe(true)
           expect(yield* readAuthority).toEqual(heldBefore)
-          yield* Fiber.interrupt(held.owner)
+          expect(yield* held.needsRebind).toBe(false)
           const final = yield* runtime.reconcile
           expect(final.report.metrics.accountingExact).toBe(true)
           expect(final.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
@@ -1812,8 +1955,12 @@ durableTest.each(
           expect(final.ledger.positions).toHaveLength(0)
           expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
             { state: 'COMPLETED' },
+            { state: 'BLOCKED' },
             { state: 'COMPLETED' },
           ])
+          expect(
+            yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE state='BLOCKED'`,
+          ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
           yield* createRuntime
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
@@ -1936,10 +2083,9 @@ durableTest.each(
             ])
             expect(repeated.ledger.positions).toHaveLength(0)
             expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
-            expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
-              { state: 'COMPLETED' },
-              { state: 'COMPLETED' },
-            ])
+            expect(
+              yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'COMPLETED' }])
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
@@ -2026,10 +2172,12 @@ durableTest.each(
             expect(final.brokerState.account.cashMicros).toBe(repeated.ledger.cashMicros)
             expect(final.riskContext.unknownMutationCount).toBe(0)
             expect(final.brokerState.unknownOrderCount).toBe(0)
-            expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
-              { state: 'COMPLETED' },
-              { state: 'COMPLETED' },
-            ])
+            expect(
+              yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'BLOCKED' }, { state: 'COMPLETED' }])
+            expect(
+              yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE account_id=${accountId} AND state='BLOCKED'`,
+            ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
             expect(
               yield* sql`
                 SELECT payload #>> '{manifest,rangeEndAt}' AS window_end
@@ -2150,7 +2298,7 @@ durableTest.each(
           const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
             count(*)::int AS count,
             bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
-            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v37') AS current_protocol
+            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v40') AS current_protocol
             FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
           expect(source?.count).toBeGreaterThan(0)
           expect(source?.candidate_only).toBe(true)

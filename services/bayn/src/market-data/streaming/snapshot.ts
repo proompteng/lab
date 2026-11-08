@@ -25,6 +25,10 @@ import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap
 import { kafkaBootstrapComplete } from './bootstrap'
 import { topicPartitionKey, type StreamingProjection, type ObservedMarketValue } from './projection'
 import { selectStreamingInputs } from './inputs'
+import { InputReadinessReason } from '../intraday/input-readiness'
+import { MarketFeatureDefinition } from '../features/contract'
+import { intradayInstantNanos } from '../intraday/time'
+import { isContinuousMarket } from '../../market-hours'
 
 export interface StreamingRecordReceipt {
   readonly sourceTopic: string
@@ -102,10 +106,7 @@ const recordReceipt = (entry: ObservedMarketValue<IntradayRecordIdentity>) =>
     }),
   )
 
-export const constructStreamingSnapshot = (
-  cut: KafkaProjectionCut,
-  query: IntradaySnapshotQuery,
-): Result.Result<StreamingVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
+export const prepareStreamingSnapshotCut = (cut: KafkaProjectionCut, query: IntradaySnapshotQuery) =>
   Result.gen(function* () {
     const request = yield* verifyIntradaySnapshotQuery(query)
     const state = cut.projection
@@ -136,6 +137,16 @@ export const constructStreamingSnapshot = (
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
       )
+    return { request, sourceBootstrap, sourcePositions }
+  })
+
+export const constructStreamingSnapshot = (
+  cut: KafkaProjectionCut,
+  query: IntradaySnapshotQuery,
+): Result.Result<StreamingVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const { request, sourceBootstrap, sourcePositions } = yield* prepareStreamingSnapshotCut(cut, query)
+    const state = cut.projection
     const snapshot = yield* constructSnapshotMaterial(state, request, sourcePositions, {
       schemaVersion: 'bayn.streaming-market-snapshot.v1',
       streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: sourceBootstrap },
@@ -183,7 +194,32 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       request.candidateSymbols.every((symbol) => excluded.has(symbol))
     )
       return yield* Result.fail(
-        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
+        new IntradaySnapshotFailure({
+          reason: 'not-ready',
+          message: 'No candidate has complete raw data and a matching rolling feature',
+          facts: {
+            inputReadiness: {
+              reason: InputReadinessReason.AllCandidatesExcluded,
+              observedAt: request.observedAt,
+              windowStartAt: request.rangeStartAt,
+              windowEndAt: request.rangeEndAt,
+              ...(isContinuousMarket(request.calendar)
+                ? {}
+                : { requiredFeatureDefinition: MarketFeatureDefinition.ObservedPriceWindow }),
+              candidateCount: request.candidateSymbols.length,
+              matchingFeatureCandidateCount: request.candidateSymbols.filter((symbol) =>
+                featureReceipts.some((feature) => feature.value.material.symbol === symbol),
+              ).length,
+              completedBarCandidateCount: request.candidateSymbols.filter((symbol) =>
+                bars.some(
+                  (bar) =>
+                    bar.symbol === symbol &&
+                    intradayInstantNanos(bar.eventAt) === intradayInstantNanos(request.rangeEndAt) - 60_000_000_000n,
+                ),
+              ).length,
+            },
+          },
+        }),
       )
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),

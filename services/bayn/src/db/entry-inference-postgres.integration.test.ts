@@ -1,3 +1,7 @@
+import jevBoxInference from '../../migrations/0188_jev_box_inference'
+import { retainedJevProtocolV39Document } from '../jev/protocol'
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import jevOnlyInference from '../../migrations/0172_jev_only_inference'
@@ -61,7 +65,7 @@ import {
   entryCompletionFixture,
   stagedCheckpointFixture,
 } from '../jev/entry-inference.test-support'
-import { makeStagedDispatchClaim, makeStagedTerminalReceipt, makeStagedSkipReceipt } from '../jev/staged-checkpoint'
+import { makeStagedDispatchClaim, makeStagedTerminalReceipt } from '../jev/staged-checkpoint'
 import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
 import {
   retainedStagedQuestionPolicyHash,
@@ -90,6 +94,7 @@ import { JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
+import { reconstructRetainedJevTradingSignalBatch } from '../jev/retained-jev-trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
@@ -110,6 +115,10 @@ import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { Authority } from '../execution/contracts'
+import { makeAuthorityPostgres } from './execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from './execution-store/observe-authority'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const url = baynTestPostgresUrl ?? 'postgresql://localhost/bayn_sequential_entry_0391_test'
@@ -143,7 +152,7 @@ const conditionalInput = {
   numericalState: { ...request.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
   schemaVersion: 'bayn.entry-inference-input.v3' as const,
   protocol: {
-    ...request.request.protocol,
+    ...retainedJevProtocolV39Document,
     executionModel: retainedIntradayExecutionModel,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
     entrySignalPolicy: 'openai-decisions-then-jev' as const,
@@ -338,7 +347,7 @@ integration('committed sequential provider handoff', () => {
             retiredProtocol === 'bayn.jev.protocol.v35' ||
             retiredProtocol === 'bayn.jev.protocol.v36'
               ? {
-                  ...request.request.protocol,
+                  ...retainedJevProtocolV39Document,
                   entrySignalPolicy: 'openai-decisions-then-jev' as const,
                   executionModel:
                     retiredProtocol === 'bayn.jev.protocol.v36'
@@ -370,7 +379,7 @@ integration('committed sequential provider handoff', () => {
                       : IntradayCandidateEvidencePolicy.MarketQuotes,
                 }
               : {
-                  ...request.request.protocol,
+                  ...retainedJevProtocolV39Document,
                   entrySignalPolicy: 'openai-decisions-then-jev' as const,
                   executionModel: retainedIntradayExecutionModel,
                   schemaVersion: retiredProtocol,
@@ -493,7 +502,7 @@ integration('committed sequential provider handoff', () => {
   )
 
   test.skipIf(formalModelExecutable === undefined)(
-    'both visual stage dispatch transactions conform to Lean at original deadlines and across durable state',
+    'Box chart dispatch transactions conform to Lean at original deadlines and across durable state',
     async () => {
       const identity = (claim: StagedDispatchClaim) => ({
         hash: claim.claimHash,
@@ -518,7 +527,7 @@ integration('committed sequential provider handoff', () => {
       ]
       const inputs = []
       const actual = []
-      for (const stage of ['CHART', 'BASE_START'] as const)
+      for (const stage of ['CHART'] as const)
         for (const scenario of scenarios) {
           const observed = await runtime.runPromise(
             Effect.gen(function* () {
@@ -530,16 +539,9 @@ integration('committed sequential provider handoff', () => {
               const checkpoint = stagedCheckpointFixture(current)
               const claim = checkpoint.claims.find((row) => row.stage === stage)
               if (claim === undefined) throw new Error('Missing stage claim')
-              if (stage === 'BASE_START') {
-                const predecessor = checkpoint.claims.find((row) => row.stage === 'CHART')
-                const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-                if (predecessor === undefined || terminal === undefined) throw new Error('Missing predecessor')
-                yield* persistVisualClaimFixture(journal, predecessor)
-                yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
-              }
               if (scenario.state === 'claimed')
                 expect(yield* persistVisualClaimFixture(journal, claim)).toEqual({
-                  dispatchAllowed: stage === 'BASE_START',
+                  dispatchAllowed: false,
                 })
               if (scenario.state === 'handed-off') {
                 yield* retainCheckpoint(current)
@@ -563,10 +565,8 @@ integration('committed sequential provider handoff', () => {
                       resolution: null,
                       handoff: null,
                       stagedCheckpoint: {
-                        claims: checkpoint.claims.filter((row) => stage === 'BASE_START' || row.stage === 'CHART'),
-                        terminals: checkpoint.terminals.filter(
-                          (row) => stage === 'BASE_START' && row.stage === 'CHART',
-                        ),
+                        claims: checkpoint.claims.filter((row) => row.stage === 'CHART'),
+                        terminals: [],
                         skips: [],
                       },
                     },
@@ -630,8 +630,8 @@ integration('committed sequential provider handoff', () => {
           inputs.push(observed.input)
           actual.push(observed.result)
         }
-      expect(actual.filter((result) => result?.dispatchAllowed)).toHaveLength(2)
-      expect(actual.filter((result) => result === null)).toHaveLength(12)
+      expect(actual.filter((result) => result?.dispatchAllowed)).toHaveLength(0)
+      expect(actual.filter((result) => result === null)).toHaveLength(6)
       expect(runFormalModel(inputs)).toEqual(actual)
     },
     180_000,
@@ -774,7 +774,7 @@ integration('committed sequential provider handoff', () => {
           ...request.request,
           schemaVersion: 'bayn.entry-inference-input.v5',
           protocol: {
-            ...request.request.protocol,
+            ...retainedJevProtocolV39Document,
             executionModel: retainedIntradayExecutionModel,
             schemaVersion: 'bayn.jev.protocol.v26',
             entrySignalPolicy: 'openai-decisions-then-jev' as const,
@@ -831,6 +831,174 @@ integration('committed sequential provider handoff', () => {
         ).toEqual([{ payload: terminal }])
       }),
     ))
+
+  test.each(['bayn.jev.protocol.v38', 'bayn.jev.protocol.v39'] as const)(
+    'Box cutover retains %s requests and claims while admitting only v40',
+    async (retainedVersion) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DROP SCHEMA public CASCADE`
+          yield* sql`CREATE SCHEMA public`
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(
+              Effect.map((rows) =>
+                rows.filter(([id]) => id < (retainedVersion === 'bayn.jev.protocol.v38' ? 184 : 188)),
+              ),
+            ),
+            table: 'schema_migrations',
+          })
+          yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${request.observedAt})`
+          const broker = Result.getOrThrow(
+            makeBrokerIdentity({
+              schemaVersion: 'bayn.broker-identity.v2',
+              provider: BrokerProvider.Alpaca,
+              environment: BrokerEnvironment.Sandbox,
+              accountId: replayAccountId,
+            }),
+          )
+          const authority = makeObserveAuthorityInterpreter(
+            sql,
+            makeAuthorityPostgres(sql, { now: sql`${request.observedAt}::timestamptz` }),
+            broker,
+          )
+          const initialized = yield* authority.ensureAuthorityGeneration({
+            generationHash: request.authorityGenerationHash,
+            maximum: Authority.Observe,
+          })
+          expect(initialized).toMatchObject({ maximum: Authority.Observe, effective: Authority.Observe, kill: 'CLEAR' })
+          yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+          const originalPlan = Result.getOrThrow(
+            reconstructRetainedJevTradingSignalBatch({
+              observation: {
+                ...fixture.observation.payload,
+                protocol: { ...retainedJevProtocolV39Document, schemaVersion: retainedVersion },
+              },
+              expiresAt: request.expiresAt,
+              planVersion: JevBatchPlanVersion.V8,
+            }),
+          )
+          const candidate = originalPlan.candidates.find((entry) => entry.status === JevCandidatePlanStatus.Requested)
+          if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected retained v38 evidence')
+          const original = candidate.request
+          yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${original.requestId},${original.cycleId},${original.authorityGenerationHash},${sql.json(original)})`
+          const checkpoint = stagedCheckpointFixture(original)
+          const claim = checkpoint.claims[0]
+          const terminal = checkpoint.terminals[0]
+          if (claim === undefined || terminal === undefined) throw new Error('Expected retained chart stage')
+          yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`
+          yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+          UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+            updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${original.cycleId}`
+          const reconciliation = fixture.portfolio.brokerState.reconciliation
+          yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+          VALUES (${reconciliation.reconciliationId},${reconciliation.schemaVersion},${broker.accountId},
+            ${reconciliation.expectedHash},${reconciliation.observedHash},${reconciliation.contentHash},
+            ${reconciliation.status},'[]'::jsonb,clock_timestamp())`
+          const requestsBefore = yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`
+          const claimsBefore =
+            yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`
+          const authorityBefore =
+            yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g ORDER BY generation_hash`
+          const authorityStateBefore = yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`
+          expect(authorityStateBefore).toHaveLength(1)
+          expect(
+            yield* sql`SELECT g.account_id FROM authority_state a JOIN authority_generations g USING (generation_hash)`,
+          ).toEqual([{ account_id: broker.accountId }])
+          if (retainedVersion === 'bayn.jev.protocol.v38') yield* sql.withTransaction(effectiveEntryAllowanceInput)
+          yield* sql.withTransaction(jevBoxInference)
+          expect(yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`).toEqual(
+            requestsBefore,
+          )
+          expect(yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`).toEqual(
+            claimsBefore,
+          )
+          expect(
+            yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g ORDER BY generation_hash`,
+          ).toEqual(authorityBefore)
+          expect(yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`).toEqual(
+            authorityStateBefore,
+          )
+          const rejectedDispatch =
+            yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
+          if (Result.isSuccess(rejectedDispatch)) throw new Error('A retained v38 request was allowed new dispatch')
+          yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+            rejectedDispatch.failure.reason.cause,
+          )
+          yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${terminal.terminalHash},${sql.json(terminal)})`
+          const successorFixture = nativeJevFixture(
+            JevPurpose.Entry,
+            new Date(Date.parse(request.observedAt) + 60_000).toISOString(),
+            replayAccountId,
+            undefined,
+            Result.getOrThrow(canonicalHashV1Result({ cutover: 'v39', previousCycleId: original.cycleId })),
+          )
+          const successorPlan = Result.getOrThrow(
+            makeJevTradingSignalBatch({
+              observation: successorFixture.observation.payload,
+              expiresAt: new Date(
+                Date.parse(successorFixture.observation.payload.observedAt) +
+                  successorFixture.protocol.inferenceValidityMs,
+              ).toISOString(),
+              planVersion: JevBatchPlanVersion.V8,
+            }),
+          )
+          const successorCandidate = successorPlan.candidates.find(
+            (entry) => entry.status === JevCandidatePlanStatus.Requested,
+          )
+          if (successorCandidate?.status !== JevCandidatePlanStatus.Requested)
+            throw new Error('Expected current post-cutover request')
+          const successor = successorCandidate.request
+          // One symbol/source/generation belongs to one request. The successor gets a new native cycle and source;
+          // the retained request is never replaced or admitted again under a different protocol identity.
+          expect(successor.cycleId).not.toBe(original.cycleId)
+          expect(successor.snapshotId).not.toBe(original.snapshotId)
+          yield* sql`UPDATE simulated_execution_clocks SET observed_at=${successor.observedAt} WHERE account_id=${replayAccountId}`
+          yield* (yield* CycleStore).acquire(successorFixture.draft, successor.observedAt)
+          yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${successor.requestId},${successor.cycleId},${successor.authorityGenerationHash},${sql.json(successor)})`
+          for (const [index, changed] of [
+            original.request,
+            {
+              ...successor.request,
+              protocol: { ...successor.request.protocol, schemaVersion: 'bayn.jev.protocol.v38' },
+            },
+            {
+              ...successor.request,
+              numericalState: {
+                ...successor.request.numericalState,
+                entryEconomics: { maximumEntryQuoteDriftBps: 10, maximumEntryLimitSlippageBps: 0 },
+              },
+            },
+            {
+              ...successor.request,
+              numericalState: {
+                ...successor.request.numericalState,
+                entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: '0' },
+              },
+            },
+            { ...successor.request, numericalState: { ...successor.request.numericalState, entryEconomics: {} } },
+          ].entries()) {
+            const id = Result.getOrThrow(canonicalHashV1Result({ invalidInput: index }))
+            const rejected =
+              yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+            VALUES (${id},${successor.cycleId},${successor.authorityGenerationHash},${sql.json({ ...successor, requestId: id, request: changed })})`.pipe(
+                Effect.result,
+              )
+            if (Result.isSuccess(rejected))
+              throw new Error('Mixed or misleading allowance input reached the current DB contract')
+            yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+              rejected.failure.reason.cause,
+            )
+          }
+        }),
+      ),
+  )
 
   test('one chart admission survives a crash and later metering upgrades discovery without double charging', async () => {
     await resetDatabase(true, expiredFixture, expiredRequest, expiredBatch)
@@ -929,11 +1097,11 @@ integration('committed sequential provider handoff', () => {
           [{ stage: 'UNKNOWN' }, '23514'],
           [{ stage: 'JEV', stageClaimHash: null }, '23514'],
           [{ stageClaimHash: null }, '23514'],
-          [{ stage: 'BASE_START' }, '23503'],
+          [{ stage: 'BASE_START' }, '23514'],
           [{ stageClaimHash: 'a'.repeat(64) }, '23503'],
           [{ stageTerminalHash: 'b'.repeat(64) }, '23503'],
           [{ stageSkipHash: 'c'.repeat(64) }, '23514'],
-          [{ stageClaimHash: null, stageSkipHash: 'c'.repeat(64) }, '23503'],
+          [{ stageClaimHash: null, stageSkipHash: 'c'.repeat(64) }, '23514'],
         ] as const) {
           const { quoteHash: _oldHash, ...material } = initialQuote
           const forgedMaterial = { ...material, line: { ...material.line, ...changes } }
@@ -981,8 +1149,8 @@ integration('committed sequential provider handoff', () => {
         yield* store.freeze(late)
         expect(find(yield* store.newSources)).toBe(false)
         const saved = yield* sql`SELECT payload FROM inference_expense_quotes WHERE request_id=${current.requestId}`
-        expect(saved).toHaveLength(4)
-        expect((yield* store.pending).filter((quote) => quote.line.requestId === current.requestId)).toHaveLength(4)
+        expect(saved).toHaveLength(3)
+        expect((yield* store.pending).filter((quote) => quote.line.requestId === current.requestId)).toHaveLength(3)
         expect(Result.getOrThrow(buildInferenceExpensePlan([...initial, ...late])).transfers).toHaveLength(1)
         const { terminalHash: __, ...terminalMaterial } = terminal
         const conflict = Result.getOrThrow(
@@ -1089,81 +1257,46 @@ integration('committed sequential provider handoff', () => {
     )
   })
 
-  test('commits a chart terminal and its base-start admission in one transaction', async () =>
+  const chartTransition = () => {
+    const checkpoint = stagedCheckpointFixture(request)
+    const chart = checkpoint.claims[0]
+    const terminal = checkpoint.terminals[0]
+    if (chart === undefined || terminal === undefined) throw new Error('Missing Box chart fixture')
+    return { chart, terminal, successor: { kind: 'HANDOFF' as const, handoff: completion.handoff } }
+  }
+
+  test('commits a Box chart terminal and its dependent Jev handoff in one transaction', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const journal = yield* EntryInferenceJournal
-        const checkpoint = stagedCheckpointFixture(request)
-        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-        if (chart === undefined || terminal === undefined || base === undefined)
-          throw new Error('Missing staged fixture')
-        expect(yield* persistVisualClaimFixture(journal, chart)).toEqual({ dispatchAllowed: false })
-        expect(
-          yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'VISUAL', claim: base } }),
-        ).toEqual({
+        const { chart, terminal, successor } = chartTransition()
+        yield* persistVisualClaimFixture(journal, chart)
+        expect(yield* persistVisualTransitionFixture(journal, { terminal, successor })).toEqual({
           dispatchAllowed: true,
         })
-        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ transaction: Schema.String })))(
-          yield* sql`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
-            WHERE request_id=${request.requestId} AND stage='CHART'
-            UNION ALL SELECT xmin::text FROM jev_staged_dispatch_claims
-            WHERE request_id=${request.requestId} AND stage='BASE_START'`,
-        )
+        const rows = yield* sql<{
+          transaction: string
+        }>`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
+        WHERE request_id=${request.requestId}
+        UNION ALL SELECT xmin::text FROM jev_inference_handoffs WHERE request_id=${request.requestId}`
         expect(rows).toHaveLength(2)
         expect(new Set(rows.map((row) => row.transaction)).size).toBe(1)
+        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
+          { stage: 'CHART' },
+        ])
+        expect(yield* sql`SELECT stage FROM jev_staged_skip_receipts WHERE request_id=${request.requestId}`).toEqual([])
       }),
     ))
 
-  test('commits a base-start terminal and its dependent Jev handoff in one transaction', async () =>
+  test('an atomic Box transition serializes retries and refuses an ambient transaction', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const journal = yield* EntryInferenceJournal
-        const checkpoint = stagedCheckpointFixture(request)
-        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-        const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-        const terminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
-        if (chart === undefined || chartTerminal === undefined || base === undefined || terminal === undefined)
-          throw new Error('Missing staged fixture')
+        const { chart, terminal, successor } = chartTransition()
         yield* persistVisualClaimFixture(journal, chart)
-        yield* persistVisualTransitionFixture(journal, { terminal: chartTerminal, successor: { kind: 'NONE' } })
-        yield* persistVisualClaimFixture(journal, base)
-        expect(
-          yield* persistVisualTransitionFixture(journal, {
-            terminal,
-            successor: { kind: 'HANDOFF', handoff: completion.handoff },
-          }),
-        ).toEqual({ dispatchAllowed: true })
-        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ transaction: Schema.String })))(
-          yield* sql`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
-            WHERE request_id=${request.requestId} AND stage='BASE_START'
-            UNION ALL SELECT xmin::text FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
-        )
-        expect(rows).toHaveLength(2)
-        expect(new Set(rows.map((row) => row.transaction)).size).toBe(1)
-      }),
-    ))
-
-  test('an atomic visual transition serializes retries and refuses an ambient transaction', async () =>
-    runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const journal = yield* EntryInferenceJournal
-        const checkpoint = stagedCheckpointFixture(request)
-        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-        if (chart === undefined || terminal === undefined || base === undefined)
-          throw new Error('Missing staged fixture')
-        yield* persistVisualClaimFixture(journal, chart)
-        const transition = persistVisualTransitionFixture(journal, {
-          terminal,
-          successor: { kind: 'VISUAL', claim: base },
-        })
+        const transition = persistVisualTransitionFixture(journal, { terminal, successor })
         expect(Result.isFailure(yield* sql.withTransaction(transition).pipe(Effect.result))).toBe(true)
         expect(
           yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
@@ -1173,144 +1306,90 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
         ).toEqual([{ stage: 'CHART' }])
-        expect(
-          yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId} ORDER BY stage`,
-        ).toEqual([{ stage: 'BASE_START' }, { stage: 'CHART' }])
       }),
     ))
 
-  test('an invalid successor retains the paid visual terminal without admitting successor evidence', async () =>
+  test('an invalid Box handoff retains the paid terminal without admitting dependent inference', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const journal = yield* EntryInferenceJournal
-        const checkpoint = stagedCheckpointFixture(request)
-        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-        if (chart === undefined || terminal === undefined || base === undefined)
-          throw new Error('Missing staged fixture')
+        const { chart, terminal, successor } = chartTransition()
         yield* persistVisualClaimFixture(journal, chart)
-        const { claimHash: _oldHash, ...material } = base
-        const invalid = Result.getOrThrow(makeStagedDispatchClaim({ ...material, selectedEnd: 'wrong-end' }))
         expect(
           Result.isFailure(
             yield* persistVisualTransitionFixture(journal, {
               terminal,
-              successor: { kind: 'VISUAL', claim: invalid },
+              successor: { ...successor, handoff: { ...successor.handoff, inputHash: 'f'.repeat(64) } },
             }).pipe(Effect.result),
           ),
         ).toBe(true)
         expect(
           yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
         ).toEqual([{ terminal_hash: terminal.terminalHash }])
-        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
-          { stage: 'CHART' },
-        ])
+        expect(
+          yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
+        ).toEqual([])
         expect(yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'NONE' } })).toEqual({
           dispatchAllowed: false,
         })
-        expect(
-          yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
-        ).toEqual([{ terminal_hash: terminal.terminalHash }])
       }),
     ))
 
-  test('an expired atomic successor retains the paid terminal without admitting another dispatch', async () =>
+  test('a late Box handoff remains durable for accounting before the provider deadline check', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const journal = yield* EntryInferenceJournal
-        const checkpoint = stagedCheckpointFixture(request)
-        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-        if (chart === undefined || terminal === undefined || base === undefined)
-          throw new Error('Missing staged fixture')
+        const { chart, terminal, successor } = chartTransition()
         yield* persistVisualClaimFixture(journal, chart)
         yield* sql`UPDATE simulated_execution_clocks SET observed_at=${request.expiresAt} WHERE account_id=${replayAccountId}`
-        expect(
-          yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'VISUAL', claim: base } }),
-        ).toEqual({ dispatchAllowed: false })
+        expect(yield* persistVisualTransitionFixture(journal, { terminal, successor })).toEqual({
+          dispatchAllowed: true,
+        })
         expect(
           yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
         ).toEqual([{ payload: terminal }])
-        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
-          { stage: 'CHART' },
-        ])
       }),
     ))
 
-  test.each(['VISUAL', 'HANDOFF'] as const)(
-    'a failed %s successor preserves every paid terminal for cost discovery',
-    async (kind) =>
-      runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const journal = yield* EntryInferenceJournal
-          const checkpoint = stagedCheckpointFixture(request)
-          const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-          const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-          const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-          const baseTerminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
-          if (chart === undefined || chartTerminal === undefined || base === undefined || baseTerminal === undefined)
-            throw new Error('Missing staged fixture')
-          yield* persistVisualClaimFixture(journal, chart)
-          if (kind === 'HANDOFF')
-            yield* persistVisualTransitionFixture(journal, {
-              terminal: chartTerminal,
-              successor: { kind: 'VISUAL', claim: base },
-            })
-          yield* sql`CREATE FUNCTION reject_visual_successor() RETURNS trigger LANGUAGE plpgsql AS $$
-          BEGIN RAISE EXCEPTION 'fixture rejected successor' USING ERRCODE='23514'; END $$`
-          if (kind === 'VISUAL')
-            yield* sql`CREATE TRIGGER reject_visual_successor BEFORE INSERT ON jev_staged_dispatch_claims
-            FOR EACH ROW WHEN (NEW.stage='BASE_START') EXECUTE FUNCTION reject_visual_successor()`
-          else
-            yield* sql`CREATE TRIGGER reject_visual_successor BEFORE INSERT ON jev_inference_handoffs
-            FOR EACH ROW EXECUTE FUNCTION reject_visual_successor()`
-          const transition =
-            kind === 'VISUAL'
-              ? persistVisualTransitionFixture(journal, {
-                  terminal: chartTerminal,
-                  successor: { kind: 'VISUAL', claim: base },
-                })
-              : persistVisualTransitionFixture(journal, {
-                  terminal: baseTerminal,
-                  successor: { kind: 'HANDOFF', handoff: completion.handoff },
-                })
-          expect(Result.isFailure(yield* transition.pipe(Effect.result))).toBe(true)
-          const expected = kind === 'VISUAL' ? [chartTerminal] : [baseTerminal, chartTerminal]
-          expect(
-            yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId} ORDER BY stage`,
-          ).toEqual(expected.map((terminal) => ({ terminal_hash: terminal.terminalHash })))
-          expect(
-            yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
-          ).toEqual([])
-          const source = (yield* makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01').newSources).find(
-            (row) => row.requestId === request.requestId,
-          )
-          if (source === undefined) throw new Error('Missing paid terminal expense source')
-          const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard))
-          for (const terminal of expected)
-            expect(
-              quotes.find((quote) => 'stage' in quote.line && quote.line.stage === terminal.stage)?.line.usageStatus,
-            ).toBe(InferenceUsageStatus.Received)
-        }),
-      ),
-  )
-
-  test('interruption while acquiring a transition lock retains the paid terminal and releases the transaction', async () =>
+  test('a failed Box handoff preserves paid evidence for cost discovery', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const journal = yield* EntryInferenceJournal
-        const checkpoint = stagedCheckpointFixture(request)
-        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-        if (chart === undefined || terminal === undefined || base === undefined)
-          throw new Error('Missing staged fixture')
+        const { chart, terminal, successor } = chartTransition()
+        yield* persistVisualClaimFixture(journal, chart)
+        yield* sql`CREATE FUNCTION reject_box_handoff() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'fixture rejected handoff' USING ERRCODE='23514'; END $$`
+        yield* sql`CREATE TRIGGER reject_box_handoff BEFORE INSERT ON jev_inference_handoffs
+        FOR EACH ROW EXECUTE FUNCTION reject_box_handoff()`
+        expect(
+          Result.isFailure(yield* persistVisualTransitionFixture(journal, { terminal, successor }).pipe(Effect.result)),
+        ).toBe(true)
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ payload: terminal }])
+        expect(
+          yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
+        ).toEqual([])
+        const source = (yield* makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01').newSources).find(
+          (row) => row.requestId === request.requestId,
+        )
+        if (source === undefined) throw new Error('Missing paid terminal expense source')
+        const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard))
+        expect(quotes.find((quote) => 'stage' in quote.line && quote.line.stage === 'CHART')?.line.usageStatus).toBe(
+          InferenceUsageStatus.Received,
+        )
+      }),
+    ))
+
+  test('interruption while acquiring a Box transition lock retains the paid terminal and releases the transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const { chart, terminal, successor } = chartTransition()
         yield* persistVisualClaimFixture(journal, chart)
         const locked = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
@@ -1324,10 +1403,9 @@ integration('committed sequential provider handoff', () => {
           )
           .pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(locked)
-        const attempt = yield* persistVisualTransitionFixture(journal, {
-          terminal,
-          successor: { kind: 'VISUAL', claim: base },
-        }).pipe(Effect.forkChild({ startImmediately: true }))
+        const attempt = yield* persistVisualTransitionFixture(journal, { terminal, successor }).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
         const interruption = yield* Fiber.interrupt(attempt).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.succeed(release, undefined)
         yield* Fiber.join(holder)
@@ -1337,94 +1415,8 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
         ).toEqual([{ payload: terminal }])
-        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
-          { stage: 'CHART' },
-        ])
       }),
     ))
-
-  test(
-    'admits base start once only after its exact committed predecessor and rejects skipped or expired dispatch',
-    async () =>
-      runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const journal = yield* EntryInferenceJournal
-          const checkpoint = stagedCheckpointFixture(request)
-          const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
-          const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-          const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-          if (chart === undefined || terminal === undefined || base === undefined)
-            throw new Error('Missing staged fixture')
-          expect(Result.isFailure(yield* persistVisualClaimFixture(journal, base).pipe(Effect.result))).toBe(true)
-          expect(yield* persistVisualClaimFixture(journal, chart)).toEqual({ dispatchAllowed: false })
-          yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
-          const { claimHash: _hash, ...material } = base
-          const changed = Result.getOrThrow(makeStagedDispatchClaim({ ...material, selectedEnd: 'wrong-end' }))
-          expect(Result.isFailure(yield* persistVisualClaimFixture(journal, changed).pipe(Effect.result))).toBe(true)
-          expect(
-            Result.isFailure(
-              yield* sql`INSERT INTO jev_staged_dispatch_claims (request_id,stage,claim_hash,payload)
-        VALUES (${changed.requestId},${changed.stage},${changed.claimHash},${sql.json(changed)})`.pipe(Effect.result),
-            ),
-          ).toBe(true)
-          const attempts = yield* Effect.all(
-            [persistVisualClaimFixture(journal, base), persistVisualClaimFixture(journal, base)],
-            {
-              concurrency: 2,
-            },
-          )
-          expect(attempts.filter((value) => value.dispatchAllowed)).toHaveLength(1)
-          const skip = Result.getOrThrow(
-            makeStagedSkipReceipt({
-              schemaVersion: 'bayn.staged-skip-receipt.v1',
-              stage: 'BASE_START',
-              requestId: request.requestId,
-              predecessorHash: terminal.terminalHash,
-              reason: 'NO_BASE',
-              recordedAt: request.observedAt,
-            }),
-          )
-          const { handoffHash: _priorHandoffHash, ...originalHandoff } = completion.handoff
-          const skippedHandoff = { ...originalHandoff, baseStart: { status: 'NOT_REQUESTED' as const, skip } }
-          expect(
-            Result.isFailure(
-              yield* persistHandoffFixture(journal, {
-                ...skippedHandoff,
-                handoffHash: Result.getOrThrow(canonicalHashV1Result(skippedHandoff)),
-              }).pipe(Effect.result),
-            ),
-          ).toBe(true)
-          expect(
-            Result.isFailure(
-              yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
-        VALUES (${skip.requestId},${skip.stage},${skip.skipHash},${sql.json(skip)})`.pipe(Effect.result),
-            ),
-          ).toBe(true)
-          // A new isolated request graph proves an original-deadline boundary, not a renewed lease.
-          const fresh = yield* retainReplayRequest
-          const freshCheckpoint = stagedCheckpointFixture(fresh)
-          const first = freshCheckpoint.claims.find((row) => row.stage === 'CHART')
-          const firstTerminal = freshCheckpoint.terminals.find((row) => row.stage === 'CHART')
-          const successor = freshCheckpoint.claims.find((row) => row.stage === 'BASE_START')
-          if (first === undefined || firstTerminal === undefined || successor === undefined)
-            throw new Error('Missing staged fixture')
-          yield* persistVisualClaimFixture(journal, first)
-          yield* persistVisualTransitionFixture(journal, { terminal: firstTerminal, successor: { kind: 'NONE' } })
-          yield* sql`UPDATE simulated_execution_clocks SET observed_at=${fresh.expiresAt} WHERE account_id=${replayAccountId}`
-          expect(yield* persistVisualClaimFixture(journal, successor)).toEqual({ dispatchAllowed: false })
-          expect(
-            Result.isFailure(
-              yield* sql`INSERT INTO jev_staged_dispatch_claims (request_id,stage,claim_hash,payload)
-        VALUES (${successor.requestId},${successor.stage},${successor.claimHash},${sql.json(successor)})`.pipe(
-                Effect.result,
-              ),
-            ),
-          ).toBe(true)
-        }),
-      ),
-    30_000,
-  )
 
   test('rejects a retired provider response on a current Jev stage before admitting financial evidence', async () =>
     runtime.runPromise(
@@ -1482,7 +1474,7 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
-  test('runs the native evaluator through committed chart evidence before dependent Jev inference', async () =>
+  test.each([0.9, 0.1])('native evaluator commits base presence %s before dependent Jev inference', async (presence) =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1505,6 +1497,10 @@ integration('committed sequential provider handoff', () => {
                     const [stored] = yield* sql`SELECT payload #>> '{disposition,jevRequestHash}' AS request_hash
           FROM jev_inference_handoffs WHERE request_id=${request.requestId}`.pipe(Effect.orDie)
                     expect(stored?.['request_hash']).toBe(prepared.requestHash)
+                    if (presence <= 0.3)
+                      expect(
+                        Object.keys(prepared.request.questions).some((name) => name.includes('base_breakout')),
+                      ).toBe(false)
                     events.push('jev-after-committed-handoff')
                     return nativeJevInference(
                       prepared.request,
@@ -1516,18 +1512,36 @@ integration('committed sequential provider handoff', () => {
                 evaluate: (raw) =>
                   Effect.gen(function* () {
                     events.push(events.length === 0 ? 'chart' : 'base-start')
-                    return nativeChartInference(raw, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
+                    const inference = nativeChartInference(
+                      raw,
+                      utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                    )
+                    if (!('base_present' in inference.response.answers)) return inference
+                    const response = {
+                      ...inference.response,
+                      answers: {
+                        ...inference.response.answers,
+                        base_present: { type: 'noul' as const, noul: presence },
+                      },
+                    }
+                    return { ...inference, response, responseHash: Result.getOrThrow(canonicalHashV1Result(response)) }
                   }),
               },
             ),
           ),
           Effect.provide(TestClock.layer()),
         )
-        expect(events).toEqual(['chart', 'base-start', 'jev-after-committed-handoff'])
+        expect(events).toEqual(
+          presence <= 0.3 ? ['chart', 'jev-after-committed-handoff'] : ['chart', 'jev-after-committed-handoff'],
+        )
         expect(result.inference.jev.status).toBe('RECEIVED')
+        expect(
+          yield* sql`SELECT payload->>'reason' AS reason FROM jev_staged_skip_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([])
         expect((yield* (yield* JevEvaluationStore).read(request.requestId))?.receipt).toEqual(result.receipt)
       }),
-    ))
+    ),
+  )
   test('rejects a receipt with no committed handoff', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -1558,7 +1572,7 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
-  test('atomically commits the source-infeasible skip, handoff and receipt without provider evidence', async () =>
+  test('atomically commits the source-infeasible handoff and receipt without provider evidence', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sourceFixture = nativeJevFixture(
@@ -1594,19 +1608,8 @@ integration('committed sequential provider handoff', () => {
             funding: source.request.funding,
           }),
         )
-        const skip = Result.getOrThrow(
-          makeStagedSkipReceipt({
-            schemaVersion: 'bayn.staged-skip-receipt.v1',
-            stage: 'BASE_START',
-            requestId: source.requestId,
-            predecessorHash: null,
-            reason: 'SOURCE_INFEASIBLE',
-            recordedAt: source.observedAt,
-          }),
-        )
         const material = {
-          schemaVersion: 'bayn.entry-handoff.v4',
-          baseStart: { status: 'NOT_REQUESTED', skip },
+          schemaVersion: 'bayn.entry-handoff.v5',
           requestId: source.requestId,
           inputHash: source.requestHash,
           visualRequestHash: visual.requestHash,
@@ -1643,7 +1646,7 @@ integration('committed sequential provider handoff', () => {
         yield* sql`DROP FUNCTION reject_test_handoff()`
         yield* persistHandoffFixture(yield* EntryInferenceJournal, handoff)
         expect(yield* sql`SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=${source.requestId}`).toEqual(
-          [{ skip_hash: skip.skipHash }],
+          [],
         )
         const receipt = yield* Effect.fromResult(
           makeJevEvaluationReceipt(source, {
@@ -1664,7 +1667,7 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload->>'schemaVersion' AS version,payload#>>'{disposition,status}' AS status
           FROM jev_inference_handoffs WHERE request_id=${source.requestId}`,
-        ).toEqual([{ version: 'bayn.entry-handoff.v4', status: 'SOURCE_INFEASIBLE' }])
+        ).toEqual([{ version: 'bayn.entry-handoff.v5', status: 'SOURCE_INFEASIBLE' }])
       }),
     ))
 
@@ -1701,10 +1704,10 @@ integration('committed sequential provider handoff', () => {
         const first = (yield* expenses.newSources).find((value) => value.requestId === request.requestId)
         if (first === undefined) throw new Error('Missing partial inference expense source')
         const partial = Result.getOrThrow(makeInferenceExpenseQuotes(first, tariff))
-        expect(Result.getOrThrow(buildInferenceExpensePlan(partial)).transfers).toHaveLength(2)
+        expect(Result.getOrThrow(buildInferenceExpensePlan(partial)).transfers).toHaveLength(1)
         yield* expenses.freeze(partial)
         expect((yield* expenses.newSources).filter((source) => source.requestId === request.requestId)).toEqual([])
-        expect(yield* expenses.pending).toHaveLength(3)
+        expect(yield* expenses.pending).toHaveLength(2)
         yield* persistEvaluationFixture(evaluations, request, receipt)
         const next = (yield* expenses.newSources).find((value) => value.requestId === request.requestId)
         if (next === undefined) throw new Error('Missing late Jev expense source')
@@ -1714,8 +1717,8 @@ integration('committed sequential provider handoff', () => {
         expect(chart(complete)?.quoteHash).toBe(chart(partial)?.quoteHash)
         yield* expenses.freeze(complete)
         const pending = yield* expenses.pending
-        expect(pending).toHaveLength(4)
-        expect(Result.getOrThrow(buildInferenceExpensePlan(pending)).transfers).toHaveLength(3)
+        expect(pending).toHaveLength(3)
+        expect(Result.getOrThrow(buildInferenceExpensePlan(pending)).transfers).toHaveLength(2)
         expect((yield* expenses.newSources).filter((source) => source.requestId === request.requestId)).toEqual([])
       }),
     ))
@@ -1749,7 +1752,7 @@ integration('committed sequential provider handoff', () => {
           ),
         ).toBe(true)
         yield* expenses.freeze(quotes)
-        expect(yield* expenses.pending).toHaveLength(3)
+        expect(yield* expenses.pending).toHaveLength(2)
         expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(0)
         expect((yield* expenses.newSources).filter((source) => source.requestId === request.requestId)).toEqual([])
       }),
@@ -1782,7 +1785,7 @@ integration('committed sequential provider handoff', () => {
             tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
           })
           const partial = yield* runInferenceExpensePass(expenses, client, tariff)
-          expect(partial.transferCount).toBe(2)
+          expect(partial.transferCount).toBe(1)
           expect(partial.gapCount).toBe(
             batch.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
           )
@@ -1802,7 +1805,7 @@ integration('committed sequential provider handoff', () => {
             snapshot,
             expenses.currentSession(snapshot.evidence.sessionDate),
           )
-          expect(ledger.transferCount).toBe(3)
+          expect(ledger.transferCount).toBe(2)
           expect(BigInt(ledger.knownEstimatedCostPicoUsd)).toBe(
             BigInt(partial.estimatedCostPicoUsd) + BigInt(late.estimatedCostPicoUsd),
           )
@@ -2054,7 +2057,7 @@ integration('committed sequential provider handoff', () => {
             numericalState: { ...request.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
             schemaVersion: retiredVersion,
             protocol: {
-              ...request.request.protocol,
+              ...retainedJevProtocolV39Document,
               executionModel: retainedIntradayExecutionModel,
               schemaVersion: 'bayn.jev.protocol.v24',
               entrySignalPolicy: 'openai-decisions-then-jev' as const,
@@ -2117,6 +2120,9 @@ integration('committed sequential provider handoff', () => {
     ['conditional-base-anchor', conditionalBaseAnchors],
     ['dated-execution-fee', datedExecutionFees],
     ['Jev-only', jevOnlyInference],
+    ['Webull-context', webullEntryContext],
+    ['effective-entry-allowance', effectiveEntryAllowanceInput],
+    ['Jev Box', jevBoxInference],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -2132,6 +2138,101 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`,
         ).toEqual(before)
+      }),
+    ),
+  )
+
+  test.each([
+    {
+      name: 'clear PAPER authority',
+      state: { maximum: 'PAPER', effective: 'PAPER', kill: 'CLEAR', reason: null },
+      reconciliation: 'fresh',
+    },
+    {
+      name: 'PAPER awaiting native OBSERVE settlement',
+      state: {
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+      },
+      reconciliation: 'fresh',
+    },
+    {
+      name: 'OBSERVE under an operator hold',
+      state: { maximum: 'OBSERVE', effective: 'OBSERVE', kill: 'ACTIVE', reason: 'operator hold' },
+      reconciliation: 'fresh',
+    },
+    ...['missing', 'stale', 'future', 'nonexact', 'before-mutation'].map((reconciliation) => ({
+      name: `clear OBSERVE with ${reconciliation} reconciliation`,
+      state: { maximum: 'OBSERVE', effective: 'OBSERVE', kill: 'CLEAR', reason: null },
+      reconciliation,
+    })),
+  ])('v39 cutover refuses $name without changing authority or retained request/claim bytes', async (scenario) =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* retainCheckpoint(request)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+              updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${request.cycleId}`
+            yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE authority_state (generation_hash text, maximum text, effective text, kill_state text, reason text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE intents (intent_id text,account_id text,state text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE mutation_events (intent_id text,occurred_at timestamptz) ON COMMIT DROP`
+            yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
+            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},${scenario.state.maximum},
+              ${scenario.state.effective},${scenario.state.kill},${scenario.state.reason})`
+            if (scenario.reconciliation !== 'missing') {
+              const ageSeconds =
+                scenario.reconciliation === 'stale'
+                  ? -61
+                  : scenario.reconciliation === 'future'
+                    ? 3600
+                    : scenario.reconciliation === 'before-mutation'
+                      ? -1
+                      : 0
+              yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',
+                ${scenario.reconciliation === 'nonexact' ? 'DISCREPANCY' : 'EXACT'},
+                clock_timestamp()+${ageSeconds}*interval '1 second',${'b'.repeat(64)})`
+            }
+            if (scenario.reconciliation === 'before-mutation') {
+              yield* sql`INSERT INTO intents VALUES (${'c'.repeat(64)},'paper-cutover','TERMINAL')`
+              yield* sql`INSERT INTO mutation_events VALUES (${'c'.repeat(64)},clock_timestamp())`
+            }
+            const authorityBefore = yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`
+            const generationsBefore = yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g`
+            const requestsBefore = yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`
+            const claimsBefore =
+              yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`
+            expect(claimsBefore.length).toBeGreaterThan(0)
+            const rejected = yield* sql.withTransaction(effectiveEntryAllowanceInput).pipe(Effect.result)
+            if (Result.isSuccess(rejected)) throw new Error(`The protocol cutover accepted ${scenario.name}`)
+            expect(rejected.failure).toMatchObject({
+              reason: {
+                cause: {
+                  code: '55000',
+                  message: expect.stringContaining(
+                    'effective-entry-allowance cutover requires terminal cycles, OBSERVE authority',
+                  ),
+                },
+              },
+            })
+            expect(yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`).toEqual(authorityBefore)
+            expect(yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g`).toEqual(
+              generationsBefore,
+            )
+            expect(yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`).toEqual(
+              requestsBefore,
+            )
+            expect(yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`).toEqual(
+              claimsBefore,
+            )
+          }),
+        )
       }),
     ),
   )

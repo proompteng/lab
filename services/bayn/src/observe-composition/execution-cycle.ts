@@ -17,6 +17,7 @@ import {
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { WriterFence } from '../execution/writer-fence'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { withPassMarketCalendarRead } from '../broker/alpaca/calendar-cache'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { recover as recoverMutation } from '../execution/coordinator'
 import { BrokerAccess } from '../execution/authority'
@@ -1075,6 +1076,7 @@ const executeBoundExecutionCycle = (
         delayMs: mutationIntentReconciliationDelayMs(executed),
         logContext,
         observedAt: step.observedAt,
+        cancellationConfirmationIntentId: step.action === 'CANCEL' ? step.intentId : undefined,
       }
     return { _tag: 'Wait' as const, observedAt: step.observedAt, waitReason: 'MUTATION_NOT_ADVANCED' }
   })
@@ -1368,4 +1370,4 @@ export const runRecoveryFirstCyclePass = (
       completedProgress.add(continuation.progress)
       cycle = continuation.cycle
     }
-  })
+  }).pipe(withPassMarketCalendarRead)

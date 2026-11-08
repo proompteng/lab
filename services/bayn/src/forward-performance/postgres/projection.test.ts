@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 
 import { completedIntradayCycles } from '../intraday-cycle.test-support'
@@ -16,7 +16,56 @@ import {
   marketVolumeRequestsFromRows,
   verifyPerformanceDecisions,
 } from './projection'
-import { persistenceDocumentFixture } from '../../system-assessment/decision-persistence.test-support'
+import {
+  persistenceDocumentFixture,
+  cryptoPersistenceDocumentFixture,
+} from '../../system-assessment/decision-persistence.test-support'
+import { controlDocumentFixture } from '../../jev/control-document.test-support'
+import { protectiveStopDocumentFixture, makeProtectiveStopDocumentFixture } from '../../jev/exit-document.test-support'
+import { retainedV38ExecutionFixture, retainedV38ExecutionGoldens } from '../../jev/retained-v38-execution.test-support'
+import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../../hash'
+import { strictParseOptions } from '../../schemas'
+import {
+  CycleDecisionDocumentSchema,
+  decodeRetainedJevExecutionDecisionDocument,
+  makeExecutionDecisionDocument,
+  makeObserveShadowDecisionDocument,
+} from '../../shadow-decision-contract'
+import { TargetPlanReason, TargetPlanStatus } from '../../target-planner/index'
+import { makeStrategyProtocolHashResult } from '../../contracts'
+import { defaultJevProtocolDocument, jevBehaviorHash } from '../../jev/protocol'
+
+const projectionRow = (
+  document: {
+    readonly bindings: { readonly cycleId: string }
+    readonly contentHash: string
+    readonly createdAt: string
+  },
+  original: unknown = document,
+): typeof CycleDecisionRow.Type => ({
+  cycle_id: document.bindings.cycleId,
+  decision_hash: document.contentHash,
+  created_at: new Date(document.createdAt),
+  document: original,
+})
+
+// Preserve the previous two-verifier acceptance boundary independently of the routing prefix.
+const expectEquivalentProjection = (row: typeof CycleDecisionRow.Type) => {
+  const current = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+  const expected = Result.isSuccess(current) ? current : decodeRetainedJevExecutionDecisionDocument(row.document)
+  const actual = verifyPerformanceDecisions([row])
+  expect(actual).toEqual(
+    expected._tag === 'Success'
+      ? { verifiedRows: [{ ...row, document: expected.success }], unverifiedDecisionHashes: [] }
+      : { verifiedRows: [], unverifiedDecisionHashes: [row.decision_hash] },
+  )
+  return actual
+}
+
+const withHash = <const Material extends object>(material: Material) => ({
+  ...material,
+  contentHash: Result.getOrThrow(canonicalHashV1Result(material)),
+})
 
 const countedRows = <T>(values: readonly T[]) => {
   let traversals = 0
@@ -32,6 +81,289 @@ const countedRows = <T>(values: readonly T[]) => {
   })
   return { rows, traversals: () => traversals }
 }
+
+test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
+  'projects genuine v38 execution evidence without losing historical performance coverage: %i',
+  (index) => {
+    const { document, bytes, golden } = retainedV38ExecutionFixture(index)
+    expect(bytes.byteLength).toBe(golden.bytes)
+    expect(sha256(bytes)).toBe(golden.canonicalHash)
+    const row = projectionRow(document, JSON.parse(bytes.toString('utf8')))
+    const verified = expectEquivalentProjection(row)
+    expect(verified.unverifiedDecisionHashes).toEqual([])
+    expect(verified.verifiedRows).toHaveLength(1)
+    expect(verified.verifiedRows[0]?.document).toEqual(document)
+    expect(Result.getOrThrow(canonicalJsonV1Result(verified.verifiedRows[0]?.document))).toBe(bytes.toString('utf8'))
+    const evidence = executionEvidenceFromRows(verified.verifiedRows, indexExecutionEvidence([], [], []))
+    expect(evidence).toHaveLength(document.targetPlan.intentTargets.length)
+    expect(evidence[0]).toMatchObject({
+      decisionDocumentHash: document.contentHash,
+      plannedQuantityAtoms: document.targetPlan.intentTargets[0]!.quantityAtoms,
+      fills: [],
+    })
+    const tampered = { ...row, document: { ...document, contentHash: 'f'.repeat(64) } }
+    expect(verifyPerformanceDecisions([tampered, tampered])).toEqual({
+      verifiedRows: [],
+      unverifiedDecisionHashes: [document.contentHash],
+    })
+  },
+)
+
+test.each([
+  { name: 'candidate entry', fixture: persistenceDocumentFixture },
+  { name: 'candidate crypto entry', fixture: cryptoPersistenceDocumentFixture },
+  { name: 'candidate exit', fixture: protectiveStopDocumentFixture },
+  { name: 'ablation entry', fixture: controlDocumentFixture('ablation') },
+  { name: 'momentum entry', fixture: controlDocumentFixture('momentum') },
+  { name: 'ablation exit', fixture: makeProtectiveStopDocumentFixture('ablation') },
+  { name: 'momentum exit', fixture: makeProtectiveStopDocumentFixture('momentum') },
+])(
+  'preserves current $name verification and rejects relabeled protocol evidence',
+  async ({ fixture }) => {
+    const document = await Effect.runPromise(fixture)
+    expect(expectEquivalentProjection(projectionRow(document)).verifiedRows).toHaveLength(1)
+    const { contentHash: _hash, ...material } = document
+    const target = document.strategyDecision
+    if (
+      target === undefined ||
+      target.schemaVersion === 'bayn.execution-flat-target.v1' ||
+      target.schemaVersion === 'bayn.intraday-momentum.target.v3'
+    )
+      throw new Error('Expected current Jev evidence')
+    const changed = withHash({
+      ...material,
+      strategyDecision: {
+        ...target,
+        evidence:
+          target.schemaVersion === 'bayn.jev-exit-target.v5'
+            ? { ...target.evidence, protocol: { ...target.evidence.protocol, schemaVersion: 'bayn.jev.protocol.v38' } }
+            : {
+                ...target.evidence,
+                observation: {
+                  ...target.evidence.observation,
+                  protocol: { ...target.evidence.observation.protocol, schemaVersion: 'bayn.jev.protocol.v38' },
+                },
+              },
+      },
+    })
+    expect(expectEquivalentProjection(projectionRow(document, changed)).verifiedRows).toEqual([])
+    if (
+      target.schemaVersion === 'bayn.entry-ablation-target.v1' ||
+      target.schemaVersion === 'bayn.repeated-momentum-target.v1'
+    ) {
+      const mixedPolicy = withHash({
+        ...material,
+        strategyDecision: {
+          ...target,
+          policy: {
+            ...target.policy,
+            sharedProtocol: { ...target.policy.sharedProtocol, schemaVersion: 'bayn.jev.protocol.v38' },
+          },
+        },
+      })
+      expect(expectEquivalentProjection(projectionRow(document, mixedPolicy)).verifiedRows).toEqual([])
+    }
+  },
+  15_000,
+)
+
+test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
+  'rejects malformed, mixed and relabeled v38 evidence after rehashing: %i',
+  (index) => {
+    const { document } = retainedV38ExecutionFixture(index)
+    const { contentHash: _hash, ...material } = document
+    const target = document.strategyDecision
+    if (target === undefined || target.schemaVersion === 'bayn.execution-flat-target.v1')
+      throw new Error('Expected retained Jev evidence')
+    const changes = [
+      { ...material, bindings: { ...document.bindings, strategyProtocolHash: 'f'.repeat(64) } },
+      { ...material, bindings: { ...document.bindings, authorityGenerationHash: 'f'.repeat(64) } },
+      { ...material, deltaRisk: [] },
+      { ...material, unexpectedEvidence: true },
+      { ...material, strategyDecision: { ...target, schemaVersion: 'bayn.unknown-target.v1' } },
+      {
+        ...material,
+        strategyDecision: {
+          ...target,
+          schemaVersion:
+            target.schemaVersion === 'bayn.jev-entry-target.v7'
+              ? 'bayn.entry-ablation-target.v1'
+              : 'bayn.jev-entry-target.v7',
+        },
+      },
+      { ...material, strategyDecision: { ...target, evidence: {} } },
+      ...['bayn.jev.protocol.v39', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.unknown', null].map((schemaVersion) => ({
+        ...material,
+        strategyDecision: {
+          ...target,
+          evidence:
+            target.schemaVersion === 'bayn.jev-exit-target.v5'
+              ? { ...target.evidence, protocol: { ...target.evidence.protocol, schemaVersion } }
+              : {
+                  ...target.evidence,
+                  observation: {
+                    ...target.evidence.observation,
+                    protocol: { ...target.evidence.observation.protocol, schemaVersion },
+                  },
+                },
+        },
+      })),
+    ]
+    for (const changed of changes)
+      expect(expectEquivalentProjection(projectionRow(document, withHash(changed))).verifiedRows).toEqual([])
+    if (
+      target.schemaVersion === 'bayn.entry-ablation-target.v1' ||
+      target.schemaVersion === 'bayn.repeated-momentum-target.v1'
+    ) {
+      const mixedPolicy = withHash({
+        ...material,
+        strategyDecision: {
+          ...target,
+          policy: {
+            ...target.policy,
+            sharedProtocol: { ...target.policy.sharedProtocol, schemaVersion: 'bayn.jev.protocol.v39' },
+          },
+        },
+      })
+      expect(expectEquivalentProjection(projectionRow(document, mixedPolicy)).verifiedRows).toEqual([])
+    }
+  },
+  15_000,
+)
+
+test('rejects native and control identity swaps after rehashing', () => {
+  const documents = [0, 2, 3].map((index) => retainedV38ExecutionFixture(index).document)
+  for (const document of documents) {
+    const { contentHash: _contentHash, ...material } = document
+    for (const other of documents) {
+      if (document.bindings.strategyProtocolHash === other.bindings.strategyProtocolHash) continue
+      const changed = withHash({
+        ...material,
+        bindings: { ...material.bindings, strategyProtocolHash: other.bindings.strategyProtocolHash },
+      })
+      expect(expectEquivalentProjection(projectionRow(document, changed)).verifiedRows).toEqual([])
+    }
+  }
+}, 15_000)
+
+test('preserves flat, OBSERVE and non-Jev documents without a nested protocol discriminator', () => {
+  const retained = retainedV38ExecutionFixture(1).document
+  const bindings = {
+    strategyName: 'jev',
+    cycleId: retained.bindings.cycleId,
+    strategyProtocolHash: retained.bindings.strategyProtocolHash,
+    accountId: retained.bindings.accountId,
+    snapshotId: retained.bindings.snapshotId,
+    snapshotContentHash: retained.bindings.snapshotContentHash,
+    snapshotFinalizedAt: retained.bindings.snapshotFinalizedAt,
+    strategyDecisionHash: retained.bindings.strategyDecisionHash,
+    policyHash: retained.bindings.policyHash,
+    planningBrokerStateHash: retained.bindings.planningBrokerStateHash,
+    reconciliationId: retained.bindings.reconciliationId,
+    reconciliationHash: retained.bindings.reconciliationHash,
+  }
+  const targetPlan = withHash({
+    schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
+    inputHash: '1'.repeat(64),
+    status: TargetPlanStatus.NoTrade,
+    reason: TargetPlanReason.TargetsSatisfied,
+    targets: [
+      {
+        symbol: 'AAPL',
+        targetWeight: 0,
+        referencePriceMicros: '100000000',
+        currentQuantityAtoms: '0',
+        targetQuantityAtoms: '0',
+      },
+    ],
+    intentTargets: [],
+    requiredReferenceBuyNotionalMicros: '0',
+    availableBuyingPowerMicros: '0',
+    residualBuyingPowerMicros: '0',
+  })
+  const { contentHash: outputHash, ...targetMaterial } = targetPlan
+  const common = {
+    dispatchable: false as const,
+    bindings,
+    targetPlan: { ...targetMaterial, outputHash },
+    deltaRisk: [],
+    createdAt: retained.createdAt,
+    submissionCutoffAt: retained.submissionCutoffAt,
+    expiresAt: retained.expiresAt,
+  }
+  const observe = Result.getOrThrow(
+    makeObserveShadowDecisionDocument({ ...common, schemaVersion: 'bayn.observe-shadow-decision.v2', mode: 'OBSERVE' }),
+  )
+  expect(expectEquivalentProjection(projectionRow(observe)).verifiedRows).toHaveLength(1)
+  const execution = {
+    ...common,
+    dispatchable: true,
+    schemaVersion: 'bayn.paper-cycle-decision.v2' as const,
+    mode: 'PAPER' as const,
+    bindings: {
+      ...bindings,
+      qualificationRunId: retained.bindings.qualificationRunId,
+      authorityGenerationHash: retained.bindings.authorityGenerationHash,
+    },
+    orderedIntentIds: [],
+  }
+  const flat = {
+    schemaVersion: 'bayn.execution-flat-target.v1' as const,
+    strategyName: 'jev',
+    sessionDate: '2026-09-04',
+    targetWeights: { AAPL: 0 },
+    symbols: ['AAPL'],
+    reason: 'mandate-close' as const,
+  }
+  const currentProtocolHash = Result.getOrThrow(
+    makeStrategyProtocolHashResult({
+      name: 'jev',
+      behaviorHash: jevBehaviorHash,
+      parameterHash: Result.getOrThrow(canonicalHashV1Result(defaultJevProtocolDocument)),
+      parameterSchemaVersion: defaultJevProtocolDocument.schemaVersion,
+    }),
+  )
+  for (const strategyProtocolHash of [retained.bindings.strategyProtocolHash, currentProtocolHash]) {
+    const flatDocument = Result.getOrThrow(
+      makeExecutionDecisionDocument({
+        ...execution,
+        bindings: {
+          ...execution.bindings,
+          strategyProtocolHash,
+          strategyDecisionHash: Result.getOrThrow(canonicalHashV1Result(flat)),
+        },
+        strategyDecision: flat,
+      }),
+    )
+    expect(Result.isSuccess(decodeRetainedJevExecutionDecisionDocument(flatDocument))).toBe(
+      strategyProtocolHash === retained.bindings.strategyProtocolHash,
+    )
+    expect(expectEquivalentProjection(projectionRow(flatDocument)).verifiedRows).toHaveLength(1)
+  }
+  const nonJev = Result.getOrThrow(
+    makeExecutionDecisionDocument({
+      ...execution,
+      bindings: { ...execution.bindings, strategyName: 'risk-balanced-trend' },
+    }),
+  )
+  expect(expectEquivalentProjection(projectionRow(nonJev)).verifiedRows).toHaveLength(1)
+})
+
+test('keeps rejected identities sorted and deduplicated independently of protocol routing', () => {
+  const { document } = retainedV38ExecutionFixture(1)
+  const valid = projectionRow(document)
+  const rejected = projectionRow(document, { ...document, contentHash: 'f'.repeat(64) })
+  const rows = [
+    { ...rejected, decision_hash: 'c'.repeat(64) },
+    valid,
+    { ...rejected, decision_hash: 'a'.repeat(64) },
+    { ...rejected, decision_hash: 'c'.repeat(64) },
+    { ...rejected, decision_hash: 'b'.repeat(64), document: { schemaVersion: 'unknown' } },
+  ]
+  const verified = verifyPerformanceDecisions(rows)
+  expect(verified.unverifiedDecisionHashes).toEqual(['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)])
+  expect(verified.verifiedRows).toEqual([{ ...valid, document }])
+})
 
 test('streams planned decisions without rebuilding history indexes or changing ambiguous ownership', async () => {
   const document = await Effect.runPromise(persistenceDocumentFixture)

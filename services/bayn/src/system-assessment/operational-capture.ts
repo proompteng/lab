@@ -13,7 +13,6 @@ import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
 import { UtcInstantSchema, strictParseOptions } from '../schemas'
-import { loadActiveStrategyProtocol } from '../strategy'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { utcInstantFromEpochMillis } from '../time'
 import { readRegisteredFinancialIdentity } from './capital-identity'
@@ -24,7 +23,6 @@ import {
   systemControllerPassQuery,
   systemDecisionQuery,
 } from './capture-queries'
-import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { decisionMarketScopeSupported } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
@@ -40,6 +38,7 @@ import {
 } from './operational-source-cut'
 import { SystemSourceCutSchema } from './source-cut'
 import { makeSystemSourceRecord, persistSystemSourceRecord, SystemSourceRecordKind } from './source-records'
+import { captureOperationalSafetySource } from './operational-safety-source'
 
 export const makeOperationalSourceSpool = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -87,12 +86,8 @@ export const captureOperationalSourceCut = (
       const identity = config.execution.brokerIdentity
       const first = registration.calendar.sessions[0]
       const last = registration.calendar.sessions.at(-1)
-      const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
-        captureQualificationRuntime(
-          qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol())),
-          registration.obligations,
-        ),
-      )
+      // The persisted registration owns historical clocks; the reporting build is recorded separately below.
+      const { configuration: runtimeConfiguration, runtimeConfigurationHash } = registration.obligations
       if (
         identity === undefined ||
         identity.environment !== BrokerEnvironment.Sandbox ||
@@ -127,6 +122,7 @@ export const captureOperationalSourceCut = (
             lastSession: last.sessionDate,
             asOf,
           }
+          const safety = yield* captureOperationalSafetySource(config, registrationHash, identity.accountId, asOf)
           const forward = yield* readForwardPerformanceInput(config, undefined, {
             authorityGenerationHash: definition.authorityGenerationHash,
           })
@@ -247,6 +243,7 @@ export const captureOperationalSourceCut = (
           )
           return {
             asOf,
+            safety,
             forward,
             financial,
             inferenceSources,
@@ -283,6 +280,7 @@ export const captureOperationalSourceCut = (
         runtimeConfiguration,
         accounts: [{ policy: JevResearchPolicy.Candidate, identity: accountIdentity, forward, inferenceSnapshots }],
         mutations,
+        safety: captured.safety,
       }
       const cut = yield* Schema.decodeUnknownEffect(
         OperationalSourceCutSchema,

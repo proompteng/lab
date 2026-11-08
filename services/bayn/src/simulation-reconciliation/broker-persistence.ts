@@ -35,7 +35,6 @@ const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: Normal
     })
     const positionsReceipt = yield* store.events.ingestPositions(normalized.positions)
     const complete = yield* store.events.completeHistory([...normalized.orderEvents, ...normalized.fillEvents])
-    yield* store.accounting.verifyCompleted(normalized.fillEvents.filter((event) => complete.has(event.sourceEventId)))
     yield* Effect.forEach(
       normalized.orderEvents.filter((event) => !complete.has(event.sourceEventId)),
       store.events.ingest,

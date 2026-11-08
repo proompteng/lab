@@ -1,14 +1,10 @@
 # Local-path storage
 
-Existing compute and CI classes remain rebuildable scratch storage. Their prohibited-use annotations continue to
-exclude databases and other durable services.
+General node-local claims use `local-path`; AMD64 CI scratch uses `local-path-ci-amd64`.
+Neither class replicates data. Retained PostgreSQL WAL uses the separate class described below.
 
-`local-path-keeper` is reserved for Torghut Keeper replicas. Its explicit NVMe paths are independent of the cache
-classes, and its claims use `Retain`. This class does not replicate data: Keeper must commit through its native
-Raft quorum across distinct hosts. Never replace the existing singleton's Ceph claim with a local claim. Add and
-verify replicas one at a time while preserving the original Keeper identity, state, hostname and Ceph PVC.
-
-`local-path-bayn-wal` is reserved for the WAL volumes of the existing two-instance `bayn-db` cluster. It uses the
+`local-path-bayn-wal` is reserved for the WAL volumes of the existing two-instance `bayn-db` and
+`bayn-native-arrival-db` clusters. It uses the
 mounted Altra local NVMe and Turin Intel NVMe, on the same two 100G hosts required by that cluster. Each node has
 one explicit path; it cannot randomly select Turin's CI device or provision on another node. Capacity and mount
 identity must be checked before allocating a claim. Local-path does not enforce a filesystem quota or support

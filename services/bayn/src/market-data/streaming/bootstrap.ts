@@ -5,6 +5,25 @@ export class KafkaBootstrapFailure extends Data.TaggedError('KafkaBootstrapFailu
 
 export const kafkaBootstrapDeadlineMs = 300_000
 
+export enum KafkaHandoffReadiness {
+  Ready = 'READY',
+  Waiting = 'WAITING',
+  Failed = 'FAILED',
+  Expired = 'EXPIRED',
+}
+
+export const kafkaHandoffReadiness = (
+  status: { readonly ready: boolean; readonly failure?: string; readonly bootstrapDeadlineAtMs: number | null },
+  now: number,
+): KafkaHandoffReadiness =>
+  status.failure !== undefined
+    ? KafkaHandoffReadiness.Failed
+    : status.ready
+      ? KafkaHandoffReadiness.Ready
+      : status.bootstrapDeadlineAtMs !== null && now > status.bootstrapDeadlineAtMs
+        ? KafkaHandoffReadiness.Expired
+        : KafkaHandoffReadiness.Waiting
+
 export enum KafkaBootstrapTimestampPolicy {
   ProducerClock = 'dorvud.producer-clock.v1',
   RetainedBeginning = 'retained-beginning',

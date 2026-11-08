@@ -1,15 +1,15 @@
 import { nativeChartInference as retainedChartInference } from './retained-chart.test-support'
-import type { ChartStageCodecs } from './staged-checkpoint'
+import type { ChartStageCodecs, ChartCheckpointCodecs } from './staged-checkpoint'
 import { Clock, Effect, Layer, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { operationalError } from '../errors'
 import { makeNativeChartEvidence } from './chart-evidence'
-import {
-  makeInitialChartStageRequest,
-  makeSelectedBaseStartStageRequest,
-  stagedChartAssessments,
-} from './staged-chart-questions'
+import { makeInitialChartStageRequest, stagedChartAssessments } from './staged-chart-questions'
+import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
+import { candleProjection } from './chart-projection'
+import { ChartSourceSchema } from './chart-evidence'
+import { makeChartSourceCandidates } from './entry-proposals'
 import type { ChartDecisionSource } from './chart-questions'
 import {
   makeStagedDispatchClaim,
@@ -21,8 +21,9 @@ import {
 import { decodeJevResponse, prepareJevRequest } from './contract'
 import { JevClient } from './client'
 import { utcInstantFromEpochMillis } from '../time'
-import { EntryInferenceJournal, deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
-import type { EntryInferenceInput, EntryInferenceMaterial } from './entry-inference-input'
+import { EntryInferenceJournal, deriveEntryDispositionForChart, type EntryInferenceCompletion } from './entry-inference'
+import { makeEntryJudgmentRequest } from './entry-questions'
+import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { defaultJevProtocolDocument } from './protocol'
@@ -45,7 +46,9 @@ export const entryEvaluationRequestFixture = (
         ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: defaultJevProtocolDocument.inputDefinition,
+        webullContext: null,
+        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol, bars1m: bars },
         session: { completedBarWindowEndsAt: windowEndAt },
@@ -70,16 +73,88 @@ export const entryEvaluationRequestFixture = (
   )
 }
 
-export const chartInferenceFixture = (input: EntryInferenceInput, at: string) => {
+export const chartInferenceFixture = (input: EntryInferenceMaterial, at: string) => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
   const prepared = Result.getOrThrow(
-    makeInitialChartStageRequest({ chart, protocol: input.protocol, funding: input.funding }),
+    (input.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? makeInitialChartStageRequest
+      : retainedJevChartStages.makeInitialChartStageRequest)({
+      chart,
+      protocol: input.protocol,
+      funding: input.funding,
+    }),
   )
   return nativeChartInference(prepared.request, at)
 }
 
 export const nativeChartInference = (raw: unknown, at: string) => {
   const prepared = Result.getOrThrow(prepareJevRequest(raw))
+  if (Object.values(prepared.request.questions).some((question) => question.type === 'box')) {
+    const state = Schema.decodeUnknownSync(
+      Schema.Struct({
+        source: Schema.Struct({
+          ...ChartSourceSchema.fields,
+          bidUsd: Schema.Number,
+        }),
+      }),
+    )(prepared.request.state)
+    const chart = Result.getOrThrow(
+      makeNativeChartEvidence({
+        symbol: state.source.symbol,
+        windowEndAt: state.source.windowEndAt,
+        bars: state.source.bars,
+      }),
+    )
+    const projected = candleProjection(chart.bars)
+    const candidates = makeChartSourceCandidates({
+      chart,
+      bidMicros: BigInt(Math.round(state.source.bidUsd * 1_000_000)),
+    })
+    const support = chart.bars
+      .filter((bar) => candidates.supportBarIds.includes(bar.id))
+      .toSorted((a, b) => a.low - b.low)[0]
+    const resistance = chart.bars
+      .filter((bar) => candidates.resistanceBarIds.includes(bar.id))
+      .toSorted((a, b) => b.high - a.high)[0]
+    const lastBase = candidates.baseWindows.at(-1)
+    const base = candidates.baseWindows.find((window) => window.lastBarId === lastBase?.lastBarId)
+    const sets = {
+      support: projected.bars.filter((bar) => bar.source.id === support?.id),
+      resistance: projected.bars.filter((bar) => bar.source.id === resistance?.id),
+      base: projected.bars.filter(
+        (bar) => base !== undefined && bar.source.id >= base.firstBarId && bar.source.id <= base.lastBarId,
+      ),
+    }
+    const answers = Object.fromEntries(
+      Object.entries(sets).flatMap(([name, selected]) => {
+        const chosen = selected.length === 0 ? projected.bars.slice(0, 1) : selected
+        const box = {
+          left: (Math.min(...chosen.map((bar) => bar.x)) - 1) / projected.width,
+          right: (Math.max(...chosen.map((bar) => bar.x)) + 1) / projected.width,
+          top: (Math.min(...chosen.map((bar) => bar.high)) - 1) / projected.height,
+          bottom: (Math.max(...chosen.map((bar) => bar.low)) + 1) / projected.height,
+        }
+        return [
+          [`${name}_present`, { type: 'noul', noul: selected.length === 0 ? 0.1 : 0.9 }],
+          [`${name}_region`, { type: 'box', box, confidence: 1 }],
+        ]
+      }),
+    )
+    const response = Result.getOrThrow(
+      decodeJevResponse(prepared.request, {
+        model: prepared.request.model,
+        answers,
+        usage: { input_tokens: 100, output_tokens: 0 },
+      }),
+    )
+    return {
+      requestHash: prepared.requestHash,
+      responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+      startedAt: at,
+      completedAt: at,
+      response,
+    }
+  }
   const Source = Schema.Struct({
     bars: Schema.Array(Schema.Struct({ id: Schema.String, low: Schema.Number, high: Schema.Number })).check(
       Schema.isMinLength(1),
@@ -139,12 +214,19 @@ export const nativeChartInference = (raw: unknown, at: string) => {
 }
 
 export const chartAssessmentsFixture = (source: ChartDecisionSource, at = source.chart.windowEndAt) => {
-  const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
+  const stages =
+    source.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? { makeInitialChartStageRequest, stagedChartAssessments }
+      : retainedJevChartStages
+  const initial = Result.getOrThrow(stages.makeInitialChartStageRequest(source))
   const chart = nativeChartInference(initial.request, at)
-  const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(source, stageResponseIdentity(chart)))
-  const baseStart = next.status === 'PREPARED' ? nativeChartInference(next.request, at) : null
+  const next =
+    'makeSelectedBaseStartStageRequest' in stages
+      ? Result.getOrThrow(stages.makeSelectedBaseStartStageRequest(source, stageResponseIdentity(chart)))
+      : null
+  const baseStart = next?.status === 'PREPARED' ? nativeChartInference(next.request, at) : null
   return Result.getOrThrow(
-    stagedChartAssessments(
+    stages.stagedChartAssessments(
       source,
       stageResponseIdentity(chart),
       baseStart === null ? null : stageResponseIdentity(baseStart),
@@ -202,11 +284,7 @@ export const entryInferenceFixtureLayer = Layer.sync(EntryInferenceJournal, () =
           const requestId = input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId
           const successor = input.successor
           const result =
-            successor.kind === 'NONE'
-              ? { dispatchAllowed: false }
-              : successor.kind === 'VISUAL'
-                ? yield* recordClaim(successor.claim)
-                : yield* recordHandoff(successor.handoff)
+            successor.kind === 'NONE' ? { dispatchAllowed: false } : yield* recordHandoff(successor.handoff)
           return { requestId, ...result }
         }),
       ),
@@ -215,7 +293,9 @@ export const entryInferenceFixtureLayer = Layer.sync(EntryInferenceJournal, () =
 })
 
 export const entryCompletionFixture = (
-  request: JevEvaluationRequest,
+  request: Pick<JevEvaluationRequest, 'requestId' | 'requestHash' | 'observedAt' | 'expiresAt'> & {
+    readonly request: EntryInferenceMaterial
+  },
   at = request.observedAt,
   support = 0.9,
 ): EntryInferenceCompletion => {
@@ -225,25 +305,40 @@ export const entryCompletionFixture = (
   const base = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
   const skip = checkpoint.skips[0]
   const baseStart = base?.outcome ?? (skip === undefined ? null : { status: 'NOT_REQUESTED' as const, skip })
-  if (baseStart === null) throw new Error('Expected fixture base outcome')
+  if (baseStart === null && request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v40')
+    throw new Error('Expected fixture base outcome')
+  const nativeChart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
+  const assessments = Result.getOrThrow(
+    (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? stagedChartAssessments
+      : retainedJevChartStages.stagedChartAssessments)(
+      { chart: nativeChart, protocol: request.request.protocol, funding: request.request.funding },
+      stageResponseIdentity(chart.outcome.inference),
+      baseStart?.status === 'RECEIVED' ? stageResponseIdentity(baseStart.inference) : null,
+    ),
+  )
   const disposition = Result.getOrThrow(
-    deriveEntryHandoffDisposition(
+    deriveEntryDispositionForChart(
       request.request,
       chart.outcome.inference,
-      baseStart.status === 'RECEIVED' ? baseStart.inference : null,
+      nativeChart,
+      assessments,
+      makeEntryJudgmentRequest,
     ),
   )
   const material = {
-    schemaVersion: 'bayn.entry-handoff.v4' as const,
     requestId: request.requestId,
     inputHash: request.requestHash,
     visualRequestHash: disposition.visual.requestHash,
     recordedAt: at,
     disposition,
-    baseStart,
   }
 
-  const handoff = { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const bound =
+    baseStart === null
+      ? { ...material, schemaVersion: 'bayn.entry-handoff.v5' as const }
+      : { ...material, schemaVersion: 'bayn.entry-handoff.v4' as const, baseStart }
+  const handoff = { ...bound, handoffHash: Result.getOrThrow(canonicalHashV1Result(bound)) }
   if (disposition.status !== 'READY') return { handoff, completedAt: at, jev: { status: 'NOT_REQUESTED' } }
   if (request.request.schemaVersion === 'bayn.entry-ablation-input.v1')
     return { handoff, completedAt: at, jev: { status: 'OMITTED_BY_POLICY' } }
@@ -281,10 +376,9 @@ export const stagedCheckpointFixture = (
     readonly request: EntryInferenceMaterial
   },
   at = request.observedAt,
-  stages: Pick<ChartStageCodecs, 'makeInitialChartStageRequest' | 'makeSelectedBaseStartStageRequest'> = {
-    makeInitialChartStageRequest,
-    makeSelectedBaseStartStageRequest,
-  },
+  stages: ChartCheckpointCodecs = request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+    ? { makeInitialChartStageRequest }
+    : retainedJevChartStages,
 ): StagedCheckpoint => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const initial = Result.getOrThrow<
@@ -309,7 +403,7 @@ export const stagedCheckpointFixture = (
       expiresAt: request.expiresAt,
     }),
   )
-  const infer = initial.request.model === 'jev-1.13.0' ? nativeChartInference : retainedChartInference
+  const infer = initial.request.model === 'gpt-6-luna' ? retainedChartInference : nativeChartInference
   const visual = infer(initial.request, at)
   const terminal = Result.getOrThrow(
     makeStagedTerminalReceipt({
@@ -321,15 +415,14 @@ export const stagedCheckpointFixture = (
       outcome: { status: 'RECEIVED', inference: visual },
     }),
   )
-  const next = Result.getOrThrow<
-    Result.Result.Success<ReturnType<ChartStageCodecs['makeSelectedBaseStartStageRequest']>>,
-    Result.Result.Failure<ReturnType<ChartStageCodecs['makeSelectedBaseStartStageRequest']>>
-  >(
-    stages.makeSelectedBaseStartStageRequest(
-      { chart, protocol: request.request.protocol, funding: request.request.funding },
-      stageResponseIdentity(visual),
-    ),
+  if (stages.makeSelectedBaseStartStageRequest === undefined)
+    return { claims: [claim], terminals: [terminal], skips: [] }
+  const computed = stages.makeSelectedBaseStartStageRequest(
+    { chart, protocol: request.request.protocol, funding: request.request.funding },
+    stageResponseIdentity(visual),
   )
+  if (computed._tag === 'Failure') throw computed.failure
+  const next = computed.success
   if (next.status === 'NOT_REQUESTED') {
     const skip = Result.getOrThrow(
       makeStagedSkipReceipt({
