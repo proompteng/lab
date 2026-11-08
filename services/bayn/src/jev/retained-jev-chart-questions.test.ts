@@ -2,21 +2,21 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
-import { defaultJevProtocolDocument } from './protocol'
+import { retainedJevProtocolV39Document } from './protocol'
 import { canonicalHashV1Result } from '../hash'
 import {
   makeInitialChartStageRequest,
   makeSelectedBaseStartStageRequest,
   stagedChartAssessments,
-} from './staged-chart-questions'
+} from './retained-jev-staged-chart-questions'
 import type { JevRequest, JevResponse } from './contract'
-import { buildChartJevRequest } from './chart-questions'
+import { buildChartJevRequest } from './retained-jev-chart-questions'
 import { jevEntryEconomics } from './entry-economics'
 import { EntrySetup, makeEntryProposals, ProposalRejection } from './entry-proposals'
 
 const sourceFor = (chart: NativeChartEvidence) => ({
   chart,
-  protocol: defaultJevProtocolDocument,
+  protocol: retainedJevProtocolV39Document,
   funding: { bidMicros: '106010000', askMicros: '106020000', capitalMicros: '100000000000', cryptoFeeTier: null },
 })
 const prepareFixtureChart = (chart: NativeChartEvidence) => makeInitialChartStageRequest(sourceFor(chart))
@@ -99,7 +99,7 @@ describe('source-bound chart questions', () => {
         cryptoFeeTier,
       }
       const prepared = Result.getOrThrow(
-        buildChartJevRequest({ chart, protocol: defaultJevProtocolDocument, funding }, { selectedEnd: last.id }),
+        buildChartJevRequest({ chart, protocol: retainedJevProtocolV39Document, funding }, { selectedEnd: last.id }),
       )
       expect(prepared.sourceFeasible).toBe(true)
       requests.push(prepared.body)
@@ -111,7 +111,7 @@ describe('source-bound chart questions', () => {
           feeAt: '2026-09-04T14:15:00.000Z',
           ...funding,
           symbol: chart.symbol,
-          protocol: defaultJevProtocolDocument,
+          protocol: retainedJevProtocolV39Document,
           bidMicros: BigInt(funding.bidMicros),
           askMicros: BigInt(funding.askMicros),
         }),
@@ -121,7 +121,7 @@ describe('source-bound chart questions', () => {
       const result = Result.getOrThrow(
         makeEntryProposals({
           chart,
-          protocol: defaultJevProtocolDocument,
+          protocol: retainedJevProtocolV39Document,
           economics,
           bidMicros: BigInt(funding.bidMicros),
           assessments: {

@@ -817,16 +817,15 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns Temporal worker source discovery with both image build triggers', () => {
+  it('aligns Temporal worker publication with source discovery and limits PR builds to worker changes', () => {
     const warehouse = byName(warehouses).get('temporal-worker')
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
-    for (const event of ['pull_request', 'push']) {
-      const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(sourcePaths).toEqual(buildPaths)
-      expect(buildPaths).not.toContain('.github/workflows/temporal-worker-images.yml')
-    }
+    const buildPaths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+    expect(sourcePaths).toEqual(buildPaths)
+    expect(buildPaths).not.toContain('.github/workflows/temporal-worker-images.yml')
+    expect(workflow.on.pull_request.paths).toEqual(['services/temporal-worker/**'])
   })
 
   it('aligns the Agents Warehouse source paths with its exact image build trigger', () => {

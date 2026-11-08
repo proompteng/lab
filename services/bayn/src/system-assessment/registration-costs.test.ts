@@ -84,7 +84,19 @@ test.each([JevAcceptanceVersion.Current, JevAcceptanceVersion.RetainedV3])(
           {
             ...registration,
             policies: registration.policies.map((definition) =>
-              definition.policy === policy ? { ...definition, inferenceRateCard: rateCard(rate) } : definition,
+              definition.policy === policy
+                ? {
+                    ...definition,
+                    inferenceRateCard: {
+                      ...rateCard(rate),
+                      rates: rateCard(rate).rates.map((line) =>
+                        line.provider === 'typesafe'
+                          ? { ...line, model: registration.obligations.configuration.protocol.model }
+                          : line,
+                      ),
+                    },
+                  }
+                : definition,
             ),
           },
           version,

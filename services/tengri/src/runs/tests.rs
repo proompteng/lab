@@ -1109,6 +1109,28 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let journal = http
+        .post(format!("{admin}/query"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({"query": format!(
+            "SELECT index,entry_type,name FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') ORDER BY index LIMIT 8", input.id
+        )}))
+        .send().await.unwrap();
+    assert!(journal.status().is_success());
+    let journal: serde_json::Value = journal.json().await.unwrap();
+    let entries = journal["rows"].as_array().unwrap();
+    let prepared = entries
+        .iter()
+        .position(|entry| entry["name"] == "prepare_codex_dispatch")
+        .unwrap();
+    let claimed = entries
+        .iter()
+        .position(|entry| entry["entry_type"] == "Notification: Call")
+        .unwrap();
+    assert!(
+        prepared < claimed,
+        "guest preparation must start while the conversation claim is pending"
+    );
     let parallel = Input {
         id: Uuid::new_v4().to_string(),
         thread_id: "parallel-thread".into(),
