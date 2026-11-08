@@ -48,6 +48,26 @@ native risk policy. It omits source, opening cash and opening equity peak. The o
 retained native preflight inputs, physical build, broker identity, request and actual daily turnover. Capture those
 inputs from the native broker/PostgreSQL/TigerBeetle evidence path; never hand-enter or reset balances.
 
+Capture that file with the reviewed deployed binary, using the independently frozen plan:
+
+```sh
+bayn-control-opening \
+  --plan /private/plan.json --plan-sha256 <independently-retained-plan-sha256> \
+  --output /private/new-native-opening
+```
+
+The command requires an embedded production build, the configured sealed sandbox request and the exact frozen
+account, build and native risk policy. It checks the current authority before running the existing native reconciler
+and checks the returned generation again. It acquires only broker read access; it cannot submit orders or activate
+capital. Normal reconciliation may retain broker events, accounting and ledger effects, and restrict authority on a
+discrepancy. It does not initialize a new generation, reset balances or change limits. The captured inputs include
+the native accounting hash, original equity peak, actual daily turnover and day-start equity, including used budgets.
+An output directory is claimed before reconciliation; reusing it fails without another pass. Native clients close
+before private `opening.json` and the final `opening-receipt.json` are published. A failure leaves no completed receipt.
+The printed opening SHA-256 pins the file for binding. Capture near the first regular open; a capture made earlier
+is diagnostic evidence and will fail binding's freshness check. The capture receipt does not independently authenticate
+when the file existed or qualify an economic result.
+
 Binding requires the same account, build and risk policy, exact flat native state, fully available cash, fresh observations
 available before the first regular open, zero used daily turnover and unchanged day-start equity. The comparison interval
 must start and finish at regular-session boundaries. It inherits the actual cash and original peak, including
