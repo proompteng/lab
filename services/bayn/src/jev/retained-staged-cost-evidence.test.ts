@@ -1,3 +1,4 @@
+import { EntryAblationSelection } from './entry-inference-input'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
@@ -25,7 +26,7 @@ import {
   makeSelectedBaseStartStageRequest,
 } from './retained-filtered-staged-chart-questions'
 import * as retainedCandidateChartStages from './retained-candidate-staged-chart-questions'
-import * as currentChartStages from './staged-chart-questions'
+import * as currentChartStages from './retained-observed-staged-chart-questions'
 import { makeEntryJudgmentRequest } from './entry-questions'
 import {
   jevProtocolSchemaForQuestionPolicy,
@@ -35,6 +36,7 @@ import {
   RetainedJevProtocolV33Schema,
   RetainedJevProtocolV34Schema,
   RetainedJevProtocolV35Schema,
+  RetainedJevProtocolV36Schema,
 } from './protocol'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
@@ -50,19 +52,32 @@ const fixture = (
     | 'bayn.jev.protocol.v32'
     | 'bayn.jev.protocol.v33'
     | 'bayn.jev.protocol.v34'
+    | 'bayn.jev.protocol.v36'
     | 'bayn.jev.protocol.v35' = 'bayn.jev.protocol.v26',
+  ablation = false,
 ) => {
-  const current = entryEvaluationRequestFixture()
+  const current = entryEvaluationRequestFixture(
+    undefined,
+    undefined,
+    ablation ? EntryAblationSelection.LowestModeledLoss : undefined,
+  )
   const baseProtocol = {
     ...current.request.protocol,
-    executionModel: retainedIntradayExecutionModel,
+    model: 'jev-1.13.0' as const,
+    entrySignalPolicy: 'openai-decisions-then-jev' as const,
+    executionModel:
+      schemaVersion === 'bayn.jev.protocol.v36'
+        ? current.request.protocol.executionModel
+        : retainedIntradayExecutionModel,
     inputDefinition:
-      schemaVersion === 'bayn.jev.protocol.v34' || schemaVersion === 'bayn.jev.protocol.v35'
+      schemaVersion === 'bayn.jev.protocol.v34' ||
+      schemaVersion === 'bayn.jev.protocol.v35' ||
+      schemaVersion === 'bayn.jev.protocol.v36'
         ? ('bayn.jev-entry-state.v23' as const)
         : ('bayn.jev-entry-state.v22' as const),
     entryQuestionPolicyHash:
-      schemaVersion === 'bayn.jev.protocol.v35'
-        ? current.request.protocol.entryQuestionPolicyHash
+      schemaVersion === 'bayn.jev.protocol.v35' || schemaVersion === 'bayn.jev.protocol.v36'
+        ? 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325'
         : schemaVersion === 'bayn.jev.protocol.v33' || schemaVersion === 'bayn.jev.protocol.v34'
           ? '864658b2565a176ecad7e6e2460a9f9be9340bf9f304d5af41db81ce49551158'
           : schemaVersion === 'bayn.jev.protocol.v32'
@@ -77,7 +92,8 @@ const fixture = (
     schemaVersion === 'bayn.jev.protocol.v32' ||
     schemaVersion === 'bayn.jev.protocol.v33' ||
     schemaVersion === 'bayn.jev.protocol.v34' ||
-    schemaVersion === 'bayn.jev.protocol.v35'
+    schemaVersion === 'bayn.jev.protocol.v35' ||
+    schemaVersion === 'bayn.jev.protocol.v36'
       ? {
           ...baseProtocol,
           schemaVersion,
@@ -86,7 +102,8 @@ const fixture = (
             schemaVersion === 'bayn.jev.protocol.v32' ||
             schemaVersion === 'bayn.jev.protocol.v33' ||
             schemaVersion === 'bayn.jev.protocol.v34' ||
-            schemaVersion === 'bayn.jev.protocol.v35'
+            schemaVersion === 'bayn.jev.protocol.v35' ||
+            schemaVersion === 'bayn.jev.protocol.v36'
               ? IntradayCandidateEvidencePolicy.MarketQuotesV2
               : IntradayCandidateEvidencePolicy.MarketQuotes,
         }
@@ -111,29 +128,37 @@ const fixture = (
       RetainedJevProtocolV33Schema,
       RetainedJevProtocolV34Schema,
       RetainedJevProtocolV35Schema,
+      RetainedJevProtocolV36Schema,
     ]),
   )(protocolMaterial)
   const input = {
     ...current.request,
     numericalState: { ...current.request.numericalState, schemaVersion: protocol.inputDefinition },
-    schemaVersion:
-      schemaVersion === 'bayn.jev.protocol.v35'
-        ? ('bayn.entry-inference-input.v8' as const)
-        : schemaVersion === 'bayn.jev.protocol.v34'
-          ? ('bayn.entry-inference-input.v7' as const)
-          : schemaVersion === 'bayn.jev.protocol.v30' ||
-              schemaVersion === 'bayn.jev.protocol.v31' ||
-              schemaVersion === 'bayn.jev.protocol.v32' ||
-              schemaVersion === 'bayn.jev.protocol.v33'
-            ? ('bayn.entry-inference-input.v6' as const)
-            : ('bayn.entry-inference-input.v5' as const),
+    ...(ablation
+      ? {
+          schemaVersion: 'bayn.entry-ablation-input.v1' as const,
+          selectionPolicy: EntryAblationSelection.LowestModeledLoss,
+        }
+      : {
+          schemaVersion:
+            schemaVersion === 'bayn.jev.protocol.v35' || schemaVersion === 'bayn.jev.protocol.v36'
+              ? ('bayn.entry-inference-input.v8' as const)
+              : schemaVersion === 'bayn.jev.protocol.v34'
+                ? ('bayn.entry-inference-input.v7' as const)
+                : schemaVersion === 'bayn.jev.protocol.v30' ||
+                    schemaVersion === 'bayn.jev.protocol.v31' ||
+                    schemaVersion === 'bayn.jev.protocol.v32' ||
+                    schemaVersion === 'bayn.jev.protocol.v33'
+                  ? ('bayn.entry-inference-input.v6' as const)
+                  : ('bayn.entry-inference-input.v5' as const),
+        }),
     protocol,
   }
   const { requestId: _, ...originalRequest } = current
   const requestMaterial = { ...originalRequest, request: input, requestHash: hash(input) }
   const request = { ...requestMaterial, requestId: hash(requestMaterial) }
   const stages =
-    schemaVersion === 'bayn.jev.protocol.v35'
+    schemaVersion === 'bayn.jev.protocol.v35' || schemaVersion === 'bayn.jev.protocol.v36'
       ? currentChartStages
       : schemaVersion === 'bayn.jev.protocol.v33' || schemaVersion === 'bayn.jev.protocol.v34'
         ? retainedCandidateChartStages
@@ -160,7 +185,8 @@ const fixture = (
       schemaVersion === 'bayn.jev.protocol.v32' ||
         schemaVersion === 'bayn.jev.protocol.v33' ||
         schemaVersion === 'bayn.jev.protocol.v34' ||
-        schemaVersion === 'bayn.jev.protocol.v35'
+        schemaVersion === 'bayn.jev.protocol.v35' ||
+        schemaVersion === 'bayn.jev.protocol.v36'
         ? makeEntryJudgmentRequest
         : marketQuestions
           ? makeRetainedMarketEntryJudgmentRequest
@@ -185,7 +211,11 @@ const fixture = (
     completedAt: request.expiresAt,
     outcome: {
       status: JevOutcome.Completed,
-      completion: { handoff, completedAt: request.expiresAt, jev: { status: 'NOT_DISPATCHED' } },
+      completion: {
+        handoff,
+        completedAt: request.expiresAt,
+        jev: { status: ablation ? 'OMITTED_BY_POLICY' : 'NOT_DISPATCHED' },
+      },
     },
   }
   const receipt = { ...receiptMaterial, receiptHash: hash(receiptMaterial) }
@@ -235,6 +265,7 @@ test.each([
   'bayn.jev.protocol.v33',
   'bayn.jev.protocol.v34',
   'bayn.jev.protocol.v35',
+  'bayn.jev.protocol.v36',
 ] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
@@ -248,6 +279,19 @@ test.each([
     expect(Result.isFailure(decodeStagedCheckpoint(row.request, row.stagedCheckpoint))).toBe(true)
   },
 )
+
+test('v36 ablation financial history retains both original paid visual stages and the omitted final stage', () => {
+  const row = fixture(true, 'bayn.jev.protocol.v36', true)
+  const decoded = Result.getOrThrow(readStagedInferenceCostEvidence(row))
+  expect(decoded.request.requestId).toBe(row.request.requestId)
+  expect(decoded.receipt?.receiptHash).toBe(row.receipt.receiptHash)
+  expect(decoded.visualStages.map((stage) => stage.outcome)).toEqual(['RECEIVED', 'RECEIVED'])
+  expect(decoded.receipt?.outcome).toMatchObject({
+    status: JevOutcome.Completed,
+    completion: { jev: { status: 'OMITTED_BY_POLICY' } },
+  })
+  expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
+})
 
 test('financial reader initializes independently under the production Node module order', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bayn-financial-reader-'))

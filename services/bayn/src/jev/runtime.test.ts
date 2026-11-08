@@ -1,3 +1,4 @@
+import { entryProviderFixture } from './entry-inference.test-support'
 import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Fiber, Logger, Option, References, Result, Tracer } from 'effect'
@@ -12,7 +13,7 @@ import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { JevBatchExpired, JevBatchStore } from './batch-evaluation'
 import type { JevBatchEvidence } from './batch-evaluation'
-import { JevCandidatePlanStatus, JevCandidateResultStatus, makeJevBatchResult } from './batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus, JevCandidateResultStatus, makeJevBatchResult } from './batch'
 import { JevFailure } from './contract'
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
@@ -21,7 +22,13 @@ import { JevEvaluationStore } from './evaluation'
 import { JevExitReason } from './exit'
 import { nativeJevFixture } from './native.test-support'
 import { JevPositionStore, JevPurpose } from './portfolio'
-import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime'
+import {
+  evaluateJevObservation,
+  evaluateJevObservationFromSnapshot,
+  evaluateJevPositionManagement,
+  loadNativeEntryObservation,
+} from './runtime'
+import { ActiveExecutionStages, type ActiveExecutionStage } from '../telemetry'
 import { utcInstantFromEpochMillis } from '../time'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { defaultJevProtocolDocument } from './protocol'
@@ -270,12 +277,109 @@ describe('entry-bound native position exits', () => {
 })
 
 describe('entry observation admission', () => {
+  test('an expired enclosing admission does not load a snapshot or begin provider work', async () => {
+    const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
+    let pendingCalls = 0
+    const admissionDeadlineAt = Date.parse(fixture.observation.payload.observedAt)
+    const result = await Effect.runPromise(
+      TestClock.setTime(admissionDeadlineAt).pipe(
+        Effect.andThen(
+          evaluateJevObservationFromSnapshot(
+            {
+              cycleId: fixture.observation.payload.cycleId,
+              authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+              protocol: fixture.protocol,
+              portfolio: fixture.portfolio,
+            },
+            fixture.snapshot.manifest.rangeEndAt,
+            Effect.die('An expired admission must not load market data'),
+            JevBatchPlanVersion.V8,
+            { admissionDeadlineAt },
+          ),
+        ),
+        Effect.result,
+        Effect.provideService(JevBatchStore, {
+          pending: () =>
+            Effect.sync(() => {
+              pendingCalls++
+              return []
+            }),
+          read: () => Effect.die('An expired admission must not read a batch'),
+          begin: () => Effect.die('An expired admission must not begin a batch'),
+          finish: () => Effect.die('An expired admission has no batch to finish'),
+          complete: () => Effect.die('An expired admission must not complete a batch'),
+        }),
+        Effect.provideService(CandidateObservationStore, {
+          record: () => Effect.die('An expired admission must not record an observation'),
+          latestJevWindowEnd: () => Effect.succeed(Option.none()),
+        }),
+        Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => Effect.die('No provider call') })),
+        Effect.provideService(JevEvaluationStore, {
+          read: () => Effect.die('An expired admission must not read an evaluation'),
+          recordAll: () => Effect.die('An expired admission must not record an evaluation'),
+          abandon: () => Effect.die('An expired admission must not abandon an evaluation'),
+        }),
+        Effect.provide(entryInferenceFixtureLayer),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Logger.layer([])),
+        Effect.provide(NodeServices.layer),
+      ),
+    )
+    expect(pendingCalls).toBe(1)
+    expect(result).toMatchObject({
+      failure: {
+        _tag: 'JevAwaitingEvidence',
+        readiness: 'DECISION_PENDING',
+        message: 'Entry admission expired before Jev observation dispatch',
+      },
+    })
+  })
+
+  test('observation construction runs inside its observed stage', async () => {
+    const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
+    const active = new Map<symbol, ActiveExecutionStage>()
+    let reads = 0
+    const snapshot = {
+      ...fixture.snapshot,
+      get bars() {
+        reads++
+        expect([...active.values()].some(({ stage }) => stage === 'bayn.jev.observation')).toBe(true)
+        return fixture.snapshot.bars
+      },
+    }
+    const result = await Effect.runPromise(
+      loadNativeEntryObservation(
+        {
+          cycleId: fixture.observation.payload.cycleId,
+          authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+          protocol: fixture.protocol,
+          portfolio: fixture.portfolio,
+        },
+        snapshot.manifest.rangeEndAt,
+        Effect.succeed(snapshot),
+      ).pipe(
+        Effect.provideService(ActiveExecutionStages, active),
+        Effect.provideService(CandidateObservationStore, {
+          record: () => Effect.die('Observation construction must not persist'),
+          latestJevWindowEnd: () => Effect.succeed(Option.none()),
+        }),
+        Effect.provide(Logger.layer([])),
+      ),
+    )
+    expect(reads).toBeGreaterThan(0)
+    expect(active.size).toBe(0)
+    expect(result.observation.contentHash).toBe(fixture.observation.contentHash)
+  })
+
   test.each([
-    ['failed', 'INFERENCE_INCOMPLETE'],
-    ['expired', 'OUTSIDE_VALIDITY_WINDOW'],
-    ['corrupt', 'INVALID_EVIDENCE'],
-    ['pending', 'NOT_COMMITTED'],
-  ] as const)('committed batch %s reports its safe cause without authorizing entry', async (mode, reason) => {
+    ['failed', 'INFERENCE_INCOMPLETE', 'INFERENCE_UNAVAILABLE'],
+    ['expired', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_EXPIRED'],
+    ['expired-late-result', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_EXPIRED'],
+    ['expired-future-clock', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_UNAVAILABLE'],
+    ['future-clock', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_UNAVAILABLE'],
+    ['corrupt', 'INVALID_EVIDENCE', 'INFERENCE_UNAVAILABLE'],
+    ['pending', 'NOT_COMMITTED', 'INFERENCE_UNAVAILABLE'],
+  ] as const)('committed batch %s refuses entry with the safe cause', async (mode, reason, readiness) => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     let pending: JevBatchEvidence | null = null
     const result = await Effect.runPromise(
@@ -336,11 +440,17 @@ describe('entry observation admission', () => {
                 makeJevBatchResult(plan, {
                   schemaVersion: 'bayn.jev-batch-result.v1',
                   batchId: plan.batchId,
-                  completedAt: plan.observedAt,
+                  completedAt:
+                    mode === 'expired-late-result' || mode === 'expired-future-clock'
+                      ? utcInstantFromEpochMillis(Date.parse(plan.expiresAt) + 1_000)
+                      : plan.observedAt,
                   candidates,
                 }),
               )
               if (mode === 'expired') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs)
+              if (mode === 'expired-late-result') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs + 1_000)
+              if (mode === 'expired-future-clock') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs + 500)
+              if (mode === 'future-clock') yield* TestClock.adjust(-1)
               return {
                 plan,
                 result: mode === 'corrupt' ? { ...saved, resultHash: 'a'.repeat(64) } : saved,
@@ -353,8 +463,9 @@ describe('entry observation admission', () => {
           recordAll: () => Effect.die('No paid inference'),
           abandon: () => Effect.die('No abandonment'),
         }),
-        Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call') }),
         Effect.provide(entryInferenceFixtureLayer),
+        Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => Effect.die('No provider call') })),
+
         Effect.provide(TestClock.layer()),
         Effect.provide(Logger.layer([])),
         Effect.provide(NodeServices.layer),
@@ -363,7 +474,7 @@ describe('entry observation admission', () => {
     expect(result).toMatchObject({
       failure: {
         _tag: 'JevAwaitingEvidence',
-        readiness: 'INFERENCE_UNAVAILABLE',
+        readiness,
         message: `Jev batch unavailable: ${reason}`,
       },
     })
@@ -430,8 +541,12 @@ describe('entry observation admission', () => {
             recordAll: () => Effect.die('No inference can be recorded'),
             abandon: () => Effect.die('No inference can be abandoned'),
           }),
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call is allowed') }),
           Effect.provide(entryInferenceFixtureLayer),
+          Effect.provideService(
+            JevClient,
+            entryProviderFixture({ evaluate: () => Effect.die('No provider call is allowed') }),
+          ),
+
           Effect.provide(TestClock.layer()),
           Effect.provide(Logger.layer([logger])),
           Effect.provide(NodeServices.layer),
@@ -440,7 +555,7 @@ describe('entry observation admission', () => {
       )
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result))
-        expect(result.failure).toMatchObject({ _tag: 'JevAwaitingEvidence', readiness: 'INFERENCE_UNAVAILABLE' })
+        expect(result.failure).toMatchObject({ _tag: 'JevAwaitingEvidence', readiness: 'INFERENCE_EXPIRED' })
       const warning = logs.find(
         ({ message }) => Array.isArray(message) && message[0] === 'Jev observation expired before batch admission',
       )

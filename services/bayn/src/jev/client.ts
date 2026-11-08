@@ -11,6 +11,7 @@ import {
   JevFailure,
   JevInferenceSchema,
   JevResponseSchema,
+  jevModel,
 } from './contract'
 
 const failedResponseUsageSchema = Schema.Struct({
@@ -67,6 +68,12 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             ),
           )
           const { requestHash } = prepared
+          if (prepared.request.model !== jevModel)
+            return yield* new JevError({
+              failure: JevFailure.Request,
+              message: 'New inference requires the current pinned Jev model',
+              requestHash,
+            })
           const started = yield* Clock.currentTimeMillis
           let failureHttpStatus: number | undefined
           return yield* Effect.gen(function* () {
@@ -75,7 +82,11 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
               HttpClientRequest.bodyText(prepared.body, 'application/json'),
               HttpClientRequest.acceptJson,
             )
-            const response = yield* http.execute(request)
+            const response = yield* http.execute(
+              prepared.request.assets === undefined
+                ? request
+                : HttpClientRequest.setHeader(request, 'TypeSafe-Danger-Zone-Images', 'true'),
+            )
             if (response.status !== 200) {
               failureHttpStatus = response.status
               // Retain only validated metering, never provider error text or echoed requests/credentials.

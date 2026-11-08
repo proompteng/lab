@@ -163,7 +163,13 @@ void mock.module('../platform/ofz', () => ({
   },
 }))
 void mock.module('../platform/relay', () => ({
-  relayCall: async (_method: unknown, input: unknown) => {
+  relayCall: async (method: { name: string }, input: unknown) => {
+    if (method.name === 'Execute') {
+      if (!permitted) throw new OfzError(403)
+      const body = z.object({ body: z.instanceof(Uint8Array) }).parse(input)
+      events.push({ name: 'Execute', body: JSON.parse(new TextDecoder().decode(body.body)) })
+      return { result: new TextEncoder().encode('{}') }
+    }
     expect(input).toEqual({
       subject: {
         clientService: 'tengri-web',
@@ -214,7 +220,8 @@ void mock.module('./grpc', () => ({
     throw new Error('Unexpected guest fixture action')
   },
 }))
-const { saveConnection, reconcileConnections, disconnectConnection } = await import('./connection-lifecycle')
+const { saveConnection, reconcileConnections, disconnectConnection, runConnectionCommand } =
+  await import('./connection-lifecycle')
 const save = () =>
   connectionRequestSchema.options[0].parse({
     kind: 'save',
@@ -546,4 +553,50 @@ test('revoked intent uses the current recovery epoch to retire retained guest st
   await reconcileConnections(identity, 'microvm-fixture')
   expect(events.find((event) => event.name === 'remove')?.body.recoveryGeneration).toBe('4')
   expect(connection?.enabled).toBe(false)
+})
+
+test('run card actions use the current connection, exact target and fresh Relay authorization', async () => {
+  const resource = { kind: 'agents.target', id: 'agents/lab' }
+  catalog = ['get_result', 'cancel_run'].map((name) =>
+    create(ConnectorOperationSchema, {
+      connectorId: 'agents',
+      name,
+      action: name === 'cancel_run' ? 'agents.runs.cancel' : 'agents.runs.read',
+      readOnly: name !== 'cancel_run',
+      targets: [{ name: 'Lab', resource }],
+    }),
+  )
+  connection = create(PlatformConnectionSchema, {
+    id: connectionId,
+    enabled: true,
+    clientReference: workspace + '/agents',
+    actions: ['agents.runs.read', 'agents.runs.cancel'],
+    resources: [resource],
+  })
+  const command = {
+    agentId: 'microvm-fixture',
+    targetId: resource.id,
+    runId: randomUUID(),
+    operationId: randomUUID(),
+    operation: 'cancel_run' as const,
+  }
+  expect((await runConnectionCommand(identity, command)).canCancel).toBe(true)
+  expect(events.find((event) => event.name === 'Execute')?.body).toMatchObject({
+    operationId: command.operationId,
+    connectorId: 'agents',
+    operation: 'cancel_run',
+    arguments: { runId: command.runId },
+    binding: { service: 'tengri', id: workspace, generation: runtime },
+    delegationId: null,
+  })
+  events.length = 0
+  await expect(runConnectionCommand(identity, { ...command, targetId: 'agents/another' })).rejects.toMatchObject({
+    status: 403,
+  })
+  connection.enabled = false
+  await expect(runConnectionCommand(identity, command)).rejects.toMatchObject({ status: 403 })
+  connection.enabled = true
+  permitted = false
+  await expect(runConnectionCommand(identity, command)).rejects.toMatchObject({ status: 403 })
+  expect(events.filter((event) => event.name === 'Execute')).toHaveLength(0)
 })

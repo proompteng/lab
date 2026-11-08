@@ -18,6 +18,7 @@ controlPlane:
     digest: sha256:37c7a3ca4db11869e2cd296dfc0fee88256cc4ec1611e1bc6a1344ae8d432aa3
   env:
     vars:
+      AGENTS_RELAY_TARGETS_FILE: /etc/agents-relay/relay-targets.json
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
@@ -325,6 +326,8 @@ env:
     AGENTS_MEMORY_DB_POOL_MAX: "2"
     PGQUERY_TIMEOUT_MS: "90000"
     AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
     OPENAI_API_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_MODEL: qwen3-embedding-saigak:8b
@@ -335,3 +338,12 @@ env:
       secretName: github-token
       key: token
 envFromSecretRefs: []
+
+extraVolumes:
+  - name: relay-targets
+    volume:
+      configMap:
+        name: agents-relay-targets
+extraVolumeMounts:
+  - name: relay-targets
+    mountPath: /etc/agents-relay

@@ -1,3 +1,5 @@
+import { BrokerEnvironment } from '../broker/identity'
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
@@ -204,19 +206,21 @@ const simulate = (
                 ),
                 budget: makeReplayInferenceBudget(1000),
                 providers: {
-                  chart: chartProviderFixture,
-                  jev: {
-                    evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
-                      Effect.gen(function* () {
-                        providerCalls += 1
-                        yield* providerClock.adjust(options.managedLatencyMs ?? 0)
-                        return nativeJevInference(
-                          input,
-                          new Date(yield* providerClock.currentTimeMillis).toISOString(),
-                          options.nativeEntry === true && options.supportsEntry !== false,
-                        )
-                      }),
-                  },
+                  jev: entryProviderFixture(
+                    {
+                      evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
+                        Effect.gen(function* () {
+                          providerCalls += 1
+                          yield* providerClock.adjust(options.managedLatencyMs ?? 0)
+                          return nativeJevInference(
+                            input,
+                            new Date(yield* providerClock.currentTimeMillis).toISOString(),
+                            options.nativeEntry === true && options.supportsEntry !== false,
+                          )
+                        }),
+                    },
+                    chartProviderFixture,
+                  ),
                 },
               },
               costs: replayRateCardFixture({
@@ -780,7 +784,9 @@ const frozenControlFixture = () => {
   }
   const { verification: _verification, ...build } = config.build
   const input = {
-    schemaVersion: 'bayn.control-study-input.v9',
+    schemaVersion: 'bayn.control-study-input.v10',
+    riskEnvironment: BrokerEnvironment.Live,
+    openingPeakEquityMicros: '100000000000',
     costObjective: 'ALL_COSTS',
     entry: 'DETERMINISTIC',
     turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
@@ -788,15 +794,15 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v10',
+      schemaVersion: 'bayn.backtest.v11',
       policy: 'JEV' as const,
       latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
         mode: 'measured-providers',
         maximumCalls: 1000,
-        models: { jev: jevModel, chart: 'gpt-6-luna' },
-        inputDefinition: 'bayn.jev-entry-state.v23',
+        models: { jev: jevModel },
+        inputDefinition: 'bayn.jev-entry-state.v24',
         costs: replayRateCardFixture({
           jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           chart: {
@@ -858,6 +864,18 @@ test('net control comparisons require a priced data allocation', () => {
   ).toBe(true)
 })
 
+test('a frozen control input cannot silently inherit the live risk default', () => {
+  const { input, receipt } = frozenControlFixture()
+  const { riskEnvironment: _riskEnvironment, ...missing } = input
+  expect(Result.isFailure(prepareControlStudy(missing, receipt))).toBe(true)
+  expect(Result.isFailure(prepareControlStudy({ ...input, openingPeakEquityMicros: '99999999999' }, receipt))).toBe(
+    true,
+  )
+  expect(
+    Result.isFailure(prepareControlStudy({ ...input, schemaVersion: 'bayn.control-study-input.v9' }, receipt)),
+  ).toBe(true)
+})
+
 test('an explicit known-cost diagnostic retains unknown data allocation without admitting all-cost profit', () => {
   const { input, receipt } = frozenControlFixture()
   const prepared = Result.getOrThrow(
@@ -905,11 +923,27 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       const repeated = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       expect(repeated.reportHash).toBe(report.reportHash)
+      expect(report.risk.maxDailyTradedNotionalMicros).toBe('200000000000')
+      expect(report.risk.maxDrawdownMicros).toBe('5000000000')
+      const sandbox = yield* runControlStudy(
+        { ...input, riskEnvironment: BrokerEnvironment.Sandbox, openingPeakEquityMicros: '120000000000' },
+        arrivals,
+        receipt,
+        {
+          mode: ControlManagementMode.Mechanical,
+        },
+      )
+      expect(sandbox.risk.maxDailyTradedNotionalMicros).toBe('1000000000000')
+      expect(sandbox.risk.maxDrawdownMicros).toBe('10000000000')
+      expect(
+        sandbox.sessions.every((session) => session.closingCapital.peakBrokerEquityMicros === '120000000000'),
+      ).toBe(true)
+      expect(sandbox.reportHash).not.toBe(report.reportHash)
       expect(report.schemaVersion).toBe('bayn.control-study-report.v7')
       expect(report.sessions).toHaveLength(6)
       expect(report.definition).toMatchObject({
         ...controlStudyDefinition,
-        schemaVersion: 'bayn.control-study-definition.v12',
+        schemaVersion: 'bayn.control-study-definition.v13',
       })
       expect(
         report.sessions.every((session) => session.completion === 'INCOMPLETE' && session.modelCallCount === 0),

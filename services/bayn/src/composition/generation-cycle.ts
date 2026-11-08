@@ -1,5 +1,5 @@
-import { Deferred, Effect, Scope, Semaphore } from 'effect'
-import type { AutonomousCycleStartup, AutonomousRuntime } from '../app'
+import { Effect, Semaphore } from 'effect'
+import type { CycleRunnerError } from '../cycle/runner/model'
 
 import {
   advanceRestrictedGenerationRecovery,
@@ -9,11 +9,7 @@ import {
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
 import { isExecutionMandateRecoveryRestriction } from '../execution/mandate'
 import { OperationalError } from '../errors'
-import type {
-  RecoveryFirstCycleAdvance,
-  RecoveryFirstCycleDriver,
-  RecoveryFirstCycleDriverOwner,
-} from '../observe-composition/model'
+import type { RecoveryFirstCycleAdvance, RecoveryFirstCycleDriver } from '../observe-composition/model'
 import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
 import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
@@ -23,35 +19,6 @@ export const executionGenerationNeedsRecovery = (authority: AuthorityState): boo
   authority.effective === Authority.Observe &&
   authority.kill === KillState.Active &&
   isExecutionMandateRecoveryRestriction(authority.reason)
-
-export const withGenerationRebinding =
-  (
-    startCycle: AutonomousCycleStartup<never, never>,
-    resolveNext: Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope>,
-  ): AutonomousCycleStartup<never, never> =>
-  (startup) =>
-    startCycle(startup).pipe(
-      Effect.map((loop) =>
-        loop.pipe(
-          Effect.andThen(resolveNext),
-          Effect.flatMap((next) => {
-            if (next.cycleBindingId === undefined || next.cycleBindingId === null)
-              return Effect.die(
-                new OperationalError({
-                  component: 'strategy',
-                  operation: 'generation-rebind',
-                  retryable: false,
-                  message: 'recovered runtime has no cycle binding',
-                }),
-              )
-            return next.startCycle({ ...startup, cycleBindingId: next.cycleBindingId })
-          }),
-          Effect.flatMap((nextLoop) => nextLoop),
-          Effect.catch(Effect.die),
-          Effect.scoped,
-        ),
-      ),
-    )
 
 interface GenerationCycleInput {
   readonly generationHash: string
@@ -63,7 +30,7 @@ interface GenerationCycleInput {
 
 export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver: RecoveryFirstCycleDriver<R>) =>
   Effect.gen(function* () {
-    const rebind = yield* Deferred.make<void>()
+    let rebind = false
     const permit = yield* Semaphore.make(1)
     const authorityReadBudgetMs = Math.max(1, Math.min(5_000, Math.floor(driver.timeoutMs / 6)))
     const readAuthority = input.readAuthority.pipe(
@@ -100,7 +67,7 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
       const authority = yield* readAuthority
       const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, authority.generationHash)
       const changed = step._tag !== 'Waiting'
-      if (changed) yield* Deferred.succeed(rebind, undefined)
+      if (changed) rebind = true
       return { authority, changed }
     })
     const advance = Effect.gen(function* () {
@@ -110,7 +77,7 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
         Effect.gen(function* () {
           const before = disposition(yield* readAuthority)
           if (before !== 'Continue') {
-            if (before === 'Rebind') yield* Deferred.succeed(rebind, undefined)
+            if (before === 'Rebind') rebind = true
             else yield* input.reconcileWhenHeld.pipe(withObservedStage('bayn.execution.generation.reconcile-held'))
             return {
               observation: {
@@ -149,7 +116,7 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
           const advanced = yield* driver.advance
           cycleInProgress = false
           const after = disposition(yield* readAuthority)
-          if (after === 'Rebind') yield* Deferred.succeed(rebind, undefined)
+          if (after === 'Rebind') rebind = true
           if (after === 'Continue' && input.mode === 'CloseOnly' && advanced.result !== undefined) yield* settle
           return advanced
         }),
@@ -160,18 +127,39 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
     }).pipe(Effect.catch((cause) => (cause instanceof OperationalError ? Effect.die(cause) : Effect.fail(cause))))
     return {
       driver: { ...driver, advance },
-      awaitRebind: Deferred.await(rebind),
-      needsRebind: Deferred.isDone(rebind),
+      needsRebind: Effect.sync(() => rebind),
     }
   })
 
-export const ownGenerationCycleDriver =
-  <R>(
-    input: GenerationCycleInput & { readonly owner: RecoveryFirstCycleDriverOwner<R> },
-  ): RecoveryFirstCycleDriverOwner<R> =>
-  (driver) =>
-    makeGenerationCycleDriver(input, driver).pipe(
-      Effect.flatMap((owned) =>
-        Effect.raceFirst(input.owner(owned.driver).pipe(Effect.andThen(Effect.never)), owned.awaitRebind),
+export const makeRebindingCycleDriver = <R, R2>(
+  initial: {
+    readonly driver: RecoveryFirstCycleDriver<R>
+    readonly needsRebind: Effect.Effect<boolean>
+  },
+  prepareNext: Effect.Effect<
+    {
+      readonly driver: RecoveryFirstCycleDriver<R>
+      readonly needsRebind: Effect.Effect<boolean>
+    },
+    OperationalError,
+    R2
+  >,
+  runPass: (
+    advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError, R | R2>,
+  ) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError, R | R2> = (advance) => advance,
+) =>
+  Effect.gen(function* () {
+    let current = initial
+    const permit = yield* Semaphore.make(1)
+    return {
+      nextDelayMs: initial.driver.nextDelayMs,
+      advance: permit.withPermit(
+        runPass(
+          Effect.gen(function* () {
+            if (yield* current.needsRebind) current = yield* prepareNext
+            return yield* current.driver.advance
+          }),
+        ),
       ),
-    )
+    }
+  })

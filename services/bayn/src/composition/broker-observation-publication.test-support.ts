@@ -70,7 +70,9 @@ await mock.module('../broker/alpaca/session', () => ({
 }))
 await mock.module('../broker/alpaca/snapshot-cache', () => ({
   ...actualCapture,
-  captureBrokerObservation: () => Effect.succeed(observedBrokerSnapshotFixture(privateDetail, startedAt)),
+  makeBrokerObservationCapture: Effect.succeed(() =>
+    Effect.succeed(observedBrokerSnapshotFixture(privateDetail, startedAt)),
+  ),
 }))
 await mock.module('../db/broker-observations', () => ({
   ...actualStore,
@@ -115,7 +117,8 @@ const polls = await Effect.runPromise(
   ).pipe(
     Effect.provideService(ValkeyCache, {
       ...valkeyFixture().cache,
-      put: () => (currentFailure === undefined ? Effect.die('missing failure fixture') : Effect.fail(currentFailure)),
+      putAll: () =>
+        currentFailure === undefined ? Effect.die('missing failure fixture') : Effect.fail(currentFailure),
     }),
     Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
     Effect.provide(TestClock.layer()),

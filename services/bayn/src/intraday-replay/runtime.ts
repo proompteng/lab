@@ -5,7 +5,6 @@ import { makeEntryInferenceJournal } from '../db/entry-inference-postgres'
 import { makeJevPositionStore } from '../db/jev-position-postgres'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
@@ -43,7 +42,11 @@ import {
 } from '../execution/configuration'
 import { Authority, KillState } from '../execution/contracts'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
-import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../composition/generation-cycle'
+import {
+  executionGenerationNeedsRecovery,
+  makeGenerationCycleDriver,
+  makeRebindingCycleDriver,
+} from '../composition/generation-cycle'
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'
@@ -172,7 +175,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
     const candidateObservationStore = yield* makeCandidateObservationStore
     const jevClient = yield* JevClient
-    const decisionsClient = yield* DecisionsClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
     const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
@@ -247,7 +249,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
-      Context.add(DecisionsClient, decisionsClient),
       Context.add(EntryInferenceJournal, entryInferenceJournal),
       Context.add(JevEvaluationStore, jevEvaluations),
       Context.add(JevBatchStore, jevBatches),
@@ -341,32 +342,26 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           driver,
         ).pipe(Effect.provideContext(resources))
       }).pipe(Effect.mapError(replayGenerationRecoveryError))
-    let owned = yield* startGeneration(activated.generationHash)
-    const initialDriver = owned.driver
-    const permit = yield* Semaphore.make(1)
-    const advance = permit.withPermit(
-      latency.runPass(
-        Effect.gen(function* () {
-          if (yield* owned.needsRebind) {
-            const current = yield* readAuthority
-            let generationHash = current.generationHash
-            if (
-              current.maximum === Authority.Observe &&
-              current.effective === Authority.Observe &&
-              current.kill === KillState.Clear
-            ) {
-              yield* reconcileForActivation
-              const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
-                researchCapitalGrantProof(request),
-                current.generationHash,
-              )
-              generationHash = next.generationHash
-            }
-            owned = yield* startGeneration(generationHash)
-          }
-          return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
-        }),
-      ),
+    const driver = yield* makeRebindingCycleDriver(
+      yield* startGeneration(activated.generationHash),
+      Effect.gen(function* () {
+        const current = yield* readAuthority
+        let generationHash = current.generationHash
+        if (
+          current.maximum === Authority.Observe &&
+          current.effective === Authority.Observe &&
+          current.kill === KillState.Clear
+        ) {
+          yield* reconcileForActivation
+          const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+            researchCapitalGrantProof(request),
+            current.generationHash,
+          )
+          generationHash = next.generationHash
+        }
+        return yield* startGeneration(generationHash)
+      }).pipe(Effect.mapError(replayGenerationRecoveryError)),
+      latency.runPass,
     )
     return {
       authorityGenerationHash: activated.generationHash,
@@ -374,8 +369,8 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      advance,
-      nextDelayMs: initialDriver.nextDelayMs,
+      advance: driver.advance.pipe(Effect.provideContext(resources)),
+      nextDelayMs: driver.nextDelayMs,
       reconcile,
       decisionLatencyEvidence: latency.evidence,
     }

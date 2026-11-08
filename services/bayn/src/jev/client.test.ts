@@ -18,6 +18,24 @@ const responseClient = (body: unknown, status = 200) =>
   )
 
 describe('Jev inference transport', () => {
+  test('historical Jev receipts cannot dispatch the retired model', async () => {
+    let calls = 0
+    const http = HttpClient.make(() => {
+      calls++
+      return Effect.die('Retired model reached the transport')
+    })
+    const result = await Effect.runPromise(
+      run(
+        JevClient.pipe(
+          Effect.flatMap((client) => client.evaluate({ ...requestFixture, model: 'jev-1.13.0' }, 1000)),
+          Effect.result,
+        ),
+        http,
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(calls).toBe(0)
+  })
   test.each([200, 429])(
     'redacts sensitive HTTP headers while retaining trace diagnostics for status %i',
     async (status) => {
@@ -77,6 +95,23 @@ describe('Jev inference transport', () => {
     expect(result.requestHash).toBe(Result.getOrThrow(canonicalHashV1Result(requestFixture)))
     expect(result.responseHash).toBe(Result.getOrThrow(canonicalHashV1Result(responseFixture())))
     expect(Date.parse(result.completedAt)).toBeGreaterThanOrEqual(Date.parse(result.startedAt))
+  })
+
+  test('opts into images only for a source-bound request carrying its chart asset', async () => {
+    const reference = `bayn_chart_image_${'a'.repeat(64)}`
+    const input = {
+      ...requestFixture,
+      state: { chart: reference },
+      assets: { [reference]: { type: 'image', format: 'png', data_base64: 'aGVsbG8=' } },
+    }
+    const http = HttpClient.make((request) => {
+      expect(request.headers['typesafe-danger-zone-images']).toBe('true')
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(responseFixture()))))
+    })
+    const result = await Effect.runPromise(
+      run(JevClient.pipe(Effect.flatMap((client) => client.evaluate(input, 1000))), http),
+    )
+    expect(result.requestHash).toBe(Result.getOrThrow(canonicalHashV1Result(input)))
   })
 
   test.each([401, 422, 429, 529])('retains status %i without retry or alternate model', async (status) => {

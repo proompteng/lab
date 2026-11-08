@@ -16,6 +16,7 @@ import {
 } from 'effect'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 import { withObservedStage } from './telemetry'
+import { withValkeyStartupRetry } from './valkey-startup'
 
 const reads = Metric.counter('bayn_valkey_reads_total', { incremental: true })
 const failures = Metric.counter('bayn_valkey_failures_total', { incremental: true })
@@ -67,12 +68,16 @@ export const ValkeyWrite = Schema.Struct({
   value: Schema.String.check(Schema.isMaxLength(4_194_304)),
   ttlMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(300_000)),
 })
+const ValkeyWriteBatch = Schema.NonEmptyArray(ValkeyWrite).check(Schema.isMaxLength(2))
 
 export class ValkeyCache extends Context.Service<
   ValkeyCache,
   {
     readonly get: (key: string) => Effect.Effect<Option.Option<string>, ValkeyCacheError | ValkeyCacheInputError>
     readonly put: (input: typeof ValkeyWrite.Type) => Effect.Effect<void, ValkeyCacheError | ValkeyCacheInputError>
+    readonly putAll: (
+      input: readonly (typeof ValkeyWrite.Type)[],
+    ) => Effect.Effect<void, ValkeyCacheError | ValkeyCacheInputError>
     readonly remove: (key: string) => Effect.Effect<void, ValkeyCacheError | ValkeyCacheInputError>
   }
 >()('bayn/ValkeyCache') {}
@@ -114,52 +119,96 @@ export const makeValkeyCache = Effect.gen(function* () {
     run: Effect.Effect<A, ValkeyCacheError>,
     deadlineCause?: () => Error | undefined,
   ) =>
-    commands
-      .withPermit(
-        invoke(operation, async () => {
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Register release before observing acquisition; diagnostics cannot strand a permit.
+        yield* Effect.acquireRelease(commands.take(1), () => commands.release(1), { interruptible: true }).pipe(
+          withObservedStage('bayn.valkey.queue', { dependency: 'valkey', operation, diagnosticOnly: true }),
+        )
+        return yield* invoke(operation, async () => {
           if (!client.isOpen) await client.connect()
         }).pipe(
+          withObservedStage('bayn.valkey.connect', { dependency: 'valkey', operation, diagnosticOnly: true }),
           Effect.andThen(run),
           Effect.onInterrupt(() => destroy),
           Effect.tapError(() => destroy),
-        ),
-      )
-      .pipe(
-        Effect.timeoutOrElse({
-          duration: '1 second',
-          orElse: () => {
-            const cause = deadlineCause?.()
-            return Effect.fail(
-              new ValkeyCacheError({
-                operation,
-                category: ValkeyFailureCategory.OperationDeadline,
-                ...(cause === undefined ? {} : { causeCategory: commandFailureCategory(cause) }),
-                message: 'Valkey command exceeded its deadline',
-                cause,
-              }),
-            )
-          },
-        }),
-        Effect.tapError((error) => {
-          const attributes = {
-            namespace: 'bayn',
-            operation,
-            category: error.category ?? ValkeyFailureCategory.CommandFailed,
-            cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
-          }
-          return Effect.gen(function* () {
-            yield* Metric.update(failures.pipe(Metric.withAttributes(attributes)), 1)
-            // The first exported counter sample can already be one; retain its event time without needing a prior zero.
-            const now = yield* Clock.currentTimeMillis
-            yield* Metric.update(lastFailure.pipe(Metric.withAttributes(attributes)), now / 1000)
-          })
-        }),
-        withObservedStage(`bayn.valkey.${operation}`, { dependency: 'valkey', slowAfterMs: 250 }),
-      )
+        )
+      }),
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: '1 second',
+        orElse: () => {
+          const cause = deadlineCause?.()
+          return Effect.fail(
+            new ValkeyCacheError({
+              operation,
+              category: ValkeyFailureCategory.OperationDeadline,
+              ...(cause === undefined ? {} : { causeCategory: commandFailureCategory(cause) }),
+              message: 'Valkey command exceeded its deadline',
+              cause,
+            }),
+          )
+        },
+      }),
+      Effect.tapError((error) => {
+        const attributes = {
+          namespace: 'bayn',
+          operation,
+          category: error.category ?? ValkeyFailureCategory.CommandFailed,
+          cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
+        }
+        return Effect.gen(function* () {
+          yield* Metric.update(failures.pipe(Metric.withAttributes(attributes)), 1)
+          // The first exported counter sample can already be one; retain its event time without needing a prior zero.
+          const now = yield* Clock.currentTimeMillis
+          yield* Metric.update(lastFailure.pipe(Metric.withAttributes(attributes)), now / 1000)
+        })
+      }),
+      withObservedStage(`bayn.valkey.${operation}`, { dependency: 'valkey', slowAfterMs: 250 }),
+    )
 
   const key = (operation: string, input: string) =>
     Schema.decodeUnknownEffect(ValkeyKey)(input).pipe(
       Effect.mapError(() => new ValkeyCacheInputError({ operation, message: 'Cache keys must use the bayn: prefix' })),
+    )
+
+  const putAll = (input: readonly (typeof ValkeyWrite.Type)[]) =>
+    Schema.decodeUnknownEffect(ValkeyWriteBatch)(input).pipe(
+      Effect.mapError(
+        () =>
+          new ValkeyCacheInputError({
+            operation: 'put',
+            message: 'Cache writes require one or two bayn: keys, bounded values and TTLs of 1–300000 ms',
+          }),
+      ),
+      Effect.flatMap((writes) => {
+        let acknowledgementFailure: Error | undefined
+        return command(
+          'put',
+          // One connection owns both writes and the barrier acknowledging its latest write offset.
+          // A failed or interrupted SET is never replayed, even when its outcome is uncertain.
+          Effect.forEach(
+            writes,
+            ({ key, value, ttlMs }) =>
+              invoke('put', (signal) => client.withAbortSignal(signal).set(key, value, { PX: ttlMs })),
+            { concurrency: 2, discard: true },
+          ).pipe(
+            withObservedStage('bayn.valkey.set', { dependency: 'valkey', slowAfterMs: 250 }),
+            Effect.andThen(
+              Effect.gen(function* () {
+                while ((yield* invoke('put', (signal) => client.withAbortSignal(signal).wait(1, 250))) < 1) {
+                  acknowledgementFailure ??= new ReplicaAcknowledgementError(
+                    'Valkey replica did not acknowledge publication',
+                  )
+                  yield* Metric.update(replicaWaits.pipe(Metric.withAttributes({ namespace: 'bayn' })), 1)
+                }
+              }).pipe(withObservedStage('bayn.valkey.replica-ack', { dependency: 'valkey', slowAfterMs: 250 })),
+            ),
+          ),
+          () => acknowledgementFailure,
+        )
+      }),
+      Effect.asVoid,
     )
 
   return ValkeyCache.of({
@@ -184,37 +233,8 @@ export const makeValkeyCache = Effect.gen(function* () {
           ),
         ),
       ),
-    put: (input) =>
-      Schema.decodeUnknownEffect(ValkeyWrite)(input).pipe(
-        Effect.mapError(
-          () =>
-            new ValkeyCacheInputError({
-              operation: 'put',
-              message: 'Cache writes require a bayn: key, bounded value and TTL of 1–300000 ms',
-            }),
-        ),
-        Effect.flatMap(({ key, value, ttlMs }) => {
-          let acknowledgementFailure: Error | undefined
-          return command(
-            'put',
-            invoke('put', (signal) => client.withAbortSignal(signal).set(key, value, { PX: ttlMs })).pipe(
-              withObservedStage('bayn.valkey.set', { dependency: 'valkey', slowAfterMs: 250 }),
-              Effect.andThen(
-                Effect.gen(function* () {
-                  while ((yield* invoke('put', (signal) => client.withAbortSignal(signal).wait(1, 250))) < 1) {
-                    acknowledgementFailure ??= new ReplicaAcknowledgementError(
-                      'Valkey replica did not acknowledge publication',
-                    )
-                    yield* Metric.update(replicaWaits.pipe(Metric.withAttributes({ namespace: 'bayn' })), 1)
-                  }
-                }).pipe(withObservedStage('bayn.valkey.replica-ack', { dependency: 'valkey', slowAfterMs: 250 })),
-              ),
-            ),
-            () => acknowledgementFailure,
-          )
-        }),
-        Effect.asVoid,
-      ),
+    put: (input) => putAll([input]),
+    putAll,
     remove: (input) =>
       key('remove', input).pipe(
         Effect.flatMap((key) =>
@@ -228,7 +248,7 @@ export const makeValkeyCache = Effect.gen(function* () {
   })
 })
 
-const clientOptions = Effect.gen(function* () {
+export const valkeyClientOptions = Effect.gen(function* () {
   const config = yield* valkeyConfig.pipe(
     Effect.mapError(
       (cause) =>
@@ -255,7 +275,6 @@ const clientOptions = Effect.gen(function* () {
     password: Redacted.value(config.password),
     disableOfflineQueue: true,
     commandOptions: { timeout: 500 },
-    pingInterval: 1_000,
     socket: {
       host: config.host,
       port: config.port,
@@ -266,12 +285,18 @@ const clientOptions = Effect.gen(function* () {
       key,
       connectTimeout: 1000,
       reconnectStrategy: false,
-      socketTimeout: 2_000,
     },
   } satisfies ValkeyClientOptions
 })
 
-export const ValkeyRedisLive = Layer.unwrap(Effect.map(clientOptions, NodeRedis.layer)).pipe(
+export const ValkeyRedisLive = Layer.unwrap(
+  Effect.map(valkeyClientOptions, (options) =>
+    withValkeyStartupRetry((signal) => {
+      const socket = { ...options.socket, signal }
+      return NodeRedis.layer({ ...options, socket })
+    }),
+  ),
+).pipe(
   Layer.provide(NodeServices.layer),
   Layer.catch((cause) =>
     Layer.effect(

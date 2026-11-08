@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+resources:
+  - oidc-discovery.yaml
 helmCharts:
   - name: spire
     repo: https://spiffe.github.io/helm-charts-hardened
@@ -7,3 +9,29 @@ helmCharts:
     releaseName: spire
     namespace: spire-system
     valuesFile: values.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: spire-spiffe-oidc-discovery-provider
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+  - target:
+      kind: Pod
+      name: spire-spiffe-oidc-discovery-provider-test-connection
+    patch: |-
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: spire-spiffe-oidc-discovery-provider-test-connection
+      $patch: delete
+  - target:
+      kind: Pod
+      name: spire-spiffe-oidc-discovery-provider-test-keys
+    patch: |-
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: spire-spiffe-oidc-discovery-provider-test-keys
+      $patch: delete

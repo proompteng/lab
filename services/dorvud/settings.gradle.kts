@@ -7,6 +7,7 @@ include(
   "flink-integration",
   "technical-analysis-flink",
   "hyperliquid-feed",
+  "webull-feed",
 )
 
 dependencyResolutionManagement {

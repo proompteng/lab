@@ -151,6 +151,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'signal_publisher/select_sequential_consistency': 1,
     })
     expect(users['signal_publisher/grants/query']).toEqual([
+      'GRANT INSERT ON signal.webull_market_events_v1',
       'GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT, INSERT ON signal.exchange_sessions_v1',
       'GRANT INSERT ON signal.intraday_bars_1m_v1',
@@ -173,6 +174,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.intraday_trades_v1',
       'GRANT SELECT ON signal.intraday_features_v1',
       'GRANT SELECT ON signal.crypto_market_events_v1',
+      'GRANT SELECT ON signal.webull_research_events_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])

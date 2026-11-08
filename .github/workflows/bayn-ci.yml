@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       bayn: ${{ github.event_name != 'pull_request' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn }}
+      formal: ${{ github.event_name != 'pull_request' && steps.manual.outputs.formal || fromJSON(steps.filter.outputs.affected).formal }}
       image: ${{ github.event_name != 'pull_request' && steps.manual.outputs.image || fromJSON(steps.filter.outputs.affected).image }}
     steps:
       - uses: actions/checkout@v5
@@ -31,9 +32,11 @@ jobs:
           workspaces: |
             bayn: ['', 'services/bayn', 'packages/scripts']
             image: ['', 'services/bayn']
+            formal: ['', 'services/bayn']
           filters: |
             bayn:
               - 'services/bayn/**'
+              - '!services/bayn/formal/**'
               - 'services/dorvud/**'
               - 'packages/scripts/src/bayn/**'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
@@ -51,12 +54,6 @@ jobs:
               - 'nix/images/bun-workspace-deps-source.test.sh'
               - 'nix/images/prune-bun-dependency-metadata.sh'
               - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - 'nix/oci-push.sh'
-              - 'nix/oci-release-contract.sh'
               - 'nix/verify-bayn-image-command.sh'
               - 'flake.nix'
               - 'flake.lock'
@@ -67,12 +64,20 @@ jobs:
               - 'bunfig.toml'
               - 'patches/**'
               - 'tsconfig.base.json'
-              - '.github/actions/setup-nix-toolchain/**'
-              - '.github/workflows/bayn-*.yml'
-              - '.github/workflows/common-monorepo.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
+            formal:
+              - 'services/bayn/src/**'
+              - 'services/bayn/migrations/**'
+              - 'services/bayn/formal/**'
+              - 'services/bayn/package.json'
+              - 'services/bayn/tsconfig*.json'
+              - 'tsconfig.base.json'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - '.github/workflows/bayn-formal.yml'
+              - '.github/workflows/bayn-ci.yml'
             image:
               - 'services/bayn/**'
+              - '!services/bayn/formal/**'
               - 'nix/images/bayn.nix'
               - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
@@ -83,11 +88,6 @@ jobs:
               - 'nix/images/bun-workspace-deps-source.nix'
               - 'nix/packages.nix'
               - 'nix/images/prune-bun-dependency-metadata.sh'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - 'nix/oci-push.sh'
               - 'nix/verify-bayn-image-command.sh'
               - 'flake.nix'
               - 'flake.lock'
@@ -98,9 +98,6 @@ jobs:
               - 'bunfig.toml'
               - 'patches/**'
               - 'tsconfig.base.json'
-              - '.github/actions/setup-nix-toolchain/**'
-              - '.github/workflows/bayn-*.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
 
       - name: Select all checks for exact-revision validation
         id: manual
@@ -109,11 +106,12 @@ jobs:
           {
             echo 'bayn=true'
             echo 'image=false'
+            echo 'formal=true'
           } >> "$GITHUB_OUTPUT"
 
   formal-verification:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
+    if: needs.changes.outputs.formal == 'true'
     uses: ./.github/workflows/bayn-formal.yml
 
   pr-checks:
@@ -176,7 +174,7 @@ jobs:
           env -u BAYN_ALPACA_ACCOUNT_ID
           -u BAYN_ALPACA_KEY_ID
           -u BAYN_ALPACA_SECRET_KEY
-          bun test --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
+          bun test src tools --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
           --timings=tools/ci-unit-timings.json --update-timings
           --reporter=junit --reporter-outfile=unit-results.xml
       - name: Retain test durations and results
@@ -332,7 +330,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [runtime, backtest, frozen-control, restart, inference]
+        group:
+          - runtime
+          - backtest
+          - latency-jev
+          - latency-ablation
+          - latency-momentum
+          - latency-momentum-trading
+          - frozen-control
+          - restart
+          - inference
     services:
       postgres:
         image: postgres:18-alpine
@@ -387,6 +394,12 @@ jobs:
           exit 1
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
         run: bun run --cwd services/bayn test:ledger ${{ matrix.group }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && startsWith(matrix.group, 'latency-') }}
+        with:
+          name: bayn-${{ matrix.group }}-${{ github.sha }}
+          path: services/bayn/node_modules/.cache/bayn-latency
+          if-no-files-found: error
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true
@@ -413,7 +426,7 @@ jobs:
           bash nix/images/bun-workspace-deps-source.test.sh
       - name: Verify registered replay image membership against a disposable registry
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts
           SCRIPT
@@ -436,13 +449,15 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
       - name: Verify replay execution capture against a disposable container and registry
         env:
           BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
           BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
           BAYN_TEST_REPLAY_EXECUTION: '1'
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
           docker pull "${BAYN_TEST_REGISTRY_IMAGE}"
@@ -488,6 +503,7 @@ jobs:
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
+          FORMAL_RELEVANT: ${{ needs.changes.outputs.formal }}
           FORMAL_RESULT: ${{ needs.formal-verification.result }}
           GEPA_RESULT: ${{ needs.gepa.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
@@ -504,13 +520,16 @@ jobs:
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
             exit 1
           fi
+          if [[ "${FORMAL_RELEVANT}" == 'true' && "${FORMAL_RESULT}" != 'success' ]]; then
+            echo "FORMAL_RESULT must be success for proof or conformance inputs, got ${FORMAL_RESULT}" >&2
+            exit 1
+          fi
           if [[ "${BAYN_RELEVANT}" != 'true' ]]; then
             echo 'No Bayn release inputs changed; the required gate is satisfied without running Bayn-specific jobs.'
             exit 0
           fi
           for result_name in \
             PR_CHECKS_RESULT \
-            FORMAL_RESULT \
             GEPA_RESULT \
             UNIT_RESULT \
             ARCHIVE_RESULT \

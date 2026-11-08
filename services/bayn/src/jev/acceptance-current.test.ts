@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { evaluateJevAcceptance, JevNumericalVerdict, JevResearchPolicy } from './acceptance'
+import {
+  evaluateRetainedJevAcceptance,
+  JevAcceptanceVersion,
+  JevNumericalVerdict,
+  JevResearchPolicy,
+} from './acceptance'
 import { bootstrapResolutionSupported, validateBootstrapPlan } from './bootstrap-plan'
 import { registrationFixture } from '../system-assessment/fixtures.test-support'
-import { registeredAssessmentTerms } from '../system-assessment/policy'
+import { retainedAssessmentTerms } from '../system-assessment/policy'
 
 const inputFixture = () => {
-  const registration = registrationFixture(undefined, 4)
+  const registration = registrationFixture(undefined, 4, JevAcceptanceVersion.RetainedV5)
   const definition = registration.policies[0]!
   return {
     schemaVersion: 'bayn.jev-acceptance-input.v1',
@@ -16,7 +21,7 @@ const inputFixture = () => {
       lockedAt: registration.registeredAt,
       attemptIndex: 1,
       sessions: registration.calendar.sessions,
-      analysis: registeredAssessmentTerms(registration, definition.riskPolicy),
+      analysis: Result.getOrThrow(retainedAssessmentTerms(registration, definition.riskPolicy)),
     },
     policies: registration.policies.map(({ policy }) => {
       let equity = 100_000
@@ -88,7 +93,7 @@ describe('fully costed economic qualification', () => {
           }
         }),
       }
-      const report = Result.getOrThrow(evaluateJevAcceptance(input))
+      const report = Result.getOrThrow(evaluateRetainedJevAcceptance(input))
       expect(report.statisticalEvidence?.status).toBe('RESEARCH_ONLY')
       expect(report.verdict).toBe(payoffs.every((p) => p > 0) ? JevNumericalVerdict.Passed : JevNumericalVerdict.Missed)
       if (!('confidence' in report)) throw new Error('Expected numerical diagnostics')
@@ -98,7 +103,7 @@ describe('fully costed economic qualification', () => {
     expect(0.5 * 0.5).toBe(0.25)
   })
   test('low activity, low turnover, small positive net edge and a failed cost stress are not rejected research targets', () => {
-    const result = Result.getOrThrow(evaluateJevAcceptance(inputFixture()))
+    const result = Result.getOrThrow(evaluateRetainedJevAcceptance(inputFixture()))
     expect(result.verdict).toBe(JevNumericalVerdict.Passed)
     if (!('metrics' in result)) throw new Error('Missing complete economic metrics')
     expect(result.metrics.completedEpisodes).toBe(4)
@@ -116,7 +121,7 @@ describe('fully costed economic qualification', () => {
 
   test('one prospectively selected control is sufficient', () => {
     const input = inputFixture()
-    const result = Result.getOrThrow(evaluateJevAcceptance({ ...input, policies: input.policies.slice(0, 2) }))
+    const result = Result.getOrThrow(evaluateRetainedJevAcceptance({ ...input, policies: input.policies.slice(0, 2) }))
     expect(result.verdict).toBe(JevNumericalVerdict.Passed)
     if (!('confidence' in result)) throw new Error('Missing confidence')
     expect(result.confidence.paired).toHaveLength(1)
@@ -132,7 +137,7 @@ describe('fully costed economic qualification', () => {
         bootstrap: { ...input.registration.analysis.bootstrap, replicates: 20_000 },
       },
     }
-    expect(Result.getOrThrow(evaluateJevAcceptance({ ...input, registration })).verdict).toBe(
+    expect(Result.getOrThrow(evaluateRetainedJevAcceptance({ ...input, registration })).verdict).toBe(
       JevNumericalVerdict.Passed,
     )
     expect(bootstrapResolutionSupported(10_000, 13, 3)).toBe(false)
@@ -157,7 +162,7 @@ describe('fully costed economic qualification', () => {
         })),
       })),
     }
-    expect(Result.getOrThrow(evaluateJevAcceptance(missing)).verdict).toBe(JevNumericalVerdict.Inconclusive)
+    expect(Result.getOrThrow(evaluateRetainedJevAcceptance(missing)).verdict).toBe(JevNumericalVerdict.Inconclusive)
     const uninformative = {
       ...input,
       registration: {
@@ -168,13 +173,15 @@ describe('fully costed economic qualification', () => {
         },
       },
     }
-    expect(Result.getOrThrow(evaluateJevAcceptance(uninformative)).verdict).toBe(JevNumericalVerdict.Inconclusive)
+    expect(Result.getOrThrow(evaluateRetainedJevAcceptance(uninformative)).verdict).toBe(
+      JevNumericalVerdict.Inconclusive,
+    )
   })
 
   test('fractional-dollar registered risk limits retain exact comparison precision', () => {
     const input = inputFixture()
     const result = Result.getOrThrow(
-      evaluateJevAcceptance({
+      evaluateRetainedJevAcceptance({
         ...input,
         registration: {
           ...input.registration,
@@ -197,7 +204,7 @@ describe('fully costed economic qualification', () => {
             ),
           },
     )
-    const result = Result.getOrThrow(evaluateJevAcceptance({ ...input, policies }))
+    const result = Result.getOrThrow(evaluateRetainedJevAcceptance({ ...input, policies }))
     expect(result.verdict).toBe(JevNumericalVerdict.Missed)
     if (!('checks' in result)) throw new Error('Missing risk checks')
     expect(result.checks.sessionLoss).toBe(false)

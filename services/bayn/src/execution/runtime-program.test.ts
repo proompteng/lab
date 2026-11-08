@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
@@ -17,7 +18,12 @@ import {
   type ReadResult,
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
+import {
+  BrokerMutationError,
+  MutationFailure,
+  MutationOperation,
+  invalidRequest,
+} from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
 import { makeReplayInferenceTiming } from '../intraday-replay/inference-timing'
@@ -353,6 +359,52 @@ describe('same-code execution program composition', () => {
         brokerAccess: BrokerAccess.ReadOnly,
       }),
     )
+  })
+
+  test('does not report a native cancellation as accepted without a durable receipt', async () => {
+    const fixture = finalLiveFixture()
+    const brokerOrderId = 'native-protection-child'
+    const command = {
+      intentId: fixture.intent.intentId,
+      accountId,
+      brokerOrderId,
+      requestedAt: observedAt,
+    } as const
+    const brokerReceipt = {
+      requestHash: Result.getOrThrow(canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId })),
+      brokerOrderId,
+      evidence: {
+        requestId: 'native-protection-cancel-test',
+        status: 204,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(null)),
+        observedAt,
+      },
+    } as const
+    let cancelCalls = 0
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...dependencies('native-cancel'),
+        brokerMutation: {
+          ...dependencies('native-cancel').brokerMutation,
+          cancel: () =>
+            Effect.sync(() => {
+              cancelCalls += 1
+              return brokerReceipt
+            }),
+        },
+        intentStore: {
+          beginProtectionCancel: () => Effect.succeed({ _tag: 'New', command } as const),
+          recordProtectionCancelAccepted: () => Effect.succeed({ _tag: 'PendingUnknown', command } as const),
+        } as unknown as ExecutionProgramDependencies['intentStore'],
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.cancelProtectionOrder(fixture.intent.intentId, brokerOrderId, undefined),
+    )
+
+    expect(result).toEqual({ _tag: 'PendingUnknown', command })
+    expect(cancelCalls).toBe(1)
   })
 
   test('produces the same final core safeguard decision for equal sandbox and live broker facts', async () => {
@@ -1140,6 +1192,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('final risk proof must not commit')),
         read: () =>
           Effect.sync(() => {
@@ -1220,6 +1273,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-lock position proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1286,6 +1340,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1381,6 +1436,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1548,8 +1604,10 @@ for (const phase of [
           measureDatabaseTime: (operation) => operation,
           providerClock,
           providers: {
-            jev: { evaluate: () => Effect.die('final authorization must not call Jev') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('final authorization must not call Jev') },
+              chartProviderFixture,
+            ),
           },
           advanceTo: (atMs) =>
             clockUnavailable
@@ -1633,6 +1691,55 @@ describe('execution with the native reconciliation cache', () => {
     }
     return { fixture, cache, deps }
   }
+  test.each(['rollback', 'defect', 'interruption'] as const)(
+    'preserves compound submit failure with %s before and after transmission',
+    async (cleanup) => {
+      for (const afterTransmission of [false, true]) {
+        const { fixture, cache, deps } = setup()
+        await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+        const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected submit denial' })
+        const rollback = new WriterFenceError({
+          operation: 'transaction',
+          failure: 'unavailable',
+          message: 'injected rollback failure',
+        })
+        const cleanupCause =
+          cleanup === 'rollback'
+            ? Cause.fail(rollback)
+            : cleanup === 'defect'
+              ? Cause.die(new Error('injected rollback defect'))
+              : Cause.interrupt()
+        let posts = 0
+        const exit = await Effect.runPromiseExit(
+          authorizeCachedFinalBrokerSubmit(
+            fixture.authority,
+            fixture.intent,
+            Effect.sync(() => {
+              posts += 1
+            }).pipe(Effect.andThen(Effect.fail(denied))),
+            {
+              ...deps,
+              currentUtcInstant: afterTransmission ? deps.currentUtcInstant : Effect.fail(denied),
+              writerFence: {
+                check: Effect.void,
+                transaction: (effect) =>
+                  effect.pipe(Effect.catchCause((cause) => Effect.failCause(Cause.combine(cause, cleanupCause)))),
+              },
+            },
+          ),
+        )
+        expect(posts).toBe(afterTransmission ? 1 : 0)
+        if (Exit.isSuccess(exit)) throw new Error('compound submit failure must propagate')
+        expect(exit.cause.reasons).toHaveLength(2)
+        expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+        if (cleanup === 'rollback' && afterTransmission) {
+          expect(exit.cause.reasons[1]).toMatchObject({ _tag: 'Fail', error: { failure: MutationFailure.Unknown } })
+        } else {
+          expect(exit.cause.reasons[1]).toEqual(cleanupCause.reasons[0])
+        }
+      }
+    },
+  )
   test.each([false, true])('checks the fee tier at the final transport clock: reset crossed %s', async (crossReset) => {
     const { fixture, cache, deps } = setup()
     const beforeReset = '2026-07-28T07:59:59.900Z'

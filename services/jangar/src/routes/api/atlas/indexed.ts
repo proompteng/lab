@@ -73,7 +73,7 @@ const getIndexedHandlerEffect = (request: Request) =>
 
       return jsonResponse({ ok: true, items: responseItems })
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
+    Effect.catch((error) => Effect.succeed(resolveServiceError(error.message))),
   )
 
 export const getAtlasIndexedHandler = async (request: Request) =>

@@ -693,6 +693,57 @@ data:
               runbook_url: docs/runbooks/mimir-email-alerting.md
       - name: ci-build-performance.rules
         rules:
+          - alert: AtticCacheUnavailable
+            expr: absent(probe_success{job="integrations/blackbox/attic-cache"}) or probe_success{job="integrations/blackbox/attic-cache"} == 0
+            for: 3m
+            labels:
+              severity: warning
+              team: platform
+              service: attic
+              notify: email
+            annotations:
+              summary: Attic cache is unavailable or its probe is missing
+              description: The internal Nix cache metadata probe has failed or disappeared for three minutes. Check Attic, PostgreSQL, and object storage.
+          - alert: AtticCacheUploadFailed
+            expr: |
+              sum by (workflow, architecture) (ci_nix_cache_events{kind="attic_upload_failures",window="1h",event="push"}) > 0
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 1m
+            labels:
+              severity: warning
+              team: platform
+              service: attic
+              notify: email
+            annotations:
+              summary: A CI build failed to populate Attic
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} reported an unsuccessful or timed-out build-cache upload. The published image does not establish cache health."
+          - alert: NixCacheDownloadFailed
+            expr: |
+              sum by (workflow, architecture, kind) (ci_nix_cache_events{kind=~"attic_download_failures|nixos_download_failures",window="1h",event="push"}) > 0
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 1m
+            labels:
+              severity: warning
+              team: platform
+              service: attic
+              notify: email
+            annotations:
+              summary: A CI build exhausted Nix cache download retries
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} reported {{ $labels.kind }}. Check the build logs and network path before retrying."
+          - alert: CiBuildStalled
+            expr: |
+              ci_job_oldest_execution_seconds{job_role="build",event="push"} > 1200
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: An individual image build has exceeded twenty minutes
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} is still running after twenty minutes. Inspect the job while it is active; this alert does not require a median regression."
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiObservabilityUnavailable
             expr: |
               absent(up{job="ci-observability"}) or up{job="ci-observability"} == 0
@@ -982,6 +1033,23 @@ data:
                 rate(ceph_bluestore_kv_sync_lat_sum{job="ceph-exporter"}[5m]) /
                 (rate(ceph_bluestore_kv_sync_lat_count{job="ceph-exporter"}[5m]) > 0)
               )
+          # Bytes include replica work, not unique logical scrub coverage.
+          - record: ceph_storage:bluefs_sst_write_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_bytes_written_sst{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluefs_wal_write_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_bytes_written_wal{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluefs_read_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_read_bytes{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_osd_scrub_replicated_read_bytes{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:osd_scrub_blocked_ops_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_osd_scrub_replicated_io_blocked{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluestore_throttle_seconds:mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                rate(ceph_bluestore_txc_throttle_lat_sum{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) /
+                (rate(ceph_bluestore_txc_throttle_lat_count{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) > 0)
+              )
           - record: ceph_storage:host_disk_busy_ratio:rate5m
             expr: max by (node, device) (rate(node_disk_io_time_seconds_total{job="node-storage"}[5m]))
           - record: ceph_storage:host_disk_queue_depth:mean5m
@@ -1133,6 +1201,18 @@ data:
               min by (namespace, persistentvolumeclaim) (
                 kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
               ) < 0.05
+              # Raw block devices can expose capacity with both byte counters zero.
+              # Missing used-byte telemetry must not suppress a full-filesystem alert.
+              unless on (namespace, persistentvolumeclaim)
+              (
+                (max by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) == 0)
+                and
+                (max by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_used_bytes{persistentvolumeclaim!=""}
+                ) == 0)
+              )
             for: 10m
             labels:
               severity: critical
@@ -1144,15 +1224,29 @@ data:
                 {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
-            expr: ceph_health_status{job="ceph-storage"} == 1
+            expr: |
+              (ceph_health_status{job="ceph-storage"} == 1)
+              unless on (job, instance)
+              (
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name=~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+                unless on (job, instance)
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name!~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+              )
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
               team: platform
             annotations:
               summary: Ceph cluster reports HEALTH_WARN
-              description: Ceph has reported HEALTH_WARN continuously for 10 minutes.
+              description: >-
+                Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable.
+                Active checks: {{ range query (printf "ceph_health_detail{job=%q,instance=%q} > 0" $labels.job $labels.instance) | sortByLabel "name" }}{{ .Labels.name }}; {{ else }}detail unavailable; {{ end }}Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthError
             expr: ceph_health_status{job="ceph-storage"} >= 2
@@ -1196,6 +1290,7 @@ data:
           - alert: CephOsdQueueWaitHigh
             expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1207,6 +1302,7 @@ data:
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1218,6 +1314,7 @@ data:
           - alert: CephOsdCommitLatencyCritical
             expr: ceph_storage:osd_commit_latency_ms:max > 150
             for: 5m
+            keep_firing_for: 10m
             labels:
               severity: critical
               service: ceph-storage
@@ -1236,6 +1333,7 @@ data:
                 }
               ) > 0
             for: 30m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -3005,14 +3103,14 @@ data:
               absent(up{job="restate-server", namespace="restate", service="restate"})
               or
               sum(up{job="restate-server", namespace="restate", service="restate"}) < 3
-            for: 2m
+            for: 5m
             labels:
-              severity: critical
+              severity: warning
               service: restate
               notify: email
             annotations:
               summary: Restate server metrics are unavailable
-              description: Fewer than three Restate NodeCtl metrics endpoints have been reachable for two minutes.
+              description: Fewer than three Restate NodeCtl metrics endpoints have been reachable for five minutes. Check replica recovery; missing metadata quorum has a separate critical alert.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateNodeHealthDegraded
             expr: |
@@ -3020,14 +3118,14 @@ data:
                 job="restate-server",
                 state=~"dead|suspect|failing_over"
               }) > 0
-            for: 2m
+            for: 5m
             labels:
-              severity: critical
+              severity: warning
               service: restate
               notify: email
             annotations:
               summary: Restate failure detector reports an unhealthy node
-              description: At least one Restate node has remained dead, suspect, or failing over for two minutes.
+              description: At least one Restate node has remained dead, suspect, or failing over for five minutes. Check replica recovery; missing metadata quorum has a separate critical alert.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateMetadataQuorumUnavailable
             expr: |
@@ -3648,8 +3746,13 @@ data:
               service: bayn
               notify: email
             annotations:
-              summary: Bayn autonomous cycle is failed
-              description: A durable blocked cycle or fail-closed authority, reconciliation, or mutation condition remains current.
+              summary: Bayn reported a fail-closed execution condition
+              description: |
+                Bayn observed a durable blocked cycle or a fail-closed authority,
+                reconciliation, or mutation condition. This does not necessarily mean
+                a terminal cycle failure. Check cycle.reason and the matching cycle/trace.
+                Firing is retained for 5 minutes after the condition clears; notification
+                time is not incident onset or duration. Follow the runbook to verify recovery.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
       - name: kafka-critical-service.rules
         rules:
@@ -3956,22 +4059,6 @@ data:
                   application="tengri"
                 }
               )
-          - alert: TengriArgoApplicationDegraded
-            expr: |
-              argocd_app_info{
-                name="tengri",
-                health_status!="Healthy"
-              } == 1
-            for: 5m
-            labels:
-              severity: critical
-              team: platform
-              service: tengri
-              notify: email
-            annotations:
-              summary: The Tengri Argo CD application is degraded
-              description: Argo CD has reported the Tengri application unhealthy for five minutes.
-              runbook_url: docs/tengri/operations.md
           - alert: TengriMetricsUnavailable
             expr: |
               (
@@ -4065,7 +4152,7 @@ data:
                     namespace="tengri"
                   }[15m]
                 )
-              ) > 2
+              ) >= 3
             for: 5m
             labels:
               severity: warning
@@ -4074,6 +4161,30 @@ data:
             annotations:
               summary: Tengri guest operations are repeatedly failing
               description: Tengri recorded more than two guest API or readiness failures during the last 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriRunStatusFailures
+            expr: sum(increase(tengri_run_read_failures_total{job="tengri",namespace="tengri"}[5m])) > 0
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri cannot reliably observe accepted runs
+              description: Run-status reads are failing or exhausting recovery deadlines despite process readiness. Inspect Restate admission and durable-write latency.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriRunRecoveryBlocked
+            expr: sum by (phase) (increase(tengri_run_recovery_observations_total{job="tengri-run-worker",namespace="tengri"}[10m])) > 0
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri run recovery needs attention
+              description: An accepted run requires current authorization or reconciliation of its execution outcome. Journal activity and Ready pods do not establish native progress. Preserve its home and never resubmit the accepted turn.
               runbook_url: docs/tengri/operations.md
           - alert: TengriBootLatencyHigh
             expr: |
@@ -4263,9 +4374,9 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynOperationMetricsUnavailable
           expr: label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"} ==
-            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"})
+            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"} <= time() + 5)
             >= time() - 90), "service", "bayn", "source_revision", ".*") or label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
-            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"})
+            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"} <= time() + 5)
             >= time() - 90), "service", "bayn-execution-controller", "source_revision", ".*")
           for: 2m
           labels:

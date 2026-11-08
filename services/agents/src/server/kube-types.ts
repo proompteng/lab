@@ -38,6 +38,7 @@ export type KubernetesClient = {
     namespace: string
     container?: string | null
     tailLines?: number | null
+    limitBytes?: number
   }) => Promise<string>
 }
 
@@ -625,7 +626,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
       throw new Error(`kubernetes events failed: ${normalizeKubeErrorMessage(error)}`)
     }
   },
-  logs: async ({ pod, namespace, container, tailLines }) => {
+  logs: async ({ pod, namespace, container, tailLines, limitBytes }) => {
     const core = getKubeClients().core
     try {
       const logs = await core.readNamespacedPodLog({
@@ -633,6 +634,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
         namespace,
         ...(container ? { container } : {}),
         ...(tailLines && Number.isFinite(tailLines) ? { tailLines: Math.max(1, Math.floor(tailLines)) } : {}),
+        ...(limitBytes ? { limitBytes } : {}),
       })
       return typeof logs === 'string' ? logs : JSON.stringify(logs)
     } catch (error) {

@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
 import {
   persistVisualClaimFixture,
@@ -9,8 +10,6 @@ import { EntryInferenceJournal } from '../jev/entry-inference'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
-import { DecisionsClient } from '../jev/decisions'
-import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -46,13 +45,7 @@ const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_j
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = () =>
   ManagedRuntime.make(
-    Layer.mergeAll(
-      CycleStoreLive,
-      CandidateObservationStoreLive,
-      JevBatchStoreLive,
-      EntryInferenceJournalLive,
-      Layer.succeed(DecisionsClient, chartProviderFixture),
-    ).pipe(
+    Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevBatchStoreLive, EntryInferenceJournalLive).pipe(
       Layer.provideMerge(JevEvaluationStoreLive),
       Layer.provideMerge(
         PostgresClientLive({
@@ -160,13 +153,16 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* TestClock.setTime(Date.parse(request.expiresAt))
         const result = yield* evaluateAdmittedFixture(dispatch).pipe(
           Effect.result,
-          Effect.provideService(JevClient, {
-            evaluate: () =>
-              Effect.sync(() => {
-                calls += 1
-                return inferenceFixture()
-              }),
-          }),
+          Effect.provideService(
+            JevClient,
+            entryProviderFixture({
+              evaluate: () =>
+                Effect.sync(() => {
+                  calls += 1
+                  return inferenceFixture()
+                }),
+            }),
+          ),
         )
         expect(Result.isFailure(result)).toBe(true)
         expect(calls).toBe(0)
@@ -193,7 +189,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
             { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
           ),
         )
-        expect(quotes).toHaveLength(3)
+        expect(quotes).toHaveLength(2)
         expect(
           quotes.every(
             (quote) =>

@@ -1,3 +1,4 @@
+import { unusedEntryExpiresAt } from '../entry-admission'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
@@ -466,8 +467,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
     expect(current).toMatchObject({ state: CycleState.Active, stateVersion: 2 })
     expect(current.bindings).toEqual({})
-    expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
-    expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
+    expect(current.window.executionCalendarSchemaVersion).toBe('bayn.alpaca-market-calendar-observation.v2')
+    expect(current.window.submissionCutoffAt).toBe('2026-08-28T19:55:00.000Z')
+    expect(unusedEntryExpiresAt(current)).toBe(Date.parse('2026-08-28T14:13:00.000Z'))
     expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
     expect(result.intentCount).toBe('0')
   })
@@ -702,7 +704,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
             'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.jev.protocol.v36', ${'7'.repeat(64)}, ${accountId},
+            'bayn.jev.protocol.v37', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}

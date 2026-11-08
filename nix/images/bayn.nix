@@ -13,11 +13,11 @@ let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
-  # Canonical hash of the compiled bayn.jev.protocol.v36 document.
-  strategyParameterHash = "adc171283bdd8086af3357629e05b241253d9661a41d8f9c5bde33fb521b5611";
+  # Canonical hash of the compiled bayn.jev.protocol.v40 document.
+  strategyParameterHash = "6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "217ca19ddedd695eaff5de8c3c9471fb45e22c55c177280675b5662f8f311b0b";
+  strategyProtocolHash = "140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -56,6 +56,16 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
   '';
+  nativeArrivalExportCommand = pkgs.writeShellScriptBin "bayn-native-arrival-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/native-arrival-export-command.js" "$@"
+  '';
+  webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/webull-research-command.js" "$@"
+  '';
   gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
@@ -63,7 +73,8 @@ let
       version = "0.1.4";
       pyproject = true;
       src = pkgs.fetchurl {
-        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        name = "8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        url = "https://codeload.github.com/gepa-ai/gepa/tar.gz/8f287de942f41a6d1e0e7e5b2d576247c4bedee9";
         hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
       };
       build-system = [ ps.setuptools ps.wheel ps.build ];
@@ -97,16 +108,21 @@ let
   depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
+    # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
+    "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
     "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
+    "node --check services/bayn/dist/market-projection-worker.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/native-arrival-export-command.js --help"
+    "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -185,6 +201,8 @@ import ./bun-workspace-service.nix {
     backtestCommand
     frozenControlCommand
     controlCommand
+    nativeArrivalExportCommand
+    webullResearchCommand
     gepaPython
     pkgs.go-containerregistry
   ];

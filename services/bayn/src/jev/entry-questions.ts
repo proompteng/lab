@@ -3,12 +3,19 @@ import { BigDecimal, Result, Schema } from 'effect'
 import { SymbolSchema } from '../schemas'
 import { instrumentMarket, MarketKind } from '../instruments'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessmentsMaterial } from './chart-questions'
-import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
+import type { ChartAssessmentsMaterial } from './/chart-assessments'
+import {
+  JevContractError,
+  jevModel,
+  retainedJevModel,
+  prepareJevRequest,
+  type JevRequest,
+  type JevResponse,
+} from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
-
-export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
+import { entryJudgmentThresholds } from './judgment-policy'
+import { WebullEntryContextSchema, webullEntryContextPolicy } from './webull-entry-context'
 
 const questionNames = (setup: EntrySetup, market: MarketKind) => {
   const setupName = setup === EntrySetup.SupportRecovery ? 'support_recovery' : 'base_breakout'
@@ -71,7 +78,7 @@ const marketJudgmentPolicy = (market: MarketKind) => ({
   ),
 })
 
-export const entryEvidenceStateDefinition = 'bayn.jev-proposal-evidence.v1' as const
+export const entryEvidenceStateDefinition = 'bayn.jev-proposal-evidence.v2' as const
 
 enum StructureCloseLocation {
   Above = 'ABOVE',
@@ -79,9 +86,9 @@ enum StructureCloseLocation {
   Below = 'BELOW',
 }
 
-export const entryJudgmentPolicy = {
-  stateDefinition: entryEvidenceStateDefinition,
-  model: jevModel,
+export const retainedEntryJudgmentPolicy = {
+  stateDefinition: 'bayn.jev-proposal-evidence.v1',
+  model: retainedJevModel,
   thresholds: entryJudgmentThresholds,
   evidenceInstructions: jevInstructions.entry,
   markets: {
@@ -90,7 +97,18 @@ export const entryJudgmentPolicy = {
   },
 }
 
+export const entryJudgmentPolicy = {
+  ...retainedEntryJudgmentPolicy,
+  model: jevModel,
+  stateDefinition: entryEvidenceStateDefinition,
+  evidenceInstructions:
+    jevInstructions.entry +
+    ' Use available webullContext as an independent completed-minute observation for the same symbol and window. Keep its prices and volume separate from completedSourceBars. It is supplemental context, not an executable quote or proof of consolidated coverage.',
+  supplementalMarketData: webullEntryContextPolicy,
+}
+
 export const makeEntryJudgmentRequest = (input: {
+  readonly model?: JevRequest['model']
   readonly numericalState: Readonly<Record<string, Schema.Json>>
   readonly chart: NativeChartEvidence
   readonly assessments: ChartAssessmentsMaterial
@@ -98,6 +116,15 @@ export const makeEntryJudgmentRequest = (input: {
 }) =>
   Result.gen(function* () {
     if (input.proposals.length === 0) return null
+    const state = yield* Schema.decodeUnknownResult(
+      Schema.Union([
+        Schema.Struct({ schemaVersion: Schema.Literals(['bayn.jev-entry-state.v22', 'bayn.jev-entry-state.v23']) }),
+        Schema.Struct({
+          schemaVersion: Schema.Literal('bayn.jev-entry-state.v24'),
+          webullContext: WebullEntryContextSchema,
+        }),
+      ]),
+    )(input.numericalState)
     const candidate = yield* Schema.decodeUnknownResult(
       Schema.Struct({ symbol: SymbolSchema, quote: Schema.optionalKey(Schema.Json) }),
     )(input.numericalState['candidate'])
@@ -192,7 +219,10 @@ export const makeEntryJudgmentRequest = (input: {
       }
       const context = {
         proposalEvidencePath: `proposals.${source.setup}`,
-        evidence: jevInstructions.entry,
+        evidence:
+          state.schemaVersion === 'bayn.jev-entry-state.v24'
+            ? entryJudgmentPolicy.evidenceInstructions
+            : retainedEntryJudgmentPolicy.evidenceInstructions,
       }
       const definitions = entryJudgmentDefinitions(source.setup)
       for (const key of ['setup', 'stop'] as const) {
@@ -211,9 +241,12 @@ export const makeEntryJudgmentRequest = (input: {
         }
     }
     return yield* prepareJevRequest({
-      model: jevModel,
+      model: input.model ?? jevModel,
       state: {
-        schemaVersion: entryEvidenceStateDefinition,
+        schemaVersion:
+          state.schemaVersion === 'bayn.jev-entry-state.v24'
+            ? entryEvidenceStateDefinition
+            : retainedEntryJudgmentPolicy.stateDefinition,
         symbol: candidate.symbol,
         windowEndAt: input.chart.windowEndAt,
         completedSourceBars: input.chart.bars.map(({ id, minuteBeforeWindowEnd, open, high, low, close, volume }) => ({
@@ -226,6 +259,7 @@ export const makeEntryJudgmentRequest = (input: {
           volume,
         })),
         ...(candidate.quote === undefined ? {} : { observedQuote: candidate.quote }),
+        ...(state.schemaVersion === 'bayn.jev-entry-state.v24' ? { webullContext: state.webullContext } : {}),
         proposals: proposalEvidence,
       },
       questions,

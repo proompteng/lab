@@ -33,6 +33,40 @@ const createKubeMock = (overrides: Partial<KubernetesClient> = {}): KubernetesCl
 })
 
 describe('getAgentRunLogs', () => {
+  it('restricts connector logs to the recorded run UID and rejects a changed target', async () => {
+    const kube = createKubeMock({
+      list: vi.fn(async () => ({ items: [buildPod('original-pod', 'Running', ['runner'])] })),
+      logs: vi.fn(async () => 'original logs'),
+    })
+    const record = {
+      id: 'projection',
+      agentName: 'agent',
+      deliveryId: 'delivery',
+      provider: 'job',
+      status: 'Running',
+      externalRunId: 'run-1',
+      payload: { request: { namespace: 'agents' }, resource: { metadata: { uid: 'original-uid' } } },
+    }
+    const response = await getAgentRunLogsHandler(
+      new Request('http://agents/logs?name=run-1&namespace=agents&tailLines=1'),
+      { kubeClient: kube, record, maxBytes: 131072 },
+    )
+    expect(response.status).toBe(200)
+    expect(kube.list).toHaveBeenCalledWith(
+      'pods',
+      'agents',
+      'agents.proompteng.ai/agent-run=run-1,agents.proompteng.ai/run-uid=original-uid',
+    )
+    expect(kube.logs).toHaveBeenCalledWith(expect.objectContaining({ limitBytes: 131072, tailLines: 1 }))
+    vi.mocked(kube.logs).mockClear()
+    const changed = await getAgentRunLogsHandler(new Request('http://agents/logs?name=run-1&namespace=other'), {
+      kubeClient: kube,
+      record,
+    })
+    expect(changed.status).toBe(502)
+    expect(kube.logs).not.toHaveBeenCalled()
+  })
+
   it('returns pods and logs for the selected pod', async () => {
     const kube = createKubeMock({
       list: vi.fn(async () => ({
@@ -63,18 +97,20 @@ describe('getAgentRunLogs', () => {
     })
   })
 
-  it('returns ok with empty pods when none are found', async () => {
+  it('reports unavailable logs when neither a live Pod nor a retained run exists', async () => {
     const response = await getAgentRunLogsHandler(
       new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents'),
-      { kubeClient: createKubeMock() },
+      {
+        kubeClient: createKubeMock(),
+        storeFactory: () => ({
+          ready: Promise.resolve(),
+          close: async () => {},
+          getAgentRunByExternalRunId: async () => null,
+        }),
+      },
     )
-
-    expect(response.status).toBe(200)
-    const payload = (await response.json()) as Record<string, unknown>
-    expect(payload.ok).toBe(true)
-    expect(payload.pods).toEqual([])
-    expect(payload.logs).toBe('')
-    expect(payload.pod).toBeNull()
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: 'AgentRun logs not found' })
   })
 
   it('requires name and namespace', async () => {
