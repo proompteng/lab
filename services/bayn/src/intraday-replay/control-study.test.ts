@@ -1,16 +1,14 @@
+import { assumptions, compressedControlFixture, frozenControlFixture } from './control-study.test-support'
 import { BrokerEnvironment } from '../broker/identity'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
-import { jevInstructions } from '../jev/instructions'
-import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 
 import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { gzipSync } from 'node:zlib'
 import { Clock, Effect, FileSystem, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
@@ -20,9 +18,6 @@ import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
-import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
-import { config } from '../testing/runtime-fixtures'
-import { jevModel } from '../jev/contract'
 import { ControlExit, ControlPolicy } from './control-portfolio'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { residualShockDefinition } from './residual-shock'
@@ -42,13 +37,7 @@ import {
 const fixture = nativeJevFixture()
 const openMs = Date.parse(exchangeSessions(fixture.snapshot.manifest.calendar)[0]?.openAt ?? '')
 const closeMs = openMs + 90 * 60_000
-const assumptions = {
-  instruments: replayTestInstruments,
-  latencyMs: 100,
-  slippageBps: 1,
-  availableLiquidityPpm: 1_000_000,
-  feeMultiplierPpm: 1_000_000,
-}
+
 const simulate = (
   options: {
     missingSnapshot?: boolean
@@ -767,87 +756,6 @@ test('a canceled residual-shock entry consumes the minute and unknown exit quote
   expect(missing.report.completion).toBe('INCOMPLETE')
   expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
 })
-
-const compressedControlFixture = (body: string) => {
-  const compressed = gzipSync(body)
-  compressed[9] = 3
-  return compressed
-}
-
-const frozenControlFixture = () => {
-  const retained = retainedReplayFixture()
-  const source = {
-    ...retained.manifest,
-    dataSha256: sha256(compressedControlFixture(retained.body)),
-    coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
-    coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
-  }
-  const { verification: _verification, ...build } = config.build
-  const input = {
-    schemaVersion: 'bayn.control-study-input.v10',
-    riskEnvironment: BrokerEnvironment.Live,
-    openingPeakEquityMicros: '100000000000',
-    costObjective: 'ALL_COSTS',
-    entry: 'DETERMINISTIC',
-    turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
-    management: ControlManagementMode.Mechanical,
-    decisionLatencyMs: 1000,
-    repeatedTargetWeightPpm: 100000,
-    backtest: {
-      schemaVersion: 'bayn.backtest.v11',
-      policy: 'JEV' as const,
-      latencyStress: null,
-      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
-      inference: {
-        mode: 'measured-providers',
-        maximumCalls: 1000,
-        models: { jev: jevModel },
-        inputDefinition: 'bayn.jev-entry-state.v24',
-        costs: replayRateCardFixture({
-          jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
-          chart: {
-            inputMicrosPerMillionTokens: '100000',
-            outputMicrosPerMillionTokens: '0',
-            cachedInputMicrosPerMillionTokens: '10000',
-            cacheWriteInputMicrosPerMillionTokens: '125000',
-          },
-        }),
-      },
-      allocatedDataCostPerSessionMicros: '1000000',
-      replicate: 'control-source-fixture',
-      interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-08T20:00:00.000Z' },
-      source,
-      openingCashMicros: '100000000000',
-      fractionalTrading: false,
-      calendar: [
-        ...retained.input.input.calendar,
-        { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
-        { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
-      ],
-      assets: equityMarketProfile.universe.map((symbol, index) => ({
-        id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
-        symbol,
-        class: 'us_equity',
-        exchange: 'NASDAQ',
-        status: 'active',
-        tradable: true,
-        fractionable: true,
-      })),
-      assetObservationAt: '2026-09-04T13:29:00.000Z',
-      assetObservationPolicy: 'retained-as-of-session',
-      build,
-      assumptions,
-      cadence: {
-        pollIntervalMs: 30000,
-        reconciliationIntervalMs: 30000,
-        reconciliationPassTimeoutMs: 30000,
-        reconciliationStaleThresholdMs: 120000,
-      },
-    },
-  }
-  const receipt = retainedReplayCaptureFixture(source)
-  return { retained, source, input, receipt }
-}
 
 test('net control comparisons require a priced data allocation', () => {
   const { input, receipt } = frozenControlFixture()
