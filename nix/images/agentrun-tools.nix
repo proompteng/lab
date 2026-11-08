@@ -7,12 +7,14 @@ let
       browserUrl = "https://storage.googleapis.com/chrome-for-testing-public/147.0.7727.15/linux64/chrome-headless-shell-linux64.zip";
       browserHash = "sha256-z3ec1UhvP8Whi+pKxgYCahZnrhbvruFa9RvTrTrgEJI=";
       spicedbArch = "amd64";
+      spicedbAssetId = "557746046";
       spicedbHash = "sha256-SQ3S+Rte86evq2AJSfYFo9tNcuqjTotBcrOPINGj5Hc=";
     };
     aarch64-linux = {
       browserUrl = "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1217/chromium-headless-shell-linux-arm64.zip";
       browserHash = "sha256-bbcEHYonMJO48senM4dmxtEquwbNAlP8kf7rtx7NRjU=";
       spicedbArch = "arm64";
+      spicedbAssetId = "557746045";
       spicedbHash = "sha256-CVw5xYoOQzjba3+nhc6OJDGpB1nfT3zwTXwPtC8/coE=";
     };
   }.${pkgs.stdenv.hostPlatform.system};
@@ -57,7 +59,9 @@ let
     pname = "agentrun-spicedb";
     version = "1.56.2";
     src = pkgs.fetchurl {
-      url = "https://github.com/authzed/spicedb/releases/download/v1.56.2/spicedb_1.56.2_linux_${platform.spicedbArch}.tar.gz";
+      name = "spicedb_1.56.2_linux_${platform.spicedbArch}.tar.gz";
+      url = "https://api.github.com/repos/authzed/spicedb/releases/assets/${platform.spicedbAssetId}";
+      curlOptsList = [ "-H" "Accept: application/octet-stream" ];
       hash = platform.spicedbHash;
     };
     sourceRoot = ".";

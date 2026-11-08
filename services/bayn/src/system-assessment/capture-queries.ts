@@ -93,18 +93,22 @@ export const systemControllerPassQuery = (
   closeAt: string,
   asOf: string,
 ) => sql`
-        SELECT DISTINCT status->>'controller_key' AS "controllerKey",
-          status->>'plan_hash' AS "planHash", (status->>'epoch')::double precision AS epoch,
-          (status->>'last_sequence')::double precision AS sequence, status->>'last_receipt_hash' AS "receiptHash",
-          to_char((status->>'completed_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "completedAt",
-          status->'last_pass' AS observation
-        FROM execution_controller_observations
-        WHERE controller_key = ${controllerKey} AND status->>'plan_hash' = ${planHash}
-          AND status->>'active' = 'true'
-          AND status->>'last_receipt_hash' IS NOT NULL AND jsonb_typeof(status->'last_pass') = 'object'
-          AND (status->>'completed_at')::timestamptz <= ${asOf}::timestamptz
-          AND ((status->>'completed_at')::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz
-            OR (status #>> '{last_pass,executionIssuedAt}')::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz)
+        SELECT DISTINCT pass.controller_key AS "controllerKey",
+          pass.plan_hash AS "planHash", pass.epoch::double precision AS epoch,
+          pass.last_sequence::double precision AS sequence, pass.last_receipt_hash AS "receiptHash",
+          to_char(pass.completed_at::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "completedAt",
+          pass.last_pass AS observation
+        FROM execution_controller_observations AS observation
+        CROSS JOIN LATERAL jsonb_to_record(observation.status) AS pass(
+          controller_key text, plan_hash text, active text, epoch text, last_sequence text,
+          last_receipt_hash text, completed_at text, last_pass jsonb
+        )
+        WHERE observation.controller_key = ${controllerKey} AND pass.plan_hash = ${planHash}
+          AND pass.active = 'true'
+          AND pass.last_receipt_hash IS NOT NULL AND jsonb_typeof(pass.last_pass) = 'object'
+          AND pass.completed_at::timestamptz <= ${asOf}::timestamptz
+          AND (pass.completed_at::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz
+            OR (pass.last_pass->>'executionIssuedAt')::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz)
         ORDER BY "receiptHash", epoch, sequence, "completedAt"`
 
 export const readSystemControllerPasses = (

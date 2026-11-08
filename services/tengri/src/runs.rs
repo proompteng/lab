@@ -18,6 +18,8 @@ pub(crate) mod reader;
 // Query expiry limits admission; an authorized response may arrive later.
 const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
 const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+// Leave room for ingress authorization within the BFF's 130-second RPC deadline.
+const ADMISSION_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 
 async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
 where
@@ -310,37 +312,72 @@ pub(crate) async fn submit(
     };
     let envelope = seal(service, "admission", &admission).await?;
     let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, workspace_uid);
-    let accepted =
-        match tokio::time::timeout(Duration::from_secs(10), client.admit(Json(envelope)).call())
-            .await
-        {
-            Ok(result) => result
+    confirm_admission(
+        async {
+            client
+                .admit(Json(envelope))
+                .call()
+                .await
+                .map_err(client_error)?
+                .into_body()
                 .map_err(client_error)
-                .and_then(|response| response.into_body().map_err(client_error)),
-            Err(_) => Err(Status::unavailable(
-                "durable run acceptance timed out; retry the same operation",
-            )),
-        };
-    if let Err(error) = &accepted {
-        if !matches!(
-            error.code(),
-            tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
-        ) {
-            return Err(error.clone());
-        }
-        tracing::warn!("durable admission response lost; reconciling the existing run");
-    }
-    match read(&principal, &input.id, Some(digest)).await {
-        Ok(snapshot) => Ok(snapshot),
-        Err(error)
-            if matches!(
-                error.code(),
-                tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
-            ) =>
+        },
+        || read(&principal, &input.id, Some(digest.clone())),
+    )
+    .await
+}
+
+async fn confirm_admission<T, A, R, Fut>(admission: A, mut read: R) -> Result<T, Status>
+where
+    A: std::future::Future<Output = Result<(), Status>>,
+    R: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    tokio::time::timeout(ADMISSION_RECOVERY_TIMEOUT, async {
+        tokio::pin!(admission);
+        let accepted = match tokio::time::timeout(Duration::from_secs(10), admission.as_mut()).await
         {
-            accepted.and(Err(error))
+            Ok(result) => result,
+            Err(_) => {
+                // Keep the original request alive: the durable admission may still be queued.
+                // A committed snapshot can confirm it sooner when only the acknowledgement is lost.
+                tracing::warn!("durable admission remains pending; reconciling the existing run");
+                let snapshot = read();
+                tokio::pin!(snapshot);
+                tokio::select! {
+                    accepted = admission.as_mut() => {
+                        if let Err(error) = accepted {
+                            require_transient_admission(error)?;
+                        }
+                        return snapshot.await;
+                    }
+                    result = snapshot.as_mut() => match result {
+                        Ok(value) => return Ok(value),
+                        Err(error) => require_transient_admission(error)?,
+                    }
+                }
+                admission.await
+            }
+        };
+        if let Err(error) = accepted {
+            require_transient_admission(error)?;
         }
-        Err(error) => Err(error),
+        read().await
+    })
+    .await
+    .map_err(|_| {
+        Status::unavailable("durable run acceptance timed out; retry the same operation")
+    })?
+}
+
+fn require_transient_admission(error: Status) -> Result<(), Status> {
+    if matches!(
+        error.code(),
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+    ) {
+        Ok(())
+    } else {
+        Err(error)
     }
 }
 

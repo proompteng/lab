@@ -84,6 +84,9 @@ New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native 
 one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
 archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
 identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+The shared controller-evidence query expands each retained JSON status once before filtering and deduplication,
+avoiding repeated decompression of large pass payloads. It preserves distinct observations, identity and window
+filters, cross-boundary execution starts, and the original database deadline.
 Operational capture uses the verified registration's original runtime configuration, even after the reporting service
 has upgraded. The capture build is recorded separately. Replay still binds every execution source to the registered
 policy, generation, build and original deadlines; a reporting upgrade cannot substitute new clocks or certify work
@@ -133,6 +136,10 @@ selected matched control, source/image/prompt identities, cost weights, actual i
 allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
 have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
+The financial market scope must cover every registered runtime entry market and may retain additional native
+markets for existing-position exits. An equity-only runtime can register an equity-only evaluation without
+enabling crypto. Captured activity outside that financial scope remains an evidence failure. Historical runtime
+commitments without an entry scope still require every market in their original protocol.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
