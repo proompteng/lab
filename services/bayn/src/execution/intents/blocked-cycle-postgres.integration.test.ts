@@ -1,5 +1,5 @@
 import webullObserveCutover from '../../../migrations/0179_webull_observe_cutover'
-import { observeCycleGenerationHash } from '../../composition/lifecycle'
+import { observeCycleGenerationHash } from '../capital-grant-algebra'
 import { orderRequestBody } from '../../broker/alpaca-mutations/decisions'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'

@@ -27,7 +27,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
@@ -60,7 +60,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
-import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
+import { loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'

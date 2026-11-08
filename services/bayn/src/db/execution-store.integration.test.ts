@@ -37,12 +37,12 @@ import {
   AuthorityGenerationStore,
   AuthorityRestrictionStore,
   BrokerEventStore,
-  ExecutionStoreLive,
   FillAccountingStore,
   ReconciliationStore,
   type ReconciliationStoreShape,
   ValuationStore,
-} from './execution-store'
+} from './execution-store/contract'
+import { ExecutionStoreLive } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'

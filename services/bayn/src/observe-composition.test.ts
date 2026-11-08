@@ -30,7 +30,7 @@ import {
   prepareObserveDecisionReads,
   readObserveDecisionFacts,
 } from './observe-composition/decision-builder'
-import { makeExecutionRiskPolicy } from './execution/risk-policy'
+import { makeExecutionRiskPolicy, loadStrategyExecutionRiskPolicy } from './execution/risk-policy'
 import { JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
@@ -91,7 +91,7 @@ import {
   type FillAccountingStoreShape,
   type ReconciliationStoreShape,
   type ValuationStoreShape,
-} from './db/execution-store'
+} from './db/execution-store/contract'
 import { operationalError, retryableOperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from './execution/authority'
 import {
@@ -157,7 +157,6 @@ import {
 } from './observe-composition/execution-cycle'
 import { executeMutationIntent } from './observe-composition/mutation-interpreter'
 import {
-  loadStrategyExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
