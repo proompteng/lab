@@ -47,4 +47,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:7a339face0aa3cdc4841985dd57b509e10aabcdff5e1f2b3a5572866166acc55
+  digest: sha256:90c2ecc17b891f44890df5052949cfa31a3c51f82da64b6b8b46e9437703474f
