@@ -56,6 +56,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
   '';
+  nativeArrivalExportCommand = pkgs.writeShellScriptBin "bayn-native-arrival-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/native-arrival-export-command.js" "$@"
+  '';
   webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -115,6 +120,7 @@ let
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/native-arrival-export-command.js --help"
     "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
@@ -194,6 +200,7 @@ import ./bun-workspace-service.nix {
     backtestCommand
     frozenControlCommand
     controlCommand
+    nativeArrivalExportCommand
     webullResearchCommand
     gepaPython
     pkgs.go-containerregistry

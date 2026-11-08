@@ -327,6 +327,8 @@ service directory with the existing archive connection and CA configuration:
 bun run native:export --capture-id <capture-id> --through-ordinal <final-chunk-ordinal> --output <new-private-directory>
 ```
 
+The published Bayn image exposes the same command as `bayn-native-arrival-export`.
+
 The command opens only the native-arrival archive, inside a read-only transaction, without migrations or broker
 credentials. Select the consumer epoch and final ordinal from its retained provenance, before inspecting control
 returns. A session needs a continuous prefix from ordinal zero that brackets the whole session. A restart cannot be
