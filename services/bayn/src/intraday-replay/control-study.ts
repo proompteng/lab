@@ -27,6 +27,7 @@ import {
   type VerifiedStrategyMarketSnapshot,
 } from '../market-data/streaming/snapshot'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { BrokerEnvironment } from '../broker/identity'
 import type { Policy } from '../risk'
 import { IsoDateSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -76,7 +77,8 @@ export type ControlStudyManagement =
     }
 
 export const ControlStudyInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.control-study-input.v9'),
+  schemaVersion: Schema.Literal('bayn.control-study-input.v10'),
+  riskEnvironment: Schema.Enum(BrokerEnvironment),
   costObjective: Schema.Literals(['ALL_COSTS', 'KNOWN_COST_DIAGNOSTIC']),
   entry: Schema.Enum(ControlEntryMode),
   management: Schema.Enum(ControlManagementMode),
@@ -100,7 +102,7 @@ export const ControlStudyInputSchema = Schema.Struct({
 )
 
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v12',
+  schemaVersion: 'bayn.control-study-definition.v13',
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
@@ -119,6 +121,7 @@ export const controlStudyDefinition = {
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
   turnover:
     'The input selects immediate adjustment or entry plus expected exit at the reference price and adverse allowance. The reserve is not a hard bound on future prices; mandatory reducing exits are unchanged.',
+  risk: 'The frozen input explicitly selects the native live or sandbox risk profile. No implicit environment default may change turnover or drawdown limits relative to the candidate.',
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   management:
@@ -946,7 +949,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       )
     const definition = {
       ...(input.ridge !== undefined ? ridgeControlStudyDefinition : policyDefinition),
-      schemaVersion: 'bayn.control-study-definition.v12',
+      schemaVersion: controlStudyDefinition.schemaVersion,
       entry: input.entry,
       opportunityAccounting: opportunityAccountingDefinition,
       nativeEntry:
@@ -976,7 +979,7 @@ export const runControlStudy = (
         message: 'Native Jev entry requires exactly one measured provider binding',
       })
     const risk = yield* Effect.fromResult(
-      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe),
+      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe, input.riskEnvironment),
     )
     const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date

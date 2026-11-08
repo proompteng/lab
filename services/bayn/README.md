@@ -2211,7 +2211,7 @@ It does not prove capture completeness, train a model, produce an executable sna
 contract. Capture interval verification remains the caller's responsibility before economic research.
 
 The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
-control-study input v7 with deterministic entry and artifact v2. It compares the seven-feature score with the genuine training-only
+control-study input v10 with deterministic entry and artifact v2. It compares the seven-feature score with the genuine training-only
 day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
 First-completed-minute eligibility is unchanged. It uses original-capture six-bar observations and the
 existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
@@ -2219,8 +2219,10 @@ no production registration, qualification or capital authority.
 
 ### Bounded mechanical control and turnover comparison
 
-The sole development contract is `bayn.control-study-input.v7`, with explicit `entry`, `management` and
-`turnoverPolicy`. It retains the deterministic controls, optional frozen residual-shock candidate and Ridge pair.
+The sole development contract is `bayn.control-study-input.v10`, with explicit `entry`, `management`,
+`turnoverPolicy`, `costObjective` and `riskEnvironment`. The risk environment selects the native live or sandbox
+profile instead of silently defaulting to live limits for a PAPER comparison. It retains the deterministic
+controls, optional frozen residual-shock candidate and Ridge pair.
 Older development input versions are rejected. See [control portfolios](../../docs/bayn/control-portfolios.md).
 
 `entry: "JEV"` adds a native Jev entry portfolio beside deterministic controls and requires mechanical exits and

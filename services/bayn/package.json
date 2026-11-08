@@ -38,11 +38,12 @@
     "tsc:all": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json",
     "tsc:production": "\"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json",
     "history": "bun tools/history.ts",
-    "build:research": "bun build src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/webull-research-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/hybrid-crash-vwap-shadow-command.ts tools/equity-edge-screen.ts tools/capital-study.ts tools/entry-timing-export.ts tools/matched-entry-study.ts tools/jev-signal-study.ts tools/jev-abstention-report.ts tools/verify-jev-plan.ts tools/native-arrival-coverage.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist/research",
+    "build:research": "bun build src/jev-study-export-command.ts src/native-arrival-export-command.ts src/backtest-command.ts src/control-study-command.ts src/webull-research-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/hybrid-crash-vwap-shadow-command.ts tools/equity-edge-screen.ts tools/capital-study.ts tools/entry-timing-export.ts tools/matched-entry-study.ts tools/jev-signal-study.ts tools/jev-abstention-report.ts tools/verify-jev-plan.ts tools/native-arrival-coverage.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist/research",
     "gap:recovery": "node dist/research/gap-recovery-command.js",
     "ridge:training": "node dist/research/ridge-training-command.js",
     "equity:screen": "node dist/research/equity-edge-screen.js",
-    "webull:research": "node dist/research/webull-research-command.js"
+    "webull:research": "node dist/research/webull-research-command.js",
+    "native:export": "node dist/research/native-arrival-export-command.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1042.0",
