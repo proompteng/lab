@@ -126,6 +126,15 @@ Historical REST retrieval cannot establish original trading-worker receipt times
 comparison is inspected development evidence with modeled availability and unresolved operating costs. It is not
 training admission for an original-capture-only command or a new prospective window.
 
+## Reference input access
+
+The pinned author README links the original [Zenodo data bundle](https://zenodo.org/records/23857833).
+Use that route before reconstructing or purchasing the reference data. The [input-source assessment](cosmosalpha-input-sources-2026-11-07.md)
+records the exact archive identity, dependency preparation, model-version distinction and current API pricing.
+Qlib and LightGBM now import in the supported Python environment; all 13 retained upstream tests and eight
+independent graph checks pass. Original-data download/admission and metered model access remain unfinished.
+The earlier missing default local paths did not establish that the authors had not published the dataset.
+
 ## Execution order and outstanding evidence
 
 Proceed in this order: source and data admission, deterministic method parity, reference comparison, separately
