@@ -1,16 +1,16 @@
+import { entryEvaluationRequestFixture } from '../jev/retained-jev.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { expect, test } from 'bun:test'
 import { Clock, Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import {
-  chartProviderFixture,
-  chartInferenceFixture,
-  entryEvaluationRequestFixture,
-} from '../jev/entry-inference.test-support'
+import { chartProviderFixture, chartInferenceFixture } from '../jev/entry-inference.test-support'
 import { stageResponseIdentity } from '../jev/staged-checkpoint'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+} from '../jev/retained-jev-staged-chart-questions'
 import {
   makeReplayInferenceBudget,
   makeReplayInferenceTiming,

@@ -1426,6 +1426,8 @@ describe('intraday shadow decision', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () =>
               Effect.sync(() => {
@@ -1541,6 +1543,8 @@ describe('intraday shadow decision', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () => Effect.die(new Error('malformed set cannot commit')),
           }),

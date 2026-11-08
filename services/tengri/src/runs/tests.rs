@@ -492,6 +492,63 @@ async fn read_recovery_keeps_a_pending_response_within_its_total_budget() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn admission_survives_a_status_timeout_before_the_queued_run_is_visible() {
+    let started = tokio::time::Instant::now();
+    let reads = std::cell::Cell::new(0);
+    let result = confirm_admission(
+        async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok(())
+        },
+        || {
+            let attempt = reads.get();
+            reads.set(attempt + 1);
+            async move {
+                if attempt == 0 {
+                    tokio::time::sleep(STATUS_RECOVERY_TIMEOUT).await;
+                    Err(Status::unavailable("run admission is still queued"))
+                } else {
+                    Ok("committed snapshot")
+                }
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, "committed snapshot");
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+    assert_eq!(reads.get(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn admission_recovery_accepts_only_committed_status_and_retains_its_total_budget() {
+    let started = tokio::time::Instant::now();
+    let result = confirm_admission(std::future::pending(), || async {
+        Ok("committed snapshot")
+    })
+    .await
+    .unwrap();
+    assert_eq!(result, "committed snapshot");
+    assert_eq!(started.elapsed(), Duration::from_secs(10));
+
+    let denied = confirm_admission::<(), _, _, _>(std::future::pending(), || async {
+        Err(Status::permission_denied("session revoked"))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+
+    let started = tokio::time::Instant::now();
+    let unavailable = confirm_admission::<(), _, _, _>(std::future::pending(), || async {
+        Err(Status::unavailable("status unavailable"))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(unavailable.code(), tonic::Code::Unavailable);
+    assert_eq!(started.elapsed(), ADMISSION_RECOVERY_TIMEOUT);
+}
+
+#[tokio::test(start_paused = true)]
 async fn read_recovery_stops_at_its_total_budget_and_does_not_retry_invalid_responses() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let attempts = AtomicUsize::new(0);
@@ -1109,6 +1166,28 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let journal = http
+        .post(format!("{admin}/query"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({"query": format!(
+            "SELECT index,entry_type,name FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') ORDER BY index LIMIT 8", input.id
+        )}))
+        .send().await.unwrap();
+    assert!(journal.status().is_success());
+    let journal: serde_json::Value = journal.json().await.unwrap();
+    let entries = journal["rows"].as_array().unwrap();
+    let prepared = entries
+        .iter()
+        .position(|entry| entry["name"] == "prepare_codex_dispatch")
+        .unwrap();
+    let claimed = entries
+        .iter()
+        .position(|entry| entry["entry_type"] == "Notification: Call")
+        .unwrap();
+    assert!(
+        prepared < claimed,
+        "guest preparation must start while the conversation claim is pending"
+    );
     let parallel = Input {
         id: Uuid::new_v4().to_string(),
         thread_id: "parallel-thread".into(),

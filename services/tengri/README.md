@@ -308,15 +308,18 @@ revision matches the content and rejects missing, malformed, or mismatched revis
 contacting the guest. Nanoagent reports stale writes as `ABORTED` with the current revision. Successful writes return
 the new path, size, and revision.
 
-Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
+Opening a conversation reads persisted native history with `thread/read` and `includeTurns: false`; it does not
+resume a model session or change its settings. History loading proceeds independently of the model catalog.
+Paginated conversations then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
-that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
+that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial read
 cursor remains the baseline for new items. The controller streams metadata, item pages, and turn pages through `ResumeCodexThread`; the BFF forwards bounded
 NDJSON records and the desktop assembles the complete snapshot. Retrieval is bounded to 90 seconds, 256 pages,
 10 MiB per native page, and 64 MiB of total native JSON. The desktop enforces the same aggregate byte budget before
 parsing each page. An explicit completion record is required, and any
 failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
+History retains `control_codex` authorization and fresh policy checks, while reusing bounded observation audit receipts.
 
 The guest pins Codex 0.164.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
@@ -541,6 +544,8 @@ returns its current state. The public controller stages content-addressed image 
 after Restate accepts the signed admission under its stable workflow key. The accepted snapshot is persisted before waiting for the workspace claim, so a slow claim remains observable
 without sending the input again. A conflicting claim still produces a rejected run. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
+After ten seconds, submission races the original admission response against a committed snapshot read, preserving
+the in-flight request if admission is still queued. Recovery remains bounded to 120 seconds and never resubmits input.
 
 `TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
 execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
@@ -600,6 +605,9 @@ Native approval IDs additionally bind a random process identity, thread, and tur
 Stop is a durable request. The workspace object retains Stop authority separately for each run, ordered by the original
 admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
+The worker queues the conversation claim before preparing the authorized guest, allowing both to progress together.
+It waits for both before dispatch and records the execution-budget timestamp with the preparation result instead of
+adding a separate durable clock step. A rejected claim still removes its own sleep pin through terminal cleanup.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
 Repeated observations return only changed controls. Stop does not release the conversation after an interrupt acknowledgement: the worker waits for
 the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation

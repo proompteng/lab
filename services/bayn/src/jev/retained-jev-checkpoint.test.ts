@@ -1,18 +1,22 @@
+import * as retainedChartStages from './retained-jev-staged-chart-questions'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
-import { decodeStagedCheckpoint, makeStagedDispatchClaim, makeStagedTerminalReceipt } from './staged-checkpoint'
 import {
-  entryEvaluationRequestFixture,
-  entryCompletionFixture,
-  stagedCheckpointFixture,
-} from './entry-inference.test-support'
+  decodeStagedCheckpointForRequest,
+  makeStagedDispatchClaim,
+  makeStagedTerminalReceipt,
+} from './staged-checkpoint'
+import { entryCompletionFixture, stagedCheckpointFixture } from './entry-inference.test-support'
 import { readStagedInferenceCostEvidence } from './staged-inference-cost-evidence'
-import { makeJevEvaluationReceipt, JevOutcome } from './evidence'
+import { JevOutcome } from './evidence'
+import { entryEvaluationRequestFixture, makeJevEvaluationReceipt } from './retained-jev.test-support'
 import { makeJevResolution, JevResolutionStatus } from './resolution'
 
 const request = entryEvaluationRequestFixture()
 const checkpoint = stagedCheckpointFixture(request)
+const decodeStagedCheckpoint = (value: typeof request, input: unknown) =>
+  decodeStagedCheckpointForRequest(value, input, retainedChartStages)
 test('selected-request reuse remains local to each complete or partial journal decode', () => {
   for (const [claims, terminals] of [
     [0, 0],

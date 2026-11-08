@@ -44,19 +44,15 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Registry maintenance
 
-The registry cleanup CLI is Python 3.14. Follow the [cleanup runbook](../../docs/registry/manual-garbage-collection.md).
-`src/registry/protected_references.py` snapshots built-in workloads and all served custom resources,
-including idle providers and retained Kargo references across all namespaces; failed discovery or listing aborts cleanup.
-`prepare.py` builds a read-only retention and blob plan on the existing claim.
-`collect.py` renames eligible tags and verified old blobs into quarantine under a bounded read-only hold and restores uploads.
-`purge.py` deletes quarantined data through the registry Pod's maintenance container,
-whose sole writable claim mount is quarantine. Preparation and purge create no separate RWO attachment.
-`scheduled.py` runs these phases daily through the GitOps-managed `registry-cleanup` CronJob,
-resumes receipted purges and skips the read-only phase for an empty plan.
-The former `prune-images.ts` CLI is removed.
+The Python 3.14 controller `src/registry/run.py` runs one cleanup worker inside the existing registry Pod.
+It refreshes the explicit workload and retained Kargo protections before the worker closes HAProxy's write gate.
+Reads stay available. The worker drains accepted uploads, validates and quarantines eligible data within four minutes,
+then reopens uploads before physical deletion. Cleanup creates no helper Pods, patches no workloads or Argo resources,
+and preserves the existing claim. Persistent version 3 receipts allow an interrupted purge to resume.
 
-Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph,
-quarantine, reupload protection and timeout/restoration regressions.
+Follow the [cleanup runbook](../../docs/registry/manual-garbage-collection.md).
+Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph, protection and worker-stop
+regressions. The scoped `registry-cleanup` CI workflow also runs the real HAProxy upload-budget, fencing and failure tests.
 
 ## Production image delivery
 

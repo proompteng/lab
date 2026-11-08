@@ -24,7 +24,7 @@ read access.
 
 ```sh
 docker build -f argocd/applications/registry/tests/Dockerfile -t registry-pacing-test argocd/applications/registry
-docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp --memory 128m --cpus 1 --pids-limit 128 registry-pacing-test
+docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp --tmpfs /control:uid=99,gid=99,mode=0770 --memory 128m --cpus 1 --pids-limit 128 registry-pacing-test
 ```
 
 The same test fails with the former single-writer configuration and with a
@@ -38,61 +38,30 @@ rate causes storage or Kafka stalls.
 
 ## Clean old images
 
-`registry-cleanup` runs daily at **03:23 America/Los_Angeles**. Its CronJob,
-service account, permissions and scripts are committed with this Application.
-Runs cannot overlap; failed runs are retained and are not automatically retried.
-Kubernetes can start the most recent missed run up to 24 hours late after
-maintenance suspension or a controller interruption. Older missed runs are skipped.
-Each run resumes receipted quarantine purges, prepares online, refreshes protected
-references, collects for at most four minutes and purges with uploads open.
-An empty plan skips the read-only restart. Missing protected content or a failed
-read of a configured image owner fails the run before collection.
-If collection reaches its deadline after writing a durable receipt, the controller
-restores uploads, releases its hold and purges the partial batch online. Completion
-reports `collectionTimedOut: true`. A missing or invalid receipt fails the run.
-Restoration allows five minutes for the registry's existing startup probes.
-Online preparation allows 45 minutes for cold filesystem metadata scans. The Job
-keeps its two-hour deadline and allows seven minutes for shutdown recovery.
+`registry-cleanup` runs daily at **03:23 America/Los_Angeles**. One controller snapshots the configured image owners
+and starts one worker in the existing `registry-maintenance` container. Progress streams into the Job log.
+No helper Pod, registry restart, Argo hold or Deployment patch is part of a cleanup run.
 
-Protection reads only the workload and release resources named in
-`packages/scripts/src/registry/protected_resources.json`. RBAC grants list access
-to those exact resources. Cleanup does not enumerate CRDs or read unrelated
-operators such as Valkey. Maintenance writes are confined to namespace `registry`
-and the named `registry` Application in namespace `argocd`.
+The worker prepares with uploads open, refreshes workload and retained Kargo references, then closes the proxy's write
+gate and drains accepted uploads. Reads remain available. Frozen validation and quarantine share a four-minute budget.
+Uploads reopen before receipted quarantine files are physically deleted. The gate is persisted before it closes so a
+proxy restart cannot reopen writes during quarantine. The Distribution listener binds only to loopback to prevent a
+Pod-address bypass.
+Startup passes the mounted configuration path directly to Distribution so its listener and cache settings take effect.
 
-Preparation validates retained blobs once while traversing their manifest graph;
-the candidate scan skips those already protected blobs. If preparation fails, the
-Job log includes its exit status and final diagnostics before collection can start.
-Recent revision links retain only manifest payloads that still exist. Missing
-content referenced by retained tags, protected images or image indexes fails the run.
+Blob descriptor caching is disabled. A serving process must check storage after quarantine so a client cannot reuse a
+deleted layer from a stale positive cache entry. The native Distribution regression covers collection, repush and full
+content verification without restarting either serving process.
 
-Keep at least five recent build tags per repository, every image uploaded in the
-last seven days, and all digests referenced by workload templates or retained Kargo
-Freight, Stage history, and promotions. Preserve the platform manifests and
-attestations reachable from retained image indexes. Leave unknown tags alone.
-Retention recognizes bare hashes, `sha-*`, `kargo-sha-*` and run-qualified build tags.
+Keep at least five recent build tags per repository, all images uploaded within seven days, unknown human tags and
+all images referenced by the explicit workload and retained Kargo protection contract. Retain platform manifests,
+attestations and layers reachable from those roots. The existing claim, version 3 receipt identities and content checks
+remain authoritative. An empty plan never closes the write gate.
 
-Use the [cleanup runbook](../../../docs/registry/manual-garbage-collection.md).
-Preparation runs while uploads remain available. An owned maintenance hold limits
-the final read-only phase to validating current roots and atomically moving eligible
-tags and old unreferenced blobs into quarantine. The controller removes its helper before
-restoring uploads and Argo reconciliation. The committed maintenance container has
-a read-only CAS mount and a writable quarantine subpath. It prepares plans and
-frees quarantined blocks online without a separate RWO attachment. Preserve the claim and verify protected images, a
-completed push, a full pull and reclaimed capacity.
+The controller has list-only protection reads, access to the named claim and Pod exec. It cannot patch Argo or the
+registry Deployment, or create and delete Pods. The worker holds one filesystem lock for its entire run. Interruption
+cancels queued work and joins active filesystem tasks before writes reopen. If worker exit cannot be confirmed, the
+controller reports failure and leaves the gate closed. A subsequent run recovers a stale gate only after acquiring the
+same exclusive lock, then resumes durable quarantine purges.
 
-Quarantine receipts use version 3: claim UID/PV and batch inode bind persisted file
-identities across Pod/volume remounts. Purge ignores only the mount-local device
-number and verifies inode, size, mtime and content; prepare/collect checks remain
-strict. Partial metadata purges and terminal receipt cleanup resume safely. Version 2
-batches require the explicit [verified recovery gate](../../../docs/registry/manual-garbage-collection.md#version-2-recovery-gate),
-not automatic rebaselining. Failure stderr is bounded and included in the scheduled
-Job log even if Pod replacement prevents removing its temporary script.
-
-When original collection provenance is unavailable, the reviewed `recover.py` tool
-can restore a version 2 batch without giving it deletion authority. It verifies all
-payload digests and recorded identities online, then uses the existing bounded
-maintenance lifecycle to restore missing content and preserve destination conflicts.
-The original receipt and recovery evidence remain archived. Normal retention then
-collects restored candidates with the sole version 3 purge contract. This requires
-an explicit recovery request; the daily scheduler does not restore legacy batches.
+See the [cleanup runbook](../../../docs/registry/manual-garbage-collection.md) for execution, recovery and native tests.

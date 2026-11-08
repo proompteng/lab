@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from '../jev/protocol'
 import { expect, test } from 'bun:test'
 import { Effect, Redacted, Result } from 'effect'
 
@@ -27,7 +28,6 @@ import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
-import { defaultJevProtocolDocument } from '../jev/protocol'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import {
   configuredCapitalActivation,
@@ -132,7 +132,7 @@ test('v39 requires a reviewed strategy rebind even when the v38 account, grant c
     parameterSchemaVersion: 'bayn.jev.protocol.v38',
     parameterHash: Result.getOrThrow(
       canonicalHashV1Result({
-        ...defaultJevProtocolDocument,
+        ...retainedJevProtocolV39Document,
         schemaVersion: 'bayn.jev.protocol.v38',
       }),
     ),

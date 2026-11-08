@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from './protocol'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -62,7 +63,7 @@ test('the current protocol rejects the retired shared history contract', () => {
   expect(
     Result.isFailure(
       decodeJevProtocol({
-        ...defaultJevProtocolDocument,
+        ...retainedJevProtocolV39Document,
         schemaVersion: 'bayn.jev.protocol.v29',
         entrySignalPolicy: 'openai-decisions-then-jev' as const,
       }),

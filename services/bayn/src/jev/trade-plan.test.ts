@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from './protocol'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -65,7 +66,7 @@ test('selected prices, source anchors and funded size reproduce the sealed propo
 
 test('retired protocol geometry and caps cannot become current defaults', () => {
   expect(
-    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v23' })),
+    Result.isFailure(decodeJevProtocol({ ...retainedJevProtocolV39Document, schemaVersion: 'bayn.jev.protocol.v23' })),
   ).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumCapitalRiskBps: 10 }))).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumStopBps: 500 }))).toBe(true)

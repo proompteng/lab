@@ -1,5 +1,6 @@
 import {
   HistoricalJevProtocolSchema,
+  retainedJevProtocolV39Document,
   RetainedJevProtocolV35Schema,
   RetainedJevProtocolV38Schema,
 } from '../jev/protocol'
@@ -154,13 +155,15 @@ const baseRegistrationFixture = (
             cachedInputMicrosPerMillionTokens: '0',
             cacheWriteInputMicrosPerMillionTokens: '0',
           },
-        }).rates.filter((rate) =>
-          usesJevOnlyInference(protocol)
-            ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
-              rate.provider === 'typesafe'
-            : policy === JevResearchPolicy.Candidate ||
-              (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
-        ),
+        })
+          .rates.map((rate) => (rate.provider === 'typesafe' ? { ...rate, model: protocol.model } : rate))
+          .filter((rate) =>
+            usesJevOnlyInference(protocol)
+              ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
+                rate.provider === 'typesafe'
+              : policy === JevResearchPolicy.Candidate ||
+                (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
+          ),
       },
       executionModelHash: sha256(`${policy}:execution`),
       ...(policy === JevResearchPolicy.Momentum
@@ -291,13 +294,13 @@ export const registrationFixture = (
       : version === JevAcceptanceVersion.RetainedV5
         ? Result.getOrThrow(
             Schema.decodeUnknownResult(RetainedJevProtocolV38Schema)({
-              ...defaultJevProtocolDocument,
+              ...retainedJevProtocolV39Document,
               schemaVersion: 'bayn.jev.protocol.v38',
             }),
           )
         : Result.getOrThrow(
             Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
-              ...defaultJevProtocolDocument,
+              ...retainedJevProtocolV39Document,
               schemaVersion: 'bayn.jev.protocol.v35',
               inputDefinition: 'bayn.jev-entry-state.v23',
               entrySignalPolicy: 'openai-decisions-then-jev' as const,

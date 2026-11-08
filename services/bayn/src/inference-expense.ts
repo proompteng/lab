@@ -1,4 +1,4 @@
-import { jevModel } from './jev/contract'
+import { jevModel, retainedJevModel } from './jev/contract'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, stableU128, stableU64 } from './hash'
@@ -41,6 +41,17 @@ export const inferenceExpenseCoverageFrom = '2026-10-05'
 export const inferenceExpenseRateCard = {
   schemaVersion: 'bayn.inference-rate-card.v1',
   rates: [
+    {
+      provider: 'typesafe',
+      model: 'jev-1.14.0',
+      currency: 'USD',
+      source:
+        'Published https://docs.typesafe.ai/models, verified 2026-11-06. Assumed list price, not invoice-reconciled. Frozen quotes retain their original rates.',
+      effectiveFrom: '2026-10-14T00:00:00.000Z',
+      effectiveUntil: '9999-12-31T23:59:59.999Z',
+      inputMicrosPerMillionTokens: '42000',
+      outputMicrosPerMillionTokens: '0',
+    },
     {
       provider: 'typesafe',
       model: 'jev-1.13.0',
@@ -301,7 +312,10 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         return yield* Result.fail(
           new InferenceCostError({ message: 'Undispatched inference cannot consume cache tokens' }),
         )
-      if (quote.rate !== null && quote.rate.provider !== (line.model === jevModel ? 'typesafe' : 'openai'))
+      if (
+        quote.rate !== null &&
+        quote.rate.provider !== (line.model === jevModel || line.model === retainedJevModel ? 'typesafe' : 'openai')
+      )
         return yield* Result.fail(new InferenceCostError({ message: 'Stage tariff belongs to another provider' }))
     }
     if (line.usageStatus === InferenceUsageStatus.Unknown) {
