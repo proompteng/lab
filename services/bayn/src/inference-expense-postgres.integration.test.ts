@@ -7,6 +7,7 @@ import { canonicalHashV1Result } from './hash'
 
 import requestMigration from '../migrations/0076_jev_evaluation_evidence'
 import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
+import batchMigration from '../migrations/0078_jev_batches'
 import expenseMigration from '../migrations/0091_inference_expense_quotes'
 import inferenceRequestVersion from '../migrations/0150_inference_request_version'
 import expenseSourceQueue from '../migrations/0173_inference_expense_source_queue'
@@ -52,13 +53,22 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         const sql = yield* PgClient.PgClient
         yield* sql`DROP SCHEMA IF EXISTS bayn_inference_expense_test CASCADE`
         yield* sql`CREATE SCHEMA bayn_inference_expense_test`
-        yield* sql`CREATE TABLE autonomous_cycles (cycle_id text PRIMARY KEY, account_id text NOT NULL, execution_session_date date NOT NULL)`
+        yield* sql`CREATE TABLE autonomous_cycles (
+          cycle_id text PRIMARY KEY,
+          account_id text NOT NULL,
+          execution_session_date date NOT NULL,
+          strategy_name text,
+          state text,
+          terminal_at timestamptz
+        )`
         yield* sql`CREATE TABLE authority_generations (generation_hash text PRIMARY KEY)`
+        yield* sql`CREATE TABLE intraday_candidate_observations (content_hash text PRIMARY KEY)`
         yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN RAISE EXCEPTION 'immutable fixture evidence'; END; $$`
         yield* requestMigration
         if (withRequestVersion) yield* inferenceRequestVersion
         yield* resolutionMigration
+        yield* batchMigration
         yield* expenseMigration
         yield* sql`CREATE TABLE jev_inference_handoffs (request_id text PRIMARY KEY, handoff_hash text NOT NULL, payload jsonb NOT NULL)`
         yield* sql`ALTER TABLE inference_expense_quotes

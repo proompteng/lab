@@ -649,8 +649,8 @@ export const makeJevTerminalBatchSettlementCursor = (accountId: string): JevTerm
  * Seal expired Jev batches from terminal cycles using the existing finalizer.
  *
  * The metadata query is intentionally bounded and does not select plan payloads. Only
- * those candidate IDs are then decoded by `read`/`finish`, so the account projection
- * never detoasts or scans every retained historical plan on its 30-second pass.
+ * those candidate IDs are then decoded by `read`/`finish`, bounding payload reads
+ * and finalization work on each 30-second pass.
  */
 export const settleExpiredTerminalJevBatches = (
   sql: PgClient.PgClient,
