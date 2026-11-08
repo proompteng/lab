@@ -202,6 +202,13 @@ cephClusterSpec:
     mgr: system-cluster-critical
 
   resources:
+    mgr:
+      # Managers hit the inherited 1Gi limit during replica recovery.
+      limits:
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
     osd:
       limits:
         memory: 12Gi

@@ -44,8 +44,9 @@ failure handling and archive provenance limits.
 When the Flink operator reports a missing JobManager and unavailable HA metadata, an ordinary image update cannot
 complete a stateful upgrade. Use the operator's explicit savepoint redeployment through reviewed GitOps:
 
-1. Read `status.jobStatus.upgradeSavepointPath` and verify the selected savepoint's `_metadata` is readable from the
-   existing checkpoint storage identity. Preserve the savepoint and its referenced state files.
+1. Read `status.jobStatus.upgradeSavepointPath` and retained checkpoint metadata. Select the newest complete,
+   compatible checkpoint or savepoint and verify its `_metadata` and referenced files through the existing storage
+   identity. Preserve the selected state files.
 2. Verify that the replacement TA image preserves the saved operator IDs, including generated Kafka sink Writer
    and Committer operators. Do not enable `allowNonRestoredState` to bypass incompatible state.
 3. Set `spec.job.initialSavepointPath` to that verified path and increment `spec.job.savepointRedeployNonce`. Leave
@@ -53,10 +54,12 @@ complete a stateful upgrade. Use the operator's explicit savepoint redeployment 
 4. Check the actual Flink job reaches `RUNNING`, restores the selected state, and completes a new checkpoint.
    Confirm raw/feature output and archive progress independently of Kargo or Argo status.
 
-Nonce `3` selects `savepoint-1d9e60-f3e71d89dac4`, the operator's latest upgrade savepoint before the October 11
-application driver failed while ClickHouse and Keeper were unavailable. Its 231,644-byte `_metadata` was read
-through the existing checkpoint identity on 2026-10-11; SHA-256 is
-`6c47daf1d5aa265caa54c39f3e9489dc7c62febaa44dfd6cb68165268fcdd899`.
+Nonce `4` selects externalized checkpoint `chk-150416` from job `6f91a7e6fde64b66a48634f7ad7c19ba`, completed
+before the November 7 outage left its JobManager without a running job. Its 357,287-byte `_metadata` was read
+through the existing checkpoint identity on 2026-11-07; SHA-256 is
+`d25ef2e958088b93c927de6510e0abf743e47fb1e9f816bdf38df2580c12d47c`.
+Flink's native metadata reader found 43 operator states and 18 external files; all files were present with the
+recorded sizes. Resolve relative state handles with that reader rather than treating embedded URI strings as active files.
 Keep `TA_FEATURE_RESTORE_TOPOLOGY=ROLLING_FEATURES` and all restoration IDs. Kafka sources resume their saved
 offsets; existing at-least-once sink semantics still apply when records are replayed. Do not select the older nonce-2
 bootstrap savepoint for an ordinary restart.
