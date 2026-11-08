@@ -880,13 +880,23 @@ describePostgres('PostgreSQL intraday observability projection', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* seedSafetyState
-        yield* sql`INSERT INTO position_snapshots (
-          snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
-          ingestion_order_trusted
-        ) SELECT md5('snapshot-' || n) || md5(n::text), 'bayn.paper-position-snapshot.v1', ${accountId},
-            md5('source-' || n) || md5(n::text), '2026-08-27T00:00:00Z'::timestamptz + n * interval '1 second',
-            0, md5('content-' || n) || md5(n::text), n > 20000
-          FROM generate_series(1, 60000) AS n ORDER BY n`
+        // Fixture loading must respect the same short statement deadline as the measured query.
+        for (let first = 1; first <= 60000; first += 1000) {
+          yield* sql`INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+            ingestion_order_trusted
+          ) SELECT md5('snapshot-' || n) || md5(n::text), 'bayn.paper-position-snapshot.v1', ${accountId},
+              md5('source-' || n) || md5(n::text), '2026-08-27T00:00:00Z'::timestamptz + n * interval '1 second',
+              0, md5('content-' || n) || md5(n::text), n > 20000
+            FROM generate_series(${first}::integer, ${first + 999}::integer) AS n ORDER BY n`
+        }
+        expect(
+          yield* sql`SELECT count(*)::integer AS count FROM position_snapshots
+          WHERE account_id = ${accountId}`,
+        ).toEqual([{ count: 60000 }])
+        yield* Effect.logInfo('Position snapshot history fixture loaded').pipe(
+          Effect.annotateLogs('fixtureRows', 60000),
+        )
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`DROP INDEX position_snapshots_legacy_account_observed_at_idx`
