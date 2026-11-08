@@ -8,6 +8,8 @@ resources:
   - storageclass-ci-amd64.yaml
   - storageclass-bayn-wal.yaml
   - storageclass-keeper.yaml
+  - storageclass-ofz-wal.yaml
+  - storageclass-restate-wal.yaml
   - compute-local-admission.yaml
 images:
   - name: rancher/local-path-provisioner

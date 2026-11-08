@@ -2,6 +2,45 @@
 
 This application deploys the self-hosted Restate server and its private admin UI exposure.
 
+## Move replicated log WAL to NVMe
+
+The desired layout keeps each retained `/restate-data` claim on Ceph and places log-server WAL on a separate
+32 GiB `local-path-restate-wal` claim. Restate 1.7.9 exposes this through `log-server.rocksdb-wal-dir`.
+Keep WAL fsync enabled, the current three-member metadata quorum, partition replication two and log replication two.
+Require one Restate member per physical host. Ryzen is an explicit mixed-storage placement exception because its
+local WAL provides the third independent log replica; its retained Ceph data volume and native identity remain intact.
+
+`prepare-wal.sh` runs after the old process has stopped and before the server starts. It copies the existing
+WAL files and archive without changing the original store. It syncs the destination before committing its seed receipt.
+A completed receipt prevents later restarts from copying old WAL over newer writes. Retained stores must have their
+original RocksDB identity; an empty receipt represents a new store whose first WAL is created directly on NVMe.
+An interrupted seed can retry. Unknown destination files or a changed retained identity fail without deleting data.
+
+Roll out through the reviewed image, Kargo Stage and exact generated `kargo/restate` commit:
+
+1. Sync the reviewed local-path application. Verify loaded paths, NVMe mounts and free space on all three hosts.
+   Record the original StatefulSet, Pod, PVC and PV UIDs, native node identities, metadata membership, partition
+   leaders and log configuration. Require all three members healthy, replication two and all 24 partitions archived.
+2. Adding a claim template is immutable in Kubernetes. During the authorized migration, hold only this Argo
+   Application and recreate only its StatefulSet controller with orphan propagation and UID/resourceVersion
+   preconditions. Preserve every running Pod, existing PVC, native identity, image receipt and Kargo annotation.
+   Use the rendered manifest from the selected Kargo commit, with a temporary rolling-update partition of two.
+   Do not delete the old Pods together, force-detach a volume or use a worktree image.
+3. Replace member two first. Require its WAL claim and seed receipt, native metadata participation, log availability,
+   partition progress and three healthy members before advancing the temporary partition to one, then zero.
+   Required host separation moves the second Turin member to Ryzen using the same retained Ceph claim.
+   Stop advancing if quorum, storage custody or native replication cannot be proven.
+4. Verify all three members on distinct hosts, the original data PVC/PV identities, three separate retained WAL
+   claims, fsync, native replication two, snapshots and application progress. Restore Argo reconciliation without
+   changing its source or policy. Compare fresh WAL timing windows and authenticated Tengri response latency.
+
+Keep both volumes for each member after migration. Reverting the WAL path to the old directory would omit newer
+acknowledged records. A failed local device requires native replica recovery from surviving peers, not reuse of the
+old WAL files or rebinding its local claim on another host.
+
+The [pinned log-server implementation](https://github.com/restatedev/restate/blob/fb0ca137d5fc1c86cda5a7d8ef653c5ab201fe6c/crates/log-server/src/rocksdb_logstore/builder.rs)
+sets the configured WAL directory without changing WAL fsync or the SST data path.
+
 ## Operator and request-identity foundation rollout
 
 This rollout installs the Restate Operator foundation but does not register, activate, or move any Bayn execution.

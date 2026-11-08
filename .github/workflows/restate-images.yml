@@ -61,7 +61,7 @@ jobs:
       - name: Install script dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
       - name: Validate configuration contracts
-        run: bun test packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts
+        run: bun test packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts packages/scripts/src/shared/__tests__/restate-wal-migration.test.ts
       - name: Resolve source metadata
         id: source
         run: |

@@ -27,28 +27,24 @@ spec:
         kubectl.kubernetes.io/default-container: restate
     spec:
       serviceAccountName: restate
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       terminationGracePeriodSeconds: 90
       securityContext:
         fsGroup: 2000
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
-      topologySpreadConstraints:
-        - labelSelector:
-            matchLabels:
-              app: restate
-          maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
       affinity:
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app: restate
-                topologyKey: kubernetes.io/hostname
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: restate
+              topologyKey: kubernetes.io/hostname
       initContainers:
         - name: snapshot-scale-up-gate
           image: docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595
@@ -152,6 +148,41 @@ spec:
             limits:
               cpu: 250m
               memory: 256Mi
+        - name: initialize-log-wal
+          image: restate-runtime
+          command: [/bin/sh, /opt/restate-wal/prepare-wal.sh]
+          args:
+            - /restate-data/$(POD_NAME)/log-store
+            - /restate-wal/log-store
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: storage
+              mountPath: /restate-data
+              readOnly: true
+            - name: wal
+              mountPath: /restate-wal
+            - name: wal-init
+              mountPath: /opt/restate-wal
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsGroup: 3000
+            runAsNonRoot: true
+            runAsUser: 1000
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
       containers:
         - name: restate
           image: restate-runtime
@@ -227,6 +258,8 @@ spec:
               value: 10s
             - name: RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND
               value: "true"
+            - name: RESTATE_LOG_SERVER__ROCKSDB_WAL_DIR
+              value: /restate-wal/log-store
             - name: RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND
               value: "true"
             - name: RESTATE_DEFAULT_REPLICATION
@@ -273,12 +306,17 @@ spec:
           volumeMounts:
             - mountPath: /restate-data
               name: storage
+            - mountPath: /restate-wal
+              name: wal
             - mountPath: /tmp
               name: tmp
             - mountPath: /var/run/secrets/restate/request-identity
               name: request-identity
               readOnly: true
       volumes:
+        - name: wal-init
+          configMap:
+            name: restate-wal-init
         - name: request-identity
           secret:
             secretName: restate-request-identity
@@ -286,6 +324,19 @@ spec:
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:
+    - metadata:
+        name: wal
+        labels:
+          app: restate
+          app.kubernetes.io/name: restate
+      spec:
+        storageClassName: local-path-restate-wal
+        volumeMode: Filesystem
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 32Gi
     - metadata:
         name: storage
         labels:

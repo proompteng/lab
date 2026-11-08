@@ -122,6 +122,10 @@ spec:
     storageClass: rook-ceph-block
     size: 30Gi
     resizeInUseVolumes: true
+  walStorage:
+    storageClass: local-path-ofz-wal
+    size: 32Gi
+    resizeInUseVolumes: false
   bootstrap:
     initdb:
       database: spicedb
@@ -149,7 +153,3 @@ spec:
       parameters:
         barmanObjectName: ofz-db
         serverName: ofz-db
-  backup:
-    volumeSnapshot:
-      className: rook-ceph-block
-      snapshotOwnerReference: backup

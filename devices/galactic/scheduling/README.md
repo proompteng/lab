@@ -17,6 +17,9 @@ tolerations, selectors, and affinity remain intact. This policy requires the clu
 Kubernetes 1.37 API and no additional admission service.
 
 Named local PVC consumers must opt in explicitly after verifying their class and bound PV.
+Restate's three-host NVMe WAL layout is an explicit mixed-storage exception: its local WAL claims require one member
+per host, while its original Ceph data claims stay retained. Its rollout must preserve native metadata quorum and log
+replication, as specified by the [Restate migration procedure](../../../argocd/applications/restate/README.md#move-replicated-log-wal-to-nvme).
 Bayn's local-path TigerBeetle cluster moves to Altra and Turin and must not retain that opt-in. Do not add the toleration or a
 blanket `Exists` toleration to applications with Ceph volumes. This taint is a scheduling
 contract for reviewed workloads, not an authorization boundary against arbitrary Pod specifications.
@@ -48,7 +51,7 @@ remain eligible on Ryzen. The monitor placement retains all three hosts with
    remain 96Gi. Verify fresh requests and local filesystem free space before promotion. A later all-five move requires the
    [Bosgame memory repartition](../../ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
 
-Three Ceph-backed database clusters, SPIRE server, and Restate retain three replicas but use preferred host separation
+Three Ceph-backed database clusters and SPIRE server retain three replicas but use preferred host separation
 because only two application storage-client hosts remain. Bayn PostgreSQL must retain one instance on Altra and one
 on Turin with required host separation; both architecture images must be validated before that rollout. Bayn status,
 execution workers, and egress likewise span those hosts. Its three TigerBeetle replicas use a two-plus-one placement

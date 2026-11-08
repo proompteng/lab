@@ -41,13 +41,35 @@ Changing `wal_buffers` requires a CNPG rolling restart and switchover; verify al
 actual authenticated app requests after reconciliation. Reverting these parameters through Git follows the same
 rollout and preserves the database and workspace volumes.
 
+### Move authorization WAL to NVMe
+
+The desired configuration separates each instance's 32 GiB WAL claim onto `local-path-ofz-wal`. The three existing
+30 GiB PGDATA volumes, database identities, roles, archive destination and backups remain on their current storage.
+Keep three instances on distinct hosts, required `ANY 1` synchronous replication, `synchronous_commit=on`, fsync
+and full-page writes. A local WAL device cannot move to another host; recover a failed instance from a verified peer.
+
+First sync the reviewed local-path configuration and verify its loaded paths, mounts and available space on all
+three hosts. Require the current database peers caught up, a successful base backup and current WAL archiving.
+Then follow the normal Ofz image cohort, Kargo promotion and Argo reconciliation. CNPG 1.30.1 moves existing WAL
+during its managed rollout. Preserve all PGDATA PVC/PV UIDs and let the operator perform the restart and switchover.
+
+After rollout, verify all three WAL claims, their host affinity, `pg_wal` mount, required synchronous settings,
+replication and archiving. Compare PostgreSQL WAL I/O counter deltas over equal windows and exercise authenticated
+Tengri commands. A healthy database alone does not establish interactive latency. Adding `walStorage` is one-way;
+do not remove it from an existing cluster or delete retained WAL files during application recovery.
+Use the existing Barman physical backups and WAL archive for recovery. CSI volume snapshots cannot capture the new
+local WAL volume, so the unused CSI snapshot configuration is removed.
+
+The migration follows [CNPG's WAL volume contract](https://cloudnative-pg.io/docs/1.30/storage/#volume-for-wal)
+and its [existing-cluster migration tests](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/tests/e2e/pg_wal_volume_test.go).
+
 `ofz-spicedb-key` contains the API preshared key. Its namespace-bound SealedSecret is committed here. The preshared key
 grants access to the whole SpiceDB API; only the Ofz API and owner bootstrap jobs receive it. The native API uses plaintext
 transport inside the cluster and has no ingress route. Browser access uses Tailscale HTTPS and requires tailnet access.
 The Tailscale operator provisions the private DNS name and certificate without a separate Pi-hole entry.
 
 The database, its inherited resources and backup ObjectStore are retained during Argo pruning or Application deletion.
-Ceph provides database storage, physical base backups and WAL. The private S3 gateway serves the
+Ceph provides database storage, physical base backups and archived WAL. The private S3 gateway serves the
 `ofz-database-backups` bucket through a separate namespace-scoped writer. Thirty-day COMPLIANCE retention protects
 immutable versions. The old `cnpg-ofz` bucket remains protected and is outside the active destination.
 

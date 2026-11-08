@@ -3,6 +3,13 @@
 Existing compute and CI classes remain rebuildable scratch storage. Their prohibited-use annotations continue to
 exclude databases and other durable services.
 
+`local-path-ofz-wal` and `local-path-restate-wal` reserve separate directories on the verified NVMe mounts of
+Ryzen, Altra and Turin. Both classes use `WaitForFirstConsumer` and `Retain`. Their consumers must retain native
+synchronous replication across distinct hosts; these classes provide no replication or failover by themselves.
+Check mount identity and actual free space before allocating claims. Local-path does not enforce the requested
+capacity or support online expansion. Never rebind a retained local volume to another host or another instance.
+The owning [Ofz](../ofz/README.md) and [Restate](../restate/README.md) procedures govern their data migrations.
+
 `local-path-keeper` is reserved for Torghut Keeper replicas. Its explicit NVMe paths are independent of the cache
 classes, and its claims use `Retain`. This class does not replicate data: Keeper must commit through its native
 Raft quorum across distinct hosts. Never replace the existing singleton's Ceph claim with a local claim. Add and

@@ -107,22 +107,19 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
-  expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
-  expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('ScheduleAnyway')
   expect(
     statefulSet.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution,
-  ).toBeUndefined()
-  expect(
-    statefulSet.spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution,
   ).toEqual([
     {
-      weight: 100,
-      podAffinityTerm: {
-        labelSelector: { matchLabels: { app: 'restate' } },
-        topologyKey: 'kubernetes.io/hostname',
-      },
+      labelSelector: { matchLabels: { app: 'restate' } },
+      topologyKey: 'kubernetes.io/hostname',
     },
   ])
+  expect(env.get('RESTATE_LOG_SERVER__ROCKSDB_WAL_DIR')).toBe('/restate-wal/log-store')
+  expect(
+    statefulSet.spec.volumeClaimTemplates.find((claim: { metadata: { name: string } }) => claim.metadata.name === 'wal')
+      .spec.storageClassName,
+  ).toBe('local-path-restate-wal')
   expect(env.get('RESTATE_AUTO_PROVISION')).toBe('false')
   expect(env.get('RESTATE_METADATA_CLIENT__ADDRESSES')).toBe(
     '["http://restate-0.restate-cluster:5122","http://restate-1.restate-cluster:5122","http://restate-2.restate-cluster:5122"]',
@@ -131,7 +128,7 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__DESTINATION')).toBe('s3://restate-snapshots/partitions')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL')).toBe('30m')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED')).toBe('2')
-  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(1)
+  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(2)
   expect(statefulSet.spec.template.spec.initContainers[0]).toMatchObject({
     name: 'snapshot-scale-up-gate',
     image:
