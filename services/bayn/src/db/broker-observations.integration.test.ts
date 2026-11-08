@@ -554,6 +554,67 @@ describePostgres('Durable per-account broker observations', () => {
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
       }),
     ))
+  test('revision handoff blocks both readers until fresh publication and never admits the predecessor again', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        const previous = snapshot(first)
+        yield* store.publish(first, previous, 0)
+        expect(yield* store.readState).toEqual(observedBrokerState(previous))
+        yield* sql`INSERT INTO authority_generations
+          (generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${generationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${first.startedAt})`
+        const authorityBefore = yield* sql`SELECT * FROM authority_generations ORDER BY generation_hash`
+
+        const successor = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
+        yield* successor.activate(0)
+        for (const reader of [store, successor]) {
+          const unavailable = yield* Effect.flip(reader.readState)
+          expect(unavailable.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(unavailable.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+        }
+
+        const next = yield* claim(successor)
+        yield* advanceToTicket(next)
+        const current = snapshot(next)
+        yield* successor.publish(next, current, 0)
+        expect(yield* successor.readState).toEqual(observedBrokerState(current))
+        const predecessor = yield* Effect.flip(store.readState)
+        expect(predecessor.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(predecessor.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+        expect(yield* store.publish(first, previous, 0)).toBe(false)
+        expect(yield* successor.readState).toEqual(observedBrokerState(current))
+
+        yield* advanceToTicket(next, 60_000)
+        expect((yield* Effect.flip(successor.readState)).message).toContain('stale-observation')
+        expect(yield* sql`SELECT * FROM authority_generations ORDER BY generation_hash`).toEqual(authorityBefore)
+      }),
+    ))
+
+  test.each(['absent', 'same-revision', 'foreign-revision'] as const)(
+    'unavailable observation identifies only a verified foreign revision: %s',
+    async (state) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          if (state === 'same-revision') yield* store.activate(0)
+          if (state === 'foreign-revision')
+            yield* makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache).activate(0)
+          const unavailable = yield* Effect.flip(store.readState)
+          expect(unavailable.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(unavailable.retryable).toBe(true)
+          expect(unavailable.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+          expect(unavailable.message).toBe(
+            state === 'foreign-revision'
+              ? 'Broker observation source revision differs from this runtime'
+              : 'Broker observation is unavailable or invalidated by a mutation',
+          )
+          expect(unavailable.message).not.toContain(accountId)
+        }),
+      ),
+  )
+
   test('activation cannot classify a predecessor revision cut as a successful current-revision wait', async () =>
     run((sql, store) =>
       Effect.gen(function* () {

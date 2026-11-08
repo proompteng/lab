@@ -321,14 +321,33 @@ export const makeBrokerObservationStore = (
             OR EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId} AND observed_at > completed_at)
           )
       `.pipe(Effect.flatMap(decodeProjectionRows))
-          if (awaiting.length === 0)
+          if (awaiting.length === 0) {
+            // Diagnose only an already rejected read. A rollout changes the
+            // account's observation owner before all predecessor APIs retire.
+            // This later read cannot admit a cut or relax the revision fence.
+            const ownership = yield* sql`
+          SELECT EXISTS (
+            SELECT 1 FROM broker_observations
+            WHERE account_id = ${accountId} AND source_revision <> ${sourceRevision}
+          ) AS "foreignRevision"
+        `.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Tuple([Schema.Struct({ foreignRevision: Schema.Boolean })]),
+                  strictParseOptions,
+                ),
+              ),
+            )
             return yield* new BrokerReadError({
               operation: 'preflight',
               kind: BrokerReadErrorKind.Timeout,
               retryable: true,
               observationFailure: 'NO_ADMISSIBLE_CUT',
-              message: 'Broker observation is unavailable or invalidated by a mutation',
+              message: ownership[0].foreignRevision
+                ? 'Broker observation source revision differs from this runtime'
+                : 'Broker observation is unavailable or invalidated by a mutation',
             })
+          }
           const pending = awaiting[0]
           if (pending === undefined) return yield* observationUnavailable('Broker observation metadata is absent')
           return { ...pending, pending: true }
