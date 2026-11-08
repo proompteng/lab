@@ -26,7 +26,7 @@ import {
   type JevEvaluationEvidence,
 } from '../jev/resolution'
 import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
-import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
+import { Sha256Schema, SymbolSchema, UtcDatabaseInstantSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
@@ -44,7 +44,7 @@ const OneBatch = Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })])
 const SettlementBatchIds = Schema.Array(
   Schema.Struct({
     batch_id: Sha256Schema,
-    terminal_at: Schema.Date,
+    terminal_at: UtcDatabaseInstantSchema,
   }),
 )
 
@@ -636,8 +636,8 @@ export interface JevTerminalBatchSettlementSummary {
 export interface JevTerminalBatchSettlementCursor {
   /** The account binding prevents a progress hint from being reused across owners. */
   readonly accountId: string
-  /** A non-authoritative keyset position; null means the next pass starts at the oldest row. */
-  position: { readonly terminalAt: Date; readonly batchId: string } | null
+  /** Preserve database microseconds; Date truncation can repeat a page. Null restarts at the oldest row. */
+  position: { readonly terminalAt: string; readonly batchId: string } | null
 }
 
 export const makeJevTerminalBatchSettlementCursor = (accountId: string): JevTerminalBatchSettlementCursor => ({
@@ -680,14 +680,15 @@ export const settleExpiredTerminalJevBatches = (
                 AND plan.batch_id COLLATE "C" > ${cursor.position.batchId} COLLATE "C"
               )
             )`
-      const rows: ReadonlyArray<{ readonly batch_id: string; readonly terminal_at: Date }> =
+      const rows: ReadonlyArray<{ readonly batch_id: string; readonly terminal_at: string }> =
         yield* Schema.decodeUnknownEffect(
           SettlementBatchIds,
           strictParseOptions,
         )(
           yield* sql`
           WITH metadata_candidates AS MATERIALIZED (
-            SELECT plan.batch_id, cycle.terminal_at
+            SELECT plan.batch_id, cycle.terminal_at AS terminal_at_sort,
+              to_char(cycle.terminal_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS terminal_at
             FROM jev_batch_plans AS plan
             JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
             WHERE cycle.account_id = ${accountId}
@@ -702,7 +703,7 @@ export const settleExpiredTerminalJevBatches = (
             LIMIT ${jevTerminalBatchSettlementLimit}
           )
           SELECT batch_id, terminal_at FROM metadata_candidates
-          ORDER BY terminal_at, batch_id COLLATE "C"
+          ORDER BY terminal_at_sort, batch_id COLLATE "C"
         `,
         )
       if (rows.length === 0) {

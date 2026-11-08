@@ -34,6 +34,8 @@ import * as observations from '../jev/observation'
 import * as evaluationPersistence from './jev-evaluation-postgres'
 import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
 
+const databaseInstant = (epochMillis: number) => `${utcInstantFromEpochMillis(epochMillis).slice(0, -1)}000Z`
+
 test.each(['success', 'validation', 'lock', 'receipts', 'evidence', 'result'])(
   'completion phases retain transaction outcome and attribute interruption at %s',
   async (interrupted) => {
@@ -605,10 +607,15 @@ test('terminal settlement walks past a full page of unexpired batches', async ()
                 metadataPage === 1
                   ? pendingPlans.map((plan, index) => ({
                       batch_id: plan.batchId,
-                      terminal_at: new Date(Date.parse(source.observedAt) + index),
+                      terminal_at: databaseInstant(Date.parse(source.observedAt) + index),
                     }))
                   : metadataPage === 2
-                    ? [{ batch_id: expiredPlan.batchId, terminal_at: new Date(Date.parse(source.observedAt) + 64) }]
+                    ? [
+                        {
+                          batch_id: expiredPlan.batchId,
+                          terminal_at: databaseInstant(Date.parse(source.observedAt) + 64),
+                        },
+                      ]
                     : [],
               )
             }
@@ -693,6 +700,12 @@ test('terminal settlement carries bounded progress across passes and retries aft
   const accountId = 'cursor-fairness-account'
   const cursor = makeJevTerminalBatchSettlementCursor(accountId)
   const readCounts = new Map<string, number>()
+  const denseMillisecond = databaseInstant(observed + 2_255).replace(/000Z$/, '')
+  const terminalAt = (index: number) => {
+    if (index === 255) return `${denseMillisecond}123Z`
+    if (index === 256) return `${denseMillisecond}456Z`
+    return databaseInstant(observed + 2_000 + index)
+  }
 
   await Effect.runPromise(
     Effect.scoped(
@@ -713,10 +726,17 @@ test('terminal settlement carries bounded progress across passes and retries aft
                 (parameter): parameter is string => typeof parameter === 'string' && orderedIds.has(parameter),
               )
               const start = afterId === undefined ? 0 : ordered.findIndex((plan) => plan.batchId === afterId) + 1
+              if (afterId !== undefined) {
+                const timestamp = parameters.find(
+                  (parameter): parameter is string =>
+                    typeof parameter === 'string' && parameter.endsWith('Z') && parameter.includes('T'),
+                )
+                expect(timestamp).toBe(terminalAt(start - 1))
+              }
               return Effect.succeed(
                 ordered.slice(start, start + 64).map((plan, offset) => ({
                   batch_id: plan.batchId,
-                  terminal_at: new Date(observed + start + offset),
+                  terminal_at: terminalAt(start + offset),
                 })),
               )
             }
@@ -749,6 +769,7 @@ test('terminal settlement carries bounded progress across passes and retries aft
           failed: 2,
         })
         expect(cursor.position?.batchId).toBe(pendingPlans[255]?.batchId)
+        expect(cursor.position?.terminalAt).toBe(terminalAt(255))
 
         expect(yield* settleExpiredTerminalJevBatches(sql, accountId, cursor)).toEqual({
           candidates: 2,
@@ -831,7 +852,7 @@ test('terminal settlement progress is isolated by account', async () => {
               if (account === undefined) throw new Error('Settlement metadata query lost its account binding')
               const plan = account === accountA ? planA : planB
               firstBatchByAccount.set(account, plan.batchId)
-              return Effect.succeed([{ batch_id: plan.batchId, terminal_at: new Date(observed) }])
+              return Effect.succeed([{ batch_id: plan.batchId, terminal_at: databaseInstant(observed) }])
             }
             if (query.includes('SELECT plan.payload AS plan')) return Effect.succeed([])
             throw new Error(`Unexpected account isolation query: ${query}`)
