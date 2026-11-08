@@ -426,7 +426,7 @@ jobs:
           bash nix/images/bun-workspace-deps-source.test.sh
       - name: Verify registered replay image membership against a disposable registry
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts
           SCRIPT
@@ -449,13 +449,15 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
       - name: Verify replay execution capture against a disposable container and registry
         env:
           BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
           BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
           BAYN_TEST_REPLAY_EXECUTION: '1'
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
           docker pull "${BAYN_TEST_REGISTRY_IMAGE}"

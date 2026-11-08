@@ -429,3 +429,7 @@ decision evidence, archive-watermark waits and unexplained decision-pending stat
 and `INCOMPLETE`, even with zero failed passes and exact flat accounting. Lookback warmup, valid no-candidate signals
 and expected order/reconciliation lifecycle waits do not count as missing decision evidence. These counters measure
 scheduled observations; they do not establish profitability or replace a complete retained source capture.
+
+The research `native:export` command now exports a pinned original consumer prefix from the separate PostgreSQL
+archive. It preserves compressed journal members and validates the resulting source with the same whole-file
+reader used by independent controls. See [the control portfolio export procedure](../../../../../docs/bayn/control-portfolios.md#export-original-deliveries-for-the-controls).

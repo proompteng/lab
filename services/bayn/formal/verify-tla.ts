@@ -18,7 +18,11 @@ const service = fileURLToPath(new URL('..', import.meta.url))
 if (process.argv.length !== 2) throw Error('Usage: bun run --filter @proompteng/bayn verify:tla')
 const models = join(service, 'formal/tla')
 const pin = Schema.decodeUnknownSync(
-  Schema.Struct({ version: Schema.String, sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)) }),
+  Schema.Struct({
+    version: Schema.String,
+    sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+    releaseAssetId: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
 )(JSON.parse(readFileSync(join(models, 'toolchain.json'), 'utf8')))
 const cache = join(service, 'node_modules/.cache/bayn-tla')
 mkdirSync(cache, { recursive: true })
@@ -35,9 +39,11 @@ if (!existsSync(jar)) {
         '--location',
         '--retry',
         '3',
+        '--header',
+        'Accept: application/octet-stream',
         '--output',
         temporaryJar,
-        `https://github.com/tlaplus/tlaplus/releases/download/v${pin.version}/tla2tools.jar`,
+        `https://api.github.com/repos/tlaplus/tlaplus/releases/assets/${pin.releaseAssetId}`,
       ],
       { stdout: 'inherit', stderr: 'inherit' },
     )
