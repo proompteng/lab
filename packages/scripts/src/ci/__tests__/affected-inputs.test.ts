@@ -620,7 +620,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     const head = commit(after)
     git('checkout', '-b', 'base', initial)
     const base = commit({ ...before, configVersion: 0 })
-    const run = (event: string, baseSha: string) => {
+    const run = (event: string, baseSha: string, dependencyAwarePush = 'false') => {
       const output = join(dir, 'output')
       writeFileSync(output, '')
       execFileSync(process.execPath, [script], {
@@ -633,6 +633,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
           INPUT_WORKSPACES: 'bayn: ["", "services/bayn"]\nlanding: ["", "apps/landing"]',
           INPUT_FILTERS: 'bayn: ["bun.lock"]\nlanding: ["bun.lock"]',
           INPUT_WORKFLOW: '',
+          INPUT_DEPENDENCY_AWARE_PUSH: dependencyAwarePush,
           GITHUB_OUTPUT: output,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -641,6 +642,9 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     }
     expect(run('pull_request', base)).toEqual({ bayn: false, landing: true })
     expect(run('push', base)).toEqual({ bayn: true, landing: true })
+    expect(run('push', initial, 'true')).toEqual({ bayn: false, landing: true })
+    expect(run('push', base, 'true')).toEqual({ bayn: true, landing: true })
+    expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({ bayn: true, landing: true })
     expect(() => changedRange('pull_request', '', head)).toThrow('valid nonzero')
   } finally {

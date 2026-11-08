@@ -56,6 +56,7 @@ jobs:
         id: filter
         with:
           workflow: .github/workflows/bayn-build-push.yml
+          dependency-aware-push: 'true'
           workspaces: |
             image: ['', 'services/bayn']
 
