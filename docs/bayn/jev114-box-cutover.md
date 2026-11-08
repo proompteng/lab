@@ -32,3 +32,16 @@ answers, derived proposals, provider usage, elapsed time and embedded build meta
 complete and at least one funded downstream judgment. It acquires no capital authority and issues no broker order.
 This proves the deployed inference path; native controller progress, exact reconciliation and restored same-account
 PAPER authority are separate required live readbacks. It does not establish trading profitability.
+
+## Restore the same-account v40 PAPER mandate
+
+The reviewed request is authored against source `1cebe22dcdf33746b8a6180d63fadeb0d80b1f00` and immutable image
+`sha256:20be6be2c16138cb29bce92bea8f4dbf4dd3e8d3d05a5a2792d2c599547c6382`. Its request hash is
+`248b6bf277de4008709d20f527f0481e0968813c4c6b2898c92eb872b9f1a40c` and protocol hash is
+`140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf`. The sandbox account, broker identity and approved risk
+policy are unchanged. Existing loss, turnover, accounting and execution history remain intact.
+
+The sealed request, identity annotation and three runtime lineages move together. The existing Kargo lineage
+assignments bind each runtime to the promoted immutable build. Read-only bootstrap remains in place; only native
+activation may realize the approved PAPER grant after fresh flat/exact preflight. The deployed Box acceptance used
+three deterministic fixtures and one downstream Jev judgment; it does not establish regular-session equity readiness.
