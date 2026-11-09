@@ -429,13 +429,14 @@ export const makeKafkaMarketProjection = (
           )
         const observedAtMs = yield* Clock.currentTimeMillis
         bootstrapDeadlineAtMs = observedAtMs + config.bootstrapTimeoutMs
-        const timestampForSource = (source: MarketSources[number]) =>
+        const timestampForTopic = (source: MarketSources[number], topic: string) =>
           diagnosticStartMs ??
           Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
-            marketHistoryMinutes[marketSourceKind(source)] * 60_000 -
+            // Webull supplies the latest completed M1 pricing bar, not entry-chart history.
+            (topic === source.topics.webullBars ? 2 : marketHistoryMinutes[marketSourceKind(source)]) * 60_000 -
             5000
-        const lowerTimestampMs = Math.min(...universe.map(timestampForSource))
         const owners = new Map<string, string>()
+        const seekGroups = new Map<number, string[]>()
         for (const source of universe) {
           const raw = [source.topics.bars, source.topics.quotes, source.topics.trades]
           const sourceTopics = Object.values(source.topics).filter((topic) => topic !== undefined)
@@ -448,20 +449,20 @@ export const makeKafkaMarketProjection = (
           for (const topic of unique) {
             if (owners.has(topic)) return yield* failure('bootstrap', 'Market sources cannot share topics')
             owners.set(topic, source.universeId)
+            const timestamp = timestampForTopic(source, topic)
+            const group = seekGroups.get(timestamp)
+            if (group === undefined) seekGroups.set(timestamp, [topic])
+            else group.push(topic)
           }
         }
+        const lowerTimestampMs = Math.min(...seekGroups.keys())
         const topics = [...owners.keys()]
         const starts = yield* operation('bootstrap', () => transport.offsets(topics, -2n))
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
           config.timestampPolicy === KafkaBootstrapTimestampPolicy.ProducerClock
-            ? (yield* Effect.forEach(universe, (source) =>
-                operation('bootstrap', () =>
-                  transport.offsets(
-                    [...new Set(Object.values(source.topics).filter((topic) => topic !== undefined))],
-                    BigInt(timestampForSource(source)),
-                  ),
-                ),
+            ? (yield* Effect.forEach([...seekGroups], ([timestamp, topics]) =>
+                operation('bootstrap', () => transport.offsets(topics, BigInt(timestamp))),
               )).flat()
             : starts
         // Separate tick streams supply current prices, not chart history. Await new verified ticks instead of
