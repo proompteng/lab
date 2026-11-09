@@ -1362,8 +1362,8 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     })
   const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
   const pricing = document.bindings.executionMarketData
-  // JevEntryTargetSchema has already reproduced the observation. Exact manifest and row equality binds that
-  // verified snapshot here without reconstructing the same complete source a second time.
+  // The target schema has reproduced the observation. Bind its manifest here and verify any retained duplicate
+  // rows without reconstructing or copying the same complete source again.
   const sourceManifest = isSnapshotExecutionMarketDataBinding(source)
     ? (({ schemaVersion: _, snapshotSchemaVersion, ...material }) => ({
         ...material,
@@ -1397,7 +1397,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     sourceManifest === undefined ||
     !equal(sourceManifest, observation.manifest) ||
-    !equal(document.decisionMarketDataRows, observation.rows) ||
+    (document.decisionMarketDataRows !== undefined && !equal(document.decisionMarketDataRows, observation.rows)) ||
     source?.snapshotId !== document.bindings.snapshotId ||
     source.contentHash !== document.bindings.snapshotContentHash ||
     source.observedAt !== document.bindings.snapshotFinalizedAt
@@ -2192,6 +2192,13 @@ export const CycleDecisionDocumentSchema = Schema.Union([
   ExecutionDecisionDocumentSchema,
 ])
 export type CycleDecisionDocument = typeof CycleDecisionDocumentSchema.Type
+
+export const decisionSourceRows = (document: CycleDecisionDocument | RecordedExecutionDecisionDocument) =>
+  'strategyDecision' in document && isProtectedEntryTarget(document.strategyDecision)
+    ? document.strategyDecision.evidence.observation.rows
+    : 'decisionMarketDataRows' in document
+      ? document.decisionMarketDataRows
+      : undefined
 
 // Only owned, deeply frozen graphs receive this receipt. Copies and stored JSON
 // still cross the full schema boundary; a claimed contentHash never earns reuse.

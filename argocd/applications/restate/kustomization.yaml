@@ -17,6 +17,7 @@ resources:
   - poddisruptionbudget.yaml
   - networkpolicy.yaml
   - resilience-scripts-configmap.yaml
+  - node-roles-configmap.yaml
   - snapshot-bootstrap-job.yaml
   - replication-migration-job.yaml
   - snapshot-restore-proof-job.yaml

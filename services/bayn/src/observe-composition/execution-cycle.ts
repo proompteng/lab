@@ -37,7 +37,7 @@ import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
-import { loadStrategyTradingProtocol, strategyDefinition } from '../strategy'
+import { strategyTradingProtocol } from '../strategy'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
@@ -143,7 +143,7 @@ const runtimeStrategyMatchesCycle = (input: ObserveAutonomousCycleInput, cycle: 
   return (
     Result.isSuccess(runtimeProtocolHash) &&
     runtimeProtocolHash.success === cycle.identity.strategyProtocolHash &&
-    strategyDefinition(input.strategy).name === cycle.identity.strategyName
+    input.strategy.definition.name === cycle.identity.strategyName
   )
 }
 
@@ -772,15 +772,7 @@ const executeBoundExecutionCycle = (
         failure: 'contract',
       })
     }
-    const protocol = yield* Effect.fromResult(loadStrategyTradingProtocol(input.strategy)).pipe(
-      Effect.mapError((cause) =>
-        mutationRunnerError({
-          message: 'intraday close window protocol is invalid',
-          cause,
-          failure: 'contract',
-        }),
-      ),
-    )
+    const protocol = strategyTradingProtocol(input.strategy)
     const sessionCloseLeads = {
       sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
       sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,

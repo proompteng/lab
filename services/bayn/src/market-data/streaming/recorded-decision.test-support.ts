@@ -1,6 +1,10 @@
 import { Result } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
-import { decodeExecutionDecisionDocument, reconstructBoundIntradaySnapshot } from '../../shadow-decision-contract'
+import {
+  decodeExecutionDecisionDocument,
+  decisionSourceRows,
+  reconstructBoundIntradaySnapshot,
+} from '../../shadow-decision-contract'
 import { IntradaySnapshotFailure } from '../intraday/model'
 
 /** Durable decoding replays the saved reducer cut and strategy, planner, and risk calculations. */
@@ -17,8 +21,8 @@ export const reproduceRecordedStreamingDecision = (input: unknown) =>
       simulation?: { readonly runId: string; readonly sourceManifestHash: string }
     }[] = []
     for (const [binding, rows] of [
-      [decisions, document.decisionMarketDataRows],
-      [document.bindings.executionMarketData, document.executionMarketDataRows ?? document.decisionMarketDataRows],
+      [decisions, decisionSourceRows(document)],
+      [document.bindings.executionMarketData, document.executionMarketDataRows ?? decisionSourceRows(document)],
     ] as const) {
       if (
         binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&

@@ -74,6 +74,59 @@ research builds pass with Bun 1.4.2. The 137 focused behavior tests, 92 delivery
 pass; the command checks use Node 24.11.1. Skipped tests are not established by local validation and require their
 configured CI integration environments.
 
+## System subtraction after the dependency cleanup
+
+This follow-up starts at `b466a9e5e154b5a29ce4184bd672e5925244db98` (PR #15790). It changes runtime work,
+not only imports. The measurements below use Bun 1.4.2 on the same machine and fixtures; PostgreSQL tests use a
+disposable PostgreSQL 18 instance. They are not production request-latency measurements.
+
+| Area                                                  |          Before |           After | Proof and retained behavior                                                                              |
+| ----------------------------------------------------- | --------------: | --------------: | -------------------------------------------------------------------------------------------------------- |
+| Jev no-trade decision JSON                            | 1,468,628 bytes | 1,193,564 bytes | One observation supplies the rows; every other document field except its content hash is identical       |
+| Jev selected-entry decision JSON                      | 1,491,155 bytes | 1,216,080 bytes | Independent execution-pricing rows remain; streaming snapshots reproduce identically                     |
+| Settled reconciliation accrual-history queries        |               3 |               2 | Actual SQL counted on both the initial stable cut and replay; one commit and exact reconciliation remain |
+| Research server JavaScript                            | 7,432,445 bytes | 5,083,464 bytes | Same target, externals and compiler; AWS/Smithy emitted modules fall from 171 to zero                    |
+| Validated strategy protocol copies per 10,000 lookups |          10,000 |               0 | Direct typed access returns the same object; external schema validation remains at ingress               |
+
+The SEC/macro collector had no active trading or model-research consumer. Remove its eight source/test files,
+startup activations, configuration, metric alert and unused TypeScript S3 dependency. Keep the existing capture bucket,
+credentials and stored captures: GEPA uses that store through Python. Its environment names now describe research
+captures and egress directly; all callers migrate together, with no aliases. The research endpoint serves
+`BaynResearchRun` only. Existing public-collector timers must be canceled while their old endpoint remains reachable,
+then checked again after registration of the replacement; see the owning
+[retirement procedure](../../argocd/applications/bayn/README.md#research-capture-storage).
+The two remaining scheduled collector invocations were gracefully canceled on November 8. Readback showed zero
+outstanding invocations and the same two state records with an identical SHA-256 fingerprint before and after.
+Repeat that readback after replacement-endpoint registration.
+
+New protected-entry decisions persist observation rows once, inside their verified strategy evidence. The existing
+financial reader still accepts retained documents and rejects any conflicting extra copy. Stored financial documents
+are not rewritten. `shadow-decision.test.ts` compares complete document material, verifies both retained and compact
+documents, reproduces their streaming snapshots and rejects a conflicting duplicate. Both fixture cases failed before
+the change and pass afterward.
+
+Fee posting returns its verified accrual records to reconciliation. A posting that changes `posted_at` rereads the
+records before returning; a settled pass reuses its verified read. Full-history accounting reconstruction, ledger
+verification and the writer fence remain. The PostgreSQL regression counted three queries before the change and two
+after it; the complete persistence file passes all 40 tests, including posting recovery and replay.
+
+Research-only strategy constructors move to `intraday-replay/strategy.ts`. Already validated protocol values no
+longer cross repeated decoders or a fake asynchronous loader. Risk-policy selection is pure `Result` code, lifted
+once by its effectful callers. Live and retained sandbox policy hashes and all budget limits remain unchanged.
+
+The acquisition review found concrete consumers for the remaining feeds: Webull evidence reaches model input, and
+crypto history supports retained exits and replay. Python, Git, Bun and Crane also have active research/replay
+consumers in the shared image. This change does not introduce another image, cache, service or storage class to remove
+them. Financial history, capture history and storage allocations are retained. Neither these byte reductions nor the
+protocol microbenchmark establish a faster live tick, image startup or improved trading returns.
+
+Local checks for this follow-up: 5,015 unit tests pass, 1,295 skip, zero fail across 464 files with Bun 1.4.3;
+the 40 PostgreSQL persistence tests and 49 native Jev persistence tests pass against PostgreSQL 18. The latter cover
+all nine native exit/recovery scenarios and retain the conflicting-source rejection check. Both TypeScript projects, formatting, both lint modes,
+production and research builds, the research command smoke checks, 92 delivery tests and all seven GEPA tests pass.
+The GEPA tests use the pinned upstream source and dependencies. Bayn and OpenCode manifests render successfully.
+Skipped integrations still require their configured CI environments.
+
 ## Findings and deletion decisions
 
 | ID  | Priority | Evidence                                                                                                                                                                                                                                                                                                   | Decision and smallest responsible change                                                                                                                                                                                                                                                               | Acceptance evidence                                                                                                                                                                                                         |
