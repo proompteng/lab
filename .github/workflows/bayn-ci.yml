@@ -43,6 +43,9 @@ jobs:
               - 'argocd/applications/bayn/**'
               - 'argocd/applications/torghut/clickhouse/**'
               - 'argocd/applicationsets/product.yaml'
+              - '.github/workflows/bayn-build-push.yml'
+              - '.github/workflows/bayn-ci.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
               - 'nix/images/bayn.nix'
               - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
@@ -78,6 +81,9 @@ jobs:
             image:
               - 'services/bayn/**'
               - '!services/bayn/formal/**'
+              - '.github/workflows/bayn-build-push.yml'
+              - '.github/workflows/bayn-ci.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
               - 'nix/images/bayn.nix'
               - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
@@ -479,6 +485,21 @@ jobs:
       publish_on_dispatch: false
     secrets: inherit
 
+  research-image:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn-research
+      package_attr: bayn-research-image
+      tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
+      publish_kargo_tag: false
+      source_revision: ${{ github.event.pull_request.head.sha }}
+      pr_number: ''
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
   required:
     name: Bayn release gate
     if: always()
@@ -495,6 +516,7 @@ jobs:
       - dependency-input-invariant
       - replay-execution-observer
       - image
+      - research-image
     runs-on: ubuntu-latest
     steps:
       - name: Require every applicable Bayn release check
@@ -514,6 +536,7 @@ jobs:
           DEPENDENCY_INPUT_RESULT: ${{ needs.dependency-input-invariant.result }}
           REPLAY_EXECUTION_RESULT: ${{ needs.replay-execution-observer.result }}
           IMAGE_RESULT: ${{ needs.image.result }}
+          RESEARCH_IMAGE_RESULT: ${{ needs.research-image.result }}
         run: |
           set -euo pipefail
           if [[ "${CHANGES_RESULT}" != 'success' ]]; then
@@ -546,6 +569,10 @@ jobs:
           done
           if [[ "${IMAGE_RELEVANT}" == 'true' && "${IMAGE_RESULT}" != 'success' ]]; then
             echo "IMAGE_RESULT must be success for image-affecting changes, got ${IMAGE_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${IMAGE_RELEVANT}" == 'true' && "${RESEARCH_IMAGE_RESULT}" != 'success' ]]; then
+            echo "RESEARCH_IMAGE_RESULT must be success for image-affecting changes, got ${RESEARCH_IMAGE_RESULT}" >&2
             exit 1
           fi
           echo 'All applicable Bayn unit, type, archive, PostgreSQL, ledger, replay, dependency-boundary, and multi-architecture image checks passed.'

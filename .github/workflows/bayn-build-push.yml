@@ -9,6 +9,9 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/bayn-build-push.yml'
+      - '.github/workflows/bayn-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
       - 'services/bayn/**'
       # PR validation covers tests and the service README; neither should reactivate the production controller.
       - '!services/bayn/**/*.test.ts'
@@ -73,9 +76,74 @@ jobs:
       image_name: bayn
       package_attr: bayn-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
+      publish_kargo_tag: false
+      kargo_tag_include_run_id: true
       source_revision: ${{ github.sha }}
       pr_number: ''
-      latest: true
+      latest: false
       publish_on_dispatch: false
     secrets: inherit
+
+  research-image:
+    needs: validation
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn-research
+      package_attr: bayn-research-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: false
+      kargo_tag_include_run_id: true
+      source_revision: ${{ github.sha }}
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
+  publish-cohort:
+    needs: [image, research-image]
+    runs-on: arc-amd64-publish
+    timeout-minutes: 15
+    env:
+      BAYN_DIGEST: ${{ needs.image.outputs.digest }}
+      RESEARCH_DIGEST: ${{ needs.research-image.outputs.digest }}
+      KARGO_TAG: kargo-sha-${{ github.sha }}-run-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+      - name: Verify both immutable images before making the cohort discoverable
+        run: |
+          set -euo pipefail
+          for member in bayn bayn-research; do
+            if [[ "$member" = bayn ]]; then digest="$BAYN_DIGEST"; else digest="$RESEARCH_DIGEST"; fi
+            reference="registry.ide-newton.ts.net/lab/${member}@${digest}"
+            bun run packages/scripts/src/shared/oci.ts assert "$reference" --platform linux/amd64 --platform linux/arm64
+            crane manifest "$reference" | jq -e --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '
+              .annotations["org.opencontainers.image.revision"] == $source and
+              .annotations["org.opencontainers.image.source"] == "https://github.com/proompteng/lab" and
+              .annotations["ai.proompteng.github-actions-run-id"] == $run and
+              .annotations["ai.proompteng.github-actions-build-conclusion"] == "success"'
+          done
+          jq -n --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg native "$BAYN_DIGEST" --arg research "$RESEARCH_DIGEST" \
+            '{sourceRevision: $source, runId: $run, tradingDigest: $native, researchDigest: $research}' > bayn-image-cohort.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bayn-image-cohort
+          path: bayn-image-cohort.json
+          if-no-files-found: error
+          retention-days: 3
+      - name: Publish the verified cohort for Kargo
+        run: |
+          set -euo pipefail
+          for member in bayn bayn-research; do
+            if [[ "$member" = bayn ]]; then digest="$BAYN_DIGEST"; else digest="$RESEARCH_DIGEST"; fi
+            image="registry.ide-newton.ts.net/lab/${member}"
+            bun run packages/scripts/src/shared/oci.ts publish-kargo-tag \
+              --image "$image" --reference "${image}@${digest}" --kargo-tag "$KARGO_TAG"
+          done
