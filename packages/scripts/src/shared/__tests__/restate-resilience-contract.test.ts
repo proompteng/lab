@@ -577,7 +577,7 @@ esac
 `,
     )
     writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
-    writeFileSync(`${tempDir}/seq`, '#!/bin/sh\n[ \"$*\" = \"1 60\" ] || exit 91\nprintf \"60\\n\"\n')
+    writeFileSync(`${tempDir}/seq`, '#!/bin/sh\n[ "$*" = "1 60" ] || exit 91\nprintf "60\\n"\n')
     chmodSync(`${tempDir}/seq`, 0o755)
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
