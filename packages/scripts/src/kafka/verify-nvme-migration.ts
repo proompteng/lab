@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 
 import { ensureCli, fatal } from '../shared/cli'
 
 const SCHEMA_VERSION = 1
 const DEFAULT_NAMESPACE = 'kafka'
 const KAFKA_BIN = '/opt/kafka/bin'
+const MAX_CONTROLLER_FETCH_AGE_MS = 10_000
 
 type JsonObject = Record<string, unknown>
 
@@ -134,6 +135,12 @@ export type FileWitness = {
   sha256: string
 }
 
+export type CopyReceiptProof = {
+  sourceFiles: FileWitness[]
+  targetFiles: FileWitness[]
+  failures: string[]
+}
+
 export type VerificationOptions = {
   requireReplicaSets?: boolean
   requiredGroups?: string[]
@@ -235,6 +242,7 @@ Usage:
   bun run packages/scripts/src/kafka/verify-nvme-migration.ts --mode verify \\
     --context galactic-tailscale \\
     --baseline baseline.json --record-witness-before before.json --record-witness-after after.json \\
+    --copy-receipts /var/tmp/kafka-migration-receipts \\
     --nvme-evidence nvme.json --output report.json
 
 Modes:
@@ -259,17 +267,16 @@ Read-only options:
   --required-node <name>              Node that must own at least one verified Kafka NVMe claim (repeatable)
   --require-replica-sets              Require broker IDs in each replica set to remain unchanged
   --quiesced                          Require exact end offsets instead of allowing append-only progress
-  --file-witness-before <path>        Full SHA-256 file manifest captured before target startup
-  --file-witness-after <path>         Full SHA-256 file manifest captured after target startup
+  --copy-receipts <dir>               Per-node copied-phase receipts emitted by migrate-nvme.ts
 
 Record witnesses are read-only JSON files containing sha256 hashes of canonical records; the verifier never
 produces a canary or stores payloads. Each record row is {topic, partition, startOffset, endOffset,
 recordCount, sha256}; start/end are the exact Kafka range [startOffset,endOffset). Hash the same
 offset,timestamp,key,value byte encoding before and after the quiesced cut.
 
-File witnesses are read-only JSON files containing {nodeId, directoryId, mountPath, relativePath, sizeBytes,
-sha256}. The migration must hash the data files before starting the copied pod and after startup; startup-created
-quorum metadata must be excluded by the producer of the manifest, and the same scope must be used on both sides.
+File witnesses are derived only from each copied-phase receipt's SOURCE_FILE_MANIFEST and TARGET_FILE_MANIFEST;
+the verifier requires COPY_VERIFIED, equal source/target manifest digests, and matching SOURCE/TARGET_META_PROPERTIES.
+There is no live post-startup filesystem hash comparison; post-startup proof comes from the Kafka snapshot and record witnesses.
 `.trim()
 
 const execCapture = async (command: string, args: string[]) => {
@@ -1290,9 +1297,14 @@ export const compareSnapshots = (
     checks.controllerQuorum = false
     failures.push('Kafka controller voter IDs changed')
   }
-  if (current.quorum.maxFollowerLag !== '0' || current.quorum.maxFollowerLagTimeMs !== '0') {
+  const maxFollowerLagTimeMs = Number(current.quorum.maxFollowerLagTimeMs)
+  const fetchAgeHealthy =
+    Number.isFinite(maxFollowerLagTimeMs) &&
+    maxFollowerLagTimeMs >= 0 &&
+    maxFollowerLagTimeMs <= MAX_CONTROLLER_FETCH_AGE_MS
+  if (current.quorum.maxFollowerLag !== '0' || !fetchAgeHealthy) {
     checks.controllerQuorum = false
-    failures.push('Kafka controller quorum has follower lag')
+    failures.push('Kafka controller quorum has follower lag or stale fetch age')
   }
   const baselineGroups = groupMap(baseline)
   const currentGroups = groupMap(current)
@@ -1400,47 +1412,217 @@ const parseWitnessDocument = (value: unknown): RecordWitness[] => {
   )
 }
 
-const parseFileWitnessDocument = (value: unknown): FileWitness[] => {
-  const rows = Array.isArray(value) ? value : isObject(value) ? value.files : undefined
-  if (!Array.isArray(rows)) throw new Error('File witness must be an array or {files: []}')
+const readWitnesses = async (path: string) => parseWitnessDocument(JSON.parse(await readFile(path, 'utf8')) as unknown)
+
+const receiptLogValues = (logs: string, label: string) =>
+  logs
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`${label}=`))
+    .map((line) => line.slice(label.length + 1))
+
+const receiptLogValue = (logs: string, label: string) => {
+  const values = receiptLogValues(logs, label)
+  if (values.length !== 1) throw new Error(`copy receipt must contain exactly one ${label} line`)
+  return values[0]
+}
+
+const parseReceiptJson = (logs: string, label: string) => {
+  try {
+    return JSON.parse(receiptLogValue(logs, label)) as unknown
+  } catch (error) {
+    throw new Error(`copy receipt has invalid ${label}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+type CopyReceiptIdentity = Pick<FileWitness, 'nodeId' | 'directoryId' | 'mountPath'>
+
+const parseReceiptManifest = (value: unknown, label: string, identity: CopyReceiptIdentity): FileWitness[] => {
+  if (!Array.isArray(value)) throw new Error(`copy receipt ${label} must be a JSON array`)
   const witnesses: FileWitness[] = []
-  for (const row of rows) {
-    if (!isObject(row)) throw new Error('File witness row must be an object')
-    const nodeId = numberValue(row.nodeId)
-    const directoryId = stringValue(row.directoryId)
-    const mountPath = stringValue(row.mountPath)
+  for (const row of value) {
+    if (!isObject(row)) throw new Error(`copy receipt ${label} contains a non-object file row`)
     const relativePath = stringValue(row.relativePath)
     const sizeBytes = textValue(row.sizeBytes)
     const sha256 = stringValue(row.sha256)
     if (
-      nodeId === null ||
-      !Number.isInteger(nodeId) ||
-      nodeId < 0 ||
-      !directoryId ||
-      !mountPath ||
       !relativePath ||
+      relativePath.startsWith('/') ||
+      relativePath.split('/').some((part) => part === '..') ||
       !sizeBytes ||
       !/^\d+$/.test(sizeBytes) ||
       !sha256 ||
       !/^[a-f0-9]{64}$/i.test(sha256)
     ) {
-      throw new Error('File witness row has invalid identity, size, or SHA-256')
+      throw new Error(`copy receipt ${label} contains an invalid file row`)
     }
-    witnesses.push({ nodeId, directoryId, mountPath, relativePath, sizeBytes, sha256: sha256.toLowerCase() })
+    witnesses.push({ ...identity, relativePath, sizeBytes, sha256: sha256.toLowerCase() })
   }
-  const keys = witnesses.map(
-    (file) => `${file.nodeId}\u0000${file.directoryId}\u0000${file.mountPath}\u0000${file.relativePath}`,
-  )
-  if (new Set(keys).size !== keys.length) throw new Error('File witness contains duplicate paths')
-  return witnesses.sort((left, right) =>
-    `${left.nodeId}\u0000${left.relativePath}`.localeCompare(`${right.nodeId}\u0000${right.relativePath}`),
-  )
+  const paths = witnesses.map((file) => file.relativePath)
+  if (new Set(paths).size !== paths.length) throw new Error(`copy receipt ${label} contains duplicate paths`)
+  return witnesses.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
 }
 
-const readWitnesses = async (path: string) => parseWitnessDocument(JSON.parse(await readFile(path, 'utf8')) as unknown)
+const parseReceiptMetaProperties = (
+  value: unknown,
+  label: string,
+  expected: { clusterId: string; nodeId: number; directoryId: string },
+) => {
+  if (!isObject(value)) throw new Error(`copy receipt ${label} must be a JSON object`)
+  const identities: Array<{ path: string; clusterId: string; nodeId: number; directoryId: string }> = []
+  for (const [path, propertiesValue] of Object.entries(value)) {
+    if (!isObject(propertiesValue)) throw new Error(`copy receipt ${label} has invalid properties for ${path}`)
+    const clusterId = stringValue(propertiesValue['cluster.id'])
+    const nodeId = numberValue(propertiesValue['node.id'])
+    const directoryId = stringValue(propertiesValue['directory.id'])
+    if (!clusterId || nodeId === null || !Number.isInteger(nodeId) || nodeId < 0 || !directoryId) {
+      throw new Error(`copy receipt ${label} is missing identity fields for ${path}`)
+    }
+    if (clusterId !== expected.clusterId || nodeId !== expected.nodeId || directoryId !== expected.directoryId) {
+      throw new Error(
+        `copy receipt ${label} identity mismatch for ${path}: expected ${expected.clusterId}/${expected.nodeId}/${expected.directoryId}`,
+      )
+    }
+    identities.push({ path, clusterId, nodeId, directoryId })
+  }
+  if (identities.length === 0) throw new Error(`copy receipt ${label} is empty`)
+  return identities.sort((left, right) => left.path.localeCompare(right.path))
+}
 
-const readFileWitnesses = async (path: string) =>
-  parseFileWitnessDocument(JSON.parse(await readFile(path, 'utf8')) as unknown)
+const receiptFailure = (name: string, error: unknown) =>
+  `${name}: ${error instanceof Error ? error.message : String(error)}`
+
+export const parseCopyReceipt = (value: unknown, baseline: KafkaSnapshot, name = 'copy receipt'): CopyReceiptProof => {
+  const failures: string[] = []
+  if (!isObject(value)) return { sourceFiles: [], targetFiles: [], failures: [`${name} is not a JSON object`] }
+  const plan = isObject(value.plan) ? value.plan : null
+  if (!plan) return { sourceFiles: [], targetFiles: [], failures: [`${name} is missing plan`] }
+  const nodeId = numberValue(plan.nodeId)
+  if (nodeId === null || !Number.isInteger(nodeId) || nodeId < 0) {
+    return { sourceFiles: [], targetFiles: [], failures: [`${name} is missing plan.nodeId`] }
+  }
+  const baselineIdentity = baseline.metaProperties.find((identity) => identity.nodeId === nodeId)
+  if (!baselineIdentity) {
+    return {
+      sourceFiles: [],
+      targetFiles: [],
+      failures: [`${name} node ${nodeId} is outside the baseline mounted Kafka identity scope`],
+    }
+  }
+  const expectedClusterId = stringValue(plan.expectedClusterId)
+  if (expectedClusterId !== baseline.clusterId) {
+    failures.push(
+      `${name} expected cluster ID does not match baseline: ${expectedClusterId ?? 'missing'} -> ${baseline.clusterId}`,
+    )
+  }
+  const copyPod = isObject(value.copyPod) ? value.copyPod : null
+  const logs = copyPod ? stringValue(copyPod.logs) : null
+  if (!logs) return { sourceFiles: [], targetFiles: [], failures: [...failures, `${name} is missing copyPod.logs`] }
+  const expected = {
+    clusterId: baseline.clusterId,
+    nodeId: baselineIdentity.nodeId,
+    directoryId: baselineIdentity.directoryId,
+  }
+  const lines = logs.split(/\r?\n/).map((line) => line.trim())
+  if (!lines.includes('COPY_VERIFIED')) failures.push(`${name} is missing COPY_VERIFIED`)
+  let sourceFiles: FileWitness[] = []
+  let targetFiles: FileWitness[] = []
+  try {
+    const sourceDigest = receiptLogValue(logs, 'SOURCE_MANIFEST_SHA256')
+    const targetDigest = receiptLogValue(logs, 'TARGET_MANIFEST_SHA256')
+    if (!/^[a-f0-9]{64}$/i.test(sourceDigest) || !/^[a-f0-9]{64}$/i.test(targetDigest)) {
+      throw new Error('manifest digests must be SHA-256 values')
+    }
+    if (sourceDigest.toLowerCase() !== targetDigest.toLowerCase()) {
+      throw new Error('source and target manifest digests differ')
+    }
+    const sourceTotalBytes = receiptLogValue(logs, 'SOURCE_TOTAL_BYTES')
+    const targetTotalBytes = receiptLogValue(logs, 'TARGET_TOTAL_BYTES')
+    if (!/^\d+$/.test(sourceTotalBytes) || !/^\d+$/.test(targetTotalBytes)) {
+      throw new Error('manifest total bytes must be non-negative integers')
+    }
+    if (sourceTotalBytes !== targetTotalBytes) throw new Error('source and target manifest byte totals differ')
+    const manifestEntries = receiptLogValue(logs, 'MANIFEST_ENTRIES')
+    if (!/^\d+$/.test(manifestEntries)) throw new Error('manifest entry count must be a non-negative integer')
+    const differences = parseReceiptJson(logs, 'MANIFEST_DIFFERENCES')
+    if (!Array.isArray(differences)) throw new Error('MANIFEST_DIFFERENCES must be a JSON array')
+    if (differences.length !== 0) throw new Error('source and target manifests report differences')
+    const sourceMeta = parseReceiptMetaProperties(
+      parseReceiptJson(logs, 'SOURCE_META_PROPERTIES'),
+      'SOURCE_META_PROPERTIES',
+      expected,
+    )
+    const targetMeta = parseReceiptMetaProperties(
+      parseReceiptJson(logs, 'TARGET_META_PROPERTIES'),
+      'TARGET_META_PROPERTIES',
+      expected,
+    )
+    if (JSON.stringify(sourceMeta) !== JSON.stringify(targetMeta)) {
+      throw new Error('source and target meta.properties identities differ')
+    }
+    const identity: CopyReceiptIdentity = {
+      nodeId: sourceMeta[0].nodeId,
+      directoryId: sourceMeta[0].directoryId,
+      mountPath: baselineIdentity.mountPath,
+    }
+    sourceFiles = parseReceiptManifest(parseReceiptJson(logs, 'SOURCE_FILE_MANIFEST'), 'SOURCE_FILE_MANIFEST', identity)
+    targetFiles = parseReceiptManifest(parseReceiptJson(logs, 'TARGET_FILE_MANIFEST'), 'TARGET_FILE_MANIFEST', identity)
+  } catch (error) {
+    failures.push(receiptFailure(name, error))
+  }
+  return { sourceFiles, targetFiles, failures }
+}
+
+export const readCopyReceipts = async (directory: string, baseline: KafkaSnapshot): Promise<CopyReceiptProof> => {
+  const failures: string[] = []
+  const sourceFiles: FileWitness[] = []
+  const targetFiles: FileWitness[] = []
+  const receiptNodeIds = new Set<number>()
+  let entries: Array<{ name: string; isFile: () => boolean }>
+  try {
+    entries = await readdir(directory, { encoding: 'utf8', withFileTypes: true })
+  } catch (error) {
+    return { sourceFiles, targetFiles, failures: [receiptFailure(`copy receipt directory ${directory}`, error)] }
+  }
+  const paths = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.receipt.json'))
+    .map((entry) => `${directory}/${entry.name}`)
+    .sort()
+  if (paths.length === 0) {
+    failures.push(`copy receipt directory ${directory} contains no .receipt.json files`)
+    return { sourceFiles, targetFiles, failures }
+  }
+  for (const path of paths) {
+    const name = path.slice(directory.length + 1)
+    let value: unknown
+    try {
+      value = JSON.parse(await readFile(path, 'utf8')) as unknown
+    } catch (error) {
+      failures.push(receiptFailure(name, error))
+      continue
+    }
+    if (isObject(value) && isObject(value.plan)) {
+      const nodeId = numberValue(value.plan.nodeId)
+      if (nodeId !== null && Number.isInteger(nodeId) && nodeId >= 0) {
+        if (!receiptNodeIds.add(nodeId)) failures.push(`${name} duplicates copy receipt for node ${nodeId}`)
+      }
+    }
+    const proof = parseCopyReceipt(value, baseline, name)
+    failures.push(...proof.failures)
+    sourceFiles.push(...proof.sourceFiles)
+    targetFiles.push(...proof.targetFiles)
+  }
+  const expectedNodeIds = new Set(baseline.metaProperties.map((identity) => identity.nodeId))
+  for (const nodeId of expectedNodeIds) {
+    if (!receiptNodeIds.has(nodeId)) failures.push(`copy receipts are missing node ${nodeId}`)
+  }
+  for (const nodeId of receiptNodeIds) {
+    if (!expectedNodeIds.has(nodeId))
+      failures.push(`copy receipt node ${nodeId} is outside baseline mounted Kafka scope`)
+  }
+  failures.push(...fileWitnessCoverageFailures(baseline, sourceFiles, targetFiles))
+  return { sourceFiles, targetFiles, failures: [...new Set(failures)] }
+}
 
 const readNvmeEvidence = async (path: string): Promise<NvmeEvidence> => {
   const value = JSON.parse(await readFile(path, 'utf8')) as unknown
@@ -1501,16 +1683,14 @@ const main = async () => {
       'Verify mode requires --record-witness-before and --record-witness-after; record counts alone are not proof',
     )
   }
-  const fileWitnessBeforePath = oneArg(args, 'file-witness-before')
-  const fileWitnessAfterPath = oneArg(args, 'file-witness-after')
-  if (!fileWitnessBeforePath || !fileWitnessAfterPath) {
-    return fatal('Verify mode requires --file-witness-before and --file-witness-after; file counts alone are not proof')
+  const copyReceiptsPath = oneArg(args, 'copy-receipts')
+  if (!copyReceiptsPath) {
+    return fatal('Verify mode requires --copy-receipts; copied data manifests are not proven without receipts')
   }
   const baseline = await readSnapshot(baselinePath)
   const beforeWitnesses = await readWitnesses(beforeWitnessPath)
   const afterWitnesses = await readWitnesses(afterWitnessPath)
-  const beforeFileWitnesses = await readFileWitnesses(fileWitnessBeforePath)
-  const afterFileWitnesses = await readFileWitnesses(fileWitnessAfterPath)
+  const copyProof = await readCopyReceipts(copyReceiptsPath, baseline)
   const options: VerificationOptions = {
     requireReplicaSets: boolArg(args, 'require-replica-sets'),
     requiredGroups: manyArgs(args, 'required-group'),
@@ -1525,8 +1705,8 @@ const main = async () => {
     ...recordWitnessCoverageFailures(baseline, beforeWitnesses, options.requiredWitnessTopics ?? []),
   ]
   const fileWitnessFailures = [
-    ...compareFileWitnesses(beforeFileWitnesses, afterFileWitnesses),
-    ...fileWitnessCoverageFailures(baseline, beforeFileWitnesses, afterFileWitnesses),
+    ...copyProof.failures,
+    ...compareFileWitnesses(copyProof.sourceFiles, copyProof.targetFiles),
   ]
   report.failures.push(...witnessFailures)
   report.failures.push(...fileWitnessFailures)

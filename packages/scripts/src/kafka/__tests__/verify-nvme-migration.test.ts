@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   compareRecordWitnesses,
   compareFileWitnesses,
   compareSnapshots,
   fileWitnessCoverageFailures,
+  parseCopyReceipt,
   parseMetaProperties,
   parseTopicDescribe,
+  readCopyReceipts,
   recordWitnessCoverageFailures,
   validateTopicInventory,
   type KafkaSnapshot,
@@ -121,6 +126,41 @@ const witness = (sha256: string): RecordWitness => ({
   recordCount: 10,
   sha256,
 })
+
+const copyReceipt = (baseline: KafkaSnapshot, nodeId = 3) => {
+  const identity = baseline.metaProperties.find((candidate) => candidate.nodeId === nodeId)
+  if (!identity) throw new Error(`missing fixture identity ${nodeId}`)
+  const digest = 'd'.repeat(64)
+  const manifest = JSON.stringify([
+    { relativePath: 'kafka-log3/00000000000000000010.log', sizeBytes: '1234', sha256: 'a'.repeat(64) },
+  ])
+  const meta = JSON.stringify({
+    'kafka-log3/meta.properties': {
+      'cluster.id': baseline.clusterId,
+      'node.id': String(identity.nodeId),
+      'directory.id': identity.directoryId,
+    },
+  })
+  const logs = [
+    `SOURCE_MANIFEST_SHA256=${digest}`,
+    `TARGET_MANIFEST_SHA256=${digest}`,
+    'MANIFEST_ENTRIES=1',
+    'SOURCE_TOTAL_BYTES=1234',
+    'TARGET_TOTAL_BYTES=1234',
+    `SOURCE_META_PROPERTIES=${meta}`,
+    `TARGET_META_PROPERTIES=${meta}`,
+    `SOURCE_FILE_MANIFEST=${manifest}`,
+    `TARGET_FILE_MANIFEST=${manifest}`,
+    'MANIFEST_DIFFERENCES=[]',
+    'COPY_VERIFIED',
+  ].join('\n')
+  return {
+    version: 1,
+    phase: 'started',
+    plan: { expectedClusterId: baseline.clusterId, nodeId },
+    copyPod: { logs },
+  }
+}
 
 describe('Kafka NVMe migration verifier', () => {
   it('passes an unchanged quiesced snapshot with verified local NVMe storage', () => {
@@ -241,6 +281,67 @@ describe('Kafka NVMe migration verifier', () => {
     )
   })
 
+  it('derives file witnesses from verified copy receipts and rejects altered receipt evidence', () => {
+    const baseline = snapshot()
+    const receipt = copyReceipt(baseline)
+    const proof = parseCopyReceipt(receipt, baseline)
+
+    expect(proof.failures).toEqual([])
+    expect(proof.sourceFiles).toEqual([
+      {
+        nodeId: 3,
+        directoryId: 'broker-directory',
+        mountPath: '/var/lib/kafka/data',
+        relativePath: 'kafka-log3/00000000000000000010.log',
+        sizeBytes: '1234',
+        sha256: 'a'.repeat(64),
+      },
+    ])
+    expect(fileWitnessCoverageFailures(baseline, proof.sourceFiles, proof.targetFiles)).toEqual(
+      expect.arrayContaining([
+        'file witness is missing baseline mounted identity: 0/controller-meta-directory//var/lib/kafka/data',
+        'file witness is missing current mounted identity: 0/controller-meta-directory//var/lib/kafka/data',
+      ]),
+    )
+
+    const missingCopyMarker = structuredClone(receipt)
+    missingCopyMarker.copyPod.logs = missingCopyMarker.copyPod.logs.replace('\nCOPY_VERIFIED', '')
+    expect(parseCopyReceipt(missingCopyMarker, baseline).failures).toContain('copy receipt is missing COPY_VERIFIED')
+
+    const differentDigest = structuredClone(receipt)
+    differentDigest.copyPod.logs = differentDigest.copyPod.logs.replace(
+      `SOURCE_MANIFEST_SHA256=${'d'.repeat(64)}`,
+      `SOURCE_MANIFEST_SHA256=${'b'.repeat(64)}`,
+    )
+    expect(parseCopyReceipt(differentDigest, baseline).failures).toContain(
+      'copy receipt: source and target manifest digests differ',
+    )
+
+    const wrongDirectory = structuredClone(receipt)
+    wrongDirectory.copyPod.logs = wrongDirectory.copyPod.logs.replaceAll('broker-directory', 'wrong-directory')
+    expect(parseCopyReceipt(wrongDirectory, baseline).failures).toContain(
+      'copy receipt: copy receipt SOURCE_META_PROPERTIES identity mismatch for kafka-log3/meta.properties: expected cluster-a/3/broker-directory',
+    )
+  })
+
+  it('requires copied receipts to cover every mounted baseline identity', async () => {
+    const baseline = snapshot()
+    const directory = await mkdtemp(join(tmpdir(), 'kafka-copy-receipts-'))
+    try {
+      await writeFile(join(directory, 'kafka-pool-b-3.receipt.json'), JSON.stringify(copyReceipt(baseline)))
+      const proof = await readCopyReceipts(directory, baseline)
+      expect(proof.failures).toEqual(
+        expect.arrayContaining([
+          'copy receipts are missing node 0',
+          'file witness is missing baseline mounted identity: 0/controller-meta-directory//var/lib/kafka/data',
+          'file witness is missing current mounted identity: 0/controller-meta-directory//var/lib/kafka/data',
+        ]),
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects incomplete or malformed topic describe output and requires list parity', () => {
     const incomplete =
       'Topic: bayn.native-arrival.v1 TopicId: topic-a PartitionCount: 2 ReplicationFactor: 1 Configs:\n' +
@@ -271,6 +372,21 @@ describe('Kafka NVMe migration verifier', () => {
     })
 
     expect(report.pass).toBe(true)
+  })
+
+  it('accepts a bounded positive controller fetch age and rejects stale or invalid age', () => {
+    const baseline = snapshot()
+    const healthy = structuredClone(baseline)
+    healthy.quorum.maxFollowerLagTimeMs = '15'
+    expect(compareSnapshots(baseline, healthy).pass).toBe(true)
+
+    for (const age of ['10001', '-1', 'NaN']) {
+      const current = structuredClone(baseline)
+      current.quorum.maxFollowerLagTimeMs = age
+      const report = compareSnapshots(baseline, current)
+      expect(report.pass).toBe(false)
+      expect(report.failures).toContain('Kafka controller quorum has follower lag or stale fetch age')
+    }
   })
 
   it('gates directory identity on mounted meta.properties, not quorum sentinel IDs', () => {
