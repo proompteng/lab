@@ -2,9 +2,82 @@ import { expect, test } from 'bun:test'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { BrokerPollFailureReason } from '../broker/alpaca/failures'
+import { OrderStatus } from '../broker/alpaca/model'
+import {
+  FillActivityRelation,
+  FillMismatchOrderRole,
+  ReconciliationError,
+  snapshotFailure,
+} from '../simulation-reconciliation/broker-reconciler-model'
 import { brokerPollFailureAnnotations, brokerPublicationFailureAnnotations } from './broker-observation-runtime'
 
-test('poll diagnostics expose fixed reasons without inspecting private messages, causes or accessors', () => {
+test('snapshot diagnostics expose only direct typed reasons and allowlisted first-mismatch categories', () => {
+  for (const reason of [
+    'HistoryChanged',
+    'FillActivitiesPending',
+    'AccountBaselineMissing',
+    'TradingDayChanged',
+  ] as const) {
+    expect(
+      brokerPollFailureAnnotations(
+        observationUnavailable(
+          'private wrapper',
+          snapshotFailure(reason, 'private detail'),
+          BrokerPollFailureReason.SnapshotRejected,
+        ),
+      ),
+    ).toEqual({ 'broker.poll_failure_reason': 'SNAPSHOT_REJECTED', 'broker.snapshot_failure_reason': reason })
+  }
+  const cause = new ReconciliationError({
+    operation: 'snapshot',
+    message: 'private detail',
+    failure: {
+      _tag: 'Snapshot',
+      reason: 'FillActivitiesPending',
+      fillMismatch: {
+        activityRelation: FillActivityRelation.BelowOrder,
+        orderRole: FillMismatchOrderRole.Leg,
+        orderStatus: OrderStatus.Filled,
+      },
+    },
+  })
+  const failure = observationUnavailable('private wrapper', cause, BrokerPollFailureReason.SnapshotRejected)
+  expect(brokerPollFailureAnnotations(failure)).toEqual({
+    'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+    'broker.snapshot_failure_reason': 'FillActivitiesPending',
+    'broker.fill_activity_relation': 'FILLS_BELOW_ORDER',
+    'broker.fill_mismatch_order_role': 'LEG',
+    'broker.fill_mismatch_order_status': OrderStatus.Filled,
+  })
+  let reads = 0
+  const getter = () => {
+    reads++
+    throw new Error('private getter')
+  }
+  Object.defineProperties(cause, { message: { get: getter }, cause: { get: getter } })
+  const mismatch = cause.failure?._tag === 'Snapshot' ? cause.failure.fillMismatch : undefined
+  if (mismatch === undefined) throw new Error('missing fixture diagnostic')
+  Object.defineProperties(mismatch, {
+    activityRelation: { value: 'private value' },
+    orderRole: { get: getter },
+    orderStatus: { value: 'private status' },
+  })
+  expect(brokerPollFailureAnnotations(failure)).toEqual({
+    'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+    'broker.snapshot_failure_reason': 'FillActivitiesPending',
+  })
+  Object.defineProperty(cause, 'failure', { get: getter })
+  expect(brokerPollFailureAnnotations(failure)).toEqual({ 'broker.poll_failure_reason': 'SNAPSHOT_REJECTED' })
+  expect(reads).toBe(0)
+  const nested = new Error('private wrapper', { cause: snapshotFailure('HistoryChanged', 'private') })
+  expect(
+    brokerPollFailureAnnotations(observationUnavailable('private', nested, BrokerPollFailureReason.SnapshotRejected)),
+  ).toEqual({ 'broker.poll_failure_reason': 'SNAPSHOT_REJECTED' })
+  expect(
+    brokerPollFailureAnnotations(observationUnavailable('private', nested, BrokerPollFailureReason.PollDeadline)),
+  ).toEqual({ 'broker.poll_failure_reason': 'POLL_DEADLINE' })
+})
+test('poll diagnostics expose fixed reasons without invoking private messages or cause accessors', () => {
   let reads = 0
   const getter = () => {
     reads++
