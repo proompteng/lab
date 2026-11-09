@@ -1,4 +1,5 @@
-import { makeEntryAblationRuntime, type StrategyRuntime } from './strategy'
+import { type StrategyRuntime } from './strategy'
+import { makeEntryAblationRuntime } from './intraday-replay/strategy'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from './jev/entry-ablation-policy'
 import { ExecutionDecisionDocumentSchema } from './shadow-decision-contract'
 import { makeIntradayMomentumDefinition } from './strategy/intraday-momentum/test-support'
@@ -30,7 +31,7 @@ import {
   prepareObserveDecisionReads,
   readObserveDecisionFacts,
 } from './observe-composition/decision-builder'
-import { makeExecutionRiskPolicy } from './execution/risk-policy'
+import { makeExecutionRiskPolicy, strategyExecutionRiskPolicy } from './execution/risk-policy'
 import { JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
@@ -91,7 +92,7 @@ import {
   type FillAccountingStoreShape,
   type ReconciliationStoreShape,
   type ValuationStoreShape,
-} from './db/execution-store'
+} from './db/execution-store/contract'
 import { operationalError, retryableOperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from './execution/authority'
 import {
@@ -157,7 +158,6 @@ import {
 } from './observe-composition/execution-cycle'
 import { executeMutationIntent } from './observe-composition/mutation-interpreter'
 import {
-  loadStrategyExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
@@ -1261,7 +1261,9 @@ const executionLifecycleFixture = async (
     executionProgram: sandboxExecutionProgram(),
   } as const
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
-  const policy = transformPolicy(await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy)))
+  const policy = transformPolicy(
+    await Effect.runPromise(Effect.fromResult(strategyExecutionRiskPolicy(accountId, strategy))),
+  )
   const document = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(evaluatedAt))
@@ -1617,7 +1619,9 @@ describe('OBSERVE runtime composition', () => {
         message: 'entry window read failed',
       })
       const pendingEvidence = mode === 'pending' ? nativeJevDecisionEvidence() : null
-      const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, currentIntradayRuntime))
+      const policy = await Effect.runPromise(
+        Effect.fromResult(strategyExecutionRiskPolicy(accountId, currentIntradayRuntime)),
+      )
       const result = await Effect.runPromise(
         TestClock.setTime(Date.parse(evaluatedAt)).pipe(
           Effect.andThen(
@@ -1749,7 +1753,9 @@ describe('OBSERVE runtime composition', () => {
         },
       },
     }
-    const currentPolicy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, currentStrategy))
+    const currentPolicy = await Effect.runPromise(
+      Effect.fromResult(strategyExecutionRiskPolicy(accountId, currentStrategy)),
+    )
 
     const recovered = await Effect.runPromise(
       recoverBoundExecutionContext(currentPolicy, fixture.boundCycle, fixture.document),
@@ -5484,7 +5490,7 @@ describe('OBSERVE runtime composition', () => {
   test.each([undefined, '2026-09-04T16:44:00.000Z'])(
     'missing native inputs retain the earlier observed window (%s) without inference',
     async (previousWindowEndAt) => {
-      const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
+      const policy = await Effect.runPromise(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
       let inferenceBatches = 0
       const result = await Effect.runPromise(
         Effect.gen(function* () {
@@ -7852,7 +7858,9 @@ const withAdmissionDrawdown = (facts: ReconciliationPassResult, policy: Policy):
 })
 
 test('flat admission protection preserves exact limit boundaries and resumes from new preflight facts', async () => {
-  const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, currentIntradayRuntime))
+  const policy = await Effect.runPromise(
+    Effect.fromResult(strategyExecutionRiskPolicy(accountId, currentIntradayRuntime)),
+  )
   const original = reconciliationResultAt(evaluatedAt)
   const equity = BigInt(original.brokerState.account.equityMicros)
   for (const excess of [0n, 1n]) {
@@ -7903,7 +7911,9 @@ test('flat admission protection preserves exact limit boundaries and resumes fro
 })
 
 test('admission protection requires exact current flat, settled and generation-bound evidence', async () => {
-  const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, currentIntradayRuntime))
+  const policy = await Effect.runPromise(
+    Effect.fromResult(strategyExecutionRiskPolicy(accountId, currentIntradayRuntime)),
+  )
   const facts = withAdmissionDrawdown(reconciliationResultAt(evaluatedAt), policy)
   const authority = facts.riskContext.authority
   if (authority === null) throw new Error('fixture requires authority')

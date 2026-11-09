@@ -25,13 +25,6 @@ import { makeResearchStore } from '../research-inference/store'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
-import {
-  makePublicInformationServices,
-  submitPublicInformationActivation,
-  submitPublicInformationJobs,
-} from './restate-public-information'
-import { publicInformationEnabled, publicInformationIntervalMs } from '../public-information'
-import { runPublicInformation } from '../public-information-resources'
 import { makeBaynResearchRun } from './restate-research-run'
 import { acquireRestateTelemetry, currentOpenTelemetryParentSpan } from './restate-telemetry'
 
@@ -121,54 +114,9 @@ export const researchServerProgram = Effect.gen(function* () {
       config.approvalKey,
       telemetry.hooks,
     )
-    const publicServices = makePublicInformationServices(
-      {
-        sourceRevision: config.sourceRevision,
-        approvalKey: config.approvalKey,
-        intervalMs: publicInformationIntervalMs,
-      },
-      {
-        collect: (source, previous, signal) => {
-          const parent = currentOpenTelemetryParentSpan()
-          const collect = runPublicInformation(source, config.sourceRevision, previous)
-          return Effect.runPromiseWith(context)(
-            parent === undefined ? collect : collect.pipe(Effect.withParentSpan(parent)),
-            { signal },
-          )
-        },
-      },
-      telemetry.hooks,
-    )
     yield* acquireRestateHttp2Server(
-      createServer(
-        restate.createEndpointHandler({ services: [workflow, ...publicServices], identityKeys: [...identityKeys] }),
-      ),
+      createServer(restate.createEndpointHandler({ services: [workflow], identityKeys: [...identityKeys] })),
       config.port,
-    )
-    yield* Effect.gen(function* () {
-      const enabled = yield* Config.Boolean('BAYN_PUBLIC_INFORMATION_ENABLED').pipe(Config.withDefault(false))
-      yield* Metric.update(publicInformationEnabled, enabled ? 1 : 0)
-      if (!enabled) return
-      yield* submitPublicInformationJobs((source) =>
-        submitPublicInformationActivation(
-          {
-            sourceRevision: config.sourceRevision,
-            approvalKey: config.approvalKey,
-            ingressOrigin: 'http://restate.restate.svc.cluster.local:8080',
-          },
-          source,
-        ),
-      )
-    }).pipe(
-      Effect.catchCause(() =>
-        Effect.logWarning(
-          'Public information job activation unavailable; trading and model research remain independent',
-        ),
-      ),
-      Effect.forkScoped,
-    )
-    yield* Effect.logInfo('Bayn independent research endpoint is listening').pipe(
-      Effect.annotateLogs({ sourceRevision: config.sourceRevision, servingPolicyHashes, port: config.port }),
     )
     return yield* Effect.never
   })

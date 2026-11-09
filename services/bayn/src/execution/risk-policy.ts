@@ -5,6 +5,8 @@ import { BrokerEnvironment } from '../broker/identity'
 import { BrokerMode, PolicySchema, executionRiskPolicySchemaVersion } from '../risk'
 import { strictParseOptions } from '../schemas'
 import { OrderType, TimeInForce } from './contracts'
+import { OperationalError, operationalError } from '../errors'
+import { strategyTradingProtocol, type StrategyRuntime } from '../strategy'
 
 const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
 
@@ -56,5 +58,40 @@ export const approvedExecutionRiskPolicyHashes = (accountId: string, allowedSymb
   Result.all(
     [BrokerEnvironment.Live, BrokerEnvironment.Sandbox].map((environment) =>
       Result.flatMap(makeExecutionRiskPolicy(accountId, allowedSymbols, environment), canonicalHashV1Result),
+    ),
+  )
+
+export const strategyExecutionRiskPolicy = (
+  accountId: string,
+  strategy: StrategyRuntime,
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
+  riskPolicyHash?: string,
+) =>
+  Result.gen(function* () {
+    const symbols = strategyTradingProtocol(strategy).universe
+    const retainedPolicy = yield* makeExecutionRiskPolicy(accountId, symbols)
+    if (riskPolicyHash === undefined || riskPolicyHash === (yield* canonicalHashV1Result(retainedPolicy)))
+      return retainedPolicy
+    if (brokerEnvironment === BrokerEnvironment.Sandbox) {
+      const paperPolicy = yield* makeExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox)
+      if (riskPolicyHash === (yield* canonicalHashV1Result(paperPolicy))) return paperPolicy
+    }
+    return yield* Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'risk-policy',
+        message: 'bound execution risk policy is not approved for this broker environment',
+      }),
+    )
+  }).pipe(
+    Result.mapError((cause) =>
+      cause instanceof OperationalError
+        ? cause
+        : operationalError({
+            component: 'strategy',
+            operation: 'risk-policy',
+            message: 'source-controlled execution risk policy is invalid',
+            cause,
+          }),
     ),
   )
