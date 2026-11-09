@@ -7,8 +7,8 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   Update its upstream index digest and both platform archive hashes together. Confirm the repository's accepted
   runner version with `gh api repos/proompteng/lab/actions/runners/downloads`, then verify `Runner.Listener --version`
   in the delivered runner. Restarting the controller does not update that binary.
-- The architecture-neutral controller and listener pods run on AMD64 capacity; runner pods retain their scale set's
-  explicit AMD64 or ARM64 selector.
+- The architecture-neutral controller and listener pods run on Ryzen's AMD64 capacity; runner pods retain their scale
+  set's explicit AMD64 or ARM64 selector.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
 - Lab runner Pods contain only the runner container. `.github/actions/setup-buildkit` starts a rootful BuildKit OCI
   worker inside the current ephemeral runner and connects Buildx's remote driver to its private Unix socket. The

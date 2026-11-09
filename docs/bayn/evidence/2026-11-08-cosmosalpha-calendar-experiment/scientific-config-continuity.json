@@ -1,0 +1,102 @@
+{
+  "kind": "scientific-config-continuity",
+  "beforeExperimentId": "ac3940ddc5e07a578af2ae58d1d9d5b5966d405445fc8e160464fbdae2483e3e",
+  "afterExperimentId": "3cbfe7a0e0fff077b038247db61aa10c78a716a2727226b0ebad865232fa626c",
+  "status": "PASS",
+  "checkedConfigs": [
+    {
+      "runId": "calendar-study-20260823-graph",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260823-graph",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260823-mcts",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260823-mcts",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260823-no-flow",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260823-no-flow",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260824-mcts",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260824-mcts",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260824-no-flow",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260824-no-flow",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260824-graph",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260824-graph",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260825-no-flow",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260825-no-flow",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260825-graph",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260825-graph",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260825-mcts",
+      "kind": "config",
+      "unchangedExceptOutputRoots": true
+    },
+    {
+      "runId": "calendar-study-20260825-mcts",
+      "kind": "downstreamConfig",
+      "unchangedExceptOutputRoots": true
+    }
+  ],
+  "limitsUnchanged": true,
+  "modelProfileUnchanged": true,
+  "targetUnchanged": true,
+  "scope": "Source control-flow and native runtime admission repairs; no data, search hyperparameter, sampling, target or downstream model parameter selection from diagnostic performance."
+}
