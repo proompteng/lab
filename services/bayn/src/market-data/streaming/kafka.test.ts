@@ -516,7 +516,8 @@ test('Kafka payload sizes are exact without enabling hashes or raw-value retenti
 })
 
 describe('Kafka bootstrap and scoped consumption', () => {
-  test('live workers skip obsolete separate ticks but wait for equity and mixed crypto history', async () => {
+  test('live workers retain entry charts and warm only recent pricing history for disabled markets', async () => {
+    const equity = { ...universe, topics: { ...universe.topics, webullBars: 'webull' } }
     const crypto: StreamingUniverse = {
       universeId: 'crypto',
       universeSymbolHash: '1'.repeat(64),
@@ -525,6 +526,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     const bounds = [
       ...positions('100'),
+      { topic: 'webull', partition: 0, offset: '100' },
       ...['crypto', 'crypto-features'].map((topic) => ({
         topic,
         partition: 0,
@@ -549,11 +551,14 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-10-29T01:00:03.000Z'))
-        const projection = yield* makeKafkaMarketProjection(config, [universe, crypto], () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [equity, crypto], () => transport)
         yield* TestClock.adjust('1 second')
         expect(seeks).toEqual([
           { topics: Object.values(universe.topics), timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
-          { topics: ['crypto', 'crypto-features'], timestamp: BigInt(Date.parse('2026-10-28T22:59:55.000Z')) },
+          {
+            topics: ['webull', 'crypto', 'crypto-features'],
+            timestamp: BigInt(Date.parse('2026-10-29T00:57:55.000Z')),
+          },
         ])
         expect(requested.filter((position) => ['quotes', 'trades'].includes(position.topic))).toEqual(
           bounds.filter((position) => ['quotes', 'trades'].includes(position.topic)),
@@ -566,7 +571,13 @@ describe('Kafka bootstrap and scoped consumption', () => {
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         transport.drained = bounds.map((position) => ({
           ...position,
-          offset: position.topic === 'crypto' ? '99' : position.offset,
+          offset: ['crypto', 'webull'].includes(position.topic) ? '99' : position.offset,
+        }))
+        yield* TestClock.adjust('1 second')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        transport.drained = bounds.map((position) => ({
+          ...position,
+          offset: position.topic === 'webull' ? '99' : position.offset,
         }))
         yield* TestClock.adjust('1 second')
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
@@ -583,9 +594,22 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
-  test('explicit historical diagnostics retain separate quote and trade history', async () => {
+  test('explicit historical diagnostics retain equity and disabled-market history', async () => {
+    const equity = { ...universe, topics: { ...universe.topics, webullBars: 'webull' } }
+    const crypto: StreamingUniverse = {
+      universeId: 'crypto',
+      universeSymbolHash: '1'.repeat(64),
+      symbols: ['ETH/USD'],
+      topics: { bars: 'crypto', quotes: 'crypto', trades: 'crypto', features: 'crypto-features' },
+    }
+    const topics = [...Object.values(equity.topics), 'crypto', 'crypto-features']
+    const bounds = (offset: string) => topics.map((topic) => ({ topic, partition: 0, offset }))
     const transport = new FakeTransport()
-    transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '100' : '0')
+    const seeks: { topics: readonly string[]; timestamp: bigint }[] = []
+    transport.offsets = async (topics, timestamp) => {
+      if (timestamp >= 0n) seeks.push({ topics, timestamp })
+      return bounds(timestamp === -1n ? '100' : '0')
+    }
     const consume = transport.consume
     let requested: readonly KafkaPartitionPosition[] = []
     transport.consume = async (starts, invalidated) => {
@@ -595,13 +619,14 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport, 0)
+        const projection = yield* makeKafkaMarketProjection(config, [equity, crypto], () => transport, 0)
         yield* TestClock.adjust('1 second')
-        expect(requested).toEqual(positions('0').toSorted((a, b) => a.topic.localeCompare(b.topic)))
+        expect(seeks).toEqual([{ topics, timestamp: 0n }])
+        expect(requested).toEqual(bounds('0').toSorted((a, b) => a.topic.localeCompare(b.topic)))
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
-        transport.drained = positions('100')
+        transport.drained = bounds('100')
         yield* TestClock.adjust('1 second')
-        expect(kafkaBootstrapComplete((yield* projection.read).bootstrap, positions('100'))).toBe(true)
+        expect(kafkaBootstrapComplete((yield* projection.read).bootstrap, bounds('100'))).toBe(true)
       }),
     )
     expect(transport.closeCount).toBe(1)

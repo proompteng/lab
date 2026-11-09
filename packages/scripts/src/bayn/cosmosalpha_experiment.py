@@ -29,7 +29,7 @@ verify = _verifier.verify
 
 SCHEMA = "bayn.cosmosalpha-frozen-experiment.v1"
 SOURCE_COMMIT = "237f0a56895fd295542e202be8f62be48d6e9995"
-SOURCE_INVENTORY_ID = "65f7d303415e564d3d949f227e8c3e2ec4625f0840cd7f82d253aed3378f364f"
+SOURCE_INVENTORY_ID = "d881fb60c4cb560e5aafce650291ed50dd2ca3d8db99a7eac1eadac1dd99f778"
 ENDPOINT = "http://flamingo.ide-newton.ts.net/v1"
 MODEL = "qwen38-flamingo"
 ARMS = ("graph", "mcts", "no-flow")
