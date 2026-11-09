@@ -2,12 +2,7 @@ import { Context, Layer } from 'effect'
 
 import { createIssueComment, issueHasReaction, postIssueCommentReaction, postIssueReaction } from './issues'
 import { fetchPullRequest, markPullRequestReadyForReview } from './pull-requests'
-import {
-  listCommitPullRequests,
-  approvePullRequest,
-  listPullRequestBlockingChecks,
-  listPullRequestReviewThreads,
-} from './reviews'
+import { listCommitPullRequests, listPullRequestBlockingChecks, listPullRequestReviewThreads } from './reviews'
 import type { GithubServiceDefinition } from './service.types'
 
 export class GithubService extends Context.Service<GithubService, GithubServiceDefinition>()(
@@ -21,7 +16,6 @@ export const GithubServiceLayer = Layer.sync(GithubService, () => ({
   createIssueComment,
   fetchPullRequest,
   markPullRequestReadyForReview,
-  approvePullRequest,
   listCommitPullRequests,
   listPullRequestReviewThreads,
   listPullRequestBlockingChecks,

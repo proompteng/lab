@@ -556,7 +556,7 @@ spec:
             pullPolicy: IfNotPresent
         - name: lab-toolchain-image
           image:
-            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:c1ba40d1490d0b4f609abb9a9e75c796d0acea3ecdc372cd2aeb3f200cc9decb
+            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:eb973655fe4acd2e717582e0e8180cd27982c55a720f99cccc818ff0ebd253c1
             pullPolicy: IfNotPresent
         - name: tools
           emptyDir:

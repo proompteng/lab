@@ -61,6 +61,8 @@ External model API fees are zero. Reserved GPU capacity, local CPU/storage and r
 
 ## Interpretation and remaining boundary
 
+The [reproduction contract and configuration audit](cosmosalpha-reproduction-contract.md) make the missing controls explicit. The present Graph/Chain study lacks MCTS and no-Flow arms for every seed. Its fixed proposal allowance also differs from the paper's approximately 150 evaluable-factor target. The formal MCTS runtime and the controller's separate multi-tree entry point require reconciliation before adding that control. Configuration consistency cannot establish method parity or the paper's main controlled result.
+
 Report all three paired quality archives, hypervolume, factor redundancy and turnover with complete resource counts. A shared maximum allowance does not guarantee identical realized calls, factor counts or elapsed time. Incomplete arms and unknown costs remain inconclusive. Successful subsets cannot establish the comparison.
 
 The pinned [LightGBM example](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a56895fd295542e202be8f62be48d6e9995/configs/lightgbm_integration.example.toml) trains through May 2019, validates through 2020 and tests during 2021–2025. Preserve those chronological segments after search results are frozen. Its `account = 100000000` and zero opening, closing, minimum and impact costs are reference diagnostics. They do not describe Bayn capital or a fully costed portfolio. The entire downstream input window loaded and passed artifact alignment checks, without fitting models or inspecting strategy performance.

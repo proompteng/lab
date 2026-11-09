@@ -49,6 +49,10 @@
   ],
   "bayn-build-push.yml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validation",
       "pattern": "^validation(?: \\(.*\\))?(?: /.*)?$"
     },
@@ -369,6 +373,10 @@
     {
       "id": "build",
       "pattern": "^Restate build and fault tests \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "cache-proof",
+      "pattern": "^cache-proof(?: \\(.*\\))?$"
     },
     {
       "id": "publish",

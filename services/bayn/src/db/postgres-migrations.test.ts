@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Deferred, Effect, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { migrationTimeoutMs, withMigrationDeadline } from './postgres-migrations'
+import { migrationTimeoutMs, withMigrationDeadline } from './migration-deadline'
 
 test('a six-minute retained-history migration completes within the dedicated startup budget', async () => {
   const result = await Effect.runPromise(
