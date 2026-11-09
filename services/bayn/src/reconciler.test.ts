@@ -41,7 +41,7 @@ import {
   type FillAccountingStoreShape,
   type ReconciliationStoreShape,
   type ValuationStoreShape,
-} from './db/execution-store'
+} from './db/execution-store/contract'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationClock, ReconciliationError, runOnce } from './reconciler'

@@ -68,28 +68,22 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: network.proompteng.ai/100g
+                  - key: kubernetes.io/hostname
                     operator: In
-                    values: ["true"]
+                    values: [talos-192-168-1-85, turin, talos-192-168-1-194]
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    strimzi.io/cluster: kafka
-                    strimzi.io/name: kafka-kafka
-                    strimzi.io/pool-name: pool-a
-                topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              strimzi.io/cluster: kafka
-              strimzi.io/name: kafka-kafka
-              strimzi.io/pool-name: pool-a
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-a
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
   resources:
     requests:
       cpu: '2000m'
@@ -118,28 +112,22 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: network.proompteng.ai/100g
+                  - key: kubernetes.io/hostname
                     operator: In
-                    values: ["true"]
+                    values: [talos-192-168-1-85, turin, talos-192-168-1-194]
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    strimzi.io/cluster: kafka
-                    strimzi.io/name: kafka-kafka
-                    strimzi.io/pool-name: pool-b
-                topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              strimzi.io/cluster: kafka
-              strimzi.io/name: kafka-kafka
-              strimzi.io/pool-name: pool-b
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-b
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
   resources:
     requests:
       cpu: '2000m'

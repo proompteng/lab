@@ -47,15 +47,11 @@ spec:
           env:
             - name: RESTATE_INGRESS_ORIGIN
               value: http://restate.restate.svc.cluster.local:8080
-            - name: BAYN_PUBLIC_INFORMATION_ENABLED
-              value: 'true'
-            - name: BAYN_PUBLIC_INFORMATION_PROXY
+            - name: BAYN_EGRESS_PROXY
               value: http://bayn-egress-proxy.bayn.svc.cluster.local:3128
-            - name: BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT
+            - name: BAYN_RESEARCH_CAPTURE_ENDPOINT
               value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
-            - name: BAYN_PUBLIC_INFORMATION_SYMBOLS
-              value: '["AAPL","AMD","AMZN","AVGO","COHR","CRDO","IWM","LITE","MRVL","MU","NVDA","QQQ","SMH","SNDK","SPY","WDC"]'
-            - name: BAYN_PUBLIC_INFORMATION_BUCKET
+            - name: BAYN_RESEARCH_CAPTURE_BUCKET
               valueFrom:
                 configMapKeyRef:
                   name: bayn-research-captures

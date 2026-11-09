@@ -57,7 +57,7 @@ spec:
           image: opencode-main
           command: [node, /app/opencode/research.js]
           env:
-            - name: BAYN_PUBLIC_INFORMATION_PROXY
+            - name: BAYN_EGRESS_PROXY
               value: http://bayn-egress-proxy.bayn.svc.cluster.local:3129
           ports:
             - name: proposal
