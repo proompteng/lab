@@ -142,7 +142,7 @@ const result = await Effect.runPromise(
     Effect.gen(function* () {
       const { runtime } = yield* acquireBrokerObservationRuntime({
         config: {
-          operationTimeoutMs: mode === 'timeout' || mode === 'acquisition-deadline' ? 25 : 5000,
+          operationTimeoutMs: mode === 'timeout' ? 25 : 5000,
           alpaca: { expectedAccountId: 'test-account' },
           build: { sourceRevision: 'b'.repeat(40) },
         },

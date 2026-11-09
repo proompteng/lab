@@ -139,9 +139,7 @@ The cleanup is deployed in source `3c102b02a902a289700b137868c86563b052cfe4`. Su
 `kargo/bayn` commit `4bbd5ae14d55f0be6a505d03c703156fc72c9656`; Argo reconciles that exact revision.
 The native activation hook succeeds, both native services select deployment `dp_11QCH160kWhe6rCtSgMpChj`,
 and both workers and matched completed ticks report the new source. This proves the release and waiting-pass
-behavior. A natural current Jev request later completes as `NO_TRADE`, and a new private compact decision passes
-the current decoder. Two subsequent natural entries also fill; their current request, submission and recovery
-records are joined below. Comparable full-request before/after latency remains unestablished.
+behavior. A current complete Jev/order request and a newly persisted compact decision remain unverified.
 
 The owning-image follow-up, PR [#15811](https://github.com/proompteng/lab/pull/15811), merges as
 `784c39819435448a812989b9d3c0a0428a5835d9`. Its 71 terminal checks include 47 successes and 24 skips, with no failures.
@@ -175,16 +173,14 @@ establish source and artifact qualification; the separate release readback above
   reconstruction: its warm median falls from 121.191 to 72.337 ms with zero row differences. Full accounting
   reconstruction, ledger verification and the writer fence remain mandatory. Matched full-pass timing below shows
   little overall improvement from this first release.
-  A subsequent change, merged in PR [#15814](https://github.com/proompteng/lab/pull/15814) as
-  `b3aa14bb383fb06bd5d95196e1aad63346f1a08c`, removes one repeated canonical hash per accounting transaction by reusing
+  A subsequent locally verified change removes one repeated canonical hash per accounting transaction by reusing
   the expected material hash already produced by reconstruction. It still hashes every stored body and verifies its
   claimed hash, every receipt and the full ledger. The active account contains 1,133 transactions. In an isolated
   1,000-record public fixture, seven alternating samples in the same published ARM64 Node runtime have wall medians
   of 48.421/41.581 ms and CPU medians of 48.815/43.726 ms: 14.1% and 10.4% lower respectively. Complete prepared
   output and four corruption failures agree. All 5,026 unit tests, 40 persistence and 49 native-Jev PostgreSQL tests,
   both type checks, all linters and both production/research builds pass; the unit run skips 1,298 cases. This hash
-  change awaits main publication and automatic rollout; its isolated result does not establish production latency.
-  All 40 PR checks finish (37 successes, three skips), with completed automatic code/security review and no findings.
+  change is not yet deployed, and its isolated result does not establish production latency.
 - B4: Native startup requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
   accepts only the latest completed bar with a 10-second availability limit. Markets disabled for new entries also
   request two minutes of pricing history, replacing the unconditional two-hour crypto rebuild. The existing entry
@@ -218,13 +214,9 @@ establish source and artifact qualification; the separate release readback above
   This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
   A live sampled historical decision passes the retained Jev financial verifier. It does not satisfy the current
   execution schema, so it cannot establish decode performance for the new representation.
-  A new compact decision created at 14:32:06.089 UTC on November 9 passes the current full execution decoder
-  inside the existing native API Pod. Independent SQL metadata agrees on its exact content hash and confirms that
-  planner input omits its duplicate broker state. The stored JSONB text is 768,254 bytes. Reconstructing equivalent
-  full/compact JSON in memory gives 1,183,892/728,580 bytes and wall verification medians of 76.785/64.371 ms
-  over three retained alternating pairs; CPU medians are 87.985/68.426 ms. The two JSON encodings are measured
-  separately from PostgreSQL's JSONB text rendering. This is one-record representation verification, not request
-  percentiles or disk savings. No historical bytes or private document contents are exported or rewritten.
+  The published native runtime also verifies equivalent full and compact public fixtures. Their JSON sizes are
+  1,214,263/1,213,236 bytes and decode/verification wall medians are 94.445/93.098 ms over three retained pairs.
+  This small fixture result is not a performance claim for a new private persisted decision; that readback remains open.
   Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
   the dedicated archive. The 367 financial epochs were created through October 27; a later snapshot finds 440 dedicated
@@ -247,8 +239,11 @@ establish source and artifact qualification; the separate release readback above
   `bayn.execution.advance` takes 919.450/916.957 ms, reconciliation persistence 607.923/606.341 ms, and accounting
   verification 274.076/267.426 ms. Nested spans must not be added together. These are waiting passes, not entry
   inference or order-submission waterfalls; a complete naturally eligible request and comparable release readback remain open.
-  Earlier v38 / Jev 1.13 filled-entry records remain in the measurement JSON and immutable historical figure.
-  Current v40 evidence below replaces that historical example in the active request walkthrough.
+  Five retained filled entries now supply an additional historical waterfall through CHART, BASE_START, handoff,
+  evaluation receipt, intent, submission, acknowledgement, broker fill and recovery. They use v38 and Jev 1.13.
+  In the newest sample, intent creation precedes submission by 4.160 seconds, the submit acknowledgement takes
+  383 ms, and the recovery event is recorded 16.776 seconds after acknowledgement. These are differences between
+  retained timestamps, not isolated CPU, SQL or provider latency. Cross-process clock offset remains unmeasured.
   Earlier source-bound baselines and the financial-primary wait sample remain in the measurement record. One
   `cea96bc87f` outlier spends 6,922.463 ms inserting a broker event and 1,094.850 ms committing; the same backend's
   PostgreSQL logs independently confirm both durations. A later sample observes brief `WalSync` and `SyncRep` waits
@@ -264,32 +259,12 @@ establish source and artifact qualification; the separate release readback above
   This is untraced wall time, not a CPU measurement. Its 61 SQL client spans include a 109.191 ms cycle insert,
   49.447 ms fee query and 47.837 ms inventory-debit aggregate. These observations motivate measuring the pure
   verifier separately; they do not establish an unmeasured database or CPU cause.
-  Before the first usable regular-session input, both pre-release and after observations report
-  `SNAPSHOT_UNAVAILABLE` / `ALL_CANDIDATES_EXCLUDED` for 15 candidates. Matching-feature/completed-bar counts
-  change from 0/0 to 1/1. These are rejected-observation diagnostics, not proof of upstream producer health;
-  unused entry deadlines expire before and after release.
-  A natural request observed at 14:31:04.705 UTC then completes under v40 / Jev 1.14.0. Its exact persisted batch
-  identity and decision hash match native span attributes inside the source-bound Restate tick. CHART claim to
-  receipt is 1,158 ms, handoff is recorded 2,561 ms after observed input, the evaluation receipt interval is 3,329 ms,
-  and the batch completes at +4,735 ms. The protected decision is created at +6,741 ms. The native worker advance
-  takes 12,204.559 ms, including reconciliation 2,365.138 ms, admission 1,668.637 ms, batch completion 1,577.200 ms
-  and decision binding 1,367.110 ms. These inclusive spans are not additive. Durable record intervals can cross
-  process clocks and do not isolate model-provider latency. The cycle ends `NO_TRADE`, with no submit, acknowledgement
-  or fill in that sample; it establishes a completed strategy abstention.
-  Two later v40 / Jev 1.14 BUY entries naturally fill. Their intents match the protected document's
-  `bindings.strategyDecisionHash`, cycle, symbol and sealed batch; the document content hash is a distinct identity.
-  The 14:46:04.667 UTC request also matches the exact batch and document-hash attributes inside native trace
-  `c9d6fb6224290c673ec49ada7304b20c`, pinned to the same deployed source. Its CHART interval is 696 ms, evaluation
-  receipt interval 1,105 ms, intent-to-submit interval 3,847 ms and submit acknowledgement 479 ms. The native advance
-  takes 11,104.318 ms, including reconciliation 2,334.089 ms, admission 1,100.819 ms, decision/intent binding
-  1,201.884 ms, committed-decision read 780.582 ms and submit 571.727 ms. Parent durations include children.
-  Four BUY fills have four balanced posted accounting receipts. Their broker source timestamps span
-  14:46:18.073649–14:46:25.735427 UTC; broker observation is recorded at 14:46:43.311 and recovery at 14:46:51.268.
-  Protective SELL fills linked to the same intent are excluded from this entry timing. Broker and process clocks
-  remain separate. These are real filled-path records, not an isolated cause for the later recovery observation or
-  a comparable eligible-request before/after distribution. The second filled entry and its two BUY receipts are
-  also retained in the measurement record.
-  No trading authority, input validation, schedule or provider configuration is changed to obtain these traces.
+  The current request path stops before inference: both the last pre-release observation and the after observation
+  report `SNAPSHOT_UNAVAILABLE` / `ALL_CANDIDATES_EXCLUDED` for 15 candidates. Matching-feature/completed-bar counts
+  change from 0/0 to 1/1. These are rejected-observation diagnostics, not proof of upstream producer health. The
+  bounded post-release timeline has no admitted request; unused entry deadlines expire before and after release.
+  Therefore new v40 CHART/Jev/order latency and the new private decision representation still require natural eligible
+  inputs. No trading authority, input validation, schedule or provider configuration is changed to obtain a trace.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
@@ -304,17 +279,10 @@ This comparison uses actual nested spans from one pass near each phase's advance
 process clock. The labels distinguish representative stage durations from the separately computed sample medians;
 parent durations include their children. It does not contain an inference request or the subsequent hash candidate.
 
-![Current v40 request with durable boundaries and native worker spans](evidence/2026-11-09-current-v40-request.svg)
+![Historical v38 entry records from admission through fill recovery](evidence/2026-11-09-historical-entry.svg)
 
-The current request chart joins the actual batch and decision identities to a completed source-bound Restate tick.
-Its two panels keep durable record boundaries separate from worker-relative span timing. `NO_TRADE` is a completed
-strategy outcome; it supplies no evidence of a current order submission or broker fill.
-
-![Current v40 filled entry through submission and recovery](evidence/2026-11-09-current-v40-filled-entry.svg)
-
-This current-release chart replaces the [earlier v38 illustration](https://github.com/proompteng/lab/blob/b3aa14bb383fb06bd5d95196e1aad63346f1a08c/docs/bayn/evidence/2026-11-09-historical-entry.svg).
-Its broker source timestamps use a separate clock. The submitted order's BUY fills are separated from later protective
-SELL fills that share its intent, and both document and strategy hashes retain their distinct correlation roles.
+The historical entry chart labels record boundaries and its missing current-release proof. The broker's fill
+timestamp uses its own clock. It is not subtracted from Bayn timestamps to claim execution latency.
 
 The full audit remains open for the explicitly unverified items above. Smaller bundles, a faster SQL query and green
 tests do not establish a faster complete trading request or disposal authority for retained data.

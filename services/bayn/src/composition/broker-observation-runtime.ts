@@ -26,27 +26,13 @@ import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../
 import { brokerSnapshotCacheConfig, makeBrokerObservationCapture } from '../broker/alpaca/snapshot-cache'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { canonicalHashV1Result } from '../hash'
-import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
-
-export const brokerPollFailureAnnotations = (failure: unknown): Readonly<Record<string, string>> => {
-  const unknown = { 'broker.poll_failure_reason': 'unknown' }
-  if (!isNativeError(failure)) return unknown
-  try {
-    // Only our fixed diagnostic field is inspected, never messages or nested causes.
-    const reason: unknown = Object.getOwnPropertyDescriptor(failure, 'pollFailureReason')?.value
-    return typeof reason === 'string' && Object.values(BrokerPollFailureReason).some((value) => value === reason)
-      ? { 'broker.poll_failure_reason': reason }
-      : unknown
-  } catch {
-    return unknown
-  }
-}
 
 export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): Readonly<Record<string, string>> => {
   const unknown = {
@@ -237,13 +223,7 @@ export const acquireBrokerObservationRuntime = (
                   Effect.timeoutOrElse({
                     duration: captureTimeoutMs,
                     orElse: () =>
-                      Effect.fail(
-                        observationUnavailable(
-                          'Broker observation acquisition exceeded its deadline',
-                          undefined,
-                          BrokerPollFailureReason.AcquisitionDeadline,
-                        ),
-                      ),
+                      Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
                   }),
                   // Stop lazy layer acquisition on every failed exit before any known-work quota settlement.
                   Effect.onExit((exit) =>
@@ -258,7 +238,6 @@ export const acquireBrokerObservationRuntime = (
                       'broker.operation': result.failure.operation,
                       'broker.failure_kind': result.failure.kind,
                       'broker.retryable': result.failure.retryable,
-                      ...brokerPollFailureAnnotations(result.failure),
                       ...(result.failure.status === undefined ? {} : { 'broker.http_status': result.failure.status }),
                     }),
                   )

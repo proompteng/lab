@@ -196,7 +196,6 @@ describe('durable broker observations', () => {
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure.cause).toMatchObject({ failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } })
-          expect(result.failure).toMatchObject({ pollFailureReason: 'SNAPSHOT_REJECTED' })
         }
         expect(scans).toBe(2)
         const fresh = yield* captureBrokerObservation(
@@ -244,7 +243,6 @@ describe('durable broker observations', () => {
         const result = yield* Fiber.join(pending)
         expect(Result.isFailure(result)).toBe(true)
         expect(cancelled).toBe(1)
-        if (Result.isFailure(result)) expect(result.failure).toMatchObject({ pollFailureReason: 'POLL_DEADLINE' })
       }),
     )
   })
