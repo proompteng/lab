@@ -45,12 +45,15 @@ Keep the pinned PostgreSQL image and existing generated credentials.
 2. Wait for the third instance to finish physical bootstrap and reach streaming with negligible replay lag.
    Read `pg_stat_replication`, slots, `synchronous_standby_names` and PVC node/path mappings. Check archived WAL
    and retained capture prefixes before retiring any original instance.
-3. With the original primary and new off-host synchronous standby healthy, retire the old Ceph standby:
+3. Promote the caught-up NVMe replica with the CNPG plugin's `promote` command. Verify its identity, off-host
+   synchronous standby, archived WAL and retained capture prefixes before retiring an original instance.
+   Subsequent replicas can then copy from NVMe instead of reading the entire archive from Ceph again.
+   Keep the original Altra standby while its full backup is running; do not interrupt that backup to reclaim its node.
+4. After verifying that the original Turin instance is a standby, retire it with
    `kubectl cnpg --context galactic-tailscale -n bayn destroy bayn-native-arrival-db <number> --keep-pvc`.
-   Preserve its detached claims until final verification. Let CNPG reconstruct its replacement on NVMe.
-4. Once that replacement is caught up, promote it with the same plugin's `promote` command. Verify its off-host
-   synchronous standby before retiring the former primary. Reconstruct that instance on NVMe.
-   Never retire an active primary or two instances together.
+   Preserve its detached claims until final verification. Wait for its NVMe replacement to catch up, then promote
+   that replacement to return the primary to a 100G host. After the Altra backup completes, retire its original
+   Ceph standby and wait for the NVMe replacement. Never retire an active primary or two instances together.
 5. Ship the final manifest: two instances, required 100G affinity, no Ryzen toleration, and annotation
    `cnpg.io/reconciliationLoop: enabled`. Immediately before syncing it, pause only this cluster's reconciliation
    with `cnpg.io/reconciliationLoop=disabled`, retire the temporary Ryzen standby with `destroy --keep-pvc`,
