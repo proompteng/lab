@@ -30,6 +30,7 @@ test('Restate image promotion requires native build proofs and uploaded release 
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toContain(mainOnly)
+  expect(publish.if).toContain('!cancelled()')
   expect(publish.if).toContain("needs.changes.result == 'success'")
   expect(publish.if).toContain("needs.build.result == 'success'")
   expect(publish.if).toContain("needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'")
