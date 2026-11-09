@@ -74,9 +74,7 @@ patches:
       metadata:
         name: strimzi-cluster-operator
       spec:
-        # Keep both Strimzi controllers stopped through the reviewed PVC handoff.
-        # Restore one replica after all copied claims and storage annotations agree.
-        replicas: 0
+        replicas: 1
         template:
           spec:
             containers:

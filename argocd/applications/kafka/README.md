@@ -8,12 +8,15 @@ Both node pools require one member per physical host across Altra, Turin, and Ry
 Ryzen's compute-local taint; its network label remains unchanged. Let Strimzi roll replicas individually and require
 controller quorum and no under-replicated partitions before the next move.
 
-`nvme-storage.yaml` reserves retained, node-bound Kafka volumes. The controller and broker paths are separate; Turin
-uses Intel NVMe for its controller and Transcend NVMe for its broker after CI moves to Ryzen. Volume creation alone
-does not move Kafka data. During the storage handoff the operator is held at zero replicas in desired state, so
-GitOps cannot restart it while a claim is released. Existing Ceph claims remain active until each stopped node's
-complete copy and original-name rebind is verified. Restore one operator replica only after all six replacements
-and StrimziPodSet storage annotations agree with the desired NVMe classes.
+`nvme-storage.yaml` reserves retained, node-bound NVMe volumes for the original Kafka claim names. Each host runs
+one controller with a 30 GiB volume and one broker with a 200 GiB volume. Turin uses Intel NVMe for its controller
+and Transcend NVMe for its broker; Altra and Ryzen use separate directories on their local NVMe filesystems.
+These reservations total 690 GiB across the cluster. Local PV capacities do not impose filesystem quotas.
+
+Strimzi runs with one operator replica. Future storage maintenance must pause reconciliation and stop the operator
+for the verified copy and original-name PVC handoff. Restore it only when all replacement claims and StrimziPodSet
+storage annotations agree with the reviewed desired classes. The retained local volumes remain bound through
+operator-managed Pod recreation.
 
 Follow the [migration and recovery runbook](../../../docs/runbooks/kafka-broker-storage-recovery.md). Capture and
 compare the complete Kafka inventory with `packages/scripts/src/kafka/verify-nvme-migration.ts`; its Kubernetes
