@@ -52,6 +52,8 @@ export type Receipt = {
   copyPod?: { name: string; uid: string; logs: string }
   finalPvcUid?: string
   rebind?: RebindJournal
+  copy?: { operationId: string; tempPvcUid?: string; copyPodUid?: string }
+  start?: { operationId: string; finalPvcUid: string; podUid?: string }
 }
 
 type RebindStage = 'armed' | 'source-deleted' | 'pvc-created' | 'pv-swapped'
@@ -66,6 +68,27 @@ type RebindJournal = {
 }
 
 const migrationMarker = 'kafka.proompteng.ai/nvme-migration'
+
+const marked = (resource: Obj, operationId: string): Obj => {
+  const metadata = meta(resource)
+  metadata.annotations = { ...object(metadata.annotations), [migrationMarker]: operationId }
+  return resource
+}
+
+const matchesDesired = (actual: Json | undefined, desired: Json): boolean => {
+  if (Array.isArray(desired))
+    return Array.isArray(actual) && desired.every((value, index) => matchesDesired(actual[index], value))
+  if (desired !== null && typeof desired === 'object')
+    return Object.entries(desired).every(([key, value]) => matchesDesired(object(actual)[key], value))
+  return actual === desired
+}
+
+const assertOwnedResource = (resource: Obj, desired: Obj, operationId: string, expectedUid?: string) => {
+  if (string(object(meta(resource).annotations)[migrationMarker]) !== operationId)
+    throw new Error('migration resource operation marker changed')
+  if (expectedUid) assertUid(resource, expectedUid, 'migration resource')
+  if (!matchesDesired(spec(resource), spec(desired))) throw new Error('migration resource specification changed')
+}
 
 const object = (value: Json | undefined): Obj =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -646,55 +669,96 @@ const verifyIdentity = async (run: Runner, options: Options, plan: MigrationPlan
   return { sourcePvc, sourcePv, targetPv, podSet }
 }
 
+const cleanupCopyPod = async (run: Runner, options: Options, receipt: Receipt) => {
+  if (!receipt.copyPod) return
+  const pod = await getMaybe(run, options, 'pod', receipt.copyPod.name)
+  if (!pod) return
+  assertUid(pod, receipt.copyPod.uid, 'verified copy Pod')
+  await run(kube(options, ['delete', 'pod', receipt.copyPod.name, '--wait=true']))
+}
+
 const runCopy = async (run: Runner, options: Options) => {
   await operatorStopped(run, options)
-  const receipt = await loadReceipt(options)
-  if (receipt.phase !== 'planned') return receipt
-  const current = await verifyIdentity(run, options, receipt.plan)
-  const sourcePod = await get(run, options, 'pod', receipt.plan.pod)
-  assertUid(sourcePod, uidOf(receipt.plan.resources.pod), 'source Pod')
+  let receipt = await loadReceipt(options)
+  if (receipt.phase !== 'planned') {
+    await cleanupCopyPod(run, options, receipt)
+    return receipt
+  }
+  const plan = receipt.plan
+  const current = await verifyIdentity(run, options, plan)
+  let sourcePod = await getMaybe(run, options, 'pod', plan.pod)
+  if (!receipt.copy) {
+    assertUid(sourcePod, uidOf(plan.resources.pod), 'source Pod')
+    receipt = { ...receipt, copy: { operationId: randomUUID() }, updatedAt: new Date().toISOString() }
+    await save(receiptPath(options), receipt as unknown as Json)
+  }
+  const journal = receipt.copy!
+  const saveCopy = async () => {
+    receipt = { ...receipt, copy: { ...journal }, updatedAt: new Date().toISOString() }
+    await save(receiptPath(options), receipt as unknown as Json)
+  }
   if (string(spec(current.sourcePv).persistentVolumeReclaimPolicy) !== 'Retain')
-    await patch(run, options, 'pv', receipt.plan.sourcePv, { spec: { persistentVolumeReclaimPolicy: 'Retain' } }, false)
-  const retained = await get(run, options, 'pv', receipt.plan.sourcePv, false)
+    await patch(run, options, 'pv', plan.sourcePv, { spec: { persistentVolumeReclaimPolicy: 'Retain' } }, false)
+  const retained = await get(run, options, 'pv', plan.sourcePv, false)
   if (string(spec(retained).persistentVolumeReclaimPolicy) !== 'Retain')
     throw new Error('source PV Retain guard failed')
-  await run(kube(options, ['delete', 'pod', receipt.plan.pod, '--wait=true', '--grace-period=-1']))
-  const targetBeforeTemp = await get(run, options, 'pv', receipt.plan.targetPv, false)
-  assertUid(targetBeforeTemp, uidOf(receipt.plan.resources.targetPv), 'target PV')
-  if (Object.keys(object(spec(targetBeforeTemp).claimRef)).length > 0)
-    throw new Error('target PV claimed before temporary PVC')
-  const sourceBeforeTemp = await get(run, options, 'pvc', receipt.plan.sourcePvc)
-  assertUid(sourceBeforeTemp, uidOf(receipt.plan.resources.sourcePvc), 'source PVC')
-  const temp = temporaryPvc(receipt.plan)
-  await apply(run, options, temp)
-  const image = string(object(arr(spec(receipt.plan.resources.desiredPod).containers)[0]).image)
+  if (sourcePod) {
+    assertUid(sourcePod, uidOf(plan.resources.pod), 'source Pod')
+    if (journal.tempPvcUid || journal.copyPodUid) throw new Error('source Pod exists after copy resources were created')
+    await run(kube(options, ['delete', 'pod', plan.pod, '--wait=true', '--grace-period=-1']))
+  }
+  sourcePod = await getMaybe(run, options, 'pod', plan.pod)
+  if (sourcePod) throw new Error('source Pod still exists after stop boundary')
+  const temp = marked(temporaryPvc(plan), journal.operationId)
+  let bound = await getMaybe(run, options, 'pvc', nameOf(temp)!)
+  if (!bound) {
+    if (journal.tempPvcUid) throw new Error('recorded temporary PVC is missing')
+    const target = await get(run, options, 'pv', plan.targetPv, false)
+    assertUid(target, uidOf(plan.resources.targetPv), 'target PV')
+    if (Object.keys(object(spec(target).claimRef)).length > 0) throw new Error('target PV claimed before temporary PVC')
+    await apply(run, options, temp)
+    bound = await get(run, options, 'pvc', nameOf(temp)!)
+  }
+  assertOwnedResource(bound, temp, journal.operationId, journal.tempPvcUid)
+  journal.tempPvcUid = uidOf(bound)
+  if (!journal.tempPvcUid) throw new Error('temporary PVC has no UID')
+  await saveCopy()
+  const image = string(object(arr(spec(plan.resources.desiredPod).containers)[0]).image)
   if (!image) throw new Error('Kafka image missing from SPS desired pod')
-  const copier = copierPod(receipt.plan, image)
-  await apply(run, options, copier)
+  const copier = marked(copierPod(plan, image), journal.operationId)
+  let observedCopier = await getMaybe(run, options, 'pod', nameOf(copier)!)
+  if (!observedCopier) {
+    if (journal.copyPodUid) throw new Error('recorded copy Pod is missing before copy receipt')
+    await apply(run, options, copier)
+    observedCopier = await get(run, options, 'pod', nameOf(copier)!)
+  }
+  assertOwnedResource(observedCopier, copier, journal.operationId, journal.copyPodUid)
+  journal.copyPodUid = uidOf(observedCopier)
+  if (!journal.copyPodUid) throw new Error('copy Pod has no UID')
+  await saveCopy()
   await wait(run, options, [
     '--for=jsonpath={.status.phase}=Bound',
     'pvc/' + nameOf(temp),
     '--timeout=' + options.timeoutSeconds + 's',
   ])
-  const bound = await get(run, options, 'pvc', nameOf(temp)!)
-  if (string(spec(bound).volumeName) !== receipt.plan.targetPv) throw new Error('temporary PVC bound to unexpected PV')
-  const targetAfterTemp = await get(run, options, 'pv', receipt.plan.targetPv, false)
-  assertUid(targetAfterTemp, uidOf(receipt.plan.resources.targetPv), 'target PV')
-  if (string(object(spec(targetAfterTemp).claimRef).uid) !== uidOf(bound))
-    throw new Error('temporary target binding UID mismatch')
+  bound = await get(run, options, 'pvc', nameOf(temp)!)
+  assertOwnedResource(bound, temp, journal.operationId, journal.tempPvcUid)
+  const targetAfterTemp = await get(run, options, 'pv', plan.targetPv, false)
+  assertUid(targetAfterTemp, uidOf(plan.resources.targetPv), 'target PV')
+  assertTempBinding(targetAfterTemp, plan, { name: nameOf(temp)!, uid: journal.tempPvcUid })
   await waitForCopyPod(run, options, nameOf(copier)!)
+  assertUid(await get(run, options, 'pod', nameOf(copier)!), journal.copyPodUid, 'copy Pod')
   const logs = (await run(kube(options, ['logs', nameOf(copier)!]))).stdout
   if (!logs.includes('COPY_VERIFIED')) throw new Error('copy job did not emit COPY_VERIFIED')
-  const copyPodUid = uidOf(await get(run, options, 'pod', nameOf(copier)!))
-  await run(kube(options, ['delete', 'pod', nameOf(copier)!, '--wait=true']))
   const next: Receipt = {
     ...receipt,
     phase: 'copied',
     updatedAt: new Date().toISOString(),
-    tempPvc: { name: nameOf(temp)!, uid: uidOf(bound)! },
-    copyPod: { name: nameOf(copier)!, uid: copyPodUid ?? '', logs },
+    tempPvc: { name: nameOf(temp)!, uid: journal.tempPvcUid },
+    copyPod: { name: nameOf(copier)!, uid: journal.copyPodUid, logs },
   }
   await save(receiptPath(options), next as unknown as Json)
+  await cleanupCopyPod(run, options, next)
   return next
 }
 
@@ -704,6 +768,7 @@ const runRebind = async (run: Runner, options: Options) => {
   const recordedTemp = receipt.tempPvc
   if (receipt.phase === 'rebound' || receipt.phase === 'started') return receipt
   if (receipt.phase !== 'copied' || !recordedTemp) throw new Error('copy receipt is required before rebind')
+  await cleanupCopyPod(run, options, receipt)
   const plan = receipt.plan
   const sourcePvcUid = uidOf(plan.resources.sourcePvc)
   const sourcePvUid = uidOf(plan.resources.sourcePv)
@@ -883,12 +948,29 @@ const runStart = async (run: Runner, options: Options) => {
   const target = await get(run, options, 'pv', plan.targetPv, false)
   if (string(object(spec(target).claimRef).uid) !== receipt.finalPvcUid)
     throw new Error('target PV final binding changed')
-  const podResult = await run(kube(options, ['get', 'pod', plan.pod, '--ignore-not-found=true', '-o', 'json']))
-  const pod = podResult.stdout.trim() ? (JSON.parse(podResult.stdout) as Obj) : undefined
-  if (pod) throw new Error('Kafka pod already exists; refusing stale-pod replacement')
-  await apply(run, options, cleanPod(plan))
+  let journal = receipt.start
+  if (!journal) {
+    if (await getMaybe(run, options, 'pod', plan.pod)) throw new Error('Kafka pod already exists before startup intent')
+    if (!receipt.finalPvcUid) throw new Error('final PVC UID is missing')
+    journal = { operationId: randomUUID(), finalPvcUid: receipt.finalPvcUid }
+    await save(receiptPath(options), { ...receipt, start: journal } as unknown as Json)
+  }
+  if (journal.finalPvcUid !== receipt.finalPvcUid) throw new Error('startup PVC identity changed')
+  const desiredPod = marked(cleanPod(plan), journal.operationId)
+  let pod = await getMaybe(run, options, 'pod', plan.pod)
+  if (!pod) {
+    if (journal.podUid) throw new Error('recorded startup Pod is missing')
+    await apply(run, options, desiredPod)
+    pod = await get(run, options, 'pod', plan.pod)
+  }
+  assertOwnedResource(pod, desiredPod, journal.operationId, journal.podUid)
+  journal.podUid = uidOf(pod)
+  if (!journal.podUid) throw new Error('startup Pod has no UID')
+  await save(receiptPath(options), { ...receipt, start: journal } as unknown as Json)
   await wait(run, options, ['--for=condition=Ready', 'pod/' + plan.pod, '--timeout=' + options.timeoutSeconds + 's'])
-  const next: Receipt = { ...receipt, phase: 'started', updatedAt: new Date().toISOString() }
+  const readyPod = await get(run, options, 'pod', plan.pod)
+  assertOwnedResource(readyPod, desiredPod, journal.operationId, journal.podUid)
+  const next: Receipt = { ...receipt, start: journal, phase: 'started', updatedAt: new Date().toISOString() }
   await save(receiptPath(options), next as unknown as Json)
   return next
 }
@@ -906,7 +988,7 @@ export const runWith = async (options: Options, runner: Runner = kubectlRunner) 
     }
     if (existing) {
       identity(existing.plan, options)
-      if (existing.phase !== 'planned')
+      if (existing.phase !== 'planned' || existing.copy)
         throw new Error('receipt already advanced; refusing to overwrite it with a new plan')
       for (const [label, before, after] of [
         ['Kafka', existing.plan.resources.kafka, plan.resources.kafka],

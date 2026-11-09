@@ -1291,6 +1291,21 @@ export const compareSnapshots = (
         checks.replication = false
         failures.push(`Kafka replica set changed for ${topicName}[${partitionId}]`)
       }
+      const replicaBrokers = right.logDirs.map((entry) => entry.broker).sort((a, b) => a - b)
+      const expectedBrokers = [...right.replicas].sort((a, b) => a - b)
+      if (JSON.stringify(replicaBrokers) !== JSON.stringify(expectedBrokers)) {
+        checks.replication = false
+        failures.push(`Kafka replica log-directory coverage is incomplete for ${topicName}[${partitionId}]`)
+      }
+      for (const replica of right.logDirs) {
+        if (
+          !/^\d+$/.test(replica.offsetLag) ||
+          (options.allowOffsetAdvance === false && BigInt(replica.offsetLag) !== 0n)
+        ) {
+          checks.replication = false
+          failures.push(`Kafka replica lag is unhealthy for ${topicName}[${partitionId}] on broker ${replica.broker}`)
+        }
+      }
     }
   }
   if (baseline.quorum.voterIds.join(',') !== current.quorum.voterIds.join(',')) {

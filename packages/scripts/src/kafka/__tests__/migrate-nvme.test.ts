@@ -316,6 +316,7 @@ describe('Kafka NVMe migration plan contract', () => {
     const sourcePvcResource = JSON.parse(JSON.stringify(plan.resources.sourcePvc)) as ResourceShape
     const targetPvResource = JSON.parse(JSON.stringify(plan.resources.targetPv)) as ResourceShape
     const calls: string[][] = []
+    let startedPod: unknown
     const runner = async (args: string[], input?: string) => {
       calls.push(args)
       const resource = args[args.indexOf('get') + 1]
@@ -350,12 +351,14 @@ describe('Kafka NVMe migration plan contract', () => {
           stderr: '',
         }
       if (args.includes('get') && args.includes('pod')) {
+        if (startedPod) return { stdout: JSON.stringify(startedPod), stderr: '' }
         if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '' }
         throw new Error('pod not found')
       }
       if (args.includes('apply')) {
         const applied = JSON.parse(input ?? '{}') as { spec?: { nodeName?: string } }
         expect(applied.spec?.nodeName).toBeUndefined()
+        startedPod = { ...applied, metadata: { ...(applied as { metadata: object }).metadata, uid: 'started-uid' } }
       }
       return { stdout: '', stderr: '' }
     }
@@ -578,5 +581,119 @@ describe('Kafka NVMe migration plan contract', () => {
     expect(calls.some((args) => args.includes('delete') || args.includes('apply') || args.includes('patch'))).toBe(
       false,
     )
+  })
+  it('resumes copy and startup after lost API acknowledgments without repeating the copy', async () => {
+    type Resource = { kind?: string; metadata: Record<string, unknown>; spec: Record<string, unknown>; status?: object }
+    for (const failurePoint of [
+      'stop',
+      'temp-create',
+      'copy-create',
+      'copy-logs',
+      'copy-delete',
+      'start-create',
+      'start-ready',
+    ]) {
+      const plan = buildPlan(options(), resources())
+      const receiptDir = await mkdtemp(join(tmpdir(), 'kafka-nvme-resume-'))
+      const receiptPath = join(receiptDir, plan.pod + '.receipt.json')
+      const clone = (value: unknown) => JSON.parse(JSON.stringify(value)) as Resource
+      const sourcePv = clone(plan.resources.sourcePv)
+      sourcePv.spec.persistentVolumeReclaimPolicy = 'Retain'
+      const target = clone(plan.resources.targetPv)
+      let sourcePod: Resource | undefined = clone(plan.resources.pod)
+      let copier: Resource | undefined
+      let temp: Resource | undefined
+      let finalPvc: Resource | undefined
+      let failed = false
+      let copyCreates = 0
+      const inject = (point: string) => {
+        if (failurePoint === point && !failed) {
+          failed = true
+          throw new Error('lost acknowledgment ' + point)
+        }
+      }
+      const initial: Receipt = { version: 1, phase: 'planned', updatedAt: new Date().toISOString(), plan }
+      await writeFile(receiptPath, JSON.stringify(initial))
+      const runner = async (args: string[], input?: string) => {
+        const empty = { stdout: '', stderr: '' }
+        const response = (value: unknown) => (value ? { stdout: JSON.stringify(value), stderr: '' } : empty)
+        if (args.includes('get')) {
+          const at = args.indexOf('get')
+          const resource = args[at + 1]
+          const name = args[at + 2]
+          if (resource === 'deployment')
+            return response({ spec: { replicas: 0, selector: { matchLabels: { app: 'operator' } } } })
+          if (resource === 'pods') return response({ items: [] })
+          if (resource === 'kafka') return response(plan.resources.kafka)
+          if (resource === 'strimzipodset') return response(plan.resources.podSet)
+          if (resource === 'pv') return response(name === plan.sourcePv ? sourcePv : target)
+          if (resource === 'pvc')
+            return response(name === plan.sourcePvc ? (finalPvc ?? plan.resources.sourcePvc) : temp)
+          if (resource === 'pod') return response(name === plan.pod ? sourcePod : copier)
+        }
+        if (args.includes('delete') && args.includes('pod')) {
+          if (args.includes(plan.pod)) {
+            sourcePod = undefined
+            inject('stop')
+          } else {
+            copier = undefined
+            inject('copy-delete')
+          }
+        }
+        if (args.includes('apply')) {
+          const resource = JSON.parse(input!) as Resource
+          if (resource.kind === 'PersistentVolumeClaim') {
+            temp = { ...resource, metadata: { ...resource.metadata, uid: 'temp-uid' } }
+            target.spec.claimRef = { name: temp.metadata.name, namespace: plan.namespace, uid: 'temp-uid' }
+            inject('temp-create')
+          } else if (resource.metadata.name === plan.pod) {
+            sourcePod = { ...resource, metadata: { ...resource.metadata, uid: 'started-uid' } }
+            inject('start-create')
+          } else {
+            copyCreates += 1
+            copier = {
+              ...resource,
+              metadata: { ...resource.metadata, uid: 'copy-uid' },
+              status: { phase: 'Succeeded' },
+            }
+            inject('copy-create')
+          }
+        }
+        if (args.includes('logs')) {
+          inject('copy-logs')
+          return { stdout: 'COPY_VERIFIED', stderr: '' }
+        }
+        if (args.includes('wait') && args.includes('pod/' + plan.pod)) inject('start-ready')
+        return empty
+      }
+      const copyOptions = options({ command: 'copy', receiptDir, yes: true })
+      const expectLostAcknowledgment = async (operation: Promise<unknown>) => {
+        let caught: unknown
+        try {
+          await operation
+        } catch (error) {
+          caught = error
+        }
+        expect(caught).toBeInstanceOf(Error)
+        expect((caught as Error).message).toContain('lost acknowledgment')
+      }
+      if (failurePoint.startsWith('start')) await runWith(copyOptions, runner)
+      else {
+        await expectLostAcknowledgment(runWith(copyOptions, runner))
+        expect(((await runWith(copyOptions, runner)) as Receipt).phase).toBe('copied')
+      }
+      expect(copyCreates).toBe(1)
+      expect(copier).toBeUndefined()
+      const copied = JSON.parse(await readFile(receiptPath, 'utf8')) as Receipt
+      expect(copied.copyPod?.logs).toBe('COPY_VERIFIED')
+      finalPvc = clone(plan.resources.sourcePvc)
+      finalPvc.metadata.uid = 'final-uid'
+      finalPvc.spec.volumeName = plan.targetPv
+      target.spec.claimRef = { name: plan.sourcePvc, namespace: plan.namespace, uid: 'final-uid' }
+      await writeFile(receiptPath, JSON.stringify({ ...copied, phase: 'rebound', finalPvcUid: 'final-uid' }))
+      const startOptions = options({ command: 'start', receiptDir, yes: true })
+      if (failurePoint.startsWith('start')) await expectLostAcknowledgment(runWith(startOptions, runner))
+      expect(((await runWith(startOptions, runner)) as Receipt).phase).toBe('started')
+    }
   })
 })

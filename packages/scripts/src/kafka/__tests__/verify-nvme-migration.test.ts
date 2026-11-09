@@ -62,7 +62,12 @@ const snapshot = (): KafkaSnapshot => ({
           isr: [3, 4, 5],
           startOffset: '10',
           endOffset: '20',
-          logDirs: [],
+          logDirs: [3, 4, 5].map((broker) => ({
+            broker,
+            logDir: '/var/lib/kafka/data',
+            sizeBytes: '1234',
+            offsetLag: '0',
+          })),
         },
       ],
     },
@@ -220,6 +225,20 @@ describe('Kafka NVMe migration verifier', () => {
     expect(report.pass).toBe(false)
     expect(report.failures).toContain('Kafka replication/ISR is not fully healthy for bayn.native-arrival.v1[0]')
     expect(report.checks.replication).toBe(false)
+  })
+
+  it('requires complete replica reports and zero replica lag for quiesced verification', () => {
+    const baseline = snapshot()
+    const current = structuredClone(baseline)
+    current.topics[0].partitions[0].logDirs[1].offsetLag = '1'
+    expect(compareSnapshots(baseline, current, { allowOffsetAdvance: false }).checks.replication).toBe(false)
+    expect(compareSnapshots(baseline, current, { allowOffsetAdvance: true }).checks.replication).toBe(true)
+    current.topics[0].partitions[0].logDirs[1].offsetLag = '-1'
+    expect(compareSnapshots(baseline, current).checks.replication).toBe(false)
+    current.topics[0].partitions[0].logDirs.pop()
+    expect(compareSnapshots(baseline, current).failures).toContain(
+      'Kafka replica log-directory coverage is incomplete for bayn.native-arrival.v1[0]',
+    )
   })
 
   it('requires exact record hashes and full range coverage for selected topics', () => {
