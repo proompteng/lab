@@ -346,6 +346,30 @@ benchmark. Two BUY fills have two balanced posted receipts; they are observed at
 recorded at 16:06:28.676. The cycle remains active at this capture. A filled intent does not establish a completed cycle.
 The request's inference expiry and the protected decision's submission cutoff are distinct contracts.
 
+An additional before entry at 14:40:12.444 UTC matches the later entry's three-candidate batch, v40 protocol,
+Jev 1.14.0 model, input schema, Altra node and `Waiting` worker outcome. Trace
+`0e4ec6b69b5f2e65566f1533a0bd44ac` matches its persisted batch and document identities through the exact old
+Restate deployment. Both entries have two BUY fills and two balanced posted receipts. Their shared native entry
+stages have successful span status and no exception events:
+
+| Shared entry stage        | Before, ms | After, ms |
+| ------------------------- | ---------: | --------: |
+| Observation               |    255.062 |   643.686 |
+| Batch plan                |    342.461 |   634.309 |
+| Batch admission           |  2,419.035 | 1,243.359 |
+| Batch completion          |  1,394.233 |   796.500 |
+| Decision construction     |  1,331.522 | 2,528.305 |
+| Decision / intent binding |    775.256 | 1,806.172 |
+| Committed-decision read   |    762.565 | 1,324.318 |
+| Entry submission          |    576.905 |   742.313 |
+
+Within each worker's clock, observation start through submission-span end takes 9,820.380/12,183.575 ms.
+The protected documents contain 1,626,245/2,823,900 JSONB text bytes. This compares the same entry-stage shape,
+with different input material, document sizes, times and load. It is one pair, not a latency distribution or a causal
+benchmark. The complete advances take 12,577.188/12,912.557 ms, but only the before advance contains a full
+reconciliation; those parent durations are not equivalent work. The later shared entry pipeline is slower in this
+sample. Lower Waiting-pass medians do not establish faster trading requests.
+
 Public collectors still have zero nonterminal invocations and the same two retained state rows and fingerprint.
 The old stateless bootstrap registration still pins two workers despite zero nonterminal invocations. Its separately
 reviewed retirement remains pending under the owning runbook. No retained records, registrations or volumes are deleted.
