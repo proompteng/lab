@@ -649,5 +649,67 @@
         "evaluationCompletedAt": "2026-11-06T18:45:08.272Z"
       }
     ]
+  },
+  "scopedBootstrapPolicy": {
+    "sourceBaseline": "9338619f6585f895770318cb91f50d09cbd74d5a",
+    "entryMarkets": ["EQUITY"],
+    "requestedHistoryMinutes": {
+      "equityEntry": {
+        "before": 30,
+        "after": 30
+      },
+      "cryptoWhileEntryDisabled": {
+        "before": 120,
+        "after": 2
+      },
+      "webullPricing": {
+        "before": 2,
+        "after": 2
+      }
+    },
+    "projectionBundle": {
+      "beforeBytes": 1070764,
+      "afterBytes": 1071017,
+      "newInputs": ["services/bayn/src/execution/trading-scope.ts"],
+      "method": "Identical single-entry Bun 1.4.2 Node builds, with tigerbeetle-node and @platformatic/kafka external. Remove the single-use submit helper so the policy module contains no financial-authority imports."
+    },
+    "scope": "Only native startup lookback changes. Producer timestamp diagnostics keep their explicit historical start. Topics, future subscriptions, source schemas, capture hashes, entry-market policy and exit authority are unchanged. All three held crypto fixtures preserve executable quotes, recorded replay and the actual exit freshness guard without entry-chart history. Window reduction is not a measured record, byte, CPU or elapsed-time reduction."
+  },
+  "captureIdentityInventory": {
+    "observedAt": "2026-11-09T08:49:30.599413+00:00",
+    "replicas": {
+      "bayn-db-1": {
+        "captures": 367,
+        "lastEpochRecordedAt": "2026-10-27T18:09:43.91713+00:00",
+        "firstEpochRecordedAt": "2026-10-18T10:27:00.79151+00:00",
+        "endStatuses": {
+          "STOPPED": 250,
+          "INCOMPLETE": 24
+        },
+        "captureIdSetSha256": "eb909402b9bcd67e3c321e62a13e09fe2cfa6443a1f4699b4182633b6516f03d",
+        "headerRangeRead": {
+          "statementTimeoutSeconds": 20,
+          "completed": false,
+          "error": "ERROR:  canceling statement due to statement timeout"
+        }
+      },
+      "bayn-native-arrival-db-1": {
+        "captures": 440,
+        "lastEpochRecordedAt": "2026-11-09T08:22:27.949642+00:00",
+        "firstEpochRecordedAt": "2026-10-27T20:26:13.955087+00:00",
+        "endStatuses": {
+          "STOPPED": 303,
+          "INCOMPLETE": 20
+        },
+        "captureIdSetSha256": "8c4dd8d7a157e3484be842da3dab11336c6762e11d14ce33c63352960abcf931",
+        "headerRangeRead": {
+          "statementTimeoutSeconds": 20,
+          "completed": false,
+          "error": "ERROR:  canceling statement due to statement timeout"
+        }
+      }
+    },
+    "equalCaptureIdsAcrossSnapshots": 0,
+    "scope": "Two separate read-only repeatable-read snapshots. Epoch identities are disjoint; this does not establish distinct underlying arrivals or permission to delete any data. Scalar header-range scans on both replicas reached the 20-second statement limit. Existing valuation and export readers retain their source-specific evidence."
   }
 }

@@ -516,7 +516,7 @@ test('Kafka payload sizes are exact without enabling hashes or raw-value retenti
 })
 
 describe('Kafka bootstrap and scoped consumption', () => {
-  test('live workers retain chart history but only warm recent Webull pricing bars', async () => {
+  test('live workers retain entry charts and warm only recent pricing history for disabled markets', async () => {
     const equity = { ...universe, topics: { ...universe.topics, webullBars: 'webull' } }
     const crypto: StreamingUniverse = {
       universeId: 'crypto',
@@ -555,8 +555,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
         yield* TestClock.adjust('1 second')
         expect(seeks).toEqual([
           { topics: Object.values(universe.topics), timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
-          { topics: ['webull'], timestamp: BigInt(Date.parse('2026-10-29T00:57:55.000Z')) },
-          { topics: ['crypto', 'crypto-features'], timestamp: BigInt(Date.parse('2026-10-28T22:59:55.000Z')) },
+          {
+            topics: ['webull', 'crypto', 'crypto-features'],
+            timestamp: BigInt(Date.parse('2026-10-29T00:57:55.000Z')),
+          },
         ])
         expect(requested.filter((position) => ['quotes', 'trades'].includes(position.topic))).toEqual(
           bounds.filter((position) => ['quotes', 'trades'].includes(position.topic)),
@@ -592,9 +594,16 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
-  test('explicit historical diagnostics retain quote, trade and Webull history', async () => {
+  test('explicit historical diagnostics retain equity and disabled-market history', async () => {
     const equity = { ...universe, topics: { ...universe.topics, webullBars: 'webull' } }
-    const bounds = (offset: string) => [...positions(offset), { topic: 'webull', partition: 0, offset }]
+    const crypto: StreamingUniverse = {
+      universeId: 'crypto',
+      universeSymbolHash: '1'.repeat(64),
+      symbols: ['ETH/USD'],
+      topics: { bars: 'crypto', quotes: 'crypto', trades: 'crypto', features: 'crypto-features' },
+    }
+    const topics = [...Object.values(equity.topics), 'crypto', 'crypto-features']
+    const bounds = (offset: string) => topics.map((topic) => ({ topic, partition: 0, offset }))
     const transport = new FakeTransport()
     const seeks: { topics: readonly string[]; timestamp: bigint }[] = []
     transport.offsets = async (topics, timestamp) => {
@@ -610,9 +619,9 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, [equity], () => transport, 0)
+        const projection = yield* makeKafkaMarketProjection(config, [equity, crypto], () => transport, 0)
         yield* TestClock.adjust('1 second')
-        expect(seeks).toEqual([{ topics: Object.values(equity.topics), timestamp: 0n }])
+        expect(seeks).toEqual([{ topics, timestamp: 0n }])
         expect(requested).toEqual(bounds('0').toSorted((a, b) => a.topic.localeCompare(b.topic)))
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         transport.drained = bounds('100')

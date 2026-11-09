@@ -149,10 +149,16 @@ The changes below are source changes until their reviewed image receipts and dep
   full reconciliation. A second ordered aggregate combines the quantity and cost inventory-debit reads in accounting
   reconstruction: its warm median falls from 121.191 to 72.337 ms with zero row differences. Full accounting
   reconstruction, ledger verification and the writer fence remain mandatory.
-- B4: Native startup now requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
-  accepts only the latest completed bar with a 10-second availability limit. Equity chart and crypto history,
-  subscriptions, capture contracts and explicit historical diagnostics are unchanged. Kafka and independent-worker
-  tests verify catch-up, freshness, cancellation and retained replay. The current workers incorporated 110,244 and
+- B4: Native startup requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
+  accepts only the latest completed bar with a 10-second availability limit. Markets disabled for new entries also
+  request two minutes of pricing history, replacing the unconditional two-hour crypto rebuild. The existing entry
+  policy controls this bound; enabling a market restores its full chart history. Current liquidation queries use one
+  completed minute and fresh quotes. BTC, ETH and SOL fixtures reproduce the same quotes without entry charts,
+  replay their retained evidence, and preserve the exit policy's stale-quote rejection. Equity entry charts,
+  subscriptions, capture contracts and explicit historical diagnostics remain intact. The projection adds only the
+  pure entry-scope module, with 253 extra emitted bytes; removing a single-use submit helper avoids importing financial
+  authority contracts into this process. Kafka and independent-worker tests verify catch-up, cancellation and cleanup.
+  The earlier current workers incorporated 110,244 and
   110,681 records in 14.407 and 33.591 seconds on Turin and Altra; replacement rollout timing remains unmeasured.
   Two additional old workers remain because `BaynExecutionBootstrap` is still latest on their old deployment.
   Restate has no remaining invocation for that stateless service, and both current services point to the new
@@ -170,9 +176,11 @@ The changes below are source changes until their reviewed image receipts and dep
   This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
   Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
-  the dedicated archive. The 367 financial epochs were created through October 27; the dedicated archive has 436
-  epochs, with a newest epoch on November 9 UTC. Epoch creation time is not last arrival time. The bounded last-arrival
-  aggregate timed out, so write quiescence and complete range overlap remain unverified. Existing exports and valuation
+  the dedicated archive. The 367 financial epochs were created through October 27; a later snapshot finds 440 dedicated
+  epochs, with a newest epoch on November 9 UTC. Their capture-ID sets have no overlap. Financial end records contain
+  250 `STOPPED` and 24 `INCOMPLETE` captures; the dedicated archive contains 303 and 20 respectively. These counts do
+  not establish complete capture contents or quiescence. Epoch creation time is not last arrival time. Both 20-second
+  header-range scans time out, so write quiescence and complete range overlap remain unverified. Existing exports and valuation
   readers retain their source-specific evidence. No rows or volumes are removed or moved.
 - B7: The six old 10 GiB Valkey claims and the 2 GiB OpenCode claim still have no Pod consumer. OpenCode explicitly
   retains `Prune=false,Delete=false`. The active Valkey StatefulSet uses two different claims. The inventory does not

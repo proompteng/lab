@@ -1,4 +1,5 @@
 import { MarketKind } from '../../instruments'
+import { currentEntryMarketEnabled } from '../../execution/trading-scope'
 import { marketHistoryMinutes } from '../history'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
@@ -432,8 +433,11 @@ export const makeKafkaMarketProjection = (
         const timestampForTopic = (source: MarketSources[number], topic: string) =>
           diagnosticStartMs ??
           Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
-            // Webull supplies the latest completed M1 pricing bar, not entry-chart history.
-            (topic === source.topics.webullBars ? 2 : marketHistoryMinutes[marketSourceKind(source)]) * 60_000 -
+            // Pricing uses a completed minute and fresh quotes. Full charts belong to enabled entry markets.
+            (topic === source.topics.webullBars || !currentEntryMarketEnabled(marketSourceKind(source))
+              ? 2
+              : marketHistoryMinutes[marketSourceKind(source)]) *
+              60_000 -
             5000
         const owners = new Map<string, string>()
         const seekGroups = new Map<number, string[]>()

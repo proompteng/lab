@@ -1,6 +1,6 @@
 import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
-import { currentSubmissionMarketAllowed } from './trading-scope'
+import { currentEntryMarketEnabled } from './trading-scope'
 import { quantityFromDecimal, quantityScale } from '../quantity'
 import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { Cause, Effect, Result } from 'effect'
@@ -1175,7 +1175,7 @@ export const makeAuthorityGuardedBrokerMutation = (
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    if (!currentSubmissionMarketAllowed(intent))
+    if (intent.side !== IntentOrderSide.Sell && !currentEntryMarketEnabled(instrumentMarket(intent.symbol)))
       return Effect.fail(
         mutationAuthorizationError(
           'crypto entries are disabled',
