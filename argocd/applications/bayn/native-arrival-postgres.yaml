@@ -10,7 +10,9 @@ metadata:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   description: Bayn immutable native market arrival archive
-  instances: 2
+  # Temporary third failure domain for the data-preserving NVMe migration.
+  # Return to two 100G hosts after replacing the two Ceph-backed instances.
+  instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
   imagePullPolicy: IfNotPresent
   enablePDB: true
@@ -22,10 +24,17 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: network.proompteng.ai/100g
+              - key: kubernetes.io/hostname
                 operator: In
                 values:
-                  - "true"
+                  - turin
+                  - talos-192-168-1-85
+                  - talos-192-168-1-194
+    tolerations:
+      - key: workload.proompteng.ai/compute-local
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
     podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
   resources:
@@ -36,11 +45,11 @@ spec:
       cpu: "2"
       memory: 2Gi
   storage:
-    storageClass: rook-ceph-block
+    storageClass: local-path
     size: 200Gi
-    resizeInUseVolumes: true
+    resizeInUseVolumes: false
   walStorage:
-    storageClass: local-path-bayn-wal
+    storageClass: local-path
     size: 32Gi
     resizeInUseVolumes: false
   bootstrap:

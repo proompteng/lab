@@ -920,9 +920,10 @@ export const mutationDecisionBuilder =
     input: ObserveAutonomousCycleInput,
     preparation: ObserveStartupPreparation,
     policy: Policy,
+    buildDecision: typeof buildMutationShadowCycleDecision,
   ): RecoveryFirstDecisionBuilder =>
   (cycle, reconcile, reconcileForPricing) =>
-    buildMutationShadowCycleDecision({
+    buildDecision({
       ...mutationDecisionInput(input, preparation, policy, cycle, reconcile),
       ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
     }).pipe(Effect.mapError(decisionBuildError))
