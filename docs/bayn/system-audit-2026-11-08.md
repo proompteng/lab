@@ -156,8 +156,9 @@ The changes below are source changes until their reviewed image receipts and dep
   completed minute and fresh quotes. BTC, ETH and SOL fixtures reproduce the same quotes without entry charts,
   replay their retained evidence, and preserve the exit policy's stale-quote rejection. Equity entry charts,
   subscriptions, capture contracts and explicit historical diagnostics remain intact. The projection adds only the
-  pure entry-scope module, with 253 extra emitted bytes; removing a single-use submit helper avoids importing financial
-  authority contracts into this process. Kafka and independent-worker tests verify catch-up, cancellation and cleanup.
+  pure entry-scope module, with 253 extra emitted bytes. The submission gate now lives in mutation-authority, and its formal
+  conformance caller imports it there. This keeps financial authority contracts out of the projection. Kafka and
+  independent-worker tests verify catch-up, cancellation and cleanup.
   The earlier current workers incorporated 110,244 and
   110,681 records in 14.407 and 33.591 seconds on Turin and Altra; replacement rollout timing remains unmeasured.
   Two additional old workers remain because `BaynExecutionBootstrap` is still latest on their old deployment.
@@ -199,6 +200,13 @@ The changes below are source changes until their reviewed image receipts and dep
   In the newest sample, intent creation precedes submission by 4.160 seconds, the submit acknowledgement takes
   383 ms, and the recovery event is recorded 16.776 seconds after acknowledgement. These are differences between
   retained timestamps, not isolated CPU, SQL or provider latency. Cross-process clock offset remains unmeasured.
+  A fresh pre-release baseline on source `cea96bc87f` binds 27 completed waiting passes to their exact Restate
+  invocation ancestry. Worker advance has a 951.300 ms median and a 9,074.354 ms maximum; persistence has a
+  644.526 ms median. The outlier spends 6,922.463 ms inserting a broker event and 1,094.850 ms committing.
+  The primary's logs independently record 6,921.870 and 1,093.963 ms for those operations on the same backend.
+  The underlying database wait reason remains unverified; the optimized history-read queries do not explain that
+  write stall. Three observed schedules also separate 29.907–29.934 seconds of requested delay from 25–705 ms of
+  start lateness. Comparable cleanup-release timing and the complete naturally eligible v40 request remain open.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 

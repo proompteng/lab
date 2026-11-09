@@ -671,7 +671,7 @@
       "beforeBytes": 1070764,
       "afterBytes": 1071017,
       "newInputs": ["services/bayn/src/execution/trading-scope.ts"],
-      "method": "Identical single-entry Bun 1.4.2 Node builds, with tigerbeetle-node and @platformatic/kafka external. Remove the single-use submit helper so the policy module contains no financial-authority imports."
+      "method": "Identical single-entry Bun 1.4.2 Node builds, with tigerbeetle-node and @platformatic/kafka external. The entry policy has no financial-authority imports; its physical submission gate lives in mutation-authority and the formal conformance caller imports it there."
     },
     "scope": "Only native startup lookback changes. Producer timestamp diagnostics keep their explicit historical start. Topics, future subscriptions, source schemas, capture hashes, entry-market policy and exit authority are unchanged. All three held crypto fixtures preserve executable quotes, recorded replay and the actual exit freshness guard without entry-chart history. Window reduction is not a measured record, byte, CPU or elapsed-time reduction."
   },
@@ -711,5 +711,459 @@
     },
     "equalCaptureIdsAcrossSnapshots": 0,
     "scope": "Two separate read-only repeatable-read snapshots. Epoch identities are disjoint; this does not establish distinct underlying arrivals or permission to delete any data. Scalar header-range scans on both replicas reached the 20-second statement limit. Existing valuation and export readers retain their source-specific evidence."
+  },
+  "preReleaseWaitingBaseline": {
+    "context": {
+      "observedAt": "2026-11-09T09:12:43.578226+00:00",
+      "deploymentId": "dp_175mWxiMylzO8oyT1rRZXKF",
+      "workers": [
+        {
+          "pod": "bayn-execution-controller-458b5f695-nnb7r",
+          "node": "turin",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "sourceRevision": "cea96bc87ff7b17d336fd84c38739976c7fc48b3"
+        },
+        {
+          "pod": "bayn-execution-controller-458b5f695-tg87z",
+          "node": "talos-192-168-1-85",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "sourceRevision": "cea96bc87ff7b17d336fd84c38739976c7fc48b3"
+        }
+      ]
+    },
+    "uniqueSamples": 27,
+    "outcomes": ["Waiting"],
+    "controllerKeySha256": ["7f6d47df0101e0ece3ad9074be820ac56a93104621e69cea203f89560c348043"],
+    "columns": [
+      "traceId",
+      "runningAt",
+      "restateActiveMs",
+      "bayn.execution.advance",
+      "bayn.reconciliation.run",
+      "bayn.reconciliation.broker-snapshot",
+      "bayn.reconciliation.persist",
+      "bayn.postgres.writer-fence",
+      "bayn.reconciliation.accounting-verify"
+    ],
+    "rows": [
+      [
+        "ba73e4594a94a4f1f0f70d42624403a4",
+        "2026-11-09T09:11:27.002Z",
+        1066.0,
+        961.423,
+        740.584,
+        78.728,
+        661.769,
+        558.815,
+        282.987
+      ],
+      [
+        "ad502c5e06e8c1c706177c06eb4e0800",
+        "2026-11-09T09:11:58.003Z",
+        9211.0,
+        9074.354,
+        8849.331,
+        123.451,
+        8725.785,
+        8582.995,
+        282.89
+      ],
+      [
+        "598cf83dc4380ebd58b5402c072968df",
+        "2026-11-09T09:12:38.002Z",
+        1042.0,
+        929.928,
+        700.397,
+        75.666,
+        624.555,
+        558.818,
+        288.208
+      ],
+      [
+        "860fe87cc39f508dd8fe903e23da854c",
+        "2026-11-09T09:13:09.002Z",
+        1003.0,
+        892.292,
+        663.728,
+        74.572,
+        588.985,
+        525.534,
+        256.235
+      ],
+      [
+        "0d456289971db86ce41f340ec576a1eb",
+        "2026-11-09T09:13:40.002Z",
+        1181.0,
+        992.542,
+        765.026,
+        74.047,
+        690.802,
+        626.354,
+        265.075
+      ],
+      [
+        "9d9709361935422ebe4a40a5d1342097",
+        "2026-11-09T09:14:12.001Z",
+        1140.0,
+        1025.524,
+        800.456,
+        86.861,
+        713.422,
+        557.127,
+        268.402
+      ],
+      [
+        "d091e98f7492f9328609e3e0a82aa457",
+        "2026-11-09T09:14:44.003Z",
+        970.0,
+        864.997,
+        643.408,
+        72.835,
+        570.462,
+        509.525,
+        257.363
+      ],
+      [
+        "3ec3f01bfe447833e1fec7062eb89220",
+        "2026-11-09T09:15:15.003Z",
+        1176.0,
+        1047.065,
+        819.781,
+        77.411,
+        742.262,
+        676.933,
+        266.91
+      ],
+      [
+        "af1dff0ebfd9a805347101c3d8965ff6",
+        "2026-11-09T09:15:47.001Z",
+        955.0,
+        908.921,
+        690.596,
+        74.677,
+        615.813,
+        511.513,
+        260.117
+      ],
+      [
+        "e90d15dab6e0768cd41271e02138c4ee",
+        "2026-11-09T09:16:18.001Z",
+        1058.0,
+        950.211,
+        715.062,
+        92.315,
+        622.571,
+        555.483,
+        272.09
+      ],
+      [
+        "e7921a090b0e0aa71031620ec2c59184",
+        "2026-11-09T09:16:49.001Z",
+        1095.0,
+        1007.105,
+        783.256,
+        78.971,
+        704.193,
+        641.055,
+        276.615
+      ],
+      [
+        "8430668917440e843f737d7b418eba23",
+        "2026-11-09T09:17:21.002Z",
+        1078.0,
+        957.063,
+        707.436,
+        85.235,
+        622.013,
+        554.787,
+        276.064
+      ],
+      [
+        "335e17dea49b51d0d0e15d192e4aa714",
+        "2026-11-09T09:18:54.002Z",
+        1114.0,
+        1015.559,
+        788.975,
+        95.114,
+        693.658,
+        572.104,
+        276.175
+      ],
+      [
+        "45433fd64229de57716e58a7904d28c6",
+        "2026-11-09T09:19:26.002Z",
+        1057.0,
+        947.509,
+        719.843,
+        80.535,
+        639.073,
+        571.778,
+        279.804
+      ],
+      [
+        "97f3122a7529d9121098a91cdab3e475",
+        "2026-11-09T09:19:57.002Z",
+        1378.0,
+        1248.088,
+        1017.779,
+        93.149,
+        924.439,
+        800.216,
+        445.91
+      ],
+      [
+        "66c3f38f05b0e105a0090a051f5e2f71",
+        "2026-11-09T09:20:29.001Z",
+        955.0,
+        909.883,
+        689.837,
+        76.139,
+        613.602,
+        548.998,
+        272.537
+      ],
+      [
+        "39f7f8ea035129ba34e2bd20b997576d",
+        "2026-11-09T09:21:00.001Z",
+        1063.0,
+        955.922,
+        728.278,
+        78.213,
+        649.895,
+        582.993,
+        294.597
+      ],
+      [
+        "9296fcc9c206d3f30cca5094aaf8cfd9",
+        "2026-11-09T09:21:31.001Z",
+        1002.0,
+        892.614,
+        669.914,
+        78.192,
+        591.632,
+        529.034,
+        264.727
+      ],
+      [
+        "dac0ec075ad0b92fc727343764294842",
+        "2026-11-09T09:22:02.002Z",
+        960.0,
+        913.226,
+        683.243,
+        74.854,
+        608.22,
+        544.112,
+        267.799
+      ],
+      [
+        "c6b7c692cd4eccc4fbae4eb2d9aeaa62",
+        "2026-11-09T09:22:33.001Z",
+        1017.0,
+        889.783,
+        666.893,
+        75.406,
+        591.303,
+        526.546,
+        256.864
+      ],
+      [
+        "e71d057ccca6e567afd69c82862667bc",
+        "2026-11-09T09:23:04.002Z",
+        1062.0,
+        951.3,
+        724.5,
+        79.8,
+        644.526,
+        543.3,
+        266.4
+      ],
+      [
+        "b6be0055d91eec707381718ba8333327",
+        "2026-11-09T09:23:35.002Z",
+        1039.0,
+        925.357,
+        702.117,
+        79.428,
+        622.515,
+        522.526,
+        257.046
+      ],
+      [
+        "514726646141f8fb3d47cd186fab29f9",
+        "2026-11-09T09:24:06.001Z",
+        997.0,
+        938.726,
+        711.766,
+        75.541,
+        636.134,
+        527.751,
+        271.507
+      ],
+      [
+        "e1874a32edc968325f2d5c31e6d83345",
+        "2026-11-09T09:24:37.001Z",
+        1356.0,
+        1270.895,
+        1044.763,
+        81.762,
+        962.819,
+        843.452,
+        292.078
+      ],
+      [
+        "994b75621a62ee16352883323bd3f41d",
+        "2026-11-09T09:25:09.001Z",
+        1527.0,
+        1419.24,
+        1192.002,
+        74.194,
+        1117.638,
+        1016.823,
+        279.698
+      ],
+      [
+        "ae7316ecaa7cd5a6eeef25169c981dd9",
+        "2026-11-09T09:25:41.001Z",
+        1061.0,
+        951.298,
+        722.994,
+        74.765,
+        648.054,
+        550.076,
+        280.606
+      ],
+      [
+        "d7747184121e02f8e563120da6d246c4",
+        "2026-11-09T09:26:12.001Z",
+        1183.0,
+        1073.792,
+        844.106,
+        79.568,
+        764.367,
+        700.201,
+        272.936
+      ]
+    ],
+    "stageMaximumDurationMedians": {
+      "bayn.execution.advance": {
+        "samples": 27,
+        "medianMs": 951.3,
+        "maximumMs": 9074.354
+      },
+      "bayn.reconciliation.run": {
+        "samples": 27,
+        "medianMs": 722.994,
+        "maximumMs": 8849.331
+      },
+      "bayn.reconciliation.broker-snapshot": {
+        "samples": 27,
+        "medianMs": 78.213,
+        "maximumMs": 123.451
+      },
+      "bayn.reconciliation.persist": {
+        "samples": 27,
+        "medianMs": 644.526,
+        "maximumMs": 8725.785
+      },
+      "bayn.postgres.writer-fence": {
+        "samples": 27,
+        "medianMs": 557.127,
+        "maximumMs": 8582.995
+      },
+      "bayn.reconciliation.accounting-verify": {
+        "samples": 27,
+        "medianMs": 272.537,
+        "maximumMs": 445.91
+      }
+    },
+    "scheduledTicks": [
+      {
+        "traceId": "994b75621a62ee16352883323bd3f41d",
+        "createdAt": "2026-11-09T09:24:38.362Z",
+        "scheduledStartAt": "2026-11-09T09:25:08.296Z",
+        "runningAt": "2026-11-09T09:25:09.001Z",
+        "completedAt": "2026-11-09T09:25:10.528Z",
+        "scheduledDelayMs": 29934.0,
+        "startLatenessMs": 705.0,
+        "activeMs": 1527.0
+      },
+      {
+        "traceId": "ae7316ecaa7cd5a6eeef25169c981dd9",
+        "createdAt": "2026-11-09T09:25:10.533Z",
+        "scheduledStartAt": "2026-11-09T09:25:40.443Z",
+        "runningAt": "2026-11-09T09:25:41.001Z",
+        "completedAt": "2026-11-09T09:25:42.062Z",
+        "scheduledDelayMs": 29910.0,
+        "startLatenessMs": 558.0,
+        "activeMs": 1061.0
+      },
+      {
+        "traceId": "d7747184121e02f8e563120da6d246c4",
+        "createdAt": "2026-11-09T09:25:42.069Z",
+        "scheduledStartAt": "2026-11-09T09:26:11.976Z",
+        "runningAt": "2026-11-09T09:26:12.001Z",
+        "completedAt": "2026-11-09T09:26:13.184Z",
+        "scheduledDelayMs": 29907.0,
+        "startLatenessMs": 25.0,
+        "activeMs": 1183.0
+      }
+    ],
+    "slowDatabaseOperation": {
+      "traceId": "ad502c5e06e8c1c706177c06eb4e0800",
+      "sourceRevision": "cea96bc87ff7b17d336fd84c38739976c7fc48b3",
+      "operations": [
+        {
+          "durationMs": 6922.463,
+          "querySha256": "21aff1d63c25dbf58129e6192f32f96471d0e9cfc68229754720d307fa7ab3cb",
+          "leadingKeyword": "INSERT",
+          "ownedRelations": ["broker_events"],
+          "hasParameters": true,
+          "queryCharacters": 366,
+          "parents": [
+            {
+              "span": "bayn.execution-store.operation",
+              "operation": "ingest"
+            },
+            {
+              "span": "bayn.execution-store.operation",
+              "operation": "ingest"
+            },
+            {
+              "span": "bayn.postgres.writer-fence",
+              "operation": null
+            },
+            {
+              "span": "bayn.execution-store.operation",
+              "operation": "reconciliation"
+            },
+            {
+              "span": "bayn.reconciliation.persist",
+              "operation": null
+            },
+            {
+              "span": "bayn.reconciliation.run",
+              "operation": null
+            }
+          ]
+        }
+      ]
+    },
+    "slowDatabaseLogDurations": [
+      {
+        "time": "2026-11-09 09:12:05.254 UTC",
+        "operation": "INSERT",
+        "durationMs": 6921.87,
+        "state": "00000"
+      },
+      {
+        "time": "2026-11-09 09:12:06.906 UTC",
+        "operation": "COMMIT",
+        "durationMs": 1093.963,
+        "state": "00000"
+      }
+    ],
+    "scope": "Two current-source sampling windows are deduplicated by trace ID. Every native advance has exact Restate invocation ancestry. Relative native span timing and Restate wall timestamps remain separate clock domains; nested stages are not additive. The outlier is an INSERT into broker_events and a slow COMMIT, independently timed by the primary logs. Its underlying wait reason remains unverified. These are waiting passes before the cleanup release, not eligible-entry timing or evidence of a release improvement."
   }
 }
