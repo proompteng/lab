@@ -93,7 +93,7 @@ const program = Effect.gen(function* () {
     },
     [source],
     () => ({
-      offsets: async () => positions,
+      offsets: async (topics) => positions.filter((position) => topics.includes(position.topic)),
       consume: async () => stream,
       close: async () => {
         if (!closed) {
