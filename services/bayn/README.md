@@ -727,6 +727,14 @@ rechecks PostgreSQL fences, account binding, original times and content identity
 Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
 PostgreSQL payload fallback or cache-disable mode.
 
+A retryable snapshot rejection or read timeout discards the cut and its retained history,
+then waits for the existing quota boundary before polling again. The already verified
+broker session stays open, so transient fill convergence does not repeat startup preflight.
+Failed acquisition, account or permission rejection, defects and external interruption
+still dispose the session before recovery. Failed publication remains unavailable.
+Market-calendar HTTP reads share a five-second budget across headers, body and retries,
+or the configured operation deadline when shorter, leaving time for the bounded recovery pass.
+
 `bun run valkey:verify` exercises authenticated writes, replica acknowledgement,
 reads, deletion and expiry. Add `--broker` to verify the actual fenced broker
 materializations and collect 20 samples of full and compact read latency and
