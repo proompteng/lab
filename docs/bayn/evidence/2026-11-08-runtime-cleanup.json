@@ -1,0 +1,1589 @@
+{
+  "sourceBaseline": "45579965308e14c07afd3d8960bc7d089de1986e",
+  "measurementScope": "Read-only production metadata and a single SQL query; no end-to-end release speedup established",
+  "intentQuery": {
+    "intents": 751,
+    "mutationEvents": 2556,
+    "resultDifferences": 0,
+    "warmExecutionMs": {
+      "before": [24.46, 24.382, 24.405, 23.55, 23.495],
+      "after": [18.403, 17.759, 17.687, 17.344, 16.905]
+    },
+    "medianMs": {
+      "before": 24.382,
+      "after": 17.687
+    },
+    "mutationRelationScansPerIntent": {
+      "before": 4,
+      "after": 1
+    },
+    "method": "Alternating EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) in a repeatable-read read-only transaction on PostgreSQL 18 replica; first pair discarded; bidirectional EXCEPT ALL checked equality"
+  },
+  "nativeImageBefore": {
+    "digest": "sha256:0629c8dd9ccbd38ddbd291aeb5539c360916f98b5cc1af09ae2df3bbb63d3fd0",
+    "platform": "linux/amd64",
+    "compressedLayerBytes": 396205749,
+    "layers": 23
+  },
+  "scheduledTicks": [
+    {
+      "traceId": "44c1751d745a527607f49d1674b5920e",
+      "sourceRevision": "45579965308e14c07afd3d8960bc7d089de1986e",
+      "scheduledDelayMs": 29910.0,
+      "startLatenessMs": 62.0,
+      "activeMs": 1025.0
+    },
+    {
+      "traceId": "bf54909f7f54096ead93ddb88b01a7f1",
+      "sourceRevision": "45579965308e14c07afd3d8960bc7d089de1986e",
+      "scheduledDelayMs": 29972.0,
+      "startLatenessMs": 862.0,
+      "activeMs": 1023.0
+    },
+    {
+      "traceId": "9942d438e6a3a92bfe17568ed5090955",
+      "sourceRevision": "45579965308e14c07afd3d8960bc7d089de1986e",
+      "scheduledDelayMs": 29904.0,
+      "startLatenessMs": 992.0,
+      "activeMs": 1163.0
+    }
+  ],
+  "marketCaptureSample": {
+    "recordsByTopic": {
+      "dorvud.webull.raw.v1": 45,
+      "bayn.market-data.crypto.v1": 91,
+      "bayn.market-data.crypto.features.v1": 1
+    },
+    "serializedBytesByTopic": {
+      "dorvud.webull.raw.v1": 2629511,
+      "bayn.market-data.crypto.v1": 158454,
+      "bayn.market-data.crypto.features.v1": 42567
+    },
+    "firstAvailableAtMs": 1794205322322,
+    "lastAvailableAtMs": 1794205328589
+  },
+  "claimInventory": {
+    "claims": [
+      {
+        "name": "bayn-db-1",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-db-1-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-db-2",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-db-2-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-1",
+        "capacity": "200Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-native-arrival-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-1-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-native-arrival-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-2",
+        "capacity": "200Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-native-arrival-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-2-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-native-arrival-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-opencode-state",
+        "capacity": "2Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "data-ledger-0",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "local-path",
+        "podConsumers": ["ledger-0"],
+        "owners": []
+      },
+      {
+        "name": "data-ledger-1",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "local-path",
+        "podConsumers": ["ledger-1"],
+        "owners": []
+      },
+      {
+        "name": "data-ledger-2",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "local-path",
+        "podConsumers": ["ledger-2"],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-0-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-0-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-1-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-1-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-2-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-2-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-rfr-bayn-valkey-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["rfr-bayn-valkey-0"],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-rfr-bayn-valkey-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["rfr-bayn-valkey-1"],
+        "owners": []
+      }
+    ],
+    "controllers": [
+      {
+        "kind": "Deployment",
+        "name": "bayn",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "bayn-egress-proxy",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "bayn-telemetry",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "StatefulSet",
+        "name": "ledger",
+        "replicas": 3,
+        "claimTemplates": ["data"]
+      },
+      {
+        "kind": "StatefulSet",
+        "name": "rfr-bayn-valkey",
+        "replicas": 2,
+        "claimTemplates": ["valkey-data"]
+      },
+      {
+        "kind": "RestateDeployment",
+        "name": "bayn-execution-controller",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "RestateDeployment",
+        "name": "bayn-research",
+        "replicas": 1,
+        "claimTemplates": []
+      }
+    ]
+  },
+  "retainedArrivalInventories": {
+    "bayn-db-1": {
+      "metadata": [
+        {
+          "relation": "native_arrival_epochs",
+          "totalBytes": 1245184,
+          "approximateRows": 367
+        },
+        {
+          "relation": "native_arrival_chunks",
+          "totalBytes": 45734297600,
+          "approximateRows": 1788824
+        },
+        {
+          "relation": "native_arrival_ends",
+          "totalBytes": 237568,
+          "approximateRows": 274
+        },
+        {
+          "captures": 367,
+          "firstRecordedAt": "2026-10-18T10:27:00.79151+00:00",
+          "lastRecordedAt": "2026-10-27T18:09:43.91713+00:00"
+        }
+      ],
+      "lastArrivalAt": "unverified: bounded query timed out; newest epoch is not last appended arrival"
+    },
+    "bayn-native-arrival-db-1": {
+      "metadata": [
+        {
+          "relation": "native_arrival_schema_migrations",
+          "totalBytes": 32768,
+          "approximateRows": 0
+        },
+        {
+          "relation": "native_arrival_epochs",
+          "totalBytes": 1458176,
+          "approximateRows": 38
+        },
+        {
+          "relation": "native_arrival_chunks",
+          "totalBytes": 127915597824,
+          "approximateRows": 279852
+        },
+        {
+          "relation": "native_arrival_ends",
+          "totalBytes": 270336,
+          "approximateRows": 36
+        },
+        {
+          "captures": 436,
+          "firstRecordedAt": "2026-10-27T20:26:13.955087+00:00",
+          "lastRecordedAt": "2026-11-09T04:01:38.860412+00:00"
+        }
+      ],
+      "lastArrivalAt": "unverified: bounded query timed out; newest epoch is not last appended arrival"
+    }
+  },
+  "activeAdvanceSpans": {
+    "traceId": "44c1751d745a527607f49d1674b5920e",
+    "clock": "Offsets within the Bayn process; separate from Restate scheduling timestamps",
+    "spans": [
+      {
+        "stage": "bayn.execution.advance",
+        "offsetMs": 0.0,
+        "durationMs": 919.45
+      },
+      {
+        "stage": "bayn.reconciliation.broker-snapshot",
+        "offsetMs": 12.163,
+        "durationMs": 79.389
+      },
+      {
+        "stage": "bayn.reconciliation.accounting-verify",
+        "offsetMs": 360.17,
+        "durationMs": 274.076
+      },
+      {
+        "stage": "bayn.postgres.writer-fence",
+        "offsetMs": 156.868,
+        "durationMs": 542.248
+      },
+      {
+        "stage": "bayn.reconciliation.persist",
+        "offsetMs": 91.596,
+        "durationMs": 607.923
+      },
+      {
+        "stage": "bayn.reconciliation.run",
+        "offsetMs": 12.151,
+        "durationMs": 687.376
+      }
+    ]
+  },
+  "accountingHistoryQuery": {
+    "warmExecutionMs": {
+      "before": [120.843, 121.191, 122.111, 119.373, 121.985],
+      "after": [71.452, 72.337, 77.13, 72.535, 69.719]
+    },
+    "medianMs": {
+      "before": 121.191,
+      "after": 72.337
+    },
+    "resultDifferences": 0,
+    "method": "Alternating EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) in a repeatable-read read-only transaction on PostgreSQL 18 replica; first pair discarded; bidirectional EXCEPT ALL checked equality",
+    "inventoryDebitScansPerTransaction": {
+      "before": 2,
+      "after": 1
+    }
+  },
+  "planningBrokerState": {
+    "sampledDocuments": 8,
+    "identicalBrokerStates": 8,
+    "beforeJsonTextBytes": 38759681,
+    "afterJsonTextBytes": 34925544,
+    "unchangedMaterial": true,
+    "savedJsonTextBytes": 3834137,
+    "method": "Read-only projection of the eight latest retained documents. Full canonical broker states match within each document. Remove only the identical planner copy from new documents; preserve the independently refreshed planning cut. JSONB text sizes are not on-disk, compressed or wire sizes. Historical bodies are unchanged."
+  },
+  "executionBootstrap": {
+    "workers": [
+      {
+        "pod": "bayn-execution-controller-bbbddd8c5-5922s",
+        "node": "talos-192-168-1-85",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:81faadf5368aae68e666912fb856672fa8fd8286b3d169ab37087352fcab2af1",
+        "startedAt": "2026-11-01T12:37:38Z",
+        "bootstrapMeasurements": []
+      },
+      {
+        "pod": "bayn-execution-controller-bbbddd8c5-x6htv",
+        "node": "turin",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:81faadf5368aae68e666912fb856672fa8fd8286b3d169ab37087352fcab2af1",
+        "startedAt": "2026-11-07T20:24:51Z",
+        "bootstrapMeasurements": []
+      },
+      {
+        "pod": "bayn-execution-controller-c664bd66f6-gj8vd",
+        "node": "talos-192-168-1-85",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:57c4a1a9fedaed6246ba6799e1eb0cf56aad86757df78a8e50f5b18863f1f435",
+        "startedAt": "2026-11-09T06:50:17Z",
+        "bootstrapMeasurements": [
+          {
+            "partitions": 34,
+            "incorporatedRecords": 110681,
+            "elapsedMs": 33591
+          }
+        ]
+      },
+      {
+        "pod": "bayn-execution-controller-c664bd66f6-h2rss",
+        "node": "turin",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:57c4a1a9fedaed6246ba6799e1eb0cf56aad86757df78a8e50f5b18863f1f435",
+        "startedAt": "2026-11-09T06:50:17Z",
+        "bootstrapMeasurements": [
+          {
+            "partitions": 34,
+            "incorporatedRecords": 110244,
+            "elapsedMs": 14407
+          }
+        ]
+      }
+    ],
+    "retiredLatestService": {
+      "name": "BaynExecutionBootstrap",
+      "kind": "Service",
+      "deploymentId": "dp_15kduUiFTQdqv13d9mofaV3",
+      "remainingInvocations": 0
+    },
+    "currentServicesDeploymentId": "dp_12t9SoVzuuTUlJMHlmiNAbL",
+    "method": "Operator-owned old and current ReplicaSets each retain two workers. Restate sys_service shows the retired stateless bootstrap service still latest on the old deployment. Both current services point to the current deployment. No registration or worker was deleted. Current worker startup measurements are observations of one rollout, not comparable after measurements."
+  },
+  "historicalFilledEntries": {
+    "scope": "Five latest filled BUY intents, joined to their request by cycle_id and symbol and to staged receipts by request_id. All use v38 and Jev 1.13. These are historical record timestamps, not a current v40 trace or comparable after sample. Broker fill source timestamps are a separate clock. No account, symbol, order or request identities are exported.",
+    "rows": [
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T20:24:22.855Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T20:24:23.250Z",
+        "chartClaimedAt": "2026-11-06T20:24:22.472Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:24:28.622+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:24:29.005+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:24:45.781+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T20:24:22.852Z",
+        "intentCreatedAt": "2026-11-06T20:24:24.462+00:00",
+        "lastFillSourceAt": "2026-11-06T20:24:31.554495000Z",
+        "firstFillSourceAt": "2026-11-06T20:24:31.554495000Z",
+        "handoffRecordedAt": "2026-11-06T20:24:23.252Z",
+        "requestObservedAt": "2026-11-06T20:24:20.870Z",
+        "evaluationStartedAt": "2026-11-06T20:24:22.472Z",
+        "evaluationCompletedAt": "2026-11-06T20:24:23.423Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T20:14:06.208Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T20:14:06.462Z",
+        "chartClaimedAt": "2026-11-06T20:14:04.873Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:14:13.069+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:14:13.5+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:14:30.835+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T20:14:06.202Z",
+        "intentCreatedAt": "2026-11-06T20:14:07.955+00:00",
+        "lastFillSourceAt": "2026-11-06T20:14:16.631126000Z",
+        "firstFillSourceAt": "2026-11-06T20:14:16.631126000Z",
+        "handoffRecordedAt": "2026-11-06T20:14:06.466Z",
+        "requestObservedAt": "2026-11-06T20:14:03.315Z",
+        "evaluationStartedAt": "2026-11-06T20:14:04.873Z",
+        "evaluationCompletedAt": "2026-11-06T20:14:06.833Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T19:14:07.501Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T19:14:08.036Z",
+        "chartClaimedAt": "2026-11-06T19:14:06.557Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T19:14:19.7+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T19:14:20.207+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T19:14:43.903+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T19:14:07.479Z",
+        "intentCreatedAt": "2026-11-06T19:14:10.955+00:00",
+        "lastFillSourceAt": "2026-11-06T19:14:29.837895000Z",
+        "firstFillSourceAt": "2026-11-06T19:14:28.017439000Z",
+        "handoffRecordedAt": "2026-11-06T19:14:08.047Z",
+        "requestObservedAt": "2026-11-06T19:14:02.720Z",
+        "evaluationStartedAt": "2026-11-06T19:14:06.557Z",
+        "evaluationCompletedAt": "2026-11-06T19:14:08.530Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T18:51:35.826Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T18:51:36.518Z",
+        "chartClaimedAt": "2026-11-06T18:51:35.436Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:51:47.694+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:51:48.176+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:52:21.588+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T18:51:35.811Z",
+        "intentCreatedAt": "2026-11-06T18:51:39.656+00:00",
+        "lastFillSourceAt": "2026-11-06T18:52:43.330656000Z",
+        "firstFillSourceAt": "2026-11-06T18:52:04.801445000Z",
+        "handoffRecordedAt": "2026-11-06T18:51:36.533Z",
+        "requestObservedAt": "2026-11-06T18:51:32.098Z",
+        "evaluationStartedAt": "2026-11-06T18:51:35.436Z",
+        "evaluationCompletedAt": "2026-11-06T18:51:37.546Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T18:45:07.491Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T18:45:07.918Z",
+        "chartClaimedAt": "2026-11-06T18:45:06.868Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:45:18.169+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:45:18.552+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:45:42.269+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T18:45:07.469Z",
+        "intentCreatedAt": "2026-11-06T18:45:10.542+00:00",
+        "lastFillSourceAt": "2026-11-06T18:46:30.587072000Z",
+        "firstFillSourceAt": "2026-11-06T18:45:19.420635000Z",
+        "handoffRecordedAt": "2026-11-06T18:45:07.932Z",
+        "requestObservedAt": "2026-11-06T18:45:03.292Z",
+        "evaluationStartedAt": "2026-11-06T18:45:06.868Z",
+        "evaluationCompletedAt": "2026-11-06T18:45:08.272Z"
+      }
+    ]
+  },
+  "scopedBootstrapPolicy": {
+    "sourceBaseline": "9338619f6585f895770318cb91f50d09cbd74d5a",
+    "entryMarkets": ["EQUITY"],
+    "requestedHistoryMinutes": {
+      "equityEntry": {
+        "before": 30,
+        "after": 30
+      },
+      "cryptoWhileEntryDisabled": {
+        "before": 120,
+        "after": 2
+      },
+      "webullPricing": {
+        "before": 2,
+        "after": 2
+      }
+    },
+    "projectionBundle": {
+      "beforeBytes": 1070764,
+      "afterBytes": 1071017,
+      "newInputs": ["services/bayn/src/execution/trading-scope.ts"],
+      "method": "Identical single-entry Bun 1.4.2 Node builds, with tigerbeetle-node and @platformatic/kafka external. The entry policy has no financial-authority imports; its physical submission gate lives in mutation-authority and the formal conformance caller imports it there."
+    },
+    "scope": "Only native startup lookback changes. Producer timestamp diagnostics keep their explicit historical start. Topics, future subscriptions, source schemas, capture hashes, entry-market policy and exit authority are unchanged. All three held crypto fixtures preserve executable quotes, recorded replay and the actual exit freshness guard without entry-chart history. Window reduction is not a measured record, byte, CPU or elapsed-time reduction."
+  },
+  "captureIdentityInventory": {
+    "observedAt": "2026-11-09T08:49:30.599413+00:00",
+    "replicas": {
+      "bayn-db-1": {
+        "captures": 367,
+        "lastEpochRecordedAt": "2026-10-27T18:09:43.91713+00:00",
+        "firstEpochRecordedAt": "2026-10-18T10:27:00.79151+00:00",
+        "endStatuses": {
+          "STOPPED": 250,
+          "INCOMPLETE": 24
+        },
+        "captureIdSetSha256": "eb909402b9bcd67e3c321e62a13e09fe2cfa6443a1f4699b4182633b6516f03d",
+        "headerRangeRead": {
+          "statementTimeoutSeconds": 20,
+          "completed": false,
+          "error": "ERROR:  canceling statement due to statement timeout"
+        }
+      },
+      "bayn-native-arrival-db-1": {
+        "captures": 440,
+        "lastEpochRecordedAt": "2026-11-09T08:22:27.949642+00:00",
+        "firstEpochRecordedAt": "2026-10-27T20:26:13.955087+00:00",
+        "endStatuses": {
+          "STOPPED": 303,
+          "INCOMPLETE": 20
+        },
+        "captureIdSetSha256": "8c4dd8d7a157e3484be842da3dab11336c6762e11d14ce33c63352960abcf931",
+        "headerRangeRead": {
+          "statementTimeoutSeconds": 20,
+          "completed": false,
+          "error": "ERROR:  canceling statement due to statement timeout"
+        }
+      }
+    },
+    "equalCaptureIdsAcrossSnapshots": 0,
+    "scope": "Two separate read-only repeatable-read snapshots. Epoch identities are disjoint; this does not establish distinct underlying arrivals or permission to delete any data. Scalar header-range scans on both replicas reached the 20-second statement limit. Existing valuation and export readers retain their source-specific evidence."
+  },
+  "preReleaseWaitingBaseline": {
+    "context": {
+      "observedAt": "2026-11-09T09:12:43.578226+00:00",
+      "deploymentId": "dp_175mWxiMylzO8oyT1rRZXKF",
+      "workers": [
+        {
+          "pod": "bayn-execution-controller-458b5f695-nnb7r",
+          "node": "turin",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "sourceRevision": "cea96bc87ff7b17d336fd84c38739976c7fc48b3"
+        },
+        {
+          "pod": "bayn-execution-controller-458b5f695-tg87z",
+          "node": "talos-192-168-1-85",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:1a5ba212dab5b580ef9d9ea310b8d244017f3952da7e43b124ad700ea3bda88e",
+          "sourceRevision": "cea96bc87ff7b17d336fd84c38739976c7fc48b3"
+        }
+      ]
+    },
+    "uniqueSamples": 27,
+    "outcomes": ["Waiting"],
+    "controllerKeySha256": ["7f6d47df0101e0ece3ad9074be820ac56a93104621e69cea203f89560c348043"],
+    "columns": [
+      "traceId",
+      "runningAt",
+      "restateActiveMs",
+      "bayn.execution.advance",
+      "bayn.reconciliation.run",
+      "bayn.reconciliation.broker-snapshot",
+      "bayn.reconciliation.persist",
+      "bayn.postgres.writer-fence",
+      "bayn.reconciliation.accounting-verify"
+    ],
+    "rows": [
+      [
+        "ba73e4594a94a4f1f0f70d42624403a4",
+        "2026-11-09T09:11:27.002Z",
+        1066.0,
+        961.423,
+        740.584,
+        78.728,
+        661.769,
+        558.815,
+        282.987
+      ],
+      [
+        "ad502c5e06e8c1c706177c06eb4e0800",
+        "2026-11-09T09:11:58.003Z",
+        9211.0,
+        9074.354,
+        8849.331,
+        123.451,
+        8725.785,
+        8582.995,
+        282.89
+      ],
+      [
+        "598cf83dc4380ebd58b5402c072968df",
+        "2026-11-09T09:12:38.002Z",
+        1042.0,
+        929.928,
+        700.397,
+        75.666,
+        624.555,
+        558.818,
+        288.208
+      ],
+      [
+        "860fe87cc39f508dd8fe903e23da854c",
+        "2026-11-09T09:13:09.002Z",
+        1003.0,
+        892.292,
+        663.728,
+        74.572,
+        588.985,
+        525.534,
+        256.235
+      ],
+      [
+        "0d456289971db86ce41f340ec576a1eb",
+        "2026-11-09T09:13:40.002Z",
+        1181.0,
+        992.542,
+        765.026,
+        74.047,
+        690.802,
+        626.354,
+        265.075
+      ],
+      [
+        "9d9709361935422ebe4a40a5d1342097",
+        "2026-11-09T09:14:12.001Z",
+        1140.0,
+        1025.524,
+        800.456,
+        86.861,
+        713.422,
+        557.127,
+        268.402
+      ],
+      [
+        "d091e98f7492f9328609e3e0a82aa457",
+        "2026-11-09T09:14:44.003Z",
+        970.0,
+        864.997,
+        643.408,
+        72.835,
+        570.462,
+        509.525,
+        257.363
+      ],
+      [
+        "3ec3f01bfe447833e1fec7062eb89220",
+        "2026-11-09T09:15:15.003Z",
+        1176.0,
+        1047.065,
+        819.781,
+        77.411,
+        742.262,
+        676.933,
+        266.91
+      ],
+      [
+        "af1dff0ebfd9a805347101c3d8965ff6",
+        "2026-11-09T09:15:47.001Z",
+        955.0,
+        908.921,
+        690.596,
+        74.677,
+        615.813,
+        511.513,
+        260.117
+      ],
+      [
+        "e90d15dab6e0768cd41271e02138c4ee",
+        "2026-11-09T09:16:18.001Z",
+        1058.0,
+        950.211,
+        715.062,
+        92.315,
+        622.571,
+        555.483,
+        272.09
+      ],
+      [
+        "e7921a090b0e0aa71031620ec2c59184",
+        "2026-11-09T09:16:49.001Z",
+        1095.0,
+        1007.105,
+        783.256,
+        78.971,
+        704.193,
+        641.055,
+        276.615
+      ],
+      [
+        "8430668917440e843f737d7b418eba23",
+        "2026-11-09T09:17:21.002Z",
+        1078.0,
+        957.063,
+        707.436,
+        85.235,
+        622.013,
+        554.787,
+        276.064
+      ],
+      [
+        "335e17dea49b51d0d0e15d192e4aa714",
+        "2026-11-09T09:18:54.002Z",
+        1114.0,
+        1015.559,
+        788.975,
+        95.114,
+        693.658,
+        572.104,
+        276.175
+      ],
+      [
+        "45433fd64229de57716e58a7904d28c6",
+        "2026-11-09T09:19:26.002Z",
+        1057.0,
+        947.509,
+        719.843,
+        80.535,
+        639.073,
+        571.778,
+        279.804
+      ],
+      [
+        "97f3122a7529d9121098a91cdab3e475",
+        "2026-11-09T09:19:57.002Z",
+        1378.0,
+        1248.088,
+        1017.779,
+        93.149,
+        924.439,
+        800.216,
+        445.91
+      ],
+      [
+        "66c3f38f05b0e105a0090a051f5e2f71",
+        "2026-11-09T09:20:29.001Z",
+        955.0,
+        909.883,
+        689.837,
+        76.139,
+        613.602,
+        548.998,
+        272.537
+      ],
+      [
+        "39f7f8ea035129ba34e2bd20b997576d",
+        "2026-11-09T09:21:00.001Z",
+        1063.0,
+        955.922,
+        728.278,
+        78.213,
+        649.895,
+        582.993,
+        294.597
+      ],
+      [
+        "9296fcc9c206d3f30cca5094aaf8cfd9",
+        "2026-11-09T09:21:31.001Z",
+        1002.0,
+        892.614,
+        669.914,
+        78.192,
+        591.632,
+        529.034,
+        264.727
+      ],
+      [
+        "dac0ec075ad0b92fc727343764294842",
+        "2026-11-09T09:22:02.002Z",
+        960.0,
+        913.226,
+        683.243,
+        74.854,
+        608.22,
+        544.112,
+        267.799
+      ],
+      [
+        "c6b7c692cd4eccc4fbae4eb2d9aeaa62",
+        "2026-11-09T09:22:33.001Z",
+        1017.0,
+        889.783,
+        666.893,
+        75.406,
+        591.303,
+        526.546,
+        256.864
+      ],
+      [
+        "e71d057ccca6e567afd69c82862667bc",
+        "2026-11-09T09:23:04.002Z",
+        1062.0,
+        951.3,
+        724.5,
+        79.8,
+        644.526,
+        543.3,
+        266.4
+      ],
+      [
+        "b6be0055d91eec707381718ba8333327",
+        "2026-11-09T09:23:35.002Z",
+        1039.0,
+        925.357,
+        702.117,
+        79.428,
+        622.515,
+        522.526,
+        257.046
+      ],
+      [
+        "514726646141f8fb3d47cd186fab29f9",
+        "2026-11-09T09:24:06.001Z",
+        997.0,
+        938.726,
+        711.766,
+        75.541,
+        636.134,
+        527.751,
+        271.507
+      ],
+      [
+        "e1874a32edc968325f2d5c31e6d83345",
+        "2026-11-09T09:24:37.001Z",
+        1356.0,
+        1270.895,
+        1044.763,
+        81.762,
+        962.819,
+        843.452,
+        292.078
+      ],
+      [
+        "994b75621a62ee16352883323bd3f41d",
+        "2026-11-09T09:25:09.001Z",
+        1527.0,
+        1419.24,
+        1192.002,
+        74.194,
+        1117.638,
+        1016.823,
+        279.698
+      ],
+      [
+        "ae7316ecaa7cd5a6eeef25169c981dd9",
+        "2026-11-09T09:25:41.001Z",
+        1061.0,
+        951.298,
+        722.994,
+        74.765,
+        648.054,
+        550.076,
+        280.606
+      ],
+      [
+        "d7747184121e02f8e563120da6d246c4",
+        "2026-11-09T09:26:12.001Z",
+        1183.0,
+        1073.792,
+        844.106,
+        79.568,
+        764.367,
+        700.201,
+        272.936
+      ]
+    ],
+    "stageMaximumDurationMedians": {
+      "bayn.execution.advance": {
+        "samples": 27,
+        "medianMs": 951.3,
+        "maximumMs": 9074.354
+      },
+      "bayn.reconciliation.run": {
+        "samples": 27,
+        "medianMs": 722.994,
+        "maximumMs": 8849.331
+      },
+      "bayn.reconciliation.broker-snapshot": {
+        "samples": 27,
+        "medianMs": 78.213,
+        "maximumMs": 123.451
+      },
+      "bayn.reconciliation.persist": {
+        "samples": 27,
+        "medianMs": 644.526,
+        "maximumMs": 8725.785
+      },
+      "bayn.postgres.writer-fence": {
+        "samples": 27,
+        "medianMs": 557.127,
+        "maximumMs": 8582.995
+      },
+      "bayn.reconciliation.accounting-verify": {
+        "samples": 27,
+        "medianMs": 272.537,
+        "maximumMs": 445.91
+      }
+    },
+    "scheduledTicks": [
+      {
+        "traceId": "994b75621a62ee16352883323bd3f41d",
+        "createdAt": "2026-11-09T09:24:38.362Z",
+        "scheduledStartAt": "2026-11-09T09:25:08.296Z",
+        "runningAt": "2026-11-09T09:25:09.001Z",
+        "completedAt": "2026-11-09T09:25:10.528Z",
+        "scheduledDelayMs": 29934.0,
+        "startLatenessMs": 705.0,
+        "activeMs": 1527.0
+      },
+      {
+        "traceId": "ae7316ecaa7cd5a6eeef25169c981dd9",
+        "createdAt": "2026-11-09T09:25:10.533Z",
+        "scheduledStartAt": "2026-11-09T09:25:40.443Z",
+        "runningAt": "2026-11-09T09:25:41.001Z",
+        "completedAt": "2026-11-09T09:25:42.062Z",
+        "scheduledDelayMs": 29910.0,
+        "startLatenessMs": 558.0,
+        "activeMs": 1061.0
+      },
+      {
+        "traceId": "d7747184121e02f8e563120da6d246c4",
+        "createdAt": "2026-11-09T09:25:42.069Z",
+        "scheduledStartAt": "2026-11-09T09:26:11.976Z",
+        "runningAt": "2026-11-09T09:26:12.001Z",
+        "completedAt": "2026-11-09T09:26:13.184Z",
+        "scheduledDelayMs": 29907.0,
+        "startLatenessMs": 25.0,
+        "activeMs": 1183.0
+      }
+    ],
+    "slowDatabaseOperation": {
+      "traceId": "ad502c5e06e8c1c706177c06eb4e0800",
+      "sourceRevision": "cea96bc87ff7b17d336fd84c38739976c7fc48b3",
+      "operations": [
+        {
+          "durationMs": 6922.463,
+          "querySha256": "21aff1d63c25dbf58129e6192f32f96471d0e9cfc68229754720d307fa7ab3cb",
+          "leadingKeyword": "INSERT",
+          "ownedRelations": ["broker_events"],
+          "hasParameters": true,
+          "queryCharacters": 366,
+          "parents": [
+            {
+              "span": "bayn.execution-store.operation",
+              "operation": "ingest"
+            },
+            {
+              "span": "bayn.execution-store.operation",
+              "operation": "ingest"
+            },
+            {
+              "span": "bayn.postgres.writer-fence",
+              "operation": null
+            },
+            {
+              "span": "bayn.execution-store.operation",
+              "operation": "reconciliation"
+            },
+            {
+              "span": "bayn.reconciliation.persist",
+              "operation": null
+            },
+            {
+              "span": "bayn.reconciliation.run",
+              "operation": null
+            }
+          ]
+        }
+      ]
+    },
+    "slowDatabaseLogDurations": [
+      {
+        "time": "2026-11-09 09:12:05.254 UTC",
+        "operation": "INSERT",
+        "durationMs": 6921.87,
+        "state": "00000"
+      },
+      {
+        "time": "2026-11-09 09:12:06.906 UTC",
+        "operation": "COMMIT",
+        "durationMs": 1093.963,
+        "state": "00000"
+      }
+    ],
+    "scope": "Two current-source sampling windows are deduplicated by trace ID. Every native advance has exact Restate invocation ancestry. Relative native span timing and Restate wall timestamps remain separate clock domains; nested stages are not additive. The outlier is an INSERT into broker_events and a slow COMMIT, independently timed by the primary logs. Its underlying wait reason remains unverified. These are waiting passes before the cleanup release, not eligible-entry timing or evidence of a release improvement."
+  },
+  "preCleanupReleaseBaseline": {
+    "context": {
+      "observedAt": "2026-11-09T10:30:47.286667+00:00",
+      "deploymentId": "dp_13r7o3x9uBjO7cp60wehyBH",
+      "workers": [
+        {
+          "pod": "bayn-execution-controller-6f64bb9695-q2q5d",
+          "node": "turin",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "sourceRevision": "351b522baf093501a703990d1403d986b652b8e8"
+        },
+        {
+          "pod": "bayn-execution-controller-6f64bb9695-zf5sl",
+          "node": "talos-192-168-1-85",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "sourceRevision": "351b522baf093501a703990d1403d986b652b8e8"
+        }
+      ],
+      "databaseContext": {
+        "clusters": [
+          {
+            "name": "bayn-db",
+            "instances": 2,
+            "storageClass": "rook-ceph-block",
+            "primary": "bayn-db-2"
+          },
+          {
+            "name": "bayn-native-arrival-db",
+            "instances": 3,
+            "storageClass": "local-path",
+            "primary": "bayn-native-arrival-db-1"
+          }
+        ],
+        "claims": [
+          {
+            "name": "bayn-db-1",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-db-1-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-db-2",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-db-2-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-1",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-1-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-2",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-2-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-3",
+            "storageClass": "local-path",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-3-wal",
+            "storageClass": "local-path",
+            "phase": "Bound"
+          }
+        ]
+      },
+      "scope": "Pre-cleanup source 351b522 after independently merged DNS/proxy changes and during independent native archive storage migration. No storage mutation performed by this diagnostic."
+    },
+    "capturedAt": "2026-11-09T10:32:31.653243+00:00",
+    "uniqueSamples": 15,
+    "outcomes": ["Waiting"],
+    "columns": [
+      "traceId",
+      "runningAt",
+      "serviceInstanceId",
+      "node",
+      "restateActiveMs",
+      "bayn.execution.advance",
+      "bayn.reconciliation.run",
+      "bayn.reconciliation.broker-snapshot",
+      "bayn.reconciliation.persist",
+      "bayn.postgres.writer-fence",
+      "bayn.reconciliation.accounting-verify"
+    ],
+    "rows": [
+      [
+        "c49eafdb5af17372b92ef578d0052b47",
+        "2026-11-09T10:25:06.002Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1632.0,
+        1354.606,
+        1117.585,
+        76.153,
+        1041.251,
+        937.167,
+        266.477
+      ],
+      [
+        "53c82bca2b902b5f09a57e272b006145",
+        "2026-11-09T10:25:38.003Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1047.0,
+        942.604,
+        719.372,
+        114.025,
+        605.235,
+        541.858,
+        266.754
+      ],
+      [
+        "1ffc5ad03a7b66caceea0febec898889",
+        "2026-11-09T10:26:09.002Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1787.0,
+        996.698,
+        768.466,
+        76.565,
+        691.727,
+        576.349,
+        277.428
+      ],
+      [
+        "359b3dd08c12a8aaf24ae0d3512ebbfe",
+        "2026-11-09T10:26:41.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1111.0,
+        961.52,
+        733.698,
+        79.506,
+        654.014,
+        549.079,
+        271.115
+      ],
+      [
+        "a6a3f0a5ddf83a0758d42ba3c54f921a",
+        "2026-11-09T10:27:12.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1094.0,
+        982.787,
+        753.778,
+        78.871,
+        674.725,
+        565.676,
+        288.387
+      ],
+      [
+        "0a947d4e2035d39abbe23310b174041e",
+        "2026-11-09T10:27:44Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1089.0,
+        985.801,
+        742.832,
+        82.182,
+        660.457,
+        594.492,
+        289.156
+      ],
+      [
+        "5acd991e00ec71e903ebce38a1a090d6",
+        "2026-11-09T10:28:16.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1022.0,
+        956.227,
+        723.32,
+        79.923,
+        643.215,
+        576.057,
+        292.241
+      ],
+      [
+        "6eab5b5ef676b3a06aae658988fa1b98",
+        "2026-11-09T10:28:47.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1033.0,
+        954.52,
+        728.964,
+        75.747,
+        653.129,
+        590.438,
+        323.112
+      ],
+      [
+        "408898471c7b3b5259cb83eea6dc01d4",
+        "2026-11-09T10:29:18.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1287.0,
+        1163.856,
+        936.002,
+        89.508,
+        846.315,
+        739.953,
+        309.111
+      ],
+      [
+        "59e2cc2c914c7e38ad450ecbc3ecf4c9",
+        "2026-11-09T10:29:50.003Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1084.0,
+        957.714,
+        726.643,
+        77.441,
+        649.022,
+        582.529,
+        293.434
+      ],
+      [
+        "896befa2664d2a0fa18899b8783c7d13",
+        "2026-11-09T10:30:21Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1306.0,
+        1120.154,
+        871.758,
+        86.046,
+        785.535,
+        665.693,
+        332.839
+      ],
+      [
+        "2164b70c396f4307e4f2b92e129f3a94",
+        "2026-11-09T10:30:53.003Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1110.0,
+        1042.507,
+        817.913,
+        110.201,
+        707.618,
+        644.38,
+        267.753
+      ],
+      [
+        "31feed1880bfc8126ac0545dc4e5d6b0",
+        "2026-11-09T10:31:25.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1144.0,
+        1018.446,
+        785.251,
+        80.855,
+        704.214,
+        591.734,
+        283.871
+      ],
+      [
+        "ab98bc71f34a92852196cbe91a76d50a",
+        "2026-11-09T10:31:57.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1097.0,
+        991.052,
+        753.727,
+        81.282,
+        672.264,
+        556.465,
+        278.477
+      ],
+      [
+        "14796cac2670ea20546f5bbbb3473ec7",
+        "2026-11-09T10:32:29.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1096.0,
+        982.461,
+        756.899,
+        80.025,
+        676.687,
+        562.635,
+        275.566
+      ]
+    ],
+    "stageMaximumDurationMedians": {
+      "bayn.execution.advance": {
+        "samples": 15,
+        "medianMs": 985.801,
+        "minimumMs": 942.604,
+        "maximumMs": 1354.606
+      },
+      "bayn.reconciliation.run": {
+        "samples": 15,
+        "medianMs": 753.778,
+        "minimumMs": 719.372,
+        "maximumMs": 1117.585
+      },
+      "bayn.reconciliation.broker-snapshot": {
+        "samples": 15,
+        "medianMs": 80.025,
+        "minimumMs": 75.747,
+        "maximumMs": 114.025
+      },
+      "bayn.reconciliation.persist": {
+        "samples": 15,
+        "medianMs": 674.725,
+        "minimumMs": 605.235,
+        "maximumMs": 1041.251
+      },
+      "bayn.postgres.writer-fence": {
+        "samples": 15,
+        "medianMs": 582.529,
+        "minimumMs": 541.858,
+        "maximumMs": 937.167
+      },
+      "bayn.reconciliation.accounting-verify": {
+        "samples": 15,
+        "medianMs": 283.871,
+        "minimumMs": 266.477,
+        "maximumMs": 332.839
+      }
+    },
+    "scheduledTicks": [
+      {
+        "traceId": "31feed1880bfc8126ac0545dc4e5d6b0",
+        "createdAt": "2026-11-09T10:30:54.117Z",
+        "scheduledStartAt": "2026-11-09T10:31:24.065Z",
+        "runningAt": "2026-11-09T10:31:25.001Z",
+        "completedAt": "2026-11-09T10:31:26.145Z",
+        "scheduledDelayMs": 29948.0,
+        "startLatenessMs": 936.0,
+        "activeMs": 1144.0
+      },
+      {
+        "traceId": "ab98bc71f34a92852196cbe91a76d50a",
+        "createdAt": "2026-11-09T10:31:26.151Z",
+        "scheduledStartAt": "2026-11-09T10:31:56.041Z",
+        "runningAt": "2026-11-09T10:31:57.001Z",
+        "completedAt": "2026-11-09T10:31:58.098Z",
+        "scheduledDelayMs": 29890.0,
+        "startLatenessMs": 960.0,
+        "activeMs": 1097.0
+      },
+      {
+        "traceId": "14796cac2670ea20546f5bbbb3473ec7",
+        "createdAt": "2026-11-09T10:31:58.101Z",
+        "scheduledStartAt": "2026-11-09T10:32:28.012Z",
+        "runningAt": "2026-11-09T10:32:29.001Z",
+        "completedAt": "2026-11-09T10:32:30.097Z",
+        "scheduledDelayMs": 29911.0,
+        "startLatenessMs": 989.0,
+        "activeMs": 1096.0
+      }
+    ],
+    "scope": "Baseline after independent DNS/proxy changes in PR #15806, before runtime cleanup release cdb8fadf7c694a43296928253d8b9b61a46e8cec. Native-arrival replica migration from that independent PR is in progress; the financial primary remains bayn-db-2 on existing rook-ceph-block data storage. Match node, database state and outcome in any comparison. Strict Restate invocation ancestry binds every native span. Nested stage durations are not additive. This does not establish any cleanup speedup."
+  },
+  "retainedDecisionReadback": {
+    "status": "NOT_MEASURED",
+    "retainedJevFinancialReaderAccepted": true,
+    "currentCycleReaderAccepted": false,
+    "method": "Latest retained decision selected by primary key after a metadata-only created_at sort. Body remains in memory inside the existing status Pod. The current and retained Jev verifiers run against the unchanged body. Only acceptance booleans leave the Pod. A historical record cannot measure the new current-execution representation; no record was rewritten.",
+    "verifierSourceRevision": "66ee055c5b75018bbf9a21780929274bf8972377",
+    "runtimeSourceRevision": "351b522baf093501a703990d1403d986b652b8e8",
+    "runtimePod": "bayn-5f4b55c84f-2xws5"
+  },
+  "financialDatabaseWaitSample": {
+    "sampleCount": 301,
+    "firstObservedAt": "2026-11-09T10:32:31.076068+00:00",
+    "lastObservedAt": "2026-11-09T10:33:30.876979+00:00",
+    "intervalMs": 200,
+    "activeBackendObservations": 8,
+    "waitObservations": [
+      {
+        "waitType": null,
+        "waitEvent": null,
+        "operation": "other",
+        "observations": 4
+      },
+      {
+        "waitType": "IPC",
+        "waitEvent": "SyncRep",
+        "operation": "other",
+        "observations": 1
+      },
+      {
+        "waitType": "IO",
+        "waitEvent": "WalSync",
+        "operation": "other",
+        "observations": 2
+      },
+      {
+        "waitType": null,
+        "waitEvent": null,
+        "operation": "select",
+        "observations": 1
+      }
+    ],
+    "maximumObservedQueryAgeMs": 120,
+    "blockingPidObservations": 0,
+    "scope": "Read-only pg_stat_activity sampling of active bayn application connections on financial primary bayn-db-2. 200 ms sampling can miss short queries and does not attribute the earlier trace. No SQL text, parameters, financial values or secret data were collected."
+  }
+}

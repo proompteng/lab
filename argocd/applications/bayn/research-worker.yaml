@@ -25,6 +25,10 @@ spec:
         app.kubernetes.io/name: bayn-research
         app.kubernetes.io/part-of: bayn
     spec:
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       nodeSelector:
         network.proompteng.ai/100g: 'true'
       automountServiceAccountToken: false
@@ -39,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: research
-          image: bayn-main
+          image: bayn-research
           command: [node, dist/restate-research-server.js]
           ports:
             - name: restate

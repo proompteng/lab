@@ -1,5 +1,6 @@
 import { type StrategyRuntime } from './strategy'
 import { makeEntryAblationRuntime } from './intraday-replay/strategy'
+import { buildResearchMutationCycleDecision } from './intraday-replay/decision-builder'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from './jev/entry-ablation-policy'
 import { ExecutionDecisionDocumentSchema } from './shadow-decision-contract'
 import { makeIntradayMomentumDefinition } from './strategy/intraday-momentum/test-support'
@@ -279,9 +280,11 @@ const makeObserveAutonomousCycleStartup =
 const makeMutationAutonomousCycleStartup =
   (input: MutationAutonomousCycleInput, owner: RecoveryFirstCycleDriverOwner = ownRecoveryFirstCycleInTestProcess) =>
   (startup: Parameters<ReturnType<typeof makeMutationAutonomousCycleStartupProduction>>[0]) =>
-    makeMutationAutonomousCycleStartupProduction(input)(startup).pipe(
-      Effect.map((driver) => driver.pipe(Effect.flatMap(owner))),
-    )
+    makeMutationAutonomousCycleStartupProduction(
+      input,
+      'Mutation',
+      buildMutationShadowCycleDecision,
+    )(startup).pipe(Effect.map((driver) => driver.pipe(Effect.flatMap(owner))))
 
 test('Restate scheduling never waits past the reconciliation cadence', () => {
   expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 300_000, reconciliationIntervalMs: 30_000 })).toBe(30_000)
@@ -426,6 +429,7 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
             executionProgram: sandboxExecutionProgram(),
           },
           executionMode,
+          buildMutationShadowCycleDecision,
         )({
           cycleBindingId: cycle.identity.qualificationRunId,
           recordPass: () => Effect.void,
@@ -524,7 +528,11 @@ test('preserves execution authority after the next bound-cycle reconciliation fa
   const advance = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(evaluatedAt))
-      const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(fixture.input)({
+      const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(
+        fixture.input,
+        'Mutation',
+        buildMutationShadowCycleDecision,
+      )({
         cycleBindingId: fixture.boundCycle.identity.qualificationRunId,
         recordPass: () => Effect.void,
       })
@@ -1214,6 +1222,7 @@ const sandboxExecutionProgram = (
 const executionLifecycleFixture = async (
   transformPolicy: (policy: Policy) => Policy = (policy) => policy,
   strategy: StrategyRuntime = currentIntradayRuntime,
+  compileDecision: typeof buildMutationShadowCycleDecision = buildMutationShadowCycleDecision,
 ) => {
   const selectedIdentity = Result.getOrThrow(
     makeCycleIdentity({
@@ -1267,7 +1276,7 @@ const executionLifecycleFixture = async (
   const document = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(evaluatedAt))
-      return yield* buildMutationShadowCycleDecision({
+      return yield* compileDecision({
         authorityGenerationHash: generationHash,
         cycle: selectedCycle,
         executionModel: currentIntradayProtocol.executionModel,
@@ -5220,7 +5229,12 @@ describe('OBSERVE runtime composition', () => {
       const fixture = await executionLifecycleFixture()
       const services = makeExactReconciliationServices(Authority.Execution)
       const input = { ...fixture.input, reconciliationIntervalMs: cadenceMs, reconciliationPassTimeoutMs: cadenceMs }
-      const builder = mutationDecisionBuilder(input, fixture.preparation, fixture.policy)
+      const builder = mutationDecisionBuilder(
+        input,
+        fixture.preparation,
+        fixture.policy,
+        buildMutationShadowCycleDecision,
+      )
       let document: CycleDecisionDocument | undefined
       let pricingReads = 0
       let reconciliationWrites = 0
@@ -6789,12 +6803,20 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
       yield* TestClock.setTime(Date.parse(evaluatedAt))
       const input = { ...fixture.input, intradayMarketData }
       const startup = { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void }
-      const restricted = yield* yield* makeMutationAutonomousCycleStartupProduction(input, 'RecoveryOnly')(startup)
+      const restricted = yield* yield* makeMutationAutonomousCycleStartupProduction(
+        input,
+        'RecoveryOnly',
+        buildMutationShadowCycleDecision,
+      )(startup)
       const held = yield* restricted.advance
       expect(held.result).toMatchObject({ outcome: 'WINDOW_CLOSED' })
       expect(stored.state).toBe(CycleState.Active)
       expect(snapshotLoads).toBe(0)
-      const active = yield* yield* makeMutationAutonomousCycleStartupProduction(input, 'Mutation')(startup)
+      const active = yield* yield* makeMutationAutonomousCycleStartupProduction(
+        input,
+        'Mutation',
+        buildMutationShadowCycleDecision,
+      )(startup)
       const unhealthy = yield* active.advance
       expect(unhealthy.observation).toMatchObject({ result: 'FAILURE', failure: 'market-data' })
       expect(snapshotLoads).toBe(0)
@@ -6812,6 +6834,7 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
               input,
               fixture.preparation,
               fixture.policy,
+              buildMutationShadowCycleDecision,
             )(subject, Effect.succeed(reconciliationResultAt(evaluatedAt))),
           buildDecisionEvidence: () =>
             Effect.forEach(snapshots, fixtureStreamingReference).pipe(
@@ -8448,7 +8471,18 @@ test('ablation uses native risk, entry protection and exact policy-bound executi
   const policy = makeEntryAblationPolicy(fixtureProtocol)
   const identity = Result.getOrThrow(entryAblationStrategyIdentity(policy))
   const strategy = makeEntryAblationRuntime(policy, { ...fixtureRuntime.provenance, strategy: identity.strategy })
-  const result = await executionLifecycleFixture(undefined, strategy)
+  const result = await executionLifecycleFixture(undefined, strategy, (input) =>
+    Effect.gen(function* () {
+      const native = yield* buildMutationShadowCycleDecision(input).pipe(Effect.result)
+      expect(Result.isFailure(native)).toBe(true)
+      if (Result.isFailure(native))
+        expect(native.failure).toMatchObject({
+          _tag: 'OperationalError',
+          message: 'Native entry requires the source-controlled Jev protocol',
+        })
+      return yield* buildResearchMutationCycleDecision(input)
+    }),
+  )
   expect(result.preparation.strategyProtocolHash).toBe(identity.protocolHash)
   expect(result.document.strategyDecision?.schemaVersion).toBe('bayn.entry-ablation-target.v1')
   expect(result.document.targetPlan.intentTargets.length).toBeGreaterThan(0)

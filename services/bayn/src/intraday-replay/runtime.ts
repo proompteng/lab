@@ -1,3 +1,4 @@
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -298,6 +299,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
+          buildDecision: buildResearchMutationCycleDecision,
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {
