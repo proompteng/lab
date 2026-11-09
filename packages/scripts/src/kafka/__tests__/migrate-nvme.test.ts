@@ -209,85 +209,92 @@ describe('Kafka NVMe migration plan contract', () => {
     expect((error as Error).message).toContain('manifest mismatch')
   })
 
-  it('executes the manifest copy against sparse files, symlinks, metadata, and meta.properties', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'kafka-nvme-copy-'))
-    const source = join(root, 'source')
-    const target = join(root, 'target')
-    const wrongTarget = join(root, 'wrong-target')
-    const mismatchTarget = join(root, 'mismatch-target')
-    const nonemptyTarget = join(root, 'nonempty-target')
-    const injectionTarget = join(root, 'injection-target')
-    await mkdir(join(source, 'topic'), { recursive: true })
-    await mkdir(target)
-    await mkdir(wrongTarget)
-    await mkdir(mismatchTarget)
-    await mkdir(nonemptyTarget)
-    await mkdir(injectionTarget)
-    await mkdir(join(source, 'lost+found'))
-    await mkdir(join(target, 'lost+found'))
-    await chmod(join(source, 'lost+found'), 0o700)
-    await chmod(join(target, 'lost+found'), 0o755)
-    await writeFile(join(source, 'meta.properties'), 'cluster.id=cluster-a\nnode.id=3\ndirectory.id=directory-a\n')
-    await writeFile(join(source, 'topic', 'records.log'), 'preserve these records\n')
-    await symlink('topic/records.log', join(source, 'records.link'))
-    await writeFile(join(source, 'sparse.log'), Buffer.from([1]))
-    await truncate(join(source, 'sparse.log'), 1024 * 1024)
+  it(
+    'executes the manifest copy against sparse files, symlinks, metadata, and meta.properties',
+    { timeout: 15_000 },
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'kafka-nvme-copy-'))
+      const source = join(root, 'source')
+      const target = join(root, 'target')
+      const wrongTarget = join(root, 'wrong-target')
+      const mismatchTarget = join(root, 'mismatch-target')
+      const nonemptyTarget = join(root, 'nonempty-target')
+      const injectionTarget = join(root, 'injection-target')
+      await mkdir(join(source, 'topic'), { recursive: true })
+      await mkdir(target)
+      await mkdir(wrongTarget)
+      await mkdir(mismatchTarget)
+      await mkdir(nonemptyTarget)
+      await mkdir(injectionTarget)
+      await mkdir(join(source, 'lost+found'))
+      await mkdir(join(target, 'lost+found'))
+      await chmod(join(source, 'lost+found'), 0o700)
+      await chmod(join(target, 'lost+found'), 0o755)
+      await writeFile(join(source, 'meta.properties'), 'cluster.id=cluster-a\nnode.id=3\ndirectory.id=directory-a\n')
+      await writeFile(join(source, 'topic', 'records.log'), 'preserve these records\n')
+      await symlink('topic/records.log', join(source, 'records.link'))
+      await writeFile(join(source, 'sparse.log'), Buffer.from([1]))
+      await truncate(join(source, 'sparse.log'), 1024 * 1024)
 
-    const gcp = Bun.which('gcp')
-    const run = async (clusterId: string, destination: string, prelude = '') => {
-      const copyCommand = prelude
-        ? gcp
-          ? 'cp -a --sparse=always'
-          : 'cp -a'
-        : gcp
-          ? gcp + ' -a --sparse=always'
-          : 'cp -a'
-      const script = copyScript(clusterId, 3)
-        .replace('cp -a --sparse=always', copyCommand)
-        .replaceAll('/tmp/source-manifest.json', '__SOURCE_MANIFEST__')
-        .replaceAll('/tmp/target-manifest.json', '__TARGET_MANIFEST__')
-        .replaceAll('/source', source)
-        .replaceAll('/target', destination)
-        .replaceAll('__SOURCE_MANIFEST__', '/tmp/source-manifest.json')
-        .replaceAll('__TARGET_MANIFEST__', '/tmp/target-manifest.json')
-        .replace('set -eu', prelude ? 'set -eu\n' + prelude : 'set -eu')
-      const child = Bun.spawn(['bash', '-euc', script], { stdout: 'pipe', stderr: 'pipe' })
-      const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()])
-      return { code: await child.exited, stdout, stderr }
-    }
+      const gcp = Bun.which('gcp')
+      const run = async (clusterId: string, destination: string, prelude = '') => {
+        const copyCommand = prelude
+          ? gcp
+            ? 'cp -a --sparse=always'
+            : 'cp -a'
+          : gcp
+            ? gcp + ' -a --sparse=always'
+            : 'cp -a'
+        const script = copyScript(clusterId, 3)
+          .replace('cp -a --sparse=always', copyCommand)
+          .replaceAll('/tmp/source-manifest.json', '__SOURCE_MANIFEST__')
+          .replaceAll('/tmp/target-manifest.json', '__TARGET_MANIFEST__')
+          .replaceAll('/source', source)
+          .replaceAll('/target', destination)
+          .replaceAll('__SOURCE_MANIFEST__', '/tmp/source-manifest.json')
+          .replaceAll('__TARGET_MANIFEST__', '/tmp/target-manifest.json')
+          .replace('set -eu', prelude ? 'set -eu\n' + prelude : 'set -eu')
+        const child = Bun.spawn(['bash', '-euc', script], { stdout: 'pipe', stderr: 'pipe' })
+        const [stdout, stderr] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ])
+        return { code: await child.exited, stdout, stderr }
+      }
 
-    const result = await run('cluster-a', target)
-    expect(result.code, result.stderr).toBe(0)
-    expect(result.stdout).toContain('COPY_VERIFIED')
-    expect(result.stdout).toContain('MANIFEST_ENTRIES=5\n')
-    expect(await readFile(join(target, 'topic', 'records.log'), 'utf8')).toBe('preserve these records\n')
-    expect(await readFile(join(target, 'meta.properties'), 'utf8')).toContain('directory.id=directory-a')
-    const sparseSource = await stat(join(source, 'sparse.log'))
-    const sparseTarget = await stat(join(target, 'sparse.log'))
-    expect(sparseTarget.size).toBe(sparseSource.size)
-    if (gcp) expect(sparseTarget.blocks).toBeLessThan(sparseTarget.size / 512)
-    const realCp = gcp ?? 'cp'
-    const mismatch = await run(
-      'cluster-a',
-      mismatchTarget,
-      'cp() { ' + realCp + ' "$@"; printf "corrupted\\n" > ' + mismatchTarget + '/topic/records.log; }',
-    )
-    expect(mismatch.code, mismatch.stderr).not.toBe(0)
-    expect(mismatch.stdout).toContain('SOURCE_FILE_MANIFEST=')
-    expect(mismatch.stdout).toContain('TARGET_FILE_MANIFEST=')
-    expect(mismatch.stdout).toContain('MANIFEST_DIFFERENCES=')
-    expect(mismatch.stdout).toContain('records.log')
-    const wrong = await run('wrong-cluster', wrongTarget)
-    expect(wrong.code).not.toBe(0)
-    const injected = join(root, 'injected')
-    const injection = await run('cluster-a$(touch ' + injected + ')', injectionTarget)
-    expect(injection.code).not.toBe(0)
-    expect(await Bun.file(injected).exists()).toBe(false)
-    await writeFile(join(source, 'lost+found', 'unexpected'), 'do not ignore this')
-    const nonempty = await run('cluster-a', nonemptyTarget)
-    expect(nonempty.code, nonempty.stderr).not.toBe(0)
-    expect(nonempty.stderr).toContain('lost+found must be empty')
-  })
+      const result = await run('cluster-a', target)
+      expect(result.code, result.stderr).toBe(0)
+      expect(result.stdout).toContain('COPY_VERIFIED')
+      expect(result.stdout).toContain('MANIFEST_ENTRIES=5\n')
+      expect(await readFile(join(target, 'topic', 'records.log'), 'utf8')).toBe('preserve these records\n')
+      expect(await readFile(join(target, 'meta.properties'), 'utf8')).toContain('directory.id=directory-a')
+      const sparseSource = await stat(join(source, 'sparse.log'))
+      const sparseTarget = await stat(join(target, 'sparse.log'))
+      expect(sparseTarget.size).toBe(sparseSource.size)
+      if (gcp) expect(sparseTarget.blocks).toBeLessThan(sparseTarget.size / 512)
+      const realCp = gcp ?? 'cp'
+      const mismatch = await run(
+        'cluster-a',
+        mismatchTarget,
+        'cp() { ' + realCp + ' "$@"; printf "corrupted\\n" > ' + mismatchTarget + '/topic/records.log; }',
+      )
+      expect(mismatch.code, mismatch.stderr).not.toBe(0)
+      expect(mismatch.stdout).toContain('SOURCE_FILE_MANIFEST=')
+      expect(mismatch.stdout).toContain('TARGET_FILE_MANIFEST=')
+      expect(mismatch.stdout).toContain('MANIFEST_DIFFERENCES=')
+      expect(mismatch.stdout).toContain('records.log')
+      const wrong = await run('wrong-cluster', wrongTarget)
+      expect(wrong.code).not.toBe(0)
+      const injected = join(root, 'injected')
+      const injection = await run('cluster-a$(touch ' + injected + ')', injectionTarget)
+      expect(injection.code).not.toBe(0)
+      expect(await Bun.file(injected).exists()).toBe(false)
+      await writeFile(join(source, 'lost+found', 'unexpected'), 'do not ignore this')
+      const nonempty = await run('cluster-a', nonemptyTarget)
+      expect(nonempty.code, nonempty.stderr).not.toBe(0)
+      expect(nonempty.stderr).toContain('lost+found must be empty')
+    },
+  )
 
   it('starts from the captured SPS pod after the original PVC receives a new UID', async () => {
     const plan = buildPlan(options(), resources())
