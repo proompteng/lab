@@ -114,9 +114,11 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn's research worker and CPU-only OpenCode proposer consume the same immutable Bayn image through
-`lab-delivery/bayn`. The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains
-independent, with its pinned serving identity verified by research receipts.
+Bayn's trading workloads consume `lab/bayn`; its research worker and CPU-only OpenCode proposer consume
+`lab/bayn-research`. Both images use the existing `lab-delivery/bayn` Warehouse and Stage. Publication withholds both
+discovery aliases until both images pass validation with the same source revision and successful build-run receipt.
+The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains independent,
+with its pinned serving identity verified by research receipts.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
@@ -139,10 +141,11 @@ Changes restricted to Bayn `*.test.ts` modules retain normal pull-request valida
 image from `main`. This avoids execution-controller reactivation when production code is unchanged.
 
 Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
-main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
-and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
-public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
-request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
+main-published cohort with matching source and run receipts. The trading image owns the exact source revision used
+for checkout, runtime bindings and activation lineage, so a newer unpublished main commit cannot hold a completed release.
+Its Stage updates the public service, execution worker, and activation hook to the trading digest, updates research
+workloads to the research digest, and carries the existing authored research request into the new build lineage.
+The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 Bayn resolves environment positions by name and converts each `findIndex` result to a string in `yaml-parse`.
 Kargo v1.11.4 returns a Go `int` for a bare index, which its promotion-state deep copy rejects before persistence.
