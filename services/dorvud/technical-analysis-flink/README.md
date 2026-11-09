@@ -96,6 +96,21 @@ volume consumer. See the [producer contract](../README.md#latest-quote-and-trade
 
 ## ClickHouse sink batching
 
+### Startup schema verification
+
+The TA application verifies both sink tables with bounded read-only metadata queries before submitting its graph.
+It requires the declared column types, 35-day retention, and the configured replicated-engine fence. Missing or
+incompatible schema fails startup under the existing strict retry policy. It never executes the bundled
+`ta-schema.sql` automatically: distributed no-op DDL can block the application thread while the JobManager remains
+Ready and no streaming job exists. Provision or repair schema through the reviewed migration process before rollout.
+The retained SQL resource remains the migration contract, including the separate options tables; TA startup does
+not migrate options tables. Connection and socket deadlines are 5 and 15 seconds, and each metadata query has a
+15-second server deadline. These are per-attempt bounds, not a total bound across the configured retries.
+
+Recovery acceptance must verify the restored savepoint, completed checkpoints, current feature production and
+matching consumption in Bayn. Pod readiness and a cleared alert alone do not establish recovery. Preserve operator
+IDs, savepoints, offsets and freshness checks; do not use a stateless restart to work around schema verification.
+
 The equity TA sinks bound `TA_CLICKHOUSE_BATCH_SIZE` to 1–1,000 rows. The deployed 1,000-row setting reaches the JDBC
 batch instead of being silently reduced to 100. The existing flush interval still publishes a partial batch when
 input is sparse. The bound limits buffered rows while allowing retained corrections to use the configured batching.

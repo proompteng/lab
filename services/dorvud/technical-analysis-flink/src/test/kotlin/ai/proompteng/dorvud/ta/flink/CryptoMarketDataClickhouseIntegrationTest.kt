@@ -21,10 +21,55 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CryptoMarketDataClickhouseIntegrationTest {
+  @Test
+  fun `TA startup verifies real metadata without repairing incompatible schemas`() {
+    val endpoint = System.getenv("BAYN_TEST_CLICKHOUSE_URL")
+    assumeTrue(endpoint != null, "requires a guarded disposable ClickHouse service")
+    val guard = requireNotNull(System.getenv("BAYN_TEST_CLICKHOUSE_GUARD_TOKEN"))
+    require(guard.matches(Regex("[0-9a-f]{32}")))
+    val database = "ta_startup_schema_test"
+    val schema = requireNotNull(javaClass.getResourceAsStream("/ta-schema.sql")).bufferedReader().use { it.readText() }
+    DriverManager.getConnection("jdbc:clickhouse:$endpoint/default", "default", "").use { connection ->
+      connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT toString(token) FROM bayn_ci_guard.endpoint_identity").use { result ->
+          assertTrue(result.next())
+          assertEquals(guard, result.getString(1))
+          assertFalse(result.next())
+        }
+        statement.execute("CREATE DATABASE $database")
+        try {
+          for (table in requiredClickhouseTaColumns.keys) {
+            val ddl =
+              schema
+                .split(';')
+                .first { it.trimStart().startsWith("CREATE TABLE IF NOT EXISTS torghut.$table ") }
+                .replace(" ON CLUSTER default", "")
+                .replace("torghut.", "$database.")
+                .replace(Regex("ENGINE = ReplicatedReplacingMergeTree\\([^\\n]+\\)"), "ENGINE = ReplacingMergeTree(ingest_ts)")
+            statement.execute(ddl)
+          }
+          // The disposable fixture has no Keeper. Production's replicated-engine fence still rejects it.
+          verifyClickhouseTaSchema(connection, database, false)
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, true) }
+          statement.execute("ALTER TABLE $database.ta_signals DROP COLUMN microstructure_signal_v1")
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
+          statement.execute("ALTER TABLE $database.ta_signals ADD COLUMN microstructure_signal_v1 Nullable(String)")
+          statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 14 DAY")
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
+          statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY")
+          verifyClickhouseTaSchema(connection, database, false)
+        } finally {
+          statement.execute("DROP DATABASE $database")
+        }
+      }
+    }
+  }
+
   @Test
   fun `production crypto JDBC and schema preserve exact events and deduplicate retries`() {
     val endpoint = System.getenv("BAYN_TEST_CLICKHOUSE_URL")
