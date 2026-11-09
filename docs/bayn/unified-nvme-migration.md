@@ -11,9 +11,11 @@ readback. Require zero open broker positions and unresolved mutations before sto
 PostgreSQL image, existing accounts and authentication. Current arrival histories must be compared by capture ID
 and exact content before merging. An empty statistics estimate does not mean a table is empty.
 
-Use a bounded, owned Argo AppProject deny window for `bayn` and `bayn-valkey`, with manual sync allowed, before
-merging. Verify neither Application is already syncing. The window prevents automatic rollout while source data
-is being moved; it does not change runtime trading authority. Retain the original project resource and remove only
+Use bounded, owned Argo AppProject deny windows for `bayn` and `bayn-valkey` before merging. Verify neither
+Application is already syncing. Block both automatic and manual Bayn application sync while source data is moving:
+Kargo can request a manual sync through `argocd-update`. Valkey may separately allow a scoped manual sync of its
+reviewed storage change before replacing its claims. Permit the full Bayn rollout only after the merge and final
+replica placement are verified. These windows do not change runtime trading authority. Retain the original project resource and remove only
 the owned entry when done. Use the reviewed immutable image, Kargo Freight and generated Stage commit for the
 application rollout. Do not bump images manually or deploy code from an unreviewed worktree.
 
@@ -26,8 +28,11 @@ existing nodes in the host selector and add Ryzen's compute-local toleration. Al
 hostname anti-affinity, synchronous `ANY 1` and NVMe data/WAL claims. The temporary third failure domain keeps two
 verified durable copies available while an original instance is replaced. Restore final placement before release.
 
-Wait for the new Ryzen instance to catch up, then promote it with the CNPG plugin. Check required synchronous
-replication and data continuity. Destroy only the verified former Turin standby instance and its original claim
+Wait for the new Ryzen instance to catch up and for CNPG to finish any Pod refresh caused by the temporary placement
+change. Require three ready instances, phase `Cluster in healthy state`, and matching current/target primary before
+promoting Ryzen with the CNPG plugin. Wait for the same stable conditions after promotion. Capture a primary WAL
+LSN and require both standbys to replay through it before replacing either one; instantaneous zero lag can race with
+ongoing WAL generation. Check required synchronous replication and data continuity. Destroy only the verified former Turin standby instance and its original claim
 identities using CNPG's native reconstruction procedure. Retain its original backing volumes until verification.
 Verify the replacement claims have new UIDs and class `local-path`, the mounts are physical NVMe and replication
 has caught up. Promote Turin, then reconstruct the original Altra standby in the same way. Never destroy the
