@@ -2,7 +2,10 @@ import { Effect, Ref, Result } from 'effect'
 import type { ApplicationPlan } from '../app'
 import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
 import { BrokerEnvironment } from '../broker/identity'
-import { type AuthorityGenerationStoreShape, type CapitalGrantLifecycleStoreShape } from '../db/execution-store'
+import {
+  type AuthorityGenerationStoreShape,
+  type CapitalGrantLifecycleStoreShape,
+} from '../db/execution-store/contract'
 import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionReason } from '../execution/authority'
 import {
   Authority,
@@ -31,7 +34,7 @@ import { CapitalActivationReconciliationNotExact, OperationalError } from '../er
 import { decideExecutionMandateAuthority, isExecutionCyclePreflightStoreRestriction } from '../execution/mandate'
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
-import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { type ReconciliationPassError, type ReconciliationPassResult } from '../reconciler'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import type { RuntimeState } from '../runtime-state'
@@ -287,11 +290,13 @@ export const validateResearchCapitalRiskPolicy = (
   plan: ApplicationPlan,
   request: ResearchCapitalActivationRequest,
 ): Effect.Effect<void, OperationalError> =>
-  loadStrategyExecutionRiskPolicy(
-    request.broker.accountId,
-    plan.strategy,
-    request.broker.environment,
-    request.riskPolicyHash,
+  Effect.fromResult(
+    strategyExecutionRiskPolicy(
+      request.broker.accountId,
+      plan.strategy,
+      request.broker.environment,
+      request.riskPolicyHash,
+    ),
   ).pipe(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('source-controlled capital risk policy is invalid', cause),

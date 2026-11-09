@@ -22,7 +22,7 @@ import {
   makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
 } from '../execution/contracts'
-import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store'
+import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store/contract'
 import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
 import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'

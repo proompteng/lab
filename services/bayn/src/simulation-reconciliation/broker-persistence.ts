@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect'
 
-import type { ReconciliationPersistence } from '../db/execution-store'
+import type { ReconciliationPersistence } from '../db/execution-store/contract'
 import type { BrokerSnapshot, ReconciliationReport, ReconciliationWriteResult } from '../db/reconciliation'
 import {
   compareText,
