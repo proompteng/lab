@@ -183,7 +183,8 @@ establish source and artifact qualification; the separate release readback above
   of 48.421/41.581 ms and CPU medians of 48.815/43.726 ms: 14.1% and 10.4% lower respectively. Complete prepared
   output and four corruption failures agree. All 5,026 unit tests, 40 persistence and 49 native-Jev PostgreSQL tests,
   both type checks, all linters and both production/research builds pass; the unit run skips 1,298 cases. This hash
-  change awaits main publication and automatic rollout; its isolated result does not establish production latency.
+  change is now published and deployed through the existing Kargo Stage. Its isolated result does not establish
+  production latency; the separate production readback below retains the slower accounting median.
   All 40 PR checks finish (37 successes, three skips), with completed automatic code/security review and no findings.
 - B4: Native startup requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
   accepts only the latest completed bar with a 10-second availability limit. Markets disabled for new entries also
@@ -246,7 +247,8 @@ establish source and artifact qualification; the separate release readback above
   29.904–29.972 seconds, start 62–992 ms after their due time, and run for 1.023–1.163 seconds. For the first two,
   `bayn.execution.advance` takes 919.450/916.957 ms, reconciliation persistence 607.923/606.341 ms, and accounting
   verification 274.076/267.426 ms. Nested spans must not be added together. These are waiting passes, not entry
-  inference or order-submission waterfalls; a complete naturally eligible request and comparable release readback remain open.
+  inference or order-submission waterfalls. The later natural entries below supply filled-path evidence, with
+  separate limits on before/after comparability.
   Earlier v38 / Jev 1.13 filled-entry records remain in the measurement JSON and immutable historical figure.
   Current v40 evidence below replaces that historical example in the active request walkthrough.
   Earlier source-bound baselines and the financial-primary wait sample remain in the measurement record. One
@@ -290,8 +292,63 @@ establish source and artifact qualification; the separate release readback above
   a comparable eligible-request before/after distribution. The second filled entry and its two BUY receipts are
   also retained in the measurement record.
   No trading authority, input validation, schedule or provider configuration is changed to obtain these traces.
-- B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
-  Keep current runtime procedures and link dated receipts through their immutable Git revision.
+- B10: The deployment and service READMEs remove superseded activation recipes, the old crypto-entry procedure,
+  completed cleanup narratives and the historical WAL-canary table. Current entry scope, projection startup and
+  retained archive ownership match source. Unique historical procedures remain linked at immutable Git revisions.
+  README-only changes no longer select runtime qualification, native image builds or main image publication.
+  Actual source and manifest changes still select their checks; all 64 affected-input tests pass.
+
+### Accounting-hash release and final readback
+
+Successful main run [42638085275](https://github.com/proompteng/lab/actions/runs/42638085275) publishes the native
+and research images for `b3aa14bb383fb06bd5d95196e1aad63346f1a08c`. Both indexes and all four platform configs match
+the exact source/run cohort. Freight `3676ecc891b9dc7d99d05b7bab82a48b30464036` reaches Argo through Kargo commit
+`9f5a2983eb68752ed99a47eb9d0cf1ad70fcb739`. The native hook succeeds, both latest native services select
+`dp_14mc4VooMcjbcrwhvtXOQa5`, and both native workers and both status replicas run the selected native digest.
+At 16:16:29.910 UTC the active controller records a source-bound `SUCCESS` pass. The active account's transaction
+count is 1,175 at the later readback, rather than the 1,133 observed before this release.
+
+The first promotion fails at activation. Trace `1f8e0fdaf8eee6f10b1e6cc077ed7947` identifies the exact rejection:
+broker order quantities and fill activities have not converged. HTTP reads succeed, but the observation cannot
+publish; accounting verification has not run on that path. This proves the rejecting guard, not the underlying
+provider disagreement's cause. After coherent observations publish through the existing quota-accounted runtime,
+a retry of the same immutable Freight and unchanged reviewed Stage succeeds at 15:53:11 UTC. No consistency guard,
+quota, deadline, authority or credential is bypassed, and no workload or storage is changed by hand.
+
+The retained source-bound sample selects seven before and 21 after full-history passes on Altra. Both windows use
+the same controller key, `Waiting` outcome and exactly one reconciliation and accounting verification. One before
+`Completed` pass is excluded. After exclusions are two `Completed` passes and one `Waiting` pass with two full
+verifications. All 32 retained ticks, including exclusions, have successful advance, reconciliation and accounting
+span statuses with no exception events. The financial primary, archive primary, replica counts and claims are
+unchanged at the captured boundaries.
+
+| Inclusive stage median             | Before, ms | After, ms |
+| ---------------------------------- | ---------: | --------: |
+| Worker advance                     |  3,684.071 | 2,423.023 |
+| Reconciliation                     |  2,941.412 | 2,060.458 |
+| Persistence                        |  2,733.372 | 1,852.378 |
+| Maximum writer-fence span per pass |  1,533.408 | 1,469.930 |
+| Accounting verification            |    671.021 |   773.120 |
+
+Accounting verification is slower in this production sample. The lower overall median is an observation across
+different history, arrivals and load; it cannot be attributed to removal of a repeated hash. The isolated kernel
+and SQL comparisons establish less work for their measured inputs. These live samples do not establish a causal
+production improvement or an eligible-entry latency distribution. Nested durations must not be added together.
+
+A natural filled request on this release is observed at 16:06:02.329 UTC. Its batch and document hash match native
+trace `ae9a9acaf7f08fe416da593eb6812068`, pinned to the exact new deployment on Altra. It uses v40 / Jev 1.14.0 and
+the compact planner representation. CHART claim to receipt takes 637 ms, its evaluation receipt interval 1,146 ms,
+intent to submit-start 6,225 ms, and acknowledgement 655 ms. The advance takes 12,912.557 ms, including decision
+construction 2,528.305 ms, binding 1,806.172 ms, committed-decision reading 1,324.318 ms and submission 742.313 ms.
+This advance contains no full reconciliation span. The earlier filled request has two candidate requests and a full
+reconciliation; this one has three candidate requests. Their elapsed times therefore do not form a matched full-path
+benchmark. Two BUY fills have two balanced posted receipts; they are observed at 16:06:23.689 UTC, with recovery
+recorded at 16:06:28.676. The cycle remains active at this capture. A filled intent does not establish a completed cycle.
+The request's inference expiry and the protected decision's submission cutoff are distinct contracts.
+
+Public collectors still have zero nonterminal invocations and the same two retained state rows and fingerprint.
+The old stateless bootstrap registration still pins two workers despite zero nonterminal invocations. Its separately
+reviewed retirement remains pending under the owning runbook. No retained records, registrations or volumes are deleted.
 
 ![Matched scheduled delay and active worker timing, on separate clocks](evidence/2026-11-08-current-waiting.svg)
 
@@ -312,7 +369,9 @@ strategy outcome; it supplies no evidence of a current order submission or broke
 
 ![Current v40 filled entry through submission and recovery](evidence/2026-11-09-current-v40-filled-entry.svg)
 
-This current-release chart replaces the [earlier v38 illustration](https://github.com/proompteng/lab/blob/b3aa14bb383fb06bd5d95196e1aad63346f1a08c/docs/bayn/evidence/2026-11-09-historical-entry.svg).
+This chart uses the deployed hash release. The [earlier cleanup-release filled chart](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/docs/bayn/evidence/2026-11-09-current-v40-filled-entry.svg)
+and [v38 illustration](https://github.com/proompteng/lab/blob/b3aa14bb383fb06bd5d95196e1aad63346f1a08c/docs/bayn/evidence/2026-11-09-historical-entry.svg)
+remain available at immutable revisions.
 Its broker source timestamps use a separate clock. The submitted order's BUY fills are separated from later protective
 SELL fills that share its intent, and both document and strategy hashes retain their distinct correlation roles.
 
