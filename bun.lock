@@ -744,7 +744,6 @@
       "name": "@proompteng/bayn",
       "version": "0.1.0",
       "dependencies": {
-        "@aws-sdk/client-s3": "3.1042.0",
         "@effect/platform-node": "4.0.0",
         "@effect/sql-clickhouse": "4.0.0",
         "@effect/sql-pg": "4.0.0",

@@ -56,7 +56,7 @@ import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { OperationalError, retryableOperationalError } from '../errors'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { type ReconciliationPassResult } from '../reconciler'
-import { loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { makeJevMarketTestSnapshot as makeIntradayMomentumTestSnapshot } from '../testing/jev-market-fixture'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -199,7 +199,7 @@ const fixture = async (source = native) => {
     intradayMarketData: freshMarket,
   }
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
-  const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
+  const policy = await Effect.runPromise(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
   const unused = Effect.die(new Error('Unexpected fixture I/O'))
   const broker: BrokerReadShape = {
     account: unused,

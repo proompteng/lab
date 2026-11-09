@@ -14,6 +14,12 @@ spec:
         valuesObject:
           nodeSelector:
             kubernetes.io/arch: amd64
+            kubernetes.io/hostname: talos-192-168-1-194
+          tolerations:
+            - key: workload.proompteng.ai/compute-local
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
@@ -34,6 +40,12 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
+                kubernetes.io/hostname: talos-192-168-1-194
+              tolerations:
+                - key: workload.proompteng.ai/compute-local
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -56,7 +68,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:daad4e5e1b428829957c1b47955005b86fb3e47e210540aa74ec3db32ef979b0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7a05f83c8a98021ef1ba15e8b46b2ed6b542a4779f541316c4685f1888d959db
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -130,7 +142,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:daad4e5e1b428829957c1b47955005b86fb3e47e210540aa74ec3db32ef979b0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7a05f83c8a98021ef1ba15e8b46b2ed6b542a4779f541316c4685f1888d959db
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -248,7 +260,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:daad4e5e1b428829957c1b47955005b86fb3e47e210540aa74ec3db32ef979b0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7a05f83c8a98021ef1ba15e8b46b2ed6b542a4779f541316c4685f1888d959db
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -330,6 +342,12 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
+                kubernetes.io/hostname: talos-192-168-1-194
+              tolerations:
+                - key: workload.proompteng.ai/compute-local
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -352,7 +370,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:daad4e5e1b428829957c1b47955005b86fb3e47e210540aa74ec3db32ef979b0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7a05f83c8a98021ef1ba15e8b46b2ed6b542a4779f541316c4685f1888d959db
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -430,7 +448,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:daad4e5e1b428829957c1b47955005b86fb3e47e210540aa74ec3db32ef979b0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:7a05f83c8a98021ef1ba15e8b46b2ed6b542a4779f541316c4685f1888d959db
                   securityContext:
                     privileged: false
                   command: [ "/home/runner/run.sh" ]
