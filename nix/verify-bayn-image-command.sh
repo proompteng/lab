@@ -67,18 +67,19 @@ test -x "${image_node}"
 
 if [[ "${role}" = trading ]]; then
   for command in index restate-execution-server restate-execution-activate market-projection-worker \
-    forward-performance-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command; do
+    forward-performance-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done
   test -x "$(resolve_image_entry /bin/bayn-inference-cost)"
   test -x "$(resolve_image_entry /bin/bayn-forward-performance)"
+  test -f "$(resolve_image_entry /app/services/bayn/dist/jev-compiler-dependencies.json)"
   for command in python python3 git bun crane bayn-research bayn-gepa bayn-backtest bayn-system-assessment; do
     if [[ -e "${rootfs}/bin/${command}" || -L "${rootfs}/bin/${command}" ]]; then
       echo "Trading image contains research executable ${command}." >&2
       exit 1
     fi
   done
-  for command in restate-research-server research-command backtest-command control-study-command system-assessment-command; do
+  for command in restate-research-server research-command control-study-command system-assessment-command; do
     if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
       echo "Trading image contains research bundle ${command}." >&2
       exit 1

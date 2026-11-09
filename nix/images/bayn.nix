@@ -36,6 +36,8 @@ let
     "streaming-diagnostics-command"
     "glitchtip-smoke-command"
     "valkey-command"
+    # Qualification verifies the replay executable against the actual trading image digest.
+    "backtest-command"
   ];
   # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
@@ -179,8 +181,8 @@ let
     for command in ${lib.concatStringsSep " " runtimeCommands}; do
       cp "$TMPDIR/work/services/bayn/dist/$command.js" "$out/app/services/bayn/dist/"
     done
-    ${lib.optionalString research ''
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
+    ${lib.optionalString research ''
     cp "$TMPDIR/work/services/bayn/dist/frozen-control-compiler.json" "$out/app/services/bayn/dist/frozen-control-compiler.json"
     mkdir -p "$out/app/services/bayn/gepa"
     cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"

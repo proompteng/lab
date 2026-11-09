@@ -141,7 +141,9 @@ The changes below are source changes until their reviewed image receipts and dep
 - B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
   bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
   first pair give medians of 24.382 ms before and 17.687 ms after. This is a 27.46% reduction for that query, not for a
-  full reconciliation. Full accounting reconstruction, ledger verification and the writer fence remain mandatory.
+  full reconciliation. A second ordered aggregate combines the quantity and cost inventory-debit reads in accounting
+  reconstruction: its warm median falls from 121.191 to 72.337 ms with zero row differences. Full accounting
+  reconstruction, ledger verification and the writer fence remain mandatory.
 - B4: Retain crypto sources while their executable-quote and replay consumers remain. A bounded sample of eight
   arrival chunks contains 137 records over 6.267 seconds: 45 Webull records, 91 crypto raw records and one crypto
   feature record. Serialized arrival bytes are 2,629,511, 158,454 and 42,567 respectively. These include retained

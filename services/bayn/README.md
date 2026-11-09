@@ -688,7 +688,9 @@ retained financial evidence; they do not select a live strategy or create curren
 ## Runtime and research images
 
 `bayn` contains status, execution, activation, projection and operating diagnostics. It retains the private
-`bayn-forward-performance` financial report. `bayn-research` contains the research server, GEPA, replay and study
+`bayn-forward-performance` financial report. Its replay executable and compiler-dependency receipt also remain
+in the trading artifact: candidate qualification verifies them against the actual trading image digest.
+`bayn-research` contains the research server, GEPA, replay and study
 commands, frozen-control compiler receipts, Python, Git, Bun and Crane. The research artifact also owns
 `bayn-system-assessment`; `--system-*` qualification flags are removed from the financial-report command.
 Both artifacts must pass native architecture builds and publish successful receipts from the same source and CI run
