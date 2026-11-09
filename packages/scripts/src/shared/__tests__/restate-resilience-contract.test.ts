@@ -19,7 +19,7 @@ test('Restate image promotion requires native build proofs and uploaded release 
     ...workflow.on.push.paths,
   ])
   expect(build.needs).toBe('changes')
-  expect(build.if).toBe("needs.changes.outputs.changed == 'true'")
+  expect(build.if).toBe("needs.changes.outputs.changed == 'true' && needs.changes.outputs.reuse != 'true'")
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
     'amd64',
     'arm64',
@@ -29,8 +29,11 @@ test('Restate image promotion requires native build proofs and uploaded release 
   expect(runtime.with.load).toBeUndefined()
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/docker.ts')
-  expect(publish.if).toBe(mainOnly)
-  expect(publish.needs).toEqual(['build'])
+  expect(publish.if).toContain(mainOnly)
+  expect(publish.if).toContain("needs.changes.result == 'success'")
+  expect(publish.if).toContain("needs.build.result == 'success'")
+  expect(publish.if).toContain("needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'")
+  expect(publish.needs).toEqual(['changes', 'build', 'cache-proof'])
   const releaseSteps = publish.steps as { name?: string; uses?: string }[]
   const uploaded = releaseSteps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
   expect(uploaded).toBeGreaterThan(0)
@@ -65,7 +68,8 @@ test.each([
   ['bun.lock', false],
   ['services/jangar/package.json', false],
   ['packages/scripts/src/shared/docker.ts', false],
-  ['packages/scripts/src/restate/build-image.ts', false],
+  ['packages/scripts/src/restate/release-inputs.ts', true],
+  ['.github/workflows/restate-images.yml', true],
   ['argocd/applicationsets/platform.yaml', false],
   ['services/restate/Dockerfile', true],
   ['services/restate/metadata-background.patch', true],
