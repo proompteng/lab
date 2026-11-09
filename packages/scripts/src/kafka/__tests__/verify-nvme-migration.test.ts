@@ -313,6 +313,30 @@ describe('Kafka NVMe migration verifier', () => {
     )
   })
 
+  it('treats exact-group as an explicit group requirement even when absent from baseline', () => {
+    const report = compareSnapshots(snapshot(), snapshot(), { exactGroups: ['mistyped-group'] })
+
+    expect(report.pass).toBe(false)
+    expect(report.failures).toContain('Required Kafka consumer group has no baseline offsets: mistyped-group')
+  })
+
+  it('rejects null committed offsets for explicitly required groups', () => {
+    const baseline = snapshot()
+    const current = structuredClone(baseline)
+    baseline.groups[0].currentOffset = null
+    current.groups[0].currentOffset = null
+
+    const report = compareSnapshots(baseline, current, { requiredGroups: ['bayn-native-arrival'] })
+
+    expect(report.pass).toBe(false)
+    expect(report.failures).toEqual(
+      expect.arrayContaining([
+        'Kafka explicit consumer group has null baseline committed offset: bayn-native-arrival',
+        'Kafka explicit consumer group has null current committed offset: bayn-native-arrival',
+      ]),
+    )
+  })
+
   it('fails closed for zero parsed partitions and selects the deepest NVMe mount', () => {
     const baseline = snapshot()
     const empty = structuredClone(baseline)

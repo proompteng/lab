@@ -1296,14 +1296,28 @@ export const compareSnapshots = (
   }
   const baselineGroups = groupMap(baseline)
   const currentGroups = groupMap(current)
-  const groupNames = uniqueSorted([...baseline.groups.map((group) => group.group), ...(options.requiredGroups ?? [])])
+  const explicitGroups = new Set([...(options.requiredGroups ?? []), ...(options.exactGroups ?? [])])
+  const groupNames = uniqueSorted([
+    ...baseline.groups.map((group) => group.group),
+    ...(options.requiredGroups ?? []),
+    ...(options.exactGroups ?? []),
+  ])
   for (const groupName of groupNames) {
     const before = baseline.groups.filter((group) => group.group === groupName)
     const after = current.groups.filter((group) => group.group === groupName)
+    const explicitGroup = explicitGroups.has(groupName)
     if (before.length === 0) {
       checks.groupOffsets = false
       failures.push(`Required Kafka consumer group has no baseline offsets: ${groupName}`)
       continue
+    }
+    if (explicitGroup && before.some((group) => group.currentOffset === null)) {
+      checks.groupOffsets = false
+      failures.push(`Kafka explicit consumer group has null baseline committed offset: ${groupName}`)
+    }
+    if (explicitGroup && after.some((group) => group.currentOffset === null)) {
+      checks.groupOffsets = false
+      failures.push(`Kafka explicit consumer group has null current committed offset: ${groupName}`)
     }
     const beforeKeys = sorted(before.map(keyForGroupOffset))
     const afterKeys = sorted(after.map(keyForGroupOffset))

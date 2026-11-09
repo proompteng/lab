@@ -7,10 +7,12 @@ import {
   copyPodFailure,
   copyScript,
   parseOptions,
+  runWith,
   sanitizedOriginalPvc,
   storageBinding,
   waitForCopyPod,
   type Options,
+  type Receipt,
 } from '../migrate-nvme'
 
 const options = (overrides: Partial<Options> = {}): Options => ({
@@ -211,7 +213,6 @@ describe('Kafka NVMe migration plan contract', () => {
 
   it(
     'executes the manifest copy against sparse files, symlinks, metadata, and meta.properties',
-    { timeout: 15_000 },
     async () => {
       const root = await mkdtemp(join(tmpdir(), 'kafka-nvme-copy-'))
       const source = join(root, 'source')
@@ -272,11 +273,13 @@ describe('Kafka NVMe migration plan contract', () => {
       const sparseTarget = await stat(join(target, 'sparse.log'))
       expect(sparseTarget.size).toBe(sparseSource.size)
       if (gcp) expect(sparseTarget.blocks).toBeLessThan(sparseTarget.size / 512)
-      const realCp = gcp ?? 'cp'
+      const realCp = gcp ?? Bun.which('cp')
+      if (!realCp) throw new Error('cp executable is required for the copy fixture')
+      const quotedCp = "'" + realCp.replaceAll("'", "'\"'\"'") + "'"
       const mismatch = await run(
         'cluster-a',
         mismatchTarget,
-        'cp() { ' + realCp + ' "$@"; printf "corrupted\\n" > ' + mismatchTarget + '/topic/records.log; }',
+        'cp() { ' + quotedCp + ' "$@"; printf "corrupted\\n" > ' + mismatchTarget + '/topic/records.log; }',
       )
       expect(mismatch.code, mismatch.stderr).not.toBe(0)
       expect(mismatch.stdout).toContain('SOURCE_FILE_MANIFEST=')
@@ -294,6 +297,7 @@ describe('Kafka NVMe migration plan contract', () => {
       expect(nonempty.code, nonempty.stderr).not.toBe(0)
       expect(nonempty.stderr).toContain('lost+found must be empty')
     },
+    { timeout: 15_000 },
   )
 
   it('starts from the captured SPS pod after the original PVC receives a new UID', async () => {
@@ -359,5 +363,220 @@ describe('Kafka NVMe migration plan contract', () => {
     if (!('phase' in result)) throw new Error('start did not return a receipt')
     expect(result.phase).toBe('started')
     expect(calls.some((args) => args.includes('apply'))).toBe(true)
+  })
+
+  it('resumes rebind after observed destructive mutations', async () => {
+    const failurePoints = [
+      'after-source-delete',
+      'after-pvc-create',
+      'after-pv-swap',
+      'after-temp-delete',
+      'before-final-receipt',
+    ] as const
+    type Resource = {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+      status?: Record<string, unknown>
+    }
+    const clone = (value: unknown) => JSON.parse(JSON.stringify(value)) as Resource
+    const empty = () => ({ stdout: '', stderr: '' })
+
+    for (const failurePoint of failurePoints) {
+      const plan = buildPlan(options(), resources())
+      const receiptDir = await mkdtemp(join(tmpdir(), 'kafka-nvme-rebind-'))
+      const tempName = plan.sourcePvc + '-nvme-copy'
+      const tempUid = 'pvc-temp'
+      const source = clone(plan.resources.sourcePvc)
+      const sourcePv = clone(plan.resources.sourcePv)
+      sourcePv.spec.persistentVolumeReclaimPolicy = 'Retain'
+      const target = clone(plan.resources.targetPv)
+      target.spec.persistentVolumeReclaimPolicy = 'Retain'
+      target.spec.claimRef = { name: tempName, namespace: plan.namespace, uid: tempUid }
+      const temp = {
+        metadata: { name: tempName, namespace: plan.namespace, uid: tempUid },
+        spec: { storageClassName: plan.targetStorageClass, volumeName: plan.targetPv },
+      } as Resource
+      const state: { source?: Resource; sourcePv: Resource; target: Resource; temp?: Resource; failed: boolean } = {
+        source,
+        sourcePv,
+        target,
+        temp,
+        failed: false,
+      }
+      const receipt: Receipt = {
+        version: 1,
+        phase: 'copied',
+        updatedAt: new Date().toISOString(),
+        plan,
+        tempPvc: { name: tempName, uid: tempUid },
+      }
+      const receiptPath = join(receiptDir, plan.pod + '.receipt.json')
+      await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600 })
+
+      const runner = async (args: string[], input?: string) => {
+        const command = args[args.indexOf('get') + 1]
+        if (args.includes('get')) {
+          if (command === 'deployment')
+            return {
+              stdout: JSON.stringify({ spec: { replicas: 0, selector: { matchLabels: { app: 'operator' } } } }),
+              stderr: '',
+            }
+          if (command === 'pods') return { stdout: JSON.stringify({ items: [] }), stderr: '' }
+          if (command === 'kafka') return { stdout: JSON.stringify(plan.resources.kafka), stderr: '' }
+          if (command === 'strimzipodset') return { stdout: JSON.stringify(plan.resources.podSet), stderr: '' }
+          if (command === 'pv') {
+            const name = args[args.indexOf('get') + 2]
+            return { stdout: JSON.stringify(name === plan.sourcePv ? state.sourcePv : state.target), stderr: '' }
+          }
+          if (command === 'pvc') {
+            const name = args[args.indexOf('get') + 2]
+            const resource = name === plan.sourcePvc ? state.source : name === tempName ? state.temp : undefined
+            return resource ? { stdout: JSON.stringify(resource), stderr: '' } : empty()
+          }
+        }
+        if (args.includes('delete') && args.includes('pvc')) {
+          const name = args[args.indexOf('delete') + 2]
+          if (name === plan.sourcePvc) {
+            state.source = undefined
+            if (failurePoint === 'after-source-delete' && !state.failed) {
+              state.failed = true
+              throw new Error('injected after source PVC delete')
+            }
+          }
+          if (name === tempName) {
+            state.temp = undefined
+            if (failurePoint === 'after-temp-delete' && !state.failed) {
+              state.failed = true
+              throw new Error('injected after temporary PVC delete')
+            }
+          }
+          return empty()
+        }
+        if (args.includes('apply')) {
+          const applied = JSON.parse(input ?? '{}') as Resource
+          state.source = { ...applied, metadata: { ...applied.metadata, uid: 'pvc-final-' + failurePoint } }
+          if (failurePoint === 'after-pvc-create' && !state.failed) {
+            state.failed = true
+            throw new Error('injected after new PVC create')
+          }
+          return empty()
+        }
+        if (args.includes('patch') && args.includes(plan.targetPv)) {
+          const operations = JSON.parse(args[args.indexOf('-p') + 1]) as Array<{ op: string; value?: unknown }>
+          state.target.spec.claimRef = operations.find((operation) => operation.op === 'replace')?.value
+          if (failurePoint === 'after-pv-swap' && !state.failed) {
+            state.failed = true
+            throw new Error('injected after PV claimRef swap')
+          }
+          return empty()
+        }
+        if (args.includes('wait')) {
+          if (failurePoint === 'before-final-receipt' && !state.failed) {
+            state.failed = true
+            throw new Error('injected before final receipt save')
+          }
+          return empty()
+        }
+        return empty()
+      }
+
+      let firstError: unknown
+      try {
+        await runWith(options({ command: 'rebind', receiptDir, yes: true }), runner)
+      } catch (error) {
+        firstError = error
+      }
+      expect(firstError).toBeInstanceOf(Error)
+      expect((JSON.parse(await readFile(receiptPath, 'utf8')) as Receipt).rebind?.operationId).toBeTruthy()
+      if (failurePoint === 'after-source-delete') expect(state.source).toBeUndefined()
+      if (failurePoint === 'after-pvc-create') expect(state.source?.metadata.uid).toBe('pvc-final-after-pvc-create')
+      if (failurePoint === 'after-pv-swap' || failurePoint === 'before-final-receipt')
+        expect((state.target.spec.claimRef as Record<string, unknown>).uid).toBe('pvc-final-' + failurePoint)
+
+      const resumed = await runWith(options({ command: 'rebind', receiptDir, yes: true }), runner)
+      expect(resumed).toMatchObject({ phase: 'rebound', finalPvcUid: 'pvc-final-' + failurePoint })
+      expect(state.temp).toBeUndefined()
+      const saved = JSON.parse(await readFile(receiptPath, 'utf8')) as Receipt
+      expect(saved.rebind?.stage).toBe('pv-swapped')
+    }
+  })
+
+  it('refuses a same-name PVC with a foreign UID or missing operation marker', async () => {
+    const plan = buildPlan(options(), resources())
+    const receiptDir = await mkdtemp(join(tmpdir(), 'kafka-nvme-foreign-'))
+    const tempName = plan.sourcePvc + '-nvme-copy'
+    const tempUid = 'pvc-temp'
+    const source = JSON.parse(JSON.stringify(plan.resources.sourcePvc)) as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    source.metadata.uid = 'foreign-pvc'
+    const sourcePv = JSON.parse(JSON.stringify(plan.resources.sourcePv)) as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    sourcePv.spec.persistentVolumeReclaimPolicy = 'Retain'
+    const target = JSON.parse(JSON.stringify(plan.resources.targetPv)) as {
+      metadata: Record<string, unknown>
+      spec: Record<string, unknown>
+    }
+    target.spec.persistentVolumeReclaimPolicy = 'Retain'
+    target.spec.claimRef = { name: tempName, namespace: plan.namespace, uid: tempUid }
+    const receipt: Receipt = {
+      version: 1,
+      phase: 'copied',
+      updatedAt: new Date().toISOString(),
+      plan,
+      tempPvc: { name: tempName, uid: tempUid },
+      rebind: {
+        stage: 'source-deleted',
+        sourcePvcUid: 'pvc-a',
+        sourcePvUid: 'pv-a',
+        targetPvUid: 'pv-target',
+        tempPvcUid: tempUid,
+        operationId: 'deadbeef-12345678',
+      },
+    }
+    await writeFile(join(receiptDir, plan.pod + '.receipt.json'), JSON.stringify(receipt), { mode: 0o600 })
+    const calls: string[][] = []
+    const runner = async (args: string[]) => {
+      calls.push(args)
+      const command = args[args.indexOf('get') + 1]
+      if (command === 'deployment')
+        return {
+          stdout: JSON.stringify({ spec: { replicas: 0, selector: { matchLabels: { app: 'operator' } } } }),
+          stderr: '',
+        }
+      if (command === 'pods') return { stdout: JSON.stringify({ items: [] }), stderr: '' }
+      if (command === 'kafka') return { stdout: JSON.stringify(plan.resources.kafka), stderr: '' }
+      if (command === 'strimzipodset') return { stdout: JSON.stringify(plan.resources.podSet), stderr: '' }
+      if (command === 'pvc') {
+        const name = args[args.indexOf('get') + 2]
+        if (name === plan.sourcePvc) return { stdout: JSON.stringify(source), stderr: '' }
+        return {
+          stdout: JSON.stringify({
+            metadata: { name: tempName, namespace: plan.namespace, uid: tempUid },
+            spec: { volumeName: plan.targetPv },
+          }),
+          stderr: '',
+        }
+      }
+      if (command === 'pv') {
+        const name = args[args.indexOf('get') + 2]
+        return { stdout: JSON.stringify(name === plan.sourcePv ? sourcePv : target), stderr: '' }
+      }
+      return { stdout: '', stderr: '' }
+    }
+    let rejected: unknown
+    try {
+      await runWith(options({ command: 'rebind', receiptDir, yes: true }), runner)
+    } catch (error) {
+      rejected = error
+    }
+    expect(rejected).toBeInstanceOf(Error)
+    expect((rejected as Error).message).toContain('new PVC operation marker changed')
+    expect(calls.some((args) => args.includes('delete') || args.includes('apply') || args.includes('patch'))).toBe(
+      false,
+    )
   })
 })

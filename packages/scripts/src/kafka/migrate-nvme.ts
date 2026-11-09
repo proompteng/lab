@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { StorageBinding } from './verify-nvme-migration'
 
@@ -50,7 +51,21 @@ export type Receipt = {
   tempPvc?: { name: string; uid: string }
   copyPod?: { name: string; uid: string; logs: string }
   finalPvcUid?: string
+  rebind?: RebindJournal
 }
+
+type RebindStage = 'armed' | 'source-deleted' | 'pvc-created' | 'pv-swapped'
+type RebindJournal = {
+  stage: RebindStage
+  sourcePvcUid: string
+  sourcePvUid: string
+  targetPvUid: string
+  tempPvcUid: string
+  operationId: string
+  finalPvcUid?: string
+}
+
+const migrationMarker = 'kafka.proompteng.ai/nvme-migration'
 
 const object = (value: Json | undefined): Obj =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -59,7 +74,7 @@ const arr = (value: Json | undefined): Json[] => (Array.isArray(value) ? value :
 const meta = (resource: Obj) => object(resource.metadata)
 const spec = (resource: Obj) => object(resource.spec)
 const nameOf = (resource: Obj) => string(meta(resource).name)
-const uidOf = (resource: Obj) => string(meta(resource).uid)
+const uidOf = (resource: Obj | undefined) => string(resource ? meta(resource).uid : undefined)
 const labels = (resource: Obj) => object(meta(resource).labels)
 const list = (resource: Obj) =>
   arr(resource.items).filter((item): item is Obj => item !== null && typeof item === 'object' && !Array.isArray(item))
@@ -145,6 +160,14 @@ const json = async (run: Runner, args: string[]) => {
 }
 const get = (run: Runner, options: Options, resource: string, name?: string, namespaced = true) =>
   json(run, kube(options, ['get', resource, ...(name ? [name] : [])], namespaced))
+const getMaybe = async (run: Runner, options: Options, resource: string, name: string, namespaced = true) => {
+  const output = await run(kube(options, ['get', resource, name, '--ignore-not-found=true', '-o', 'json'], namespaced))
+  if (!output.stdout.trim()) return undefined
+  const parsed: Json = JSON.parse(output.stdout)
+  if (parsed === null) return undefined
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('kubectl returned non-object JSON')
+  return parsed as Obj
+}
 const apply = (run: Runner, options: Options, resource: Obj) =>
   run(kube(options, ['apply', '-f', '-']), JSON.stringify(resource) + '\n')
 const patch = (run: Runner, options: Options, resource: string, name: string, value: Obj, namespaced = true) =>
@@ -191,7 +214,7 @@ const save = async (path: string, value: Json) => {
 }
 const optionsDir = (path: string) => path.slice(0, Math.max(path.lastIndexOf('/'), 0)) || '.'
 const load = async <T extends Json>(path: string) => JSON.parse(await readFile(path, 'utf8')) as T
-const assertUid = (resource: Obj, expected: string | undefined, label: string) => {
+const assertUid = (resource: Obj | undefined, expected: string | undefined, label: string) => {
   if (!expected || uidOf(resource) !== expected) throw new Error(label + ' UID changed')
 }
 
@@ -466,7 +489,7 @@ const cleanPod = (plan: MigrationPlan): Obj => {
   return { apiVersion: 'v1', kind: 'Pod', metadata, spec: podSpec }
 }
 
-export const sanitizedOriginalPvc = (plan: MigrationPlan): Obj => {
+export const sanitizedOriginalPvc = (plan: MigrationPlan, operationId?: string): Obj => {
   const source = structuredClone(plan.resources.sourcePvc)
   const metadata = object(source.metadata)
   for (const key of ['uid', 'resourceVersion', 'generation', 'creationTimestamp', 'managedFields', 'finalizers'])
@@ -479,6 +502,8 @@ export const sanitizedOriginalPvc = (plan: MigrationPlan): Obj => {
       key.startsWith('volume.beta.kubernetes.io/')
     )
       delete annotations[key]
+  if (operationId) annotations[migrationMarker] = operationId
+  if (operationId) metadata.annotations = annotations
   const pvcSpec = object(source.spec)
   pvcSpec.storageClassName = plan.targetStorageClass
   pvcSpec.volumeName = plan.targetPv
@@ -501,6 +526,48 @@ const temporaryPvc = (plan: MigrationPlan): Obj => ({
     volumeName: plan.targetPv,
   },
 })
+
+const claimIdentity = (claim: Obj) => ({
+  uid: string(claim.uid),
+  name: string(claim.name),
+  namespace: string(claim.namespace),
+})
+
+const assertTempBinding = (pv: Obj, plan: MigrationPlan, temp: { name: string; uid: string }) => {
+  const claim = claimIdentity(object(spec(pv).claimRef))
+  if (claim.uid !== temp.uid || claim.name !== temp.name || claim.namespace !== plan.namespace)
+    throw new Error('target PV binding is not the recorded temporary PVC')
+}
+
+const assertFinalPvc = (pvc: Obj, plan: MigrationPlan, operationId: string, expectedUid?: string) => {
+  const metadata = meta(pvc)
+  const annotations = object(metadata.annotations)
+  if (expectedUid && uidOf(pvc) !== expectedUid) throw new Error('new PVC UID changed')
+  if (nameOf(pvc) !== plan.sourcePvc || string(metadata.namespace) !== plan.namespace)
+    throw new Error('new PVC name or namespace changed')
+  if (string(annotations[migrationMarker]) !== operationId) throw new Error('new PVC operation marker changed')
+  const pvcLabels = labels(pvc)
+  for (const key of ['strimzi.io/cluster', 'strimzi.io/pool-name']) {
+    const expected = string(labels(plan.resources.sourcePvc)[key])
+    if (expected !== undefined && string(pvcLabels[key]) !== expected) throw new Error('new PVC label changed: ' + key)
+  }
+  if (string(spec(pvc).storageClassName) !== plan.targetStorageClass) throw new Error('new PVC storage class changed')
+  if (string(spec(pvc).volumeName) !== plan.targetPv) throw new Error('new PVC volumeName changed')
+}
+
+const assertJournal = (receipt: Receipt, journal: RebindJournal) => {
+  const expected = {
+    sourcePvcUid: uidOf(receipt.plan.resources.sourcePvc),
+    sourcePvUid: uidOf(receipt.plan.resources.sourcePv),
+    targetPvUid: uidOf(receipt.plan.resources.targetPv),
+    tempPvcUid: receipt.tempPvc?.uid,
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    if (!value || journal[key as keyof typeof expected] !== value) throw new Error('rebind journal ' + key + ' changed')
+  }
+  if (!journal.operationId || !/^[0-9a-f-]{16,128}$/i.test(journal.operationId))
+    throw new Error('rebind journal operation ID is invalid')
+}
 
 const copierPod = (plan: MigrationPlan, image: string): Obj => ({
   apiVersion: 'v1',
@@ -566,7 +633,9 @@ const verifyIdentity = async (run: Runner, options: Options, plan: MigrationPlan
   const kafka = await get(run, options, 'kafka', options.cluster)
   assertUid(kafka, uidOf(plan.resources.kafka), 'Kafka')
   if (string(object(kafka.status).clusterId) !== options.expectedClusterId) throw new Error('Kafka cluster ID changed')
-  const sourcePvc = await get(run, options, 'pvc', plan.sourcePvc)
+  const sourcePvc = requireSourcePvc
+    ? await get(run, options, 'pvc', plan.sourcePvc)
+    : await getMaybe(run, options, 'pvc', plan.sourcePvc)
   const sourcePv = await get(run, options, 'pv', plan.sourcePv, false)
   const targetPv = await get(run, options, 'pv', plan.targetPv, false)
   const podSet = await get(run, options, 'strimzipodset', nameOf(plan.resources.podSet))
@@ -631,76 +700,171 @@ const runCopy = async (run: Runner, options: Options) => {
 
 const runRebind = async (run: Runner, options: Options) => {
   await operatorStopped(run, options)
-  const receipt = await loadReceipt(options)
+  let receipt = await loadReceipt(options)
+  const recordedTemp = receipt.tempPvc
   if (receipt.phase === 'rebound' || receipt.phase === 'started') return receipt
-  if (receipt.phase !== 'copied' || !receipt.tempPvc) throw new Error('copy receipt is required before rebind')
+  if (receipt.phase !== 'copied' || !recordedTemp) throw new Error('copy receipt is required before rebind')
   const plan = receipt.plan
-  const identities = await verifyIdentity(run, options, plan)
-  const temp = await get(run, options, 'pvc', receipt.tempPvc.name)
-  assertUid(temp, receipt.tempPvc.uid, 'temporary PVC')
-  if (string(spec(temp).volumeName) !== plan.targetPv) throw new Error('temporary PVC target changed')
-  const tempTarget = await get(run, options, 'pv', plan.targetPv, false)
-  const tempClaim = object(spec(tempTarget).claimRef)
+  const sourcePvcUid = uidOf(plan.resources.sourcePvc)
+  const sourcePvUid = uidOf(plan.resources.sourcePv)
+  const targetPvUid = uidOf(plan.resources.targetPv)
+  if (!sourcePvcUid || !sourcePvUid || !targetPvUid) throw new Error('plan is missing binding UIDs')
+  const identities = await verifyIdentity(run, options, plan, false)
+  const temp = await getMaybe(run, options, 'pvc', recordedTemp.name)
+  if (temp) {
+    assertUid(temp, recordedTemp.uid, 'temporary PVC')
+    if (string(spec(temp).volumeName) !== plan.targetPv) throw new Error('temporary PVC target changed')
+  } else if (receipt.rebind?.stage !== 'pv-swapped' || !receipt.rebind.finalPvcUid) {
+    throw new Error('temporary PVC is missing before the final rebind stage')
+  }
+
+  let journal: RebindJournal
+  const recordedJournal = receipt.rebind
+  if (recordedJournal) {
+    assertJournal(receipt, recordedJournal)
+    journal = recordedJournal
+  } else {
+    assertUid(identities.sourcePvc, sourcePvcUid, 'source PVC')
+    const target = identities.targetPv
+    assertUid(target, targetPvUid, 'target PV')
+    assertTempBinding(target, plan, recordedTemp)
+    journal = {
+      stage: 'armed',
+      sourcePvcUid,
+      sourcePvUid,
+      targetPvUid,
+      tempPvcUid: recordedTemp.uid,
+      operationId: randomUUID(),
+    }
+    receipt = { ...receipt, updatedAt: new Date().toISOString(), rebind: journal }
+    await save(receiptPath(options), receipt as unknown as Json)
+  }
+
+  const saveJournal = async (stage: RebindStage, finalPvcUid?: string) => {
+    const nextJournal: RebindJournal = {
+      ...journal,
+      stage,
+      ...(finalPvcUid === undefined ? {} : { finalPvcUid }),
+    }
+    journal = nextJournal
+    receipt = { ...receipt, updatedAt: new Date().toISOString(), rebind: nextJournal }
+    await save(receiptPath(options), receipt as unknown as Json)
+  }
+
+  const currentTarget = async () => {
+    const target = await get(run, options, 'pv', plan.targetPv, false)
+    assertUid(target, journal.targetPvUid, 'target PV')
+    if (string(spec(target).persistentVolumeReclaimPolicy) !== 'Retain') throw new Error('target PV lost Retain guard')
+    return target
+  }
+
+  const currentSource = async () => getMaybe(run, options, 'pvc', plan.sourcePvc)
+
+  if (journal.stage === 'armed') {
+    const source = await currentSource()
+    if (source) {
+      assertUid(source, journal.sourcePvcUid, 'source PVC')
+      const target = await currentTarget()
+      assertTempBinding(target, plan, recordedTemp)
+      const beforeDelete = await currentSource()
+      assertUid(beforeDelete, journal.sourcePvcUid, 'source PVC')
+      await run(kube(options, ['delete', 'pvc', plan.sourcePvc, '--wait=true']))
+      if (await currentSource()) throw new Error('source PVC still exists after delete')
+    }
+    const sourcePv = await get(run, options, 'pv', plan.sourcePv, false)
+    assertUid(sourcePv, journal.sourcePvUid, 'source PV')
+    if (string(spec(sourcePv).persistentVolumeReclaimPolicy) !== 'Retain')
+      throw new Error('source PV lost Retain guard')
+    assertTempBinding(await currentTarget(), plan, recordedTemp)
+    await saveJournal('source-deleted')
+  }
+
+  let finalPvc = await currentSource()
+  if (journal.stage === 'source-deleted') {
+    if (finalPvc) {
+      if (uidOf(finalPvc) === journal.sourcePvcUid) throw new Error('old source PVC still exists after delete boundary')
+      assertFinalPvc(finalPvc, plan, journal.operationId, journal.finalPvcUid)
+    } else {
+      if (journal.finalPvcUid) throw new Error('recorded final PVC is missing')
+      assertTempBinding(await currentTarget(), plan, recordedTemp)
+      await apply(run, options, sanitizedOriginalPvc(plan, journal.operationId))
+      finalPvc = await currentSource()
+      if (!finalPvc) throw new Error('new PVC was not observed after create')
+      assertFinalPvc(finalPvc, plan, journal.operationId)
+    }
+    const finalUid = uidOf(finalPvc)
+    if (!finalUid) throw new Error('new PVC has no UID')
+    await saveJournal('pvc-created', finalUid)
+  } else if (journal.stage === 'pvc-created') {
+    if (!journal.finalPvcUid) throw new Error('pvc-created journal has no final PVC UID')
+    if (!finalPvc) throw new Error('recorded final PVC is missing')
+    assertFinalPvc(finalPvc, plan, journal.operationId, journal.finalPvcUid)
+  } else if (journal.stage !== 'pv-swapped') {
+    throw new Error('invalid rebind journal stage')
+  }
+
+  if (journal.stage === 'pvc-created') {
+    const finalUid = journal.finalPvcUid
+    if (!finalUid) throw new Error('new PVC UID is missing')
+    const target = await currentTarget()
+    const targetClaim = claimIdentity(object(spec(target).claimRef))
+    if (targetClaim.uid === journal.tempPvcUid) {
+      const replacement = JSON.stringify([
+        { op: 'test', path: '/metadata/uid', value: journal.targetPvUid },
+        { op: 'test', path: '/spec/claimRef/uid', value: journal.tempPvcUid },
+        {
+          op: 'replace',
+          path: '/spec/claimRef',
+          value: {
+            apiVersion: 'v1',
+            kind: 'PersistentVolumeClaim',
+            name: plan.sourcePvc,
+            namespace: plan.namespace,
+            uid: finalUid,
+          },
+        },
+      ])
+      await run(kube(options, ['patch', 'pv', plan.targetPv, '--type=json', '-p', replacement], false))
+    } else if (targetClaim.uid !== finalUid) {
+      throw new Error('target PV has a foreign claim before atomic handoff')
+    }
+    const afterSwap = await currentTarget()
+    const finalClaim = claimIdentity(object(spec(afterSwap).claimRef))
+    if (finalClaim.uid !== finalUid || finalClaim.name !== plan.sourcePvc || finalClaim.namespace !== plan.namespace)
+      throw new Error('target PV final claim mismatch')
+    await saveJournal('pv-swapped', finalUid)
+  }
+
+  const rebound = await currentSource()
+  if (!rebound || !journal.finalPvcUid) throw new Error('final PVC disappeared before completion')
+  assertFinalPvc(rebound, plan, journal.operationId, journal.finalPvcUid)
+  const boundTarget = await currentTarget()
+  const boundClaim = claimIdentity(object(spec(boundTarget).claimRef))
   if (
-    tempClaim.uid !== receipt.tempPvc.uid ||
-    tempClaim.name !== receipt.tempPvc.name ||
-    tempClaim.namespace !== plan.namespace
+    boundClaim.uid !== journal.finalPvcUid ||
+    boundClaim.name !== plan.sourcePvc ||
+    boundClaim.namespace !== plan.namespace
   )
-    throw new Error('target PV binding UID changed')
-  if (string(spec(identities.sourcePv).persistentVolumeReclaimPolicy) !== 'Retain')
-    throw new Error('source PV lost Retain guard')
-  assertUid(identities.sourcePvc, uidOf(plan.resources.sourcePvc), 'source PVC')
-  await run(kube(options, ['delete', 'pvc', plan.sourcePvc, '--wait=true']))
-  const releasedSource = await get(run, options, 'pv', plan.sourcePv, false)
-  if (string(spec(releasedSource).persistentVolumeReclaimPolicy) !== 'Retain')
-    throw new Error('source PV Retain guard changed')
-  const targetBeforeCreate = await get(run, options, 'pv', plan.targetPv, false)
-  assertUid(targetBeforeCreate, uidOf(plan.resources.targetPv), 'target PV')
-  if (string(object(spec(targetBeforeCreate).claimRef).uid) !== receipt.tempPvc.uid)
-    throw new Error('target PV claim changed before original PVC creation')
-  await apply(run, options, sanitizedOriginalPvc(plan))
-  const finalPvc = await get(run, options, 'pvc', plan.sourcePvc)
-  const finalUid = uidOf(finalPvc)
-  if (!finalUid || string(spec(finalPvc).volumeName) !== plan.targetPv)
-    throw new Error('original PVC was not created with target volumeName')
-  const targetBeforeReplace = await get(run, options, 'pv', plan.targetPv, false)
-  const targetClaim = object(spec(targetBeforeReplace).claimRef)
-  if (targetClaim.uid !== receipt.tempPvc.uid) throw new Error('target PV claim changed before atomic handoff')
-  const replacement = JSON.stringify([
-    { op: 'test', path: '/spec/claimRef/uid', value: receipt.tempPvc.uid },
-    {
-      op: 'replace',
-      path: '/spec/claimRef',
-      value: {
-        apiVersion: 'v1',
-        kind: 'PersistentVolumeClaim',
-        name: plan.sourcePvc,
-        namespace: plan.namespace,
-        uid: finalUid,
-      },
-    },
-  ])
-  await run(kube(options, ['patch', 'pv', plan.targetPv, '--type=json', '-p', replacement], false))
+    throw new Error('target PV final binding changed')
   await wait(run, options, [
     '--for=jsonpath={.status.phase}=Bound',
     'pvc/' + plan.sourcePvc,
     '--timeout=' + options.timeoutSeconds + 's',
   ])
   const finalBound = await get(run, options, 'pvc', plan.sourcePvc)
-  if (uidOf(finalBound) !== finalUid || string(spec(finalBound).volumeName) !== plan.targetPv)
-    throw new Error('original PVC did not bind target PV')
-  const targetAfter = await get(run, options, 'pv', plan.targetPv, false)
-  const finalClaim = object(spec(targetAfter).claimRef)
-  if (finalClaim.uid !== finalUid || finalClaim.name !== plan.sourcePvc || finalClaim.namespace !== plan.namespace)
-    throw new Error('target PV final claim mismatch')
-  const tempBeforeDelete = await get(run, options, 'pvc', receipt.tempPvc.name)
-  assertUid(tempBeforeDelete, receipt.tempPvc.uid, 'temporary PVC')
-  await run(kube(options, ['delete', 'pvc', receipt.tempPvc.name, '--wait=true']))
+  assertFinalPvc(finalBound, plan, journal.operationId, journal.finalPvcUid)
+  const tempBeforeDelete = await getMaybe(run, options, 'pvc', recordedTemp.name)
+  if (tempBeforeDelete) {
+    assertUid(tempBeforeDelete, recordedTemp.uid, 'temporary PVC')
+    await run(kube(options, ['delete', 'pvc', recordedTemp.name, '--wait=true']))
+    if (await getMaybe(run, options, 'pvc', recordedTemp.name))
+      throw new Error('temporary PVC still exists after delete')
+  }
   const next: Receipt = {
     ...receipt,
     phase: 'rebound',
     updatedAt: new Date().toISOString(),
-    finalPvcUid: finalUid,
+    finalPvcUid: journal.finalPvcUid,
   }
   await save(receiptPath(options), next as unknown as Json)
   return next
