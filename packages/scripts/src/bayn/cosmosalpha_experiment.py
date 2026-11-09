@@ -29,7 +29,7 @@ verify = _verifier.verify
 
 SCHEMA = "bayn.cosmosalpha-frozen-experiment.v1"
 SOURCE_COMMIT = "237f0a56895fd295542e202be8f62be48d6e9995"
-SOURCE_INVENTORY_ID = "48bfb6fe9501929271e8a22b3e67f82209a39183d6326fc65a9e451b2588de49"
+SOURCE_INVENTORY_ID = "65f7d303415e564d3d949f227e8c3e2ec4625f0840cd7f82d253aed3378f364f"
 ENDPOINT = "http://flamingo.ide-newton.ts.net/v1"
 MODEL = "qwen38-flamingo"
 ARMS = ("graph", "mcts", "no-flow")
@@ -211,6 +211,52 @@ class BudgetReached(Exception):
     pass
 
 
+def auxiliary_response_valid(purpose, content):
+    try:
+        value = json.loads(content)
+        if not isinstance(value, dict):
+            return False
+        if purpose == "suggestion":
+            items = value.get("suggestions")
+            return (
+                isinstance(items, list)
+                and bool(items)
+                and all(isinstance(item, str) and item.strip() for item in items)
+            )
+        return purpose == "portrait" and all(
+            isinstance(value.get(key), str) and value[key].strip()
+            for key in [
+                "portrait_name",
+                "portrait_logic",
+                "portrait_pseudocode",
+                "expression",
+            ]
+        )
+    except (ValueError, TypeError):
+        return False
+
+
+class CheckedModelClient:
+    def __init__(self, delegate, budget):
+        self.delegate, self.budget = delegate, budget
+
+    def complete(self, request):
+        purpose = request.prompt.prompt_id
+        if purpose not in {"suggestion", "portrait"}:
+            return self.delegate.complete(request)
+        content = None
+        try:
+            response = self.delegate.complete(request)
+            content = response.content
+            if not auxiliary_response_valid(purpose, content):
+                raise ValueError("Unusable MCTS auxiliary response: " + purpose)
+        except Exception as error:
+            self.budget.auxiliary(purpose, False, content, type(error).__name__)
+            raise
+        self.budget.auxiliary(purpose, True, content, None)
+        return response
+
+
 class ArmBudget:
     def __init__(self, limits):
         self.limits = limits
@@ -222,11 +268,14 @@ class ArmBudget:
         self.evaluable = {}
         self.evaluation_pending = set()
         self.evaluation_attempts = self.evaluation_completions = 0
+        self.auxiliary_successes = self.auxiliary_failures = 0
         self.record = lambda event: None
 
     def _available(self):
         if self.unknown_usage:
             raise BudgetReached("unknown-request-usage")
+        if self.auxiliary_failures:
+            raise BudgetReached("unusable-auxiliary-response")
         if len(self.evaluable) >= self.limits.evaluable_factors:
             raise BudgetReached("evaluable-factor-target")
 
@@ -242,6 +291,8 @@ class ArmBudget:
         with self.lock:
             if self.unknown_usage:
                 raise BudgetReached("unknown-request-usage")
+            if self.auxiliary_failures:
+                raise BudgetReached("unusable-auxiliary-response")
             if (
                 type(maximum) is not int
                 or not 0 < maximum <= self.limits.max_output_tokens
@@ -298,8 +349,28 @@ class ArmBudget:
                 "evaluationAttempts": self.evaluation_attempts,
                 "completedEvaluations": self.evaluation_completions,
                 "pendingEvaluations": len(self.evaluation_pending),
+                "successfulAuxiliaryResponses": self.auxiliary_successes,
+                "failedAuxiliaryResponses": self.auxiliary_failures,
                 "blocked": dict(self.blocked),
             }
+
+    def auxiliary(self, purpose, valid, content, error_type):
+        with self.lock:
+            self.auxiliary_successes += valid
+            self.auxiliary_failures += not valid
+            self.record(
+                {
+                    "event": "auxiliary-response",
+                    "purpose": purpose,
+                    "valid": valid,
+                    "contentSha256": hashlib.sha256(
+                        content.strip().encode()
+                    ).hexdigest()
+                    if isinstance(content, str)
+                    else None,
+                    "errorType": error_type,
+                }
+            )
 
 
 class FlamingoTransport:
@@ -721,20 +792,21 @@ def execute(path):
     for run in plan["runs"]:
         output = root / "receipts" / run["runId"]
         output.mkdir(parents=True)
-        source = native_source(
-            root / plan["sourceIdentityFile"], Path(cosmosalpha.__file__).parent
-        )
-        if (
-            live_model() != plan["modelIdentity"]
-            or digest(root / run["config"]) != run["sha256"]
-        ):
-            raise ValueError("Frozen model or configuration drifted before arm")
-        verify_provider_inventory(root, plan)
         budget = ArmBudget(Limits(**plan["limits"]))
         started = time.monotonic()
         failure = None
+        source = None
         try:
             with (output / "requests.jsonl").open("x", buffering=1) as journal:
+                source = native_source(
+                    root / plan["sourceIdentityFile"], Path(cosmosalpha.__file__).parent
+                )
+                if (
+                    live_model() != plan["modelIdentity"]
+                    or digest(root / run["config"]) != run["sha256"]
+                ):
+                    raise ValueError("Frozen model or configuration drifted before arm")
+                verify_provider_inventory(root, plan)
                 transport = FlamingoTransport(
                     budget, run["seed"], plan["modelIdentity"], journal, output / "wire"
                 )
@@ -742,15 +814,21 @@ def execute(path):
         except Exception as error:
             failure = {"type": type(error).__name__, "message": str(error)}
         summary = budget.summary()
-        unchanged = (
-            live_model() == plan["modelIdentity"]
-            and runtime_versions() == plan["runtimeVersions"]
-            and verify_provider_inventory(root, plan)
-            and native_source(
-                root / plan["sourceIdentityFile"], Path(cosmosalpha.__file__).parent
+        identity_failure = None
+        try:
+            unchanged = (
+                source is not None
+                and live_model() == plan["modelIdentity"]
+                and runtime_versions() == plan["runtimeVersions"]
+                and verify_provider_inventory(root, plan)
+                and native_source(
+                    root / plan["sourceIdentityFile"], Path(cosmosalpha.__file__).parent
+                )
+                == source
             )
-            == source
-        )
+        except Exception as error:
+            unchanged = False
+            identity_failure = {"type": type(error).__name__, "message": str(error)}
         complete = (
             failure is None
             and unchanged
@@ -758,6 +836,8 @@ def execute(path):
             and not summary["heldCompletionTokens"]
             and not summary["pendingEvaluations"]
             and not summary["rejectedRequests"]
+            and not summary["failedAuxiliaryResponses"]
+            and (run["arm"] != "mcts" or summary["successfulAuxiliaryResponses"] > 0)
             and summary["completedEvaluations"] >= summary["evaluableFactors"]
             and summary["evaluableFactors"] == plan["limits"]["evaluable_factors"]
         )
@@ -769,6 +849,7 @@ def execute(path):
             "targetId": plan["targetId"],
             "status": "COMPLETE" if complete else "INCONCLUSIVE",
             "failure": failure,
+            "identityVerificationFailure": identity_failure,
             "identityUnchanged": unchanged,
             "wallSeconds": time.monotonic() - started,
             "resources": summary,
@@ -982,11 +1063,46 @@ def audit(path):
                     for event in events
                     if event["event"] == "proposal-reserved"
                 ),
+                "successfulAuxiliaryResponses": sum(
+                    event["event"] == "auxiliary-response" and event["valid"]
+                    for event in events
+                ),
+                "failedAuxiliaryResponses": sum(
+                    event["event"] == "auxiliary-response" and not event["valid"]
+                    for event in events
+                ),
             }
             if any(resources[key] != value for key, value in expected.items()):
                 raise ValueError("Resource receipt differs from physical evidence")
             if resources["rejectedRequests"]:
                 raise ValueError("Native runtime submitted a malformed model request")
+            if expected["failedAuxiliaryResponses"] or (
+                run["arm"] == "mcts" and not expected["successfulAuxiliaryResponses"]
+            ):
+                raise ValueError(
+                    "MCTS auxiliary helpers did not produce usable responses"
+                )
+            contents = {}
+            for number in received:
+                response = json.loads(
+                    (output / "wire" / f"{number:06d}-response.json").read_text()
+                )
+                for choice in response.get("choices", []):
+                    content = choice.get("message", {}).get("content")
+                    if isinstance(content, str):
+                        contents[
+                            hashlib.sha256(content.strip().encode()).hexdigest()
+                        ] = content
+            for event in events:
+                if event["event"] == "auxiliary-response" and (
+                    event["contentSha256"] not in contents
+                    or not auxiliary_response_valid(
+                        event["purpose"], contents[event["contentSha256"]]
+                    )
+                ):
+                    raise ValueError(
+                        "Auxiliary evidence differs from actual model content"
+                    )
             if (
                 tokens > plan["limits"]["completion_tokens"]
                 or len(starts) > plan["limits"]["physical_requests"]
@@ -994,16 +1110,16 @@ def audit(path):
             ):
                 raise ValueError("Frozen budget exceeded")
             expected_returns = plan["inputs"]["mining"]["targetArtifactId"]
+            evaluated_factors = set()
             for candidate in (
                 root / "runs" / run["runId"] / "objects" / "evaluation_result"
             ).glob("*.json"):
-                if (
-                    json.loads(candidate.read_text())["forward_return_ref"][
-                        "artifact_id"
-                    ]
-                    != expected_returns
-                ):
+                evaluation = json.loads(candidate.read_text())
+                if evaluation["forward_return_ref"]["artifact_id"] != expected_returns:
                     raise ValueError("Native evaluator consumed unverified labels")
+                evaluated_factors.add(evaluation["factor_id"])
+            if not observed.issubset(evaluated_factors):
+                raise ValueError("Matched pool is missing native evaluation evidence")
             if (
                 receipt["experimentId"] != plan["experimentId"]
                 or receipt["targetId"] != plan["targetId"]

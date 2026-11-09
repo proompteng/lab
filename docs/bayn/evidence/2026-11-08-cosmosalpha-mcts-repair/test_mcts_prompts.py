@@ -7,7 +7,7 @@ from cosmosalpha.factors import build_base_field_catalog, build_base_operator_ca
 from cosmosalpha.llm.client import LLMResponse
 from cosmosalpha.pipeline.mcts.controller import MCTSController
 from cosmosalpha.pipeline.mcts.core import MCTSNode
-from cosmosalpha.pipeline.mcts.portrait import generate_portrait
+from cosmosalpha.pipeline.mcts.portrait import build_portrait_prompt, generate_portrait
 
 
 class RecordingClient:
@@ -28,6 +28,28 @@ class RecordingClient:
 
 
 class MCTSPromptTests(unittest.TestCase):
+    def test_real_portrait_prompt_reaches_the_client_after_boundary_whitespace_normalization(
+        self,
+    ):
+        client = RecordingClient(
+            {
+                "portrait_name": "Fixture",
+                "portrait_logic": "Observe close",
+                "portrait_pseudocode": "return close",
+                "expression": "close",
+            }
+        )
+        prompt = build_portrait_prompt(
+            dimension="stability",
+            field_catalog=build_base_field_catalog(),
+            operator_catalog=build_base_operator_catalog(),
+            parent_expression="close",
+        )
+        result = generate_portrait(client, prompt, model_alias="fixture")
+        self.assertEqual(len(client.requests), 1)
+        self.assertEqual(client.requests[0].prompt.messages[0].content, prompt.strip())
+        self.assertIsNotNone(result)
+
     def test_suggestions_transmit_the_parent_prompt_with_the_json_object_contract(self):
         client = RecordingClient(
             {"suggestions": ["Normalize close by trailing volume."]}
@@ -49,7 +71,7 @@ class MCTSPromptTests(unittest.TestCase):
         self.assertEqual(request.prompt.messages[0].role, "user")
         self.assertIn("Factor: close", request.prompt.messages[0].content)
         self.assertEqual(request.prompt.output_json_schema["type"], "object")
-        self.assertEqual(request.max_output_tokens, 300)
+        self.assertEqual(request.max_output_tokens, 2000)
         self.assertEqual(result, ["Normalize close by trailing volume."])
 
     def test_portrait_transmits_the_original_text_without_an_unsupported_request_argument(
@@ -72,7 +94,7 @@ class MCTSPromptTests(unittest.TestCase):
         self.assertEqual(
             request.prompt.messages[0].content, "Preserve this exact portrait prompt."
         )
-        self.assertEqual(request.max_output_tokens, 800)
+        self.assertEqual(request.max_output_tokens, 20000)
         self.assertIsNotNone(result)
 
 

@@ -38,6 +38,15 @@
                          },
                          estimated_input_tokens=len(prompt_text) // 4,
                          token_estimation_method="char_div_4",
+@@ -1144,7 +1150,7 @@
+                         schema_version="prompt-render-result/1.0",
+                     ),
+                     model_alias=self._model_alias,
+-                    max_output_tokens=300,
++                    max_output_tokens=2000,
+                     response_format="json_object",
+                 )
+             )
 @@ -1760,23 +1766,11 @@
  
  
@@ -103,13 +112,16 @@
                      input_schema="portrait/1.0",
                      output_schema="portrait/1.0",
 -                    messages=(),
-+                    messages=(PromptMessage("user", prompt_text),),
++                    messages=(PromptMessage("user", prompt_text.strip()),),
                      output_json_schema={
                          "type": "object",
                          "properties": {
-@@ -202,7 +194,6 @@
+@@ -200,9 +192,8 @@
+                     schema_version="prompt-render-result/1.0",
+                 ),
                  model_alias=model_alias,
-                 max_output_tokens=800,
+-                max_output_tokens=800,
++                max_output_tokens=20000,
                  response_format="json_object",
 -                temperature=temperature,
              )

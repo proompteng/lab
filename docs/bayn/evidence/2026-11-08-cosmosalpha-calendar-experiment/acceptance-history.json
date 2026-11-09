@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-acceptance-history.v1",
+  "trials": [
+    {
+      "name": "acceptance-v5",
+      "experimentId": "9bb27e0853c5924f10344a9e11e1c1d4e64624445cf0332f87e7175809ba13c1",
+      "status": "INCONCLUSIVE",
+      "heldOutFits": 0,
+      "reason": "Native MCTS sent an empty conversation; unknown usage blocked more requests. Other planned mining arms retained.",
+      "resultSha256": "68a92414712fabe6f20f1dd8a2a24a2b69557d5dbd29d5649cd113fc0fbf42d7"
+    },
+    {
+      "name": "acceptance-v6",
+      "experimentId": "e63a1e741bf8dac28c2faae4110f57d483c5e9b744eb645b2302958efaa9eee6",
+      "status": "STOPPED_INCONCLUSIVE",
+      "heldOutFits": 0,
+      "reason": "MCTS auxiliary reasoning exhausts original output caps without usable JSON; stop before held-out fitting. Preserve trial without replay.",
+      "emptyAuxiliaryResponsesCapturedAtStop": 5,
+      "externalStopSha256": "a9bb2da1d3619b3b6b0dab4231f890d4558baa2f6e9ff0ac2b717fbab2684006"
+    }
+  ],
+  "functionalBudgetProbes": [
+    {
+      "name": "auxiliary-budget-2000",
+      "maxOutputTokens": 2000,
+      "suggestionsCount": 3,
+      "portraitUsable": false,
+      "physicalRequests": 1,
+      "completionTokens": 455,
+      "responses": [
+        {
+          "number": 1,
+          "finishReason": "stop",
+          "completionTokens": 455,
+          "contentCharacters": 482,
+          "responseSha256": "bb8a2308b6e85f04d7e6d50381d85931674d92fed112c89b870c1bc96a9b1266"
+        }
+      ],
+      "resultSha256": "28b0f5ec9275f6f3448dae19fdef66a5c537fab7c49b4e145ef087dd3a3dfb18"
+    },
+    {
+      "name": "auxiliary-budget-4000",
+      "maxOutputTokens": 4000,
+      "suggestionsCount": 3,
+      "portraitUsable": false,
+      "physicalRequests": 2,
+      "completionTokens": 4292,
+      "responses": [
+        {
+          "number": 1,
+          "finishReason": "stop",
+          "completionTokens": 292,
+          "contentCharacters": 522,
+          "responseSha256": "d6c992c167af2e9b93b9da3786ceca8605925998d409b70074445101fa29ae32"
+        },
+        {
+          "number": 2,
+          "finishReason": "length",
+          "completionTokens": 4000,
+          "contentCharacters": 0,
+          "responseSha256": "66041a96163a44bde1b0a76d3634055c512dce49200678ee6d85f4a0baa1ecfc"
+        }
+      ],
+      "resultSha256": "d3d7c6f58a47c396edbf7c72da926a2584af86d7c15a24368e5b4fd7b88ddb7b"
+    },
+    {
+      "name": "auxiliary-budget-2000-normalized",
+      "maxOutputTokens": 2000,
+      "suggestionsCount": 3,
+      "portraitUsable": false,
+      "physicalRequests": 2,
+      "completionTokens": 2982,
+      "responses": [
+        {
+          "number": 1,
+          "finishReason": "stop",
+          "completionTokens": 982,
+          "contentCharacters": 478,
+          "responseSha256": "98e93e3407829d63e63adc9caec71dc6fcff80633aa8670c3b78325fbefc0582"
+        },
+        {
+          "number": 2,
+          "finishReason": "length",
+          "completionTokens": 2000,
+          "contentCharacters": 0,
+          "responseSha256": "27f723341b09837ebfa88f667be406cf0c2ccb8ed4a0bd3fb9f410c0bb372414"
+        }
+      ],
+      "resultSha256": "daecbbf7ffaef39d08f74bcd8965357e3d32bc6c0bd048b3bed3d5441e854d3b"
+    },
+    {
+      "name": "auxiliary-budget-20000",
+      "maxOutputTokens": 20000,
+      "suggestionsCount": 3,
+      "portraitUsable": true,
+      "physicalRequests": 2,
+      "completionTokens": 11088,
+      "responses": [
+        {
+          "number": 1,
+          "finishReason": "stop",
+          "completionTokens": 292,
+          "contentCharacters": 522,
+          "responseSha256": "32519ca6a619383b1d14d14d0dea09e5bf34cd06994e98cbfff4251b8f9ae504"
+        },
+        {
+          "number": 2,
+          "finishReason": "stop",
+          "completionTokens": 10796,
+          "contentCharacters": 1038,
+          "responseSha256": "1a3b6c98c950a9ae1b8e29bdfe4d853ef8b15b8a5f4c69dac9e0f15ede5f78da"
+        }
+      ],
+      "resultSha256": "d71b44e4c13b4fc9ddf5f24295aff8781db8ccafd39bb8577b301e990e190d73"
+    }
+  ],
+  "selectionCriterion": "Usable JSON from the real auxiliary helpers with thinking enabled. No held-out model fits or trading metrics used to select token limits. All probes and stopped trials retained.",
+  "economicQualification": "NOT_ESTABLISHED"
+}

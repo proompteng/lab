@@ -36,7 +36,7 @@ from cosmosalpha.pipeline.runtime import (
 )
 from cosmosalpha.storage import LocalArtifactRepository, write_run_reports
 
-from cosmosalpha_experiment import digest, write_json
+from cosmosalpha_experiment import CheckedModelClient, digest, write_json
 
 
 def admit_config(path, run_id):
@@ -328,7 +328,9 @@ def run_arm(root, plan, run, budget, transport, output):
     np.random.seed(run["seed"])
     config = admit_config(root / run["config"], run["runId"])
     frozen = FrozenInputs(root, plan["inputs"]["mining"])
-    client = OpenAICompatibleLLMClient.from_config(config.llm, transport=transport)
+    client = CheckedModelClient(
+        OpenAICompatibleLLMClient.from_config(config.llm, transport=transport), budget
+    )
     runtime = RuntimeBuilder(
         config,
         run_id=run["runId"],

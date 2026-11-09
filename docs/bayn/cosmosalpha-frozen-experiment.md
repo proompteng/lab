@@ -7,11 +7,13 @@ The runner binds verified calendar targets to native Graph, multi-tree MCTS and 
 Use the native Python 3.12 research environment with CosmosAlpha author commit `237f0a56895fd295542e202be8f62be48d6e9995` and its pinned dependencies. Apply these repairs to that source before installing it:
 
 1. [Numeric literals and Graph duplicate decisions](evidence/2026-11-07-cosmosalpha-source-repair/source.patch).
-2. [MCTS prompt messages and request construction](evidence/2026-11-08-cosmosalpha-mcts-repair/source.patch).
+2. [MCTS prompts, request construction and self-hosted output limits](evidence/2026-11-08-cosmosalpha-mcts-repair/source.patch).
 
-The patches use paths relative to the author repository and apply with `patch -p1`. The second repair retains the suggestion and portrait output limits of 300 and 800 tokens. It sends the prompt text that the original helpers discarded, removes an unsupported request argument and aligns suggestions with the client's JSON-object response contract. It changes no search-score or evaluator math.
+The patches use paths relative to the author repository and apply with `patch -p1`. The second repair sends the prompt text that the original helpers discarded, normalizes boundary whitespace that the native message validator rejects, removes an unsupported request argument and aligns suggestions with the client's JSON-object response contract. It also declares output limits of 2,000 tokens for suggestions and 20,000 for portraits. It changes no search-score or evaluator math.
 
-The runner accepts one registered source inventory, `48bfb6fe9501929271e8a22b3e67f82209a39183d6326fc65a9e451b2588de49`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant.
+The runner accepts one registered source inventory, `65f7d303415e564d3d949f227e8c3e2ec4625f0840cd7f82d253aed3378f364f`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant.
+
+These auxiliary limits adapt the declared Qwen backbone. The original 300-token suggestion calls exhausted their output on reasoning without JSON. Portrait probes also returned no content at 2,000 and 4,000 tokens; a probe under the existing 20,000-token ceiling returned a usable portrait using 10,796 completion tokens. Calibration used response validity, not held-out performance. Actual tokens remain charged against the common per-arm ceiling.
 
 Create a request using the existing training-only native Graph and chronological LightGBM TOML configurations, the [calendar-target request](cosmosalpha-calendar-targets.md) and its generated target directory:
 
@@ -62,7 +64,7 @@ The 600-slot ceiling leaves room for MCTS cycles that emit one factor while requ
 
 Graph has a native safety bound of 300 expansion attempts. MCTS has a bound of 300 total multi-tree rounds. These native units differ and are not the comparison budget. MCTS uses `MCTSController.run_multi_tree` with free roots and the shared factor zoo. Python, NumPy and model requests use the registered seed. Graph and no-Flow retain paired settings except gamma and output storage; no-Flow sets gamma to zero.
 
-All arms use `qwen38-flamingo` through `http://flamingo.ide-newton.ts.net/v1`. The fixed profile uses temperature 0, top-p 0.95, top-k 20, min-p 0, presence and frequency penalties 0, repetition penalty 1 and thinking enabled. Native stage limits remain intact beneath the common output ceiling. The runner sends no authorization header, follows no redirects and has no model fallback.
+All arms use `qwen38-flamingo` through `http://flamingo.ide-newton.ts.net/v1`. The fixed profile uses temperature 0, top-p 0.95, top-k 20, min-p 0, presence and frequency penalties 0, repetition penalty 1 and thinking enabled. Stage limits remain bounded by the common output ceiling, including the declared MCTS auxiliary adaptations. The runner sends no authorization header, follows no redirects and has no model fallback.
 
 The exact served model, checkpoint, tokenizer, chat template and image must match the frozen identity on every response. The runner saves raw requests and responses plus their hashes. Unknown usage blocks further requests in that arm. Output-token reservations prevent concurrent calls from exceeding the completion-token ceiling.
 
@@ -76,13 +78,15 @@ python packages/scripts/src/bayn/cosmosalpha_experiment.py audit \
   /research/calendar-study/plan.json
 ```
 
-The output directory has one execution owner. An existing receipt directory prevents replay. There is no resume, top-up, replacement seed or best-seed selection. Failed arms remain in the result, and the runner attempts the remaining planned mining arms. A shortfall makes the study inconclusive.
+The output directory has one execution owner. An existing receipt directory prevents replay. There is no resume, top-up, replacement seed or best-seed selection. Failed arms remain in the result, and the runner attempts the remaining planned mining arms. Pre-run identity failures record an unstarted arm without sending inference. Post-run identity-check exceptions preserve the original arm failure and its usage receipt. A shortfall makes the study inconclusive.
+
+The client records whether each native MCTS suggestion or portrait response contains usable JSON. A native helper cannot silently fall back from a failed auxiliary response and still qualify the arm. MCTS requires at least one successful auxiliary response; any failed auxiliary response blocks further model calls and makes it inconclusive even if it reaches the factor target.
 
 No held-out fitting starts until every planned mining pool is complete. Search uses April 1, 2010 through May 31, 2019. The downstream split uses that same training interval, June 1, 2019 through December 31, 2020 for validation, and January 1, 2021 through December 31, 2025 for testing. Targets cannot cross split cutoffs. Both the mining evaluator and downstream model receive the verified native return artifacts instead of the legacy return calculator.
 
 The native LightGBM path consumes every factor in each matched pool, including threshold-rejected factors. Source admission accepts Graph and MCTS directly and rejects search on validation or test dates. It preserves the native feature calculations, preprocessing, fit and offline portfolio configuration.
 
-The final audit independently reads the saved wire bodies, reconciles actual token usage and request counts with receipts, verifies pool identity and checks native evaluation target references. It also checks the selected factor count, downstream target binding and hashes of model, prediction, signal and portfolio artifacts. Only a complete matrix with a passing audit receives a paired descriptive comparison across all registered seeds.
+The final audit independently reads the saved wire bodies, reconciles actual token usage and request counts with receipts, validates auxiliary JSON against the actual returned content, verifies pool identity and checks native evaluation target references. It also checks the selected factor count, downstream target binding and hashes of model, prediction, signal and portfolio artifacts. Only a complete matrix with a passing audit receives a paired descriptive comparison across all registered seeds.
 
 ## Acceptance and tests
 
@@ -104,7 +108,7 @@ python -m pytest -q \
   docs/bayn/evidence/2026-11-08-cosmosalpha-mcts-repair/test_mcts_prompts.py
 ```
 
-The new MCTS regression cases failed before the prompt repair. The earlier failed acceptance trial retains its empty-conversation HTTP 400 evidence and did not start held-out fitting. It is not replayed or relabeled as the repaired trial.
+The three native prompt regression cases failed before their respective repairs, including the case that uses the real portrait prompt builder. Earlier acceptance trials retain their empty-conversation HTTP 400 and reasoning-truncation evidence. Neither reached held-out fitting. They are not replayed or relabeled as repaired trials.
 
 ## Interpretation limits
 

@@ -1,12 +1,14 @@
 {
   "schemaVersion": "bayn.cosmosalpha-frozen-plan-summary.v1",
-  "experimentId": "a122524830106b7fdf8f8e4ad993009f67af20fb8b9a8f9377dfc492d45cdad6",
-  "planSha256": "4d1dfd3928fa3f674546068a6f2abefe5e7a081a8f1ea8f50da99688a603e34f",
-  "frozenAt": "2026-11-09T00:07:26.612547+00:00",
+  "experimentId": "6556c083d4c42164c203e674fa9b3a0cbfa9244e541cf2332178f442e707a88d",
+  "planSha256": "378df29294a5094169ddba39f1729a11dd46d4e90b9e0b174f7d056fd3438fa6",
+  "frozenAt": "2026-11-09T00:42:46.561571+00:00",
   "kind": "study",
   "executionStatus": "NOT_STARTED_AT_FREEZE",
+  "supersedesUnstartedFreeze": "a122524830106b7fdf8f8e4ad993009f67af20fb8b9a8f9377dfc492d45cdad6",
+  "supersessionReason": "Failure receipts, auxiliary JSON admission and self-hosted auxiliary limits repaired before scientific execution.",
   "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
-  "sourceIdentitySha256": "3cae6631976418ec375b09589c3d177f75385c872860fc0f78da06158dbce982",
+  "sourceIdentitySha256": "666df02001e43fbb32bb1a38a328ee260035b47c48cf014c8e12c584d7f90208",
   "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
   "limits": {
     "evaluable_factors": 150,
@@ -21,81 +23,81 @@
       "seed": 20260823,
       "arm": "graph",
       "config": "calendar-study-20260823-graph.toml",
-      "sha256": "a2de91a3860f46e7daf7652a32ce53f5567536ab5f7aca16271cb36678af5f2e",
+      "sha256": "d0fde47bc9c7d32ba3b648d2683fc332d5c86389da5eb6b827e2993e3278ce75",
       "downstreamConfig": "calendar-study-20260823-graph-model.toml",
-      "downstreamSha256": "65f8d1638418eaa08f91dca4daf7c52891e19b8fefbf19a1d896d7e17a1fc33b"
+      "downstreamSha256": "0e4188d8c701088bfecaf11dae076f1130e7113c3b85bf529d2c4a7e0c78e548"
     },
     {
       "runId": "calendar-study-20260823-mcts",
       "seed": 20260823,
       "arm": "mcts",
       "config": "calendar-study-20260823-mcts.toml",
-      "sha256": "ab251e1e59c01d997699cb1b1a8a13ff604626bd1f1de530bf393af0ff846753",
+      "sha256": "9a30b5c04e216c83159ce82a7ebc6f994d2369156744bb8b9647a4325aebfff5",
       "downstreamConfig": "calendar-study-20260823-mcts-model.toml",
-      "downstreamSha256": "5df75d567c8e177085e998270cc6603803ed6aa2d3ecd5a8a5d5e4aef25732b7"
+      "downstreamSha256": "d15c46a8660520aeda8026de7d4c571627302491963054c43d491e44580d99d5"
     },
     {
       "runId": "calendar-study-20260823-no-flow",
       "seed": 20260823,
       "arm": "no-flow",
       "config": "calendar-study-20260823-no-flow.toml",
-      "sha256": "2554c244896d50b0f39e3f11101eab9e93b9d229113dc2d8bc6f4e317457dc06",
+      "sha256": "4f4db153915cd39bc3d354745ebbef38868b7aef609047bfa278b2b292d04e41",
       "downstreamConfig": "calendar-study-20260823-no-flow-model.toml",
-      "downstreamSha256": "183f64d566a2763570b31e2fc10f1b612fbe4feb516d30d1edae5a7b30228e8e"
+      "downstreamSha256": "97b6ea99d04aaf49184b629eeb5075fb11225fe28dbee0851520e34397a2f656"
     },
     {
       "runId": "calendar-study-20260824-mcts",
       "seed": 20260824,
       "arm": "mcts",
       "config": "calendar-study-20260824-mcts.toml",
-      "sha256": "f89ac6692a81e6f4f0ebb39688604a99aadb18df11ff3c9d5c90a2cd75e3f6c0",
+      "sha256": "839ff1dead3452e9521eb98739783a5d522ba8e7c17f1ff9d3ad72493f34ca5f",
       "downstreamConfig": "calendar-study-20260824-mcts-model.toml",
-      "downstreamSha256": "93ac554b80ba44e385b6a6cda16a2992aecd929f6a2edf2d4cfc6122cba1efad"
+      "downstreamSha256": "3383f48f34afce7bdc6dba86adb6dd78c0fa92e8f2c4e2f83c25756f61c796c0"
     },
     {
       "runId": "calendar-study-20260824-no-flow",
       "seed": 20260824,
       "arm": "no-flow",
       "config": "calendar-study-20260824-no-flow.toml",
-      "sha256": "1b3cb929857d10f835182d4fa6c2394349e5ac48af4d076d5fd1489e2f44ad55",
+      "sha256": "47e205ecd335899b933ffd069195a6d8d31a05714c4581e9cac69a9d308b3e17",
       "downstreamConfig": "calendar-study-20260824-no-flow-model.toml",
-      "downstreamSha256": "02504ff71e6fb85da8beda3e03255bf71a080f6e8ea94c7cfdf39569aea61a05"
+      "downstreamSha256": "fe7f14c72d0fc8bf6e25a8ebffff2fff6d5c3adaddfc62880a693a2ee0c59c9e"
     },
     {
       "runId": "calendar-study-20260824-graph",
       "seed": 20260824,
       "arm": "graph",
       "config": "calendar-study-20260824-graph.toml",
-      "sha256": "5de7481273ea392fe1deff8276317ef91344385be76681da1a92ab1fb09c7ccf",
+      "sha256": "6768a8375590c3d07fc3c36185233a94071eec3cf87ce2838c5f358c0f2572dd",
       "downstreamConfig": "calendar-study-20260824-graph-model.toml",
-      "downstreamSha256": "600687bae9bf65657bd603cc00dfab9531f15bb2dcaaf59ba5eee83e4e03ad03"
+      "downstreamSha256": "0eea00e1d8f871db8a5f290914abde5ec8fcd1f31822f7bc2a355ee621846ffa"
     },
     {
       "runId": "calendar-study-20260825-no-flow",
       "seed": 20260825,
       "arm": "no-flow",
       "config": "calendar-study-20260825-no-flow.toml",
-      "sha256": "d40dda047bfed9db5030b13234164f743293ec0c60e3b9a08aa8b6704ebeb5db",
+      "sha256": "9f87b9be7a7447c242e5ced43e293adab41da1e112a166831c2b3673f776ab81",
       "downstreamConfig": "calendar-study-20260825-no-flow-model.toml",
-      "downstreamSha256": "cd4cf0ae3b50d8f5460f8c060f585451c746a2afc51f7f554d24c82226d2aa50"
+      "downstreamSha256": "85e8f55f67b7fe2b81eb6eee4a2be87e7773c5929f8cb25da5be3271ddf44ae1"
     },
     {
       "runId": "calendar-study-20260825-graph",
       "seed": 20260825,
       "arm": "graph",
       "config": "calendar-study-20260825-graph.toml",
-      "sha256": "3d02c223e02936d1f21a2e4c274b9929bf366a60d5dde6a54407f28cc18fbd1d",
+      "sha256": "2e93b5c3a3ed86a1287b3fa38ea83ebb68adfe25707c923d6f823ee57c112d8e",
       "downstreamConfig": "calendar-study-20260825-graph-model.toml",
-      "downstreamSha256": "3104a632e25a7c8593868f039b502431a8573c72b0e0988c3872ef5366875faf"
+      "downstreamSha256": "1d065e5f9ad2231e41d25f26d703ffdaf0f6085426a9289a9d44554036749d1f"
     },
     {
       "runId": "calendar-study-20260825-mcts",
       "seed": 20260825,
       "arm": "mcts",
       "config": "calendar-study-20260825-mcts.toml",
-      "sha256": "e94e80d33d7894398f8a9f8e077afc9b06030141c66f7a9cfab0bd5e089f45c6",
+      "sha256": "32b6dcf4a701c6a9daad4d076837f182f545cb81d70de5e2f7ccc8cc12ca9925",
       "downstreamConfig": "calendar-study-20260825-mcts-model.toml",
-      "downstreamSha256": "888b9ab177aaf2eaafa63322c05860784efa614314dff9f7cdb8b52662254cae"
+      "downstreamSha256": "366339a5124e8bc903da82c4d8a9cf22cd05e5d2d8dc25f95b10fed54b0f25ea"
     }
   ],
   "modelIdentity": {
@@ -154,11 +156,11 @@
   "implementation": [
     {
       "path": "cosmosalpha_experiment.py",
-      "sha256": "2e851d18aa41083c6922c8529dd181136d6c651edd377e503c3d88eeaf238610"
+      "sha256": "5c85ff890ab6d263857695700d002a9735638a036fe066d96e3e0a94b5c72cbb"
     },
     {
       "path": "cosmosalpha_native_experiment.py",
-      "sha256": "7ef010a4bb7a466e6f63d4966185f76068aa0cf60682b79829fe909d1b1bfd44"
+      "sha256": "fc3832d3ab8cd20443766307135f9e9852741991d4156fbd3117e89fa45b1b82"
     },
     {
       "path": "verify-cosmosalpha-targets.py",
