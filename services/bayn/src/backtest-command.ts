@@ -194,7 +194,7 @@ const main = Effect.scoped(
       prepared.input.inference.mode === 'retained-responses' || prepared.input.policy === JevResearchPolicy.Momentum
         ? execute(null)
         : Effect.gen(function* () {
-            const proxy = yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')
+            const proxy = yield* Config.NonEmptyString('BAYN_EGRESS_PROXY')
             return yield* Effect.gen(function* () {
               return yield* execute({ jev: yield* JevClient })
             }).pipe(

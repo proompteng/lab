@@ -273,8 +273,8 @@ The same immutable image includes `bayn-gepa` for bounded native Jev question op
 and deployed verification. It uses the worker's existing research API and storage identity. It needs no broker access
 or additional network/database grants.
 
-`research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
-inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
+`research-worker.yaml` runs `BaynResearchRun`. Model research permits one inference in flight and uses a separate
+two-connection PostgreSQL pool.
 The worker receives the existing Jev credential for native probes. It has no broker, capital, Kafka, ClickHouse or TigerBeetle credential. Kargo's
 existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads. Research rolls
 out after execution activation and the public service, so its initial grants cannot delay their rollout.
@@ -917,20 +917,15 @@ temporary deny-all `bayn-restate-retirement-hook-gc` NetworkPolicy. Do not recre
 retirement hook unless a new independently reviewed recovery procedure explicitly requires it.
 
 
-## Restate public information collection
+## Research capture storage
 
-The existing `bayn-research` RestateDeployment hosts independent SEC filings and macro-calendar virtual objects.
-`BAYN_PUBLIC_INFORMATION_ENABLED=true` starts their signed asynchronous activations after endpoint registration.
-No additional Kubernetes Job or CronJob is involved. The trading worker and its readiness remain independent.
-
-The prepared worker mounts the canonical reflected `bayn-research-captures` OBC credential and generated bucket name.
-This is an additional credential destination and needs approval under the repository scope rule before rollout.
-The existing bucket-owner permissions remain unchanged; application code uploads immutable content-derived keys.
-Only the research worker receives RGW egress. Its public HTTPS requests use the existing proxy with the SEC, BLS and
-Federal Reserve host allowlist; credentials never pass through that client. Its internal Restate egress only submits
-public-job activations. Verify the OBC ownership/private ACL and exact synthetic object SHA-256 readback before live
-collection, then inspect source-keyed Restate status, artifact readback and source metrics. A source failure cannot
-fail the trading endpoint or delay a protective closure.
+The research worker retains the existing `bayn-research-captures` bucket and reflected owner credential for GEPA.
+`BAYN_RESEARCH_CAPTURE_BUCKET` and `BAYN_RESEARCH_CAPTURE_ENDPOINT` select that existing store; `BAYN_EGRESS_PROXY`
+selects the existing HTTP proxy. The retired SEC/macro collector has no active trading or model-research consumer.
+Its stored objects and Restate object state are retained. Cancel only outstanding `BaynPublicInformation` and
+`BaynPublicInformationControl` invocations during retirement, while their old endpoints remain reachable. Confirm no
+nonterminal invocation remains after the new research endpoint registers. Preserve `BaynResearchRun`, paid research
+receipts, all trading invocations, and the existing storage credentials, permissions and destinations.
 
 ### Available-history hard cutover
 

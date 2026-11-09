@@ -4,9 +4,14 @@ This application owns the existing Strimzi cluster, its three controllers, three
 The [controller and broker separation design](../../../docs/kafka-kraft-controller-broker-separation-design-2026-03-11.md)
 describes the storage and quorum layout.
 
-Both node pools require `network.proompteng.ai/100g=true`. Their existing preferred separation permits three
-controllers and three brokers across Turin and Altra while excluding Ryzen. Retain each Ceph claim and let Strimzi
-roll replicas individually; require controller quorum and no under-replicated partitions before the next move.
+Both node pools require one member per physical host across Altra, Turin, and Ryzen. Kafka explicitly tolerates
+Ryzen's compute-local taint; its network label remains unchanged. Let Strimzi roll replicas individually and require
+controller quorum and no under-replicated partitions before the next move.
+
+`nvme-storage.yaml` reserves retained, node-bound Kafka volumes. The controller and broker paths are separate; Turin
+uses Intel NVMe for its controller and Transcend NVMe for its broker after CI moves to Ryzen. Volume creation alone
+does not move Kafka data. Existing Ceph claims remain the active storage until the identity-preserving copy and
+rebind procedure has verified each replacement.
 
 ## Broker heartbeat tolerance
 

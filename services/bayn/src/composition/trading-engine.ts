@@ -8,7 +8,8 @@ import type { BlockedCycleIntentStoreShape } from '../execution/intents/blocked-
 import { makeExecutionProgram, type ExecutionProgramDependencies } from '../execution/runtime-program'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '../observe-composition/model'
-import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
+import { makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 
 export interface TradingEngineInput {
   readonly authority: ExecutionAuthority
@@ -31,11 +32,8 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
         message: 'Trading engine cycle and broker authority must use the same account',
       })
     const brokerEnvironment = input.authority.brokerIdentity.environment
-    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(
-      input.cycle.accountId,
-      input.cycle.strategy,
-      brokerEnvironment,
-      input.riskPolicyHash,
+    const riskPolicy = yield* Effect.fromResult(
+      strategyExecutionRiskPolicy(input.cycle.accountId, input.cycle.strategy, brokerEnvironment, input.riskPolicyHash),
     )
     const executionProgram = yield* Effect.fromResult(
       makeExecutionProgram(input.authority, {
