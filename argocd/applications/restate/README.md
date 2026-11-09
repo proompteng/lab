@@ -64,6 +64,13 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Resilience migration
 
+The image workflow validates configuration changes without compiling Restate again. It compares the Docker context
+and build parameters with the signed release selected by `kargo/restate`. Identical inputs reuse its filesystem layers,
+update source labels, and pass the existing signed receipt and Kargo publication gates. A changed Dockerfile, patch,
+test input, or build parameter requires both native builds and their fault proofs. Cargo registry, Git, test, and
+release cache mounts persist as signed, architecture-specific images in the existing registry. Pull requests can read
+those caches; only successful main builds publish them. The first source build after cache loss still compiles normally.
+
 The [NVMe cutover](nvme-migration.md) replaces the immutable claim template through an orphaned controller handoff.
 Its temporary `OnDelete` strategy and storage-copy scheduling gate hold new Pods until each retained copy is verified.
 Run it only after the 1.8.1 software upgrade has recovered on the existing claims. Final desired state removes these
