@@ -418,5 +418,236 @@
       "before": 2,
       "after": 1
     }
+  },
+  "planningBrokerState": {
+    "sampledDocuments": 8,
+    "identicalBrokerStates": 8,
+    "beforeJsonTextBytes": 38759681,
+    "afterJsonTextBytes": 34925544,
+    "unchangedMaterial": true,
+    "savedJsonTextBytes": 3834137,
+    "method": "Read-only projection of the eight latest retained documents. Full canonical broker states match within each document. Remove only the identical planner copy from new documents; preserve the independently refreshed planning cut. JSONB text sizes are not on-disk, compressed or wire sizes. Historical bodies are unchanged."
+  },
+  "executionBootstrap": {
+    "workers": [
+      {
+        "pod": "bayn-execution-controller-bbbddd8c5-5922s",
+        "node": "talos-192-168-1-85",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:81faadf5368aae68e666912fb856672fa8fd8286b3d169ab37087352fcab2af1",
+        "startedAt": "2026-11-01T12:37:38Z",
+        "bootstrapMeasurements": []
+      },
+      {
+        "pod": "bayn-execution-controller-bbbddd8c5-x6htv",
+        "node": "turin",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:81faadf5368aae68e666912fb856672fa8fd8286b3d169ab37087352fcab2af1",
+        "startedAt": "2026-11-07T20:24:51Z",
+        "bootstrapMeasurements": []
+      },
+      {
+        "pod": "bayn-execution-controller-c664bd66f6-gj8vd",
+        "node": "talos-192-168-1-85",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:57c4a1a9fedaed6246ba6799e1eb0cf56aad86757df78a8e50f5b18863f1f435",
+        "startedAt": "2026-11-09T06:50:17Z",
+        "bootstrapMeasurements": [
+          {
+            "partitions": 34,
+            "incorporatedRecords": 110681,
+            "elapsedMs": 33591
+          }
+        ]
+      },
+      {
+        "pod": "bayn-execution-controller-c664bd66f6-h2rss",
+        "node": "turin",
+        "image": "registry.ide-newton.ts.net/lab/bayn@sha256:57c4a1a9fedaed6246ba6799e1eb0cf56aad86757df78a8e50f5b18863f1f435",
+        "startedAt": "2026-11-09T06:50:17Z",
+        "bootstrapMeasurements": [
+          {
+            "partitions": 34,
+            "incorporatedRecords": 110244,
+            "elapsedMs": 14407
+          }
+        ]
+      }
+    ],
+    "retiredLatestService": {
+      "name": "BaynExecutionBootstrap",
+      "kind": "Service",
+      "deploymentId": "dp_15kduUiFTQdqv13d9mofaV3",
+      "remainingInvocations": 0
+    },
+    "currentServicesDeploymentId": "dp_12t9SoVzuuTUlJMHlmiNAbL",
+    "method": "Operator-owned old and current ReplicaSets each retain two workers. Restate sys_service shows the retired stateless bootstrap service still latest on the old deployment. Both current services point to the current deployment. No registration or worker was deleted. Current worker startup measurements are observations of one rollout, not comparable after measurements."
+  },
+  "historicalFilledEntries": {
+    "scope": "Five latest filled BUY intents, joined to their request by cycle_id and symbol and to staged receipts by request_id. All use v38 and Jev 1.13. These are historical record timestamps, not a current v40 trace or comparable after sample. Broker fill source timestamps are a separate clock. No account, symbol, order or request identities are exported.",
+    "rows": [
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T20:24:22.855Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T20:24:23.250Z",
+        "chartClaimedAt": "2026-11-06T20:24:22.472Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:24:28.622+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:24:29.005+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:24:45.781+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T20:24:22.852Z",
+        "intentCreatedAt": "2026-11-06T20:24:24.462+00:00",
+        "lastFillSourceAt": "2026-11-06T20:24:31.554495000Z",
+        "firstFillSourceAt": "2026-11-06T20:24:31.554495000Z",
+        "handoffRecordedAt": "2026-11-06T20:24:23.252Z",
+        "requestObservedAt": "2026-11-06T20:24:20.870Z",
+        "evaluationStartedAt": "2026-11-06T20:24:22.472Z",
+        "evaluationCompletedAt": "2026-11-06T20:24:23.423Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T20:14:06.208Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T20:14:06.462Z",
+        "chartClaimedAt": "2026-11-06T20:14:04.873Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:14:13.069+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:14:13.5+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T20:14:30.835+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T20:14:06.202Z",
+        "intentCreatedAt": "2026-11-06T20:14:07.955+00:00",
+        "lastFillSourceAt": "2026-11-06T20:14:16.631126000Z",
+        "firstFillSourceAt": "2026-11-06T20:14:16.631126000Z",
+        "handoffRecordedAt": "2026-11-06T20:14:06.466Z",
+        "requestObservedAt": "2026-11-06T20:14:03.315Z",
+        "evaluationStartedAt": "2026-11-06T20:14:04.873Z",
+        "evaluationCompletedAt": "2026-11-06T20:14:06.833Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T19:14:07.501Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T19:14:08.036Z",
+        "chartClaimedAt": "2026-11-06T19:14:06.557Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T19:14:19.7+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T19:14:20.207+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T19:14:43.903+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T19:14:07.479Z",
+        "intentCreatedAt": "2026-11-06T19:14:10.955+00:00",
+        "lastFillSourceAt": "2026-11-06T19:14:29.837895000Z",
+        "firstFillSourceAt": "2026-11-06T19:14:28.017439000Z",
+        "handoffRecordedAt": "2026-11-06T19:14:08.047Z",
+        "requestObservedAt": "2026-11-06T19:14:02.720Z",
+        "evaluationStartedAt": "2026-11-06T19:14:06.557Z",
+        "evaluationCompletedAt": "2026-11-06T19:14:08.530Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T18:51:35.826Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T18:51:36.518Z",
+        "chartClaimedAt": "2026-11-06T18:51:35.436Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:51:47.694+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:51:48.176+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:52:21.588+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T18:51:35.811Z",
+        "intentCreatedAt": "2026-11-06T18:51:39.656+00:00",
+        "lastFillSourceAt": "2026-11-06T18:52:43.330656000Z",
+        "firstFillSourceAt": "2026-11-06T18:52:04.801445000Z",
+        "handoffRecordedAt": "2026-11-06T18:51:36.533Z",
+        "requestObservedAt": "2026-11-06T18:51:32.098Z",
+        "evaluationStartedAt": "2026-11-06T18:51:35.436Z",
+        "evaluationCompletedAt": "2026-11-06T18:51:37.546Z"
+      },
+      {
+        "model": "jev-1.13.0",
+        "protocol": "bayn.jev.protocol.v38",
+        "baseClaimedAt": "2026-11-06T18:45:07.491Z",
+        "receiptSchema": "bayn.jev-evaluation-receipt.v3",
+        "baseRecordedAt": "2026-11-06T18:45:07.918Z",
+        "chartClaimedAt": "2026-11-06T18:45:06.868Z",
+        "mutationEvents": [
+          {
+            "type": "SUBMIT_STARTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:45:18.169+00:00"
+          },
+          {
+            "type": "SUBMIT_ACCEPTED",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:45:18.552+00:00"
+          },
+          {
+            "type": "RECOVERY_FOUND",
+            "operation": "SUBMIT",
+            "occurredAt": "2026-11-06T18:45:42.269+00:00"
+          }
+        ],
+        "chartRecordedAt": "2026-11-06T18:45:07.469Z",
+        "intentCreatedAt": "2026-11-06T18:45:10.542+00:00",
+        "lastFillSourceAt": "2026-11-06T18:46:30.587072000Z",
+        "firstFillSourceAt": "2026-11-06T18:45:19.420635000Z",
+        "handoffRecordedAt": "2026-11-06T18:45:07.932Z",
+        "requestObservedAt": "2026-11-06T18:45:03.292Z",
+        "evaluationStartedAt": "2026-11-06T18:45:06.868Z",
+        "evaluationCompletedAt": "2026-11-06T18:45:08.272Z"
+      }
+    ]
   }
 }

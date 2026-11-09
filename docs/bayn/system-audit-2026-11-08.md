@@ -137,6 +137,9 @@ The changes below are source changes until their reviewed image receipts and dep
   remains available in the API workload. Qualification and replay move to `bayn-system-assessment` in the research
   artifact; the old command rejects those flags. The two images require the same successful source/run receipts before
   Kargo discovers the cohort. Archive checks verify required commands and reject research tools in the trading image.
+  CI run `42577558311` verifies the actual trading and research archives on AMD64 and ARM64 at `4cc29d4350`.
+  The trading image retains the two files required by physical candidate-image qualification, including its
+  backtest bundle and dependency receipt. Python, GEPA, Git, Bun and registry tools remain research-only.
   The original AMD64 image has 396,205,749 compressed layer bytes; replacement OCI size remains unmeasured locally.
 - B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
   bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
@@ -144,13 +147,26 @@ The changes below are source changes until their reviewed image receipts and dep
   full reconciliation. A second ordered aggregate combines the quantity and cost inventory-debit reads in accounting
   reconstruction: its warm median falls from 121.191 to 72.337 ms with zero row differences. Full accounting
   reconstruction, ledger verification and the writer fence remain mandatory.
-- B4: Retain crypto sources while their executable-quote and replay consumers remain. A bounded sample of eight
+- B4: Native startup now requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
+  accepts only the latest completed bar with a 10-second availability limit. Equity chart and crypto history,
+  subscriptions, capture contracts and explicit historical diagnostics are unchanged. Kafka and independent-worker
+  tests verify catch-up, freshness, cancellation and retained replay. The current workers incorporated 110,244 and
+  110,681 records in 14.407 and 33.591 seconds on Turin and Altra; replacement rollout timing remains unmeasured.
+  Two additional old workers remain because `BaynExecutionBootstrap` is still latest on their old deployment.
+  Restate has no remaining invocation for that stateless service, and both current services point to the new
+  deployment. Its registration retirement remains a separate reviewed operation under the owning runbook.
+  Retain crypto sources while their executable-quote and replay consumers remain. A bounded sample of eight
   arrival chunks contains 137 records over 6.267 seconds: 45 Webull records, 91 crypto raw records and one crypto
   feature record. Serialized arrival bytes are 2,629,511, 158,454 and 42,567 respectively. These include retained
   transport evidence and are not Kafka wire-byte or CPU measurements. A quotes-only acquisition experiment is removed;
   changing a captured source and its partition coverage also changes the replay contract. No traffic saving is claimed.
-- B5: The earlier removal of duplicate rows from new decisions remains verified. Cross-record content references and
-  their retained-reader/export costs are still open; they are not implemented by this change.
+- B5: New decisions store identical broker state once within the protected document. The planner resolves the full
+  state from its own immutable entry observation; a different or refreshed planning cut keeps its separate state.
+  Canonical document hashes cover the stored form. Retained full documents still decode, and target planning, risk,
+  freezing and status readers use the complete state. All 90 targeted PostgreSQL cases pass. The eight latest sampled
+  documents contain identical states: a read-only projection removes 3,834,137 of 38,759,681 JSONB text bytes, or 9.89%.
+  This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
+  Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
   the dedicated archive. The 367 financial epochs were created through October 27; the dedicated archive has 436
   epochs, with a newest epoch on November 9 UTC. Epoch creation time is not last arrival time. The bounded last-arrival
@@ -168,6 +184,11 @@ The changes below are source changes until their reviewed image receipts and dep
   `bayn.execution.advance` takes 919.450/916.957 ms, reconciliation persistence 607.923/606.341 ms, and accounting
   verification 274.076/267.426 ms. Nested spans must not be added together. These are waiting passes, not entry
   inference or order-submission waterfalls; a complete naturally eligible request and comparable release readback remain open.
+  Five retained filled entries now supply an additional historical waterfall through CHART, BASE_START, handoff,
+  evaluation receipt, intent, submission, acknowledgement, broker fill and recovery. They use v38 and Jev 1.13.
+  In the newest sample, intent creation precedes submission by 4.160 seconds, the submit acknowledgement takes
+  383 ms, and the recovery event is recorded 16.776 seconds after acknowledgement. These are differences between
+  retained timestamps, not isolated CPU, SQL or provider latency. Cross-process clock offset remains unmeasured.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
@@ -175,6 +196,11 @@ The changes below are source changes until their reviewed image receipts and dep
 
 The upper panel uses Restate's schedule records. The lower panel uses spans from the matched Bayn process, relative
 to its own worker advance. This preserves causal correlation without assuming synchronized clocks across services.
+
+![Historical v38 entry records from admission through fill recovery](evidence/2026-11-09-historical-entry.svg)
+
+The historical entry chart labels record boundaries and its missing current-release proof. The broker's fill
+timestamp uses its own clock. It is not subtracted from Bayn timestamps to claim execution latency.
 
 The full audit remains open for the explicitly unverified items above. Smaller bundles, a faster SQL query and green
 tests do not establish a faster complete trading request or disposal authority for retained data.
