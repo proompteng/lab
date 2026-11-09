@@ -26,6 +26,16 @@
       "evaluableMCTSFactorsAtStop": 4,
       "reason": "Native MCTS starts additional portraits after the common evaluable target; stop at the next-expansion boundary is required. No held-out fitting started.",
       "externalStopSha256": "40017433ff8438fc1be3cfe8eaeaccf0442d2991f2748d09beeea6032515b28a"
+    },
+    {
+      "name": "acceptance-v9",
+      "experimentId": "aed249f8285f2955eeeab8727ce005a8a2b30e21c7444c585fb78bd6e94507d5",
+      "status": "INCONCLUSIVE",
+      "miningArmsComplete": 3,
+      "heldOutFits": 0,
+      "heldOutAttempts": 3,
+      "reason": "All three four-factor pools qualified. Native model fitting failed before training because libomp was missing. The trial remains inconclusive; OpenMP installation and separate downstream diagnostics do not rewrite it.",
+      "resultSha256": "f95e012e979d69e50ffbc0155bc2598544489a17bdcc8642f8d1dab7931ef59a"
     }
   ],
   "functionalBudgetProbes": [

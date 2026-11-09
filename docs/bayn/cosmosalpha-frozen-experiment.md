@@ -13,6 +13,8 @@ The patches use paths relative to the author repository and apply with `patch -p
 
 The runner accepts one registered source inventory, `65f7d303415e564d3d949f227e8c3e2ec4625f0840cd7f82d253aed3378f364f`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant.
 
+LightGBM's native runtime must load before freeze or execution can begin. On macOS its installed wheel needs OpenMP, available as Homebrew `libomp`. Admission records the platform and native LightGBM binary hash alongside Python package versions. The native contract check also exercises a small synthetic fit and prediction. This catches dependency failures before data preparation or model inference; it does not replace the full-data model checks.
+
 These auxiliary limits adapt the declared Qwen backbone. The original 300-token suggestion calls exhausted their output on reasoning without JSON. Portrait probes also returned no content at 2,000 and 4,000 tokens; a probe under the existing 20,000-token ceiling returned a usable portrait using 10,796 completion tokens. Calibration used response validity, not held-out performance. Actual tokens remain charged against the common per-arm ceiling.
 
 Create a request using the existing training-only native Graph and chronological LightGBM TOML configurations, the [calendar-target request](cosmosalpha-calendar-targets.md) and its generated target directory:
@@ -50,6 +52,8 @@ The study contains all nine runs in this order:
 | 20260825 | no-Flow, Graph, MCTS |
 
 MCTS stops at the next expansion boundary after the shared target is met. Its final cycle feedback can complete, and the native helper fallback cannot turn the stop into more model calls.
+
+The same guard applies before a new MCTS root. The author's internal node counter also includes unavailable RankIC values; it is not used as a second output limit. The shared coverage-qualified evaluation counter owns the factor target.
 
 Each run targets exactly 150 unique, technically evaluable factors. Both accepted and threshold-rejected factors count when they satisfy the native coverage gate. Failed evaluations and duplicates do not count. Concurrent evaluations reserve capacity before computation so they cannot overshoot the target.
 
@@ -111,6 +115,24 @@ python -m pytest -q \
 ```
 
 The three native prompt regression cases failed before their respective repairs, including the case that uses the real portrait prompt builder. Earlier acceptance trials retain their empty-conversation HTTP 400 and reasoning-truncation evidence. Neither reached held-out fitting. They are not replayed or relabeled as repaired trials.
+
+## Paper-to-runtime evidence
+
+The reference is [CosmosAlpha v1](https://arxiv.org/html/2611.04555v1), particularly Sections 3.2–3.4 and Appendices B–D. Evidence boundaries remain separate:
+
+The quality archive supplies marginal hypervolume credit. Parent selection uses a different Pareto ordering over propagated quality, fertility and diversity. Setting gamma to zero preserves those utilities and selection while removing propagation.
+
+| Boundary                      | Owning code and observed evidence                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Typed relations and utilities | Pinned `graph/core.py`, `structure.py`, `reward.py` and `flow.py` retain the author's generation, structure and correlation graph; intrinsic quality, birth-time hypervolume credit, attempt fertility and reference distance. Source and upstream numerical cases were checked. This is not an independent recomputation of every archive update.                                                               |
+| Flow and selection            | `flow.iterative_flow` implements the fixed-point recurrence; `selector` retains Pareto fronts and crowding. The [actual selector artifacts](evidence/2026-11-08-cosmosalpha-calendar-experiment/flow-artifact-check.json) show convergence in 14 states: all seven no-Flow states retain raw utilities, and all seven Graph states change them.                                                                  |
+| MCTS                          | `MCTSController.run_multi_tree` generates roots within the run and shares its factor zoo. Its common hypothesis/design/expression loop remains active. The inherited controller additionally requests portrait guidance, which the paper's prompt-route table does not enumerate; that extra source path and its costs are retained explicitly. Native tests exercise free roots and both quota-stop boundaries. |
+| Shared factors and data       | The frozen configs retain windows 5/10/20, depth 15, two repair attempts, chronological segments, daily coverage gates, neutralization and shared LightGBM settings. Target consumption has its own independent full-data oracle. Industry history and historical feature-calendar semantics remain unqualified.                                                                                                 |
+| Integration                   | [Three canonical downstream diagnostics](evidence/2026-11-08-cosmosalpha-calendar-experiment/downstream-diagnostic.json) used all four factors per retained pool, verified 18 output artifacts and matched the full target binding. These diagnostics do not convert the earlier failed acceptance into a pass.                                                                                                  |
+
+This experiment deliberately changes the backbone to self-hosted Qwen, uses corrected calendar targets and imposes explicit request/token ceilings. Its 20,000-token common output ceiling and declared auxiliary limits differ from the paper's 12,000-token setting. The study covers CSI 300 and three methods, not the paper's complete cross-universe baseline suite. These differences prevent a claim of exact reproduction of published results.
+
+The paired report retains the four predictive and three portfolio metrics specified by the paper. Native Qlib portfolio analysis uses arithmetic-return risk analysis with a zero benchmark; the runner does not reinterpret its signed drawdown as compounded wealth drawdown.
 
 ## Interpretation limits
 

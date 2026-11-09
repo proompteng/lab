@@ -47,6 +47,88 @@ PLAN = json.loads((ROOT / "plan.json").read_text())
 
 
 class NativeContracts(unittest.TestCase):
+    def test_native_node_counter_includes_missing_rank_ic(self):
+        controller = MCTSController(
+            None,
+            None,
+            None,
+            field_catalog=build_base_field_catalog(),
+            operator_catalog=build_base_operator_catalog(),
+        )
+        with (
+            patch.object(
+                controller, "_compute_turnover_from_result", return_value=None
+            ),
+            patch.object(
+                controller,
+                "_extract_factor_values_from_result",
+                return_value=(None, None),
+            ),
+            patch.object(controller, "_compute_zoo_diversity", return_value=0.0),
+            patch.object(controller, "_current_fzoo_entries", return_value=()),
+        ):
+            node = controller._build_node(
+                factor_id="missing-metric",
+                expression="close",
+                experiment_ref=None,
+                rank_ic_mean=None,
+                action_label="fixture",
+                loop_result=object(),
+                eval_scores={"rank_ic": None, "stability": 0.0, "diversity": 0.0},
+            )
+        self.assertIsNone(node.rank_ic_mean)
+        self.assertEqual(controller._evaluated_factor_count, 1)
+
+    def test_target_stop_escapes_native_new_root_retries_without_a_model_call(self):
+        run = next(run for run in PLAN["runs"] if run["arm"] == "mcts")
+        frozen = FrozenInputs(ROOT, PLAN["inputs"]["mining"])
+        with tempfile.TemporaryDirectory() as temp:
+            original = load_experiment_config(ROOT / run["config"])
+            config = replace(original, storage=replace(original.storage, root=temp))
+            runtime = RuntimeBuilder(config, run_id="root-stop-contract").build(
+                resume=False
+            )
+            budget = ArmBudget(Limits(evaluable_factors=1))
+            budget.evaluable["completed"] = object()
+            loop = bind_loop(runtime._loop, frozen, budget, 2, stop_at_target=True)
+            controller = MCTSController(
+                loop,
+                runtime._objects,
+                runtime._artifacts,
+                field_catalog=build_base_field_catalog(),
+                operator_catalog=build_base_operator_catalog(),
+            )
+            with self.assertRaises(EvaluableTargetReached):
+                controller.run_multi_tree(
+                    data_snapshot=frozen.snapshot,
+                    base_context=_base_context(config, frozen.snapshot),
+                    config_snapshot_ref=runtime._config_snapshot_ref,
+                    code_version="native-contract",
+                    max_total_rounds=1,
+                )
+            self.assertEqual(budget.summary()["physicalRequests"], 0)
+            self.assertEqual(budget.summary()["failedAuxiliaryResponses"], 0)
+
+    def test_native_lightgbm_backend_trains_and_predicts(self):
+        import lightgbm as lgb
+        import numpy as np
+
+        features = np.array([[0.0, 1.0], [1.0, 0.0], [2.0, 1.0], [3.0, 0.0]])
+        model = lgb.train(
+            {
+                "objective": "regression",
+                "verbosity": -1,
+                "num_threads": 1,
+                "num_leaves": 2,
+                "min_data_in_leaf": 1,
+            },
+            lgb.Dataset(features, label=np.arange(4.0)),
+            num_boost_round=2,
+        )
+        predictions = model.predict(features)
+        self.assertEqual(len(predictions), 4)
+        self.assertTrue(np.isfinite(predictions).all())
+
     def test_target_stop_escapes_native_suggestion_fallback_without_a_model_call(self):
         budget = ArmBudget(Limits(evaluable_factors=1))
         budget.evaluable["completed"] = object()
@@ -133,7 +215,13 @@ class NativeContracts(unittest.TestCase):
                     if run["arm"] == "mcts"
                     else runtime._graph_loop_factory()
                 )
-                bind_loop(loop, frozen, ArmBudget(Limits()), 2)
+                bind_loop(
+                    loop,
+                    frozen,
+                    ArmBudget(Limits()),
+                    2,
+                    stop_at_target=run["arm"] == "mcts",
+                )
                 loop.set_reference_factor_values_provider(runtime._factor_library)
                 self.assertIs(loop._forward_return_calculator, frozen)
 

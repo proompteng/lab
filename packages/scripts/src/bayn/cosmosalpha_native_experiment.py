@@ -271,12 +271,21 @@ class BudgetedEvaluator:
             self.budget.finish_evaluation(key, result, eligible)
 
 
-def bind_loop(loop, inputs, budget, slots):
+def bind_loop(loop, inputs, budget, slots, *, stop_at_target):
     loop._forward_return_calculator = inputs
     loop._evaluator = BudgetedEvaluator(loop._evaluator, budget)
     original = loop.run
 
     def run(**kwargs):
+        if stop_at_target and budget.target_reached():
+            budget.record(
+                {
+                    "event": "search-stop",
+                    "reason": "evaluable-factor-target",
+                    "boundary": "new-root",
+                }
+            )
+            raise EvaluableTargetReached()
         budget.proposal(slots)
         return original(**kwargs)
 
@@ -345,7 +354,11 @@ def run_arm(root, plan, run, budget, transport, output):
     ).build(resume=False)
     if run["arm"] == "mcts":
         loop = bind_loop(
-            runtime._loop, frozen, budget, config.factor_generation.max_proposals
+            runtime._loop,
+            frozen,
+            budget,
+            config.factor_generation.max_proposals,
+            stop_at_target=True,
         )
         snapshot = frozen.copy(runtime._artifacts)
         runtime._objects.put_object("data_snapshot", snapshot.snapshot_id, snapshot)
@@ -370,7 +383,6 @@ def run_arm(root, plan, run, budget, transport, output):
                 config_snapshot_ref=runtime._config_snapshot_ref,
                 code_version=__import__("cosmosalpha").__version__,
                 max_total_rounds=config.mcts.max_iterations,
-                max_evaluated_factors=budget.limits.evaluable_factors,
                 initial_budget=config.mcts.initial_budget,
                 budget_increment=config.mcts.budget_increment,
                 breakthrough_relax=config.mcts.breakthrough_relax,
@@ -395,7 +407,7 @@ def run_arm(root, plan, run, budget, transport, output):
             factory = getattr(runtime, field)
 
             def wrapped(factory=factory, slots=slots):
-                return bind_loop(factory(), frozen, budget, slots)
+                return bind_loop(factory(), frozen, budget, slots, stop_at_target=False)
 
             setattr(runtime, field, wrapped)
         result = runtime.run(resume=False)

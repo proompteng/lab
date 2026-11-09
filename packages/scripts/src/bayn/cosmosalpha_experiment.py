@@ -184,8 +184,12 @@ def live_model():
 
 
 def runtime_versions():
+    from lightgbm.basic import _LIB
+
     return {
         "python": platform.python_version(),
+        "platform": platform.platform(),
+        "lightgbmBinarySha256": digest(_LIB._name),
         "packages": dict(
             sorted((item.metadata["Name"], item.version) for item in distributions())
         ),
@@ -248,16 +252,15 @@ class CheckedModelClient:
         purpose = request.prompt.prompt_id
         if purpose not in {"suggestion", "portrait"}:
             return self.delegate.complete(request)
-        with self.budget.lock:
-            if len(self.budget.evaluable) >= self.budget.limits.evaluable_factors:
-                self.budget.record(
-                    {
-                        "event": "search-stop",
-                        "reason": "evaluable-factor-target",
-                        "boundary": purpose,
-                    }
-                )
-                raise EvaluableTargetReached()
+        if self.budget.target_reached():
+            self.budget.record(
+                {
+                    "event": "search-stop",
+                    "reason": "evaluable-factor-target",
+                    "boundary": purpose,
+                }
+            )
+            raise EvaluableTargetReached()
         content = None
         try:
             response = self.delegate.complete(request)
@@ -284,6 +287,10 @@ class ArmBudget:
         self.evaluation_attempts = self.evaluation_completions = 0
         self.auxiliary_successes = self.auxiliary_failures = 0
         self.record = lambda event: None
+
+    def target_reached(self):
+        with self.lock:
+            return len(self.evaluable) >= self.limits.evaluable_factors
 
     def _available(self):
         if self.unknown_usage:
@@ -569,6 +576,7 @@ def freeze(request_path, output):
         k: (request_path.parent / request[k]).resolve()
         for k in required - {"schemaVersion", "kind"}
     }
+    versions = runtime_versions()
     root = Path(output).resolve()
     root.mkdir()
     source = write_source_identity(
@@ -691,6 +699,8 @@ def freeze(request_path, output):
     write_json(root / "configuration-audit.json", audit_report)
     if audit.returncode != 0:
         raise ValueError("Native configurations are not matched: " + audit.stdout)
+    if runtime_versions() != versions:
+        raise ValueError("Native model runtime changed while freezing")
     plan = {
         "schemaVersion": SCHEMA,
         "frozenAt": datetime.now(timezone.utc).isoformat(),
@@ -709,7 +719,7 @@ def freeze(request_path, output):
         ),
         "modelIdentity": live_model(),
         "modelProfile": PROFILE,
-        "runtimeVersions": runtime_versions(),
+        "runtimeVersions": versions,
         "limits": asdict(limits),
         "inputs": prepared,
         "runs": runs,

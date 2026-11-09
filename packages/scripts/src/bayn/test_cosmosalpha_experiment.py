@@ -332,6 +332,53 @@ class TransportTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_freeze_rejects_an_unavailable_model_runtime_before_data_or_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request = root / "request.json"
+            request.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "bayn.cosmosalpha-experiment-request.v1",
+                        "kind": "acceptance",
+                        "baseConfig": "base.toml",
+                        "downstreamConfig": "model.toml",
+                        "targetRequest": "targets.json",
+                        "targetDirectory": "targets",
+                    }
+                )
+            )
+            native = types.SimpleNamespace(prepare_inputs=unittest.mock.Mock())
+            with (
+                patch.dict(
+                    sys.modules,
+                    {
+                        "cosmosalpha": types.SimpleNamespace(
+                            __file__="/virtual/cosmosalpha/__init__.py"
+                        ),
+                        "cosmosalpha_native_experiment": native,
+                    },
+                ),
+                patch.object(
+                    experiment,
+                    "runtime_versions",
+                    side_effect=OSError("missing libomp"),
+                ),
+                patch.object(experiment, "write_source_identity", return_value={}),
+                patch.object(
+                    experiment,
+                    "verify",
+                    side_effect=AssertionError(
+                        "Data started before model runtime admission"
+                    ),
+                ) as verify,
+            ):
+                with self.assertRaisesRegex(OSError, "libomp"):
+                    experiment.freeze(request, root / "frozen")
+                self.assertFalse((root / "frozen").exists())
+                verify.assert_not_called()
+                native.prepare_inputs.assert_not_called()
+
     def test_provider_inventory_detects_quote_drift_even_outside_the_target_fields(
         self,
     ):
