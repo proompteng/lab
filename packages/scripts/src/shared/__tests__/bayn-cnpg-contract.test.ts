@@ -25,30 +25,9 @@ test('native market capture keeps independent storage, required synchronous dura
   })
   for (const key of ['imageName', 'enablePDB', 'enableSuperuserAccess', 'postgresql'])
     expect(cluster.spec[key]).toEqual(financial.spec[key])
-  // A third physical host keeps required synchronous commits available during the NVMe reconstruction.
-  expect(cluster.spec.instances).toBe(3)
-  expect(cluster.spec.affinity).toEqual({
-    nodeAffinity: {
-      requiredDuringSchedulingIgnoredDuringExecution: {
-        nodeSelectorTerms: [
-          {
-            matchExpressions: [
-              {
-                key: 'kubernetes.io/hostname',
-                operator: 'In',
-                values: ['turin', 'talos-192-168-1-85', 'talos-192-168-1-194'],
-              },
-            ],
-          },
-        ],
-      },
-    },
-    tolerations: [
-      { key: 'workload.proompteng.ai/compute-local', operator: 'Equal', value: 'true', effect: 'NoSchedule' },
-    ],
-    podAntiAffinityType: 'required',
-    topologyKey: 'kubernetes.io/hostname',
-  })
+  expect(cluster.spec.instances).toBe(2)
+  expect(cluster.spec.affinity).toEqual(financial.spec.affinity)
+  expect(cluster.metadata.annotations['cnpg.io/reconciliationLoop']).toBe('enabled')
   expect(cluster.spec.walStorage).toEqual({ storageClass: 'local-path', size: '32Gi', resizeInUseVolumes: false })
   expect(cluster.spec.minSyncReplicas).toBeUndefined()
   expect(cluster.spec.storage).toEqual({ storageClass: 'local-path', size: '200Gi', resizeInUseVolumes: false })
