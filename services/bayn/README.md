@@ -798,6 +798,13 @@ retryability and HTTP status without logging response payloads. Defects and
 interruption are not converted to timeouts or settled as completed work. Every
 failed capture disposes its lazy broker runtime before any known-work quota settlement.
 
+Failed-capture warnings also emit the fixed `broker.poll_failure_reason`: acquisition deadline,
+poll deadline, snapshot rejected, or unknown. The acquisition deadline covers the outer runtime,
+including lazy acquisition and capture; it does not identify which stage was slow. Snapshot rejection
+includes unstable history; the existing broad `TIMEOUT` kind alone does not establish a network timeout. This diagnostic
+does not inspect messages or nested causes and does not change admission, retry, quota,
+mutation, clock, source-revision or authority fences.
+
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
 handlers poll without overlap and publish full and compact snapshots in Valkey before committing their fenced
 references in PostgreSQL `broker_observations`. Execution and status processes read those shared materializations; they do not start local pollers. Endpoint registration remains separate

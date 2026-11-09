@@ -2,7 +2,7 @@ import { Config, DateTime, Effect, Exit, Schema, Semaphore } from 'effect'
 
 import { readBrokerSnapshotOnce } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
-import { BrokerReadError, configurationError } from './failures'
+import { BrokerPollFailureReason, BrokerReadError, configurationError } from './failures'
 import { OrderCollection, SortDirection, type BrokerHistory, type BrokerReadShape } from './model'
 import {
   BrokerObservations,
@@ -123,11 +123,22 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
-            : observationUnavailable('Broker polling could not establish a stable history', cause),
+            : observationUnavailable(
+                'Broker polling could not establish a stable history',
+                cause,
+                BrokerPollFailureReason.SnapshotRejected,
+              ),
         ),
         Effect.timeoutOrElse({
           duration: timeoutMs,
-          orElse: () => Effect.fail(observationUnavailable('Broker observation polling exceeded its deadline')),
+          orElse: () =>
+            Effect.fail(
+              observationUnavailable(
+                'Broker observation polling exceeded its deadline',
+                undefined,
+                BrokerPollFailureReason.PollDeadline,
+              ),
+            ),
         }),
         Effect.withSpan('broker.observation.poll'),
       )
