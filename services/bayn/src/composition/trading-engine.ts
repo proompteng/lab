@@ -8,7 +8,8 @@ import type { BlockedCycleIntentStoreShape } from '../execution/intents/blocked-
 import { makeExecutionProgram, type ExecutionProgramDependencies } from '../execution/runtime-program'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '../observe-composition/model'
-import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
+import { makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
+import { loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
 
 export interface TradingEngineInput {
   readonly authority: ExecutionAuthority

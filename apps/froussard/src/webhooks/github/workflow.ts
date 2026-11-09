@@ -1,3 +1,4 @@
+import type { ApprovalCommand } from '@/approvals/contracts'
 import type { Effect as EffectType } from 'effect/Effect'
 import type { WorkflowCommand } from '@/codex/workflow-machine'
 import type { AppConfigService } from '@/effect/config'
@@ -24,6 +25,7 @@ export interface WorkflowExecutionContext {
     }
   }
   deliveryId: string
+  enqueueApproval: (command: Pick<ApprovalCommand, 'repositoryFullName' | 'pullNumber'>) => Promise<void>
   agentRunIdentifier?: string | null
   submitAgentRun: AgentRunSubmitter
 }
@@ -46,44 +48,6 @@ export const executeWorkflowCommands = async (
         const result = await context.submitAgentRun(submission)
         if (!result.ok) {
           throw new Error(result.error ?? `Agents service rejected AgentRun submission with HTTP ${result.status}`)
-        }
-        break
-      }
-      case 'approveReadyPullRequest': {
-        const result = await context.runGithub(() =>
-          context.githubService.approvePullRequest({
-            repositoryFullName: command.data.repositoryFullName,
-            pullNumber: command.data.pullNumber,
-            headSha: command.data.headSha,
-            body: command.data.body,
-            token: context.config.github.token,
-            apiBaseUrl: context.config.github.apiBaseUrl,
-            userAgent: context.config.github.userAgent,
-          }),
-        )
-        if (!result.ok) {
-          logger.warn(
-            {
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              reason: result.reason,
-              status: result.status,
-            },
-            'ready approval was not submitted',
-          )
-          if (!['not-ready', 'head-changed', 'pending-review'].includes(result.reason)) {
-            throw new Error(`GitHub approval failed: ${result.reason} (${result.status ?? 'no status'})`)
-          }
-        } else {
-          logger.info(
-            {
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              headSha: command.data.headSha,
-              reviewUrl: result.reviewUrl,
-            },
-            'ready approval confirmed',
-          )
         }
         break
       }

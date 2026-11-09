@@ -6,7 +6,7 @@ import { canonicalHashV1Result } from '../hash'
 import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
-import { loadStrategyExecutionRiskPolicy } from './startup'
+import { loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { accountEntryProtectionReasons, accountLossMicros, Reason } from '../risk'
 
 test('raises sandbox turnover and cumulative drawdown budgets while preserving the complete live policy', async () => {
