@@ -92,7 +92,7 @@ spec:
     type: persistent-claim
     size: 30Gi
     deleteClaim: false
-    class: rook-ceph-block
+    class: kafka-nvme
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
@@ -136,7 +136,7 @@ spec:
     type: persistent-claim
     size: 200Gi
     deleteClaim: false
-    class: rook-ceph-block
+    class: kafka-nvme
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser

@@ -6,8 +6,9 @@ continues to cover scheduling reservations and pod states.
 
 The observability Argo application owns one central collector in the `arc` namespace. It uses ARC's existing
 `github-token` Secret for read-only GitHub API requests. It does not change token identity, scopes, runner templates
-or worker capacity. The Pod has one container, no Kubernetes API token, and no sidecars. Its pinned upstream Python
-image runs the committed ConfigMap source using the same deployment pattern as existing observability helpers.
+or worker capacity. The Pod runs on Ryzen's AMD64 capacity and retains its existing 1 GiB Ceph claim. The Pod has one
+container, no Kubernetes API token, and no sidecars. Its pinned upstream Python image runs the committed ConfigMap
+source using the same deployment pattern as existing observability helpers.
 
 ## Collection and storage
 
