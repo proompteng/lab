@@ -1,5 +1,4 @@
 {
-  # Force native recomputation; replace both placeholders with the build's actual hashes.
-  x86_64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-  aarch64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  x86_64-linux = "sha256-k1HEA8d724+SrtsGaEDGFYL2KfA9zhLO3JcH3XqRTpc=";
+  aarch64-linux = "sha256-rJbbAlK/MdFZBOfkrGY0Qb97gXoZfm8TXkrV94ZinZg=";
 }

@@ -2309,11 +2309,6 @@ node services/bayn/dist/research/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-The input is `bayn.backtest.v6` in `src/intraday-replay/backtest.ts`. It binds an explicit UTC `interval` with `startAt` and `endAt`, the full broker calendar,
-source manifest, native Jev build and strategy identities, opening cash, asset metadata, execution assumptions,
-controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
-Historical artifacts remain available for comparison and audit.
-
 Set `BAYN_JEV_API_KEY` and `BAYN_EGRESS_PROXY` through the existing protected environment. Current
 requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
 `models: {"jev": "jev-1.14.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`

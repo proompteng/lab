@@ -95,6 +95,9 @@ captures and egress directly; all callers migrate together, with no aliases. The
 `BaynResearchRun` only. Existing public-collector timers must be canceled while their old endpoint remains reachable,
 then checked again after registration of the replacement; see the owning
 [retirement procedure](../../argocd/applications/bayn/README.md#research-capture-storage).
+The two remaining scheduled collector invocations were gracefully canceled on November 8. Readback showed zero
+outstanding invocations and the same two state records with an identical SHA-256 fingerprint before and after.
+Repeat that readback after replacement-endpoint registration.
 
 New protected-entry decisions persist observation rows once, inside their verified strategy evidence. The existing
 financial reader still accepts retained documents and rejects any conflicting extra copy. Stored financial documents
@@ -118,7 +121,8 @@ them. Financial history, capture history and storage allocations are retained. N
 protocol microbenchmark establish a faster live tick, image startup or improved trading returns.
 
 Local checks for this follow-up: 5,015 unit tests pass, 1,295 skip, zero fail across 464 files with Bun 1.4.3;
-the 40 PostgreSQL persistence tests pass against PostgreSQL 18. Both TypeScript projects, formatting, both lint modes,
+the 40 PostgreSQL persistence tests and 49 native Jev persistence tests pass against PostgreSQL 18. The latter cover
+all nine native exit/recovery scenarios and retain the conflicting-source rejection check. Both TypeScript projects, formatting, both lint modes,
 production and research builds, the research command smoke checks, 92 delivery tests and all seven GEPA tests pass.
 The GEPA tests use the pinned upstream source and dependencies. Bayn and OpenCode manifests render successfully.
 Skipped integrations still require their configured CI environments.
