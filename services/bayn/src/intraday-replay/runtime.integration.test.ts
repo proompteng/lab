@@ -97,7 +97,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { CycleStore } from '../cycle/store/model'
 import { CycleTerminalReason } from '../cycle/model'
 import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'

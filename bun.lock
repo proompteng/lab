@@ -117,6 +117,7 @@
         "@elysiajs/eden": "^1.4.9",
         "@octokit/webhooks": "^14.2.0",
         "@proompteng/agent-contracts": "workspace:*",
+        "@restatedev/restate-sdk": "1.16.5",
         "@sinclair/typebox": "^0.34.49",
         "discord-interactions": "^4.4.0",
         "effect": "4.1.2",

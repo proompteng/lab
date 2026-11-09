@@ -14,7 +14,7 @@ import {
   type ExecutionCycleClosure,
   type ExecutionCycleClosureStoreShape,
 } from '../db/execution-cycle-closure'
-import { AuthorityRestrictionStore } from '../db/execution-store'
+import { AuthorityRestrictionStore } from '../db/execution-store/contract'
 import { WriterFence } from '../execution/writer-fence'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { withPassMarketCalendarRead } from '../broker/alpaca/calendar-cache'

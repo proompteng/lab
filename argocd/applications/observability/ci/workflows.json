@@ -49,6 +49,10 @@
   ],
   "bayn-build-push.yml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validation",
       "pattern": "^validation(?: \\(.*\\))?(?: /.*)?$"
     },
