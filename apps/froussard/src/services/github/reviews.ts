@@ -1,4 +1,11 @@
-import type { ApprovePullRequestOptions, ApprovePullRequestResult } from './types'
+import { approvalBody } from '@/approvals/contracts'
+import type {
+  ApprovalReviewOptions,
+  ApprovalReviewResult,
+  PrepareApprovalOptions,
+  PrepareApprovalResult,
+  SubmitApprovalOptions,
+} from './types'
 import { Effect, Schema } from 'effect'
 import { fetchPullRequest } from './pull-requests'
 
@@ -532,8 +539,15 @@ type ApprovalError =
       detail: string
     }
 
-/** A submitted review is the durable receipt for this actor and checked commit. */
-export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.Effect<ApprovePullRequestResult> =>
+const approvalFailure = (error: ApprovalError) =>
+  Effect.succeed({
+    ok: false as const,
+    reason: error.type,
+    ...('status' in error ? { status: error.status } : {}),
+    ...('detail' in error ? { detail: error.detail } : {}),
+  })
+
+const approvalContext = (options: ApprovalReviewOptions) =>
   Effect.gen(function* () {
     if (!options.token?.trim())
       return yield* Effect.fail<ApprovalError>({
@@ -609,7 +623,41 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         detail: 'Current commit has no completed Codex review without unresolved findings',
       })
 
+    return { ok: true as const, fetchFn, prefix, headers }
+  }).pipe(Effect.catch(approvalFailure))
+
+export const preparePullRequestApproval = (options: PrepareApprovalOptions): Effect.Effect<PrepareApprovalResult> =>
+  Effect.gen(function* () {
+    const context = yield* approvalContext(options)
+    if (!context.ok) return context
+    const { fetchFn, prefix, headers } = context
     const reviewsUrl = `${prefix}/pulls/${options.pullNumber}/reviews`
+    if (options.previousReview?.headSha === options.headSha) {
+      const lookup = yield* requestJson(fetchFn, `${reviewsUrl}/${options.previousReview.reviewId}`, { headers }).pipe(
+        Effect.flatMap((value) =>
+          Schema.decodeUnknownEffect(AutomationReviewSchema)(value).pipe(Effect.mapError(toInvalidJson)),
+        ),
+        Effect.result,
+      )
+      if (lookup._tag === 'Failure') {
+        // Only an unsubmitted draft can be deleted; an uncertain approval keeps its exact ID.
+        if (
+          lookup.failure.type !== 'http-error' ||
+          lookup.failure.status !== 404 ||
+          options.previousReview.state !== 'PENDING'
+        )
+          return yield* Effect.fail(lookup.failure)
+      } else {
+        const known = lookup.success
+        if (known.user.login.toLowerCase() !== 'tuslagch' || known.commit_id !== options.headSha)
+          return yield* Effect.fail<ApprovalError>({
+            type: 'pending-review',
+            detail: 'Stored review has another owner or commit',
+          })
+        if (known.state === 'APPROVED' || (known.state === 'PENDING' && known.body === options.body))
+          return { ok: true as const, review: known }
+      }
+    }
     const readReviews = Effect.gen(function* () {
       const reviews: Array<typeof AutomationReviewSchema.Type> = []
       for (let page = 1; ; page++) {
@@ -630,15 +678,14 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
     }
     let reviews = yield* readReviews
     const existing = approved(reviews)
-    if (existing !== undefined) return { ok: true as const, reviewUrl: existing.html_url }
+    if (existing !== undefined) return { ok: true as const, review: existing }
     let pending = reviews.find((review) => review.state === 'PENDING')
-    if (pending && pending.commit_id !== options.headSha && pending.body === options.body) {
+    if (pending && pending.commit_id !== options.headSha && pending.body === approvalBody(pending.commit_id)) {
       // Only discard this automation's obsolete draft, never another review's work.
       yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}`, { method: 'DELETE', headers })
       pending = undefined
     }
     if (pending === undefined) {
-      // GitHub permits one pending review per actor/PR, arbitrating concurrent deliveries.
       const created = yield* requestJson(fetchFn, reviewsUrl, {
         method: 'POST',
         headers,
@@ -651,7 +698,7 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
       } else {
         reviews = yield* readReviews
         const reconciled = approved(reviews)
-        if (reconciled !== undefined) return { ok: true as const, reviewUrl: reconciled.html_url }
+        if (reconciled !== undefined) return { ok: true as const, review: reconciled }
         pending = reviews.find((review) => review.state === 'PENDING')
         if (pending === undefined) return yield* Effect.fail(created.failure)
       }
@@ -661,11 +708,6 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         type: 'pending-review',
         detail: 'An unrelated pending review must not be submitted by readiness automation',
       })
-    const reconciled = approved(yield* readReviews)
-    if (reconciled !== undefined) {
-      yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}`, { method: 'DELETE', headers }).pipe(Effect.ignore)
-      return { ok: true as const, reviewUrl: reconciled.html_url }
-    }
     const latestPull = yield* fetchPullRequest({ ...options, fetchImplementation: fetchFn })
     if (!latestPull.ok) return latestPull
     if (
@@ -679,40 +721,67 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         detail: 'Pull request changed before approval submission',
       })
     }
-    const submitted = yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}/events`, {
+    return { ok: true as const, review: pending }
+  }).pipe(Effect.catch(approvalFailure))
+
+/** A persisted review ID makes retries target the same GitHub mutation. */
+export const submitPullRequestApproval = (options: SubmitApprovalOptions): Effect.Effect<ApprovalReviewResult> =>
+  Effect.gen(function* () {
+    const context = yield* approvalContext(options)
+    if (!context.ok) return context
+    const { fetchFn, prefix, headers } = context
+    const url = `${prefix}/pulls/${options.pullNumber}/reviews/${options.reviewId}`
+    const read = requestJson(fetchFn, url, { headers }).pipe(
+      Effect.flatMap((value) =>
+        Schema.decodeUnknownEffect(AutomationReviewSchema)(value).pipe(Effect.mapError(toInvalidJson)),
+      ),
+    )
+    const known = yield* read
+    const matches = (review: typeof AutomationReviewSchema.Type) =>
+      review.commit_id === options.headSha && review.user.login.toLowerCase() === 'tuslagch'
+    if (!matches(known))
+      return yield* Effect.fail<ApprovalError>({
+        type: 'pending-review',
+        detail: 'Stored review has another owner or commit',
+      })
+    if (known.state === 'APPROVED') return { ok: true as const, reviewUrl: known.html_url }
+    if (known.state !== 'PENDING' || known.body !== options.body)
+      return yield* Effect.fail<ApprovalError>({
+        type: 'pending-review',
+        detail: 'Stored review is not this automation’s pending draft',
+      })
+    const latestPull = yield* fetchPullRequest({ ...options, fetchImplementation: fetchFn })
+    if (!latestPull.ok) return latestPull
+    if (
+      latestPull.pullRequest.headSha !== options.headSha ||
+      latestPull.pullRequest.state !== 'open' ||
+      latestPull.pullRequest.draft
+    )
+      return yield* Effect.fail<ApprovalError>({
+        type: 'head-changed',
+        detail: 'Pull request changed before approval submission',
+      })
+    const submitted = yield* requestJson(fetchFn, `${url}/events`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ event: 'APPROVE', body: options.body }),
     }).pipe(Effect.result)
     if (submitted._tag === 'Failure') {
-      const reconciled = approved(yield* readReviews)
-      if (reconciled !== undefined) return { ok: true as const, reviewUrl: reconciled.html_url }
+      const reconciled = yield* read
+      if (matches(reconciled) && reconciled.state === 'APPROVED')
+        return { ok: true as const, reviewUrl: reconciled.html_url }
       return yield* Effect.fail(submitted.failure)
     }
     const review = yield* Schema.decodeUnknownEffect(AutomationReviewSchema)(submitted.success).pipe(
       Effect.mapError(toInvalidJson),
     )
-    if (
-      review.state !== 'APPROVED' ||
-      review.commit_id !== options.headSha ||
-      review.user.login.toLowerCase() !== 'tuslagch'
-    )
+    if (!matches(review) || review.state !== 'APPROVED')
       return yield* Effect.fail<ApprovalError>({
         type: 'not-ready',
         detail: 'GitHub did not return the requested approval identity and commit',
       })
     return { ok: true as const, reviewUrl: review.html_url }
-  }).pipe(
-    Effect.catch(
-      (error): Effect.Effect<ApprovePullRequestResult> =>
-        Effect.succeed({
-          ok: false,
-          reason: error.type,
-          ...('status' in error ? { status: error.status } : {}),
-          ...('detail' in error ? { detail: error.detail } : {}),
-        }),
-    ),
-  )
+  }).pipe(Effect.catch(approvalFailure))
 
 export const listCommitPullRequests = (
   options: ListBlockingChecksOptions,

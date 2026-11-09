@@ -49,36 +49,10 @@ const prepareHistoryStorageFixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const text = yield* fs.readFileString(
     fileURLToPath(
-      new URL(
-        '../../../../../argocd/applications/torghut/clickhouse/historical-datasets-schema-job.yaml',
-        import.meta.url,
-      ),
+      new URL('../../../../../argocd/applications/torghut/clickhouse/schema/historical-datasets.sql', import.meta.url),
     ),
   )
-  const yaml = yield* Effect.try({
-    try: (): unknown => Bun.YAML.parse(text),
-    catch: (cause) => new HistoricalDatasetFailure({ message: 'Historical schema job YAML cannot be parsed', cause }),
-  })
-  const job = yield* Schema.decodeUnknownEffect(
-    Schema.Struct({
-      spec: Schema.Struct({
-        template: Schema.Struct({
-          spec: Schema.Struct({ containers: Schema.Array(Schema.Struct({ args: Schema.Array(Schema.String) })) }),
-        }),
-      }),
-    }),
-  )(yaml)
-  const script = job.spec.template.spec.containers[0]?.args[0]
-  if (script === undefined)
-    return yield* new HistoricalDatasetFailure({ message: 'Historical schema job has no SQL script' })
-  const first = script.indexOf('CREATE DATABASE IF NOT EXISTS signal'),
-    last = script.indexOf('SELECT throwIf')
-  if (first < 0 || last < first)
-    return yield* new HistoricalDatasetFailure({ message: 'Historical schema job has no bounded DDL section' })
-  const ddl = script
-    .slice(first, last)
-    .replaceAll(' ON CLUSTER default', '')
-    .replace(/ReplicatedMergeTree\('[^']+', '[^']+'\)/g, 'MergeTree()')
+  const ddl = text.replace(/ReplicatedMergeTree\('[^']+', '[^']+'\)/g, 'MergeTree()')
   for (const statement of ddl
     .split(';')
     .map((part) => part.trim())

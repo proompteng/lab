@@ -416,7 +416,6 @@ export const compileJevEntry = (
       maximumBuyQuantityAtoms,
       maximumSellQuantityAtoms: Object.fromEntries(symbols.map((symbol) => [symbol, '0'])),
       planningTargetWeights,
-      decisionMarketDataRows: yield* persistIntradayRecordRows(decisionSnapshot),
       ...(dedicated
         ? {
             decisionMarketData: yield* executionMarketDataBinding(decisionSnapshot),

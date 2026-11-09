@@ -27,6 +27,10 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-09-08T06:37:35.585Z"
     spec:
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       nodeSelector:
         network.proompteng.ai/100g: "true"
       serviceAccountName: bayn

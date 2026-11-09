@@ -24,24 +24,6 @@ data:
               summary: Bayn research worker stopped publishing telemetry
               description: Inspect the isolated research worker and database access. Trading execution has no research dependency.
               runbook_url: docs/bayn/jev-optimization.md
-          - alert: BaynPublicInformationStale
-            expr: |
-              (
-                time() - max by (source) (bayn_public_information_last_success_timestamp_seconds{source="SEC_FILINGS"}) > 5400
-                or time() - max by (source) (bayn_public_information_last_success_timestamp_seconds{source="MACRO_CALENDAR"}) > 10800
-                or absent_over_time(bayn_public_information_last_success_timestamp_seconds{source="SEC_FILINGS"}[90m])
-                or absent_over_time(bayn_public_information_last_success_timestamp_seconds{source="MACRO_CALENDAR"}[3h])
-              ) and on() (max(bayn_public_information_enabled) == 1)
-            for: 15m
-            labels:
-              severity: warning
-              service: bayn-research
-              namespace: bayn
-              team: platform
-              component: public-information
-            annotations:
-              summary: Bayn public information research inputs are stale
-              description: Inspect the source-keyed BaynPublicInformation Restate object, its last run, failed URLs, proxy status and object uploads. Trading and protective closures do not depend on these jobs. Last successful artifacts retain their original fetch clocks; missing inputs remain explicit.
           - alert: BaynResearchAttemptsFailing
             expr: sum(increase(bayn_research_attempts{outcome!="COMPLETE"}[15m])) >= 3
             for: 5m

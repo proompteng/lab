@@ -12,30 +12,6 @@ import {
 } from './execution-store/contract'
 import { makeExecutionPersistence } from './execution-store/postgres'
 
-export {
-  BrokerEventStore,
-  AuthorityGenerationStore,
-  AuthorityRestrictionStore,
-  CapitalGrantLifecycleStore,
-  ExecutionStoreError,
-  FillAccountingStore,
-  ReconciliationStore,
-  VALUATION_SNAPSHOT_MAX_SKEW_MS,
-  ValuationStore,
-  type BrokerEventStoreShape,
-  type AuthorityGenerationLineage,
-  type AuthorityGenerationStoreShape,
-  type AuthorityRestrictionStoreShape,
-  type CapitalGrantLifecycleStoreShape,
-  type EnsureAuthorityGenerationInput,
-  type EventReceipt,
-  type FillAccountingStoreShape,
-  type PositionSnapshotReceipt,
-  type ReconciliationPersistence,
-  type ReconciliationStoreShape,
-  type ValuationStoreShape,
-} from './execution-store/contract'
-
 export const ExecutionStoreLive = (config: ExecutionStoreRuntimeConfig) =>
   Layer.effectContext(
     makeExecutionPersistence(config).pipe(

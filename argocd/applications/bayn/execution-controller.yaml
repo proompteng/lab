@@ -26,6 +26,10 @@ spec:
         app.kubernetes.io/name: bayn-execution-controller
         app.kubernetes.io/part-of: bayn
     spec:
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       nodeSelector:
         network.proompteng.ai/100g: "true"
       serviceAccountName: bayn

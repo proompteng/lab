@@ -29,11 +29,15 @@ import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { type IntradayMarketDataService } from '../market-data/intraday/model'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
-import { AuthorityGenerationStore } from '../db/execution-store'
-import { OrderStatus, ReconciliationStatus, type AuthorityState } from '../execution/contracts'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { Authority, OrderStatus, ReconciliationStatus, type AuthorityState } from '../execution/contracts'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
-import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
+import {
+  decisionSourceRows,
+  reconstructBoundIntradaySnapshot,
+  type CycleDecisionDocument,
+} from '../shadow-decision-contract'
 import {
   confirmAcceptedCancellation,
   restrictMutationLoopFailure,
@@ -194,11 +198,13 @@ const verifyDecisionBindingEvidence = (
   document: CycleDecisionDocument,
 ): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
   const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
+  const rows = decisionSourceRows(document)
   if (binding === undefined || binding.schemaVersion === 'bayn.reconciled-position-liquidation-binding.v1')
     return Effect.succeed({})
   if (
     marketData === undefined ||
-    !('decisionMarketDataRows' in document) ||
+    document.mode === Authority.Observe ||
+    rows === undefined ||
     (binding.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
       binding.schemaVersion !== 'bayn.execution-market-data-binding.v4')
   )
@@ -208,7 +214,7 @@ const verifyDecisionBindingEvidence = (
         message: 'Decision requires canonical market data and persisted input rows',
       }),
     )
-  const inputs = [{ binding, rows: document.decisionMarketDataRows }]
+  const inputs = [{ binding, rows }]
   const pricing = document.bindings.executionMarketData
   if (pricing !== undefined && pricing.snapshotId !== binding.snapshotId) {
     if (
@@ -914,9 +920,10 @@ export const mutationDecisionBuilder =
     input: ObserveAutonomousCycleInput,
     preparation: ObserveStartupPreparation,
     policy: Policy,
+    buildDecision: typeof buildMutationShadowCycleDecision,
   ): RecoveryFirstDecisionBuilder =>
   (cycle, reconcile, reconcileForPricing) =>
-    buildMutationShadowCycleDecision({
+    buildDecision({
       ...mutationDecisionInput(input, preparation, policy, cycle, reconcile),
       ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
     }).pipe(Effect.mapError(decisionBuildError))
