@@ -362,6 +362,8 @@ export const storageBinding = (
   path: plan.targetPath,
 })
 
+const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'"
+
 export const copyScript = (clusterId: string, nodeId: number) =>
   [
     'set -eu',
@@ -409,14 +411,14 @@ export const copyScript = (clusterId: string, nodeId: number) =>
     'with open(output,"w",encoding="utf-8") as stream: json.dump(result,stream,separators=(",",":"))',
     'PY',
     'python3 /tmp/kafka-migration-check.py /source ' +
-      JSON.stringify(clusterId) +
+      shellQuote(clusterId) +
       ' ' +
       String(nodeId) +
       ' /tmp/source-manifest.json',
     'cp -a --sparse=always /source/. /target/',
     'sync',
     'python3 /tmp/kafka-migration-check.py /target ' +
-      JSON.stringify(clusterId) +
+      shellQuote(clusterId) +
       ' ' +
       String(nodeId) +
       ' /tmp/target-manifest.json',
