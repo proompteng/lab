@@ -4905,6 +4905,22 @@ describe('OBSERVE runtime composition', () => {
     return { exit, events, snapshotRequests, refreshes, initial, refreshed, reconciliationReads }
   }
 
+  test('turnover exhausted during inference waits without constructing a zero-sized target plan', async () => {
+    const fixture = await executionLifecycleFixture()
+    const result = await buildEntryWithHeadroom({
+      brokerMaximumAgeMs: 40_000,
+      transform: (facts) => withAdmissionTurnover(facts, fixture.policy),
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('Exhausted turnover must not produce an entry decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: DecisionReadinessReason.TurnoverBudgetExhausted },
+    })
+    expect(result.events).toEqual(['signal', 'inference-committed', 'refresh-start', 'refresh-committed'])
+    expect(result.snapshotRequests).toHaveLength(1)
+  })
+
   test('a funded equity entry binds the real higher ask to risk while capping its DAY order', async () => {
     const result = await buildEntryWithHeadroom({ brokerMaximumAgeMs: 40_000, pricingAskIncrease: 0.01 })
     if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
@@ -7825,7 +7841,47 @@ test.each([
   }
 })
 
-test('account drawdown does not suppress read-only strategy observations', async () => {
+test.each([0n, 1n])('exhausted turnover blocks entry inference at %s excess micros', async (excess) => {
+  const fixture = await executionLifecycleFixture()
+  const original = reconciliationResult(generationHash, Authority.Execution)
+  const facts = {
+    ...original,
+    riskContext: {
+      ...original.riskContext,
+      dailyTradedNotionalMicros: (BigInt(fixture.policy.maxDailyTradedNotionalMicros) + excess).toString(),
+    },
+  }
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* Effect.result(
+        buildMutationShadowCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixture.preparation.executionModel,
+          policy: fixture.policy,
+          strategy: fixtureRuntime,
+          reconcile: Effect.succeed(facts),
+          intradayMarketData: {
+            ...fixture.input.intradayMarketData,
+            loadSnapshot: () => Effect.die('Exhausted turnover must not load candidate data or start inference'),
+          },
+        }).pipe(Effect.mapError(decisionBuildError)),
+      )
+    }).pipe(
+      (program) => provideDecisionServices(program, () => Effect.die('Exhausted turnover must not read the calendar')),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      failure: 'not-ready',
+      readiness: { reason: DecisionReadinessReason.TurnoverBudgetExhausted },
+    })
+})
+
+test('account drawdown and exhausted turnover do not suppress read-only strategy observations', async () => {
   const fixture = await executionLifecycleFixture()
   const original = reconciliationResult(generationHash, Authority.Observe)
   const policy = await Effect.runPromise(
@@ -7851,6 +7907,7 @@ test('account drawdown does not suppress read-only strategy observations', async
                 BigInt(policy.maxDrawdownMicros) +
                 1n
               ).toString(),
+              dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros,
             },
           }),
           intradayMarketData: {
@@ -7878,6 +7935,41 @@ const withAdmissionDrawdown = (facts: ReconciliationPassResult, policy: Policy):
       1n
     ).toString(),
   },
+})
+
+const withAdmissionTurnover = (facts: ReconciliationPassResult, policy: Policy): ReconciliationPassResult => ({
+  ...facts,
+  riskContext: { ...facts.riskContext, dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros },
+})
+
+test('flat turnover admission blocks at the exact cap and resumes from fresh capacity', async () => {
+  const policy = await Effect.runPromise(
+    Effect.fromResult(strategyExecutionRiskPolicy(accountId, currentIntradayRuntime)),
+  )
+  const original = reconciliationResultAt(evaluatedAt)
+  for (const excess of [-1n, 0n, 1n]) {
+    const facts = {
+      ...original,
+      riskContext: {
+        ...original.riskContext,
+        dailyTradedNotionalMicros: (BigInt(policy.maxDailyTradedNotionalMicros) + excess).toString(),
+      },
+    }
+    const result = protectedAccountAdmission(facts, policy, generationHash, evaluatedAt)
+    if (excess < 0n) expect(result).toBeUndefined()
+    else
+      expect(result).toMatchObject({
+        outcome: 'ADMISSION_WAITING',
+        readiness: { reason: DecisionReadinessReason.TurnoverBudgetExhausted },
+        admissionProtection: {
+          inputs: {
+            schemaVersion: 'bayn.account-protection-inputs.v2',
+            dailyTradedNotionalMicros: facts.riskContext.dailyTradedNotionalMicros,
+          },
+        },
+      })
+  }
+  expect(protectedAccountAdmission(original, policy, generationHash, evaluatedAt)).toBeUndefined()
 })
 
 test('flat admission protection preserves exact limit boundaries and resumes from new preflight facts', async () => {
@@ -8039,9 +8131,13 @@ test('admission protection requires exact current flat, settled and generation-b
   expect(protectedAccountAdmission(priorDate, policy, generationHash, '2026-09-05T04:00:00.000Z')).toBeUndefined()
 })
 
-test.each(['empty', 'expired', 'bound'] as const)(
-  'protected %s account preserves recovery priority without new cycle writes',
-  async (kind) => {
+test.each(
+  (['empty', 'expired', 'bound'] as const).flatMap((kind) =>
+    (['drawdown', 'turnover'] as const).map((protection) => ({ kind, protection })),
+  ),
+)(
+  '$protection protected $kind account preserves recovery priority without new cycle writes',
+  async ({ kind, protection }) => {
     const fixture = await executionLifecycleFixture()
     const services = makeExactReconciliationServices(Authority.Execution)
     const at = kind === 'expired' ? utcInstantFromEpochMillis(unusedEntryExpiresAt(cycle)) : evaluatedAt
@@ -8112,7 +8208,10 @@ test.each(['empty', 'expired', 'bound'] as const)(
                 },
                 { read: forbidden(), refresh: forbidden() },
                 { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
-                withAdmissionDrawdown(reconciliationResultAt(observedAt), fixture.policy),
+                (protection === 'drawdown' ? withAdmissionDrawdown : withAdmissionTurnover)(
+                  reconciliationResultAt(observedAt),
+                  fixture.policy,
+                ),
               ),
             ),
           )

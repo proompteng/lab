@@ -1,5 +1,13 @@
 # Bayn
 
+Entry admission checks the existing daily turnover limit before candidate discovery or paid inference. A fresh,
+exact, flat account at or above that limit reports `TURNOVER_BUDGET_EXHAUSTED` with reproducible account-protection
+evidence and waits for fresh session capacity. An already acquired entry cycle repeats the check before inference
+and after pricing reconciliation, so a later fill cannot become a zero-sized `TARGETS_SATISFIED` decision. Bound
+positions, unsettled orders and risk-reducing exits remain with their existing recovery owners; read-only strategy
+observations remain available. The configured turnover cap and final broker risk checks are unchanged. Historical
+v1 account-protection inputs retain their original loss/drawdown semantics; v2 adds the recorded turnover counter.
+
 Broker read timing separates `bayn.alpaca.read.headers` (request execution through response headers, including
 configured transport retries) from `bayn.alpaca.read.body` (body transfer and JSON parsing). Both remain inside the
 original total read deadline and use only the existing finite operation/dependency/outcome labels. A header-stage
