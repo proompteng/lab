@@ -52,7 +52,10 @@ jobs:
       - name: Install script dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
       - name: Validate configuration and release selection
-        run: bun test packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts packages/scripts/src/restate/release-inputs.test.ts
+        run: |
+          bun test packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts packages/scripts/src/restate/release-inputs.test.ts \
+            packages/scripts/src/ci/__tests__/affected-inputs.test.ts packages/scripts/src/shared/__tests__/kargo.test.ts
+          bun packages/scripts/src/ci/generate-observability-workflows.ts --check
       - name: Select build or qualified runtime reuse
         id: plan
         run: bun packages/scripts/src/restate/release-inputs.ts
@@ -165,7 +168,7 @@ jobs:
 
   publish:
     if: >-
-      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.changes.result == 'success' && needs.changes.outputs.changed == 'true' &&
       needs.cache-proof.result == 'success' &&
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'))
