@@ -8,8 +8,46 @@ and completed passing CI. It skips drafts, conflicts, and PRs authored by
 existing approvals are reconciled per commit. See the
 [GitOps credential configuration](../../argocd/applications/froussard/README.md#github-identity).
 
+Completion webhooks enqueue a signed command in Restate before returning success.
+`FroussardApprovals` serializes commands by lowercase repository and PR number. Its
+dedicated worker persists the pending GitHub review ID before submission. Retries
+read that exact ID and reuse an accepted approval even if GitHub's review list is
+stale. It rechecks readiness before submission and retries transient GitHub read
+and write failures. The webhook server has no direct approval writer.
+
+The worker runs `bun dist/approval-server.mjs` on port 9080 and requires
+`GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, and `RESTATE_REQUEST_IDENTITY_KEYS`.
+The public server sends commands to `FROUSSARD_RESTATE_INGRESS`, defaulting to
+the shared cluster ingress. Both processes use the existing Froussard credentials;
+commands contain no GitHub credential. Restate request identity and a command HMAC
+restrict the worker to authenticated deliveries.
+
+Run `bun run test:restate` with Docker available to test concurrent deliveries
+through two SDK processes, lost GitHub responses, SDK process crashes, an abrupt
+Restate restart, and readiness changes after draft creation. These tests use a
+real isolated Restate 1.8.1 server and a local GitHub fixture.
+
 Froussard uses Effect 4.1.2 for services, schemas, concurrency, and resource lifetimes. Its
 Agents client uses the same version. There is no Effect 3 adapter in the runtime.
+
+Telemetry uses Effect's native `OtlpTracer` and `OtlpMetrics` in the application's managed
+runtime. It exports batched OTLP/HTTP JSON to Tempo and the existing Alloy-to-Mimir pipeline.
+Froussard has no dependency on `@proompteng/otel` and does not initialize a separate SDK.
+The runtime owns exporter shutdown and flushing. Effect handles transient HTTP retries;
+failed export attempts are logged, and sustained receiver outages can still lose telemetry.
+
+Enable the signals with `OTEL_TRACES_EXPORTER=otlp` and `OTEL_METRICS_EXPORTER=otlp`.
+Configure full HTTP URLs with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. Effect reads the standard OTLP header, batch and interval
+settings. Each HTTP attempt has a 10-second timeout. The signal-specific OTLP timeout settings
+bound shutdown flushing. Legacy `LGTM_*` trace/metric endpoints and gRPC protocol selection
+are removed. Loki logging retains its existing configuration.
+
+Request spans cover handler execution and include response status and a bounded route name.
+They accept upstream trace context without recording query strings, bodies or credentials.
+Native metrics include HTTP request counts/duration and the existing Linear webhook counters
+and delivery latency histogram. Resource metadata includes the service, namespace, pod and
+source commit. Verify trace IDs in Tempo and matching pod metric series in Mimir after rollout.
 
 Froussard is a TypeScript service running on Bun (Elysia HTTP runtime) that receives webhook
 deliveries (GitHub, Linear issues, and Discord slash commands), verifies signatures, and forwards

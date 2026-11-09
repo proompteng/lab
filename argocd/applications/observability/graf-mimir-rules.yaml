@@ -3103,14 +3103,14 @@ data:
               absent(up{job="restate-server", namespace="restate", service="restate"})
               or
               sum(up{job="restate-server", namespace="restate", service="restate"}) < 3
-            for: 2m
+            for: 5m
             labels:
-              severity: critical
+              severity: warning
               service: restate
               notify: email
             annotations:
               summary: Restate server metrics are unavailable
-              description: Fewer than three Restate NodeCtl metrics endpoints have been reachable for two minutes.
+              description: Fewer than three Restate NodeCtl metrics endpoints have been reachable for five minutes. Check replica recovery; missing metadata quorum has a separate critical alert.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateNodeHealthDegraded
             expr: |
@@ -3118,14 +3118,14 @@ data:
                 job="restate-server",
                 state=~"dead|suspect|failing_over"
               }) > 0
-            for: 2m
+            for: 5m
             labels:
-              severity: critical
+              severity: warning
               service: restate
               notify: email
             annotations:
               summary: Restate failure detector reports an unhealthy node
-              description: At least one Restate node has remained dead, suspect, or failing over for two minutes.
+              description: At least one Restate node has remained dead, suspect, or failing over for five minutes. Check replica recovery; missing metadata quorum has a separate critical alert.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateMetadataQuorumUnavailable
             expr: |
@@ -4059,22 +4059,6 @@ data:
                   application="tengri"
                 }
               )
-          - alert: TengriArgoApplicationDegraded
-            expr: |
-              argocd_app_info{
-                name="tengri",
-                health_status!="Healthy"
-              } == 1
-            for: 5m
-            labels:
-              severity: critical
-              team: platform
-              service: tengri
-              notify: email
-            annotations:
-              summary: The Tengri Argo CD application is degraded
-              description: Argo CD has reported the Tengri application unhealthy for five minutes.
-              runbook_url: docs/tengri/operations.md
           - alert: TengriMetricsUnavailable
             expr: |
               (
@@ -4168,7 +4152,7 @@ data:
                     namespace="tengri"
                   }[15m]
                 )
-              ) > 2
+              ) >= 3
             for: 5m
             labels:
               severity: warning

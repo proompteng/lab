@@ -938,6 +938,7 @@ const compileObserveStrategyDecision = <R>(
         strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
           ? JevBatchPlanVersion.Ablation
           : JevBatchPlanVersion.V8,
+        { admissionDeadlineAt: admissionExpiresAt },
       )
       const evidence = yield* Effect.fromResult(
         Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),

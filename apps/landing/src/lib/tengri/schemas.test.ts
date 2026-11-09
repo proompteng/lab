@@ -38,10 +38,9 @@ describe('Tengri BFF action schema', () => {
       }).success,
     ).toBe(false)
   })
-  test('accepts model options on conversation operations and rejects invalid choices', () => {
+  test('accepts model options when creating threads or sending turns and rejects invalid choices', () => {
     for (const action of [
       { action: 'create-thread', agentId: 'agent-test' },
-      { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' },
       {
         action: 'send-turn',
         operationId: '11111111-1111-4111-8111-111111111111',
@@ -56,6 +55,13 @@ describe('Tengri BFF action schema', () => {
       expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol\n' }).success).toBe(false)
       expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'unbounded' }).success).toBe(false)
     }
+  })
+
+  test('history reads accept only the conversation identity', () => {
+    const action = { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' }
+    expect(tengriActionSchema.safeParse(action).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol' }).success).toBe(false)
+    expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'high' }).success).toBe(false)
   })
 
   test('editor logout revocation cannot select another owner', () => {

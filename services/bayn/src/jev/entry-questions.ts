@@ -3,13 +3,19 @@ import { BigDecimal, Result, Schema } from 'effect'
 import { SymbolSchema } from '../schemas'
 import { instrumentMarket, MarketKind } from '../instruments'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessmentsMaterial } from './chart-questions'
-import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
+import type { ChartAssessmentsMaterial } from './/chart-assessments'
+import {
+  JevContractError,
+  jevModel,
+  retainedJevModel,
+  prepareJevRequest,
+  type JevRequest,
+  type JevResponse,
+} from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
+import { entryJudgmentThresholds } from './judgment-policy'
 import { WebullEntryContextSchema, webullEntryContextPolicy } from './webull-entry-context'
-
-export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
 
 const questionNames = (setup: EntrySetup, market: MarketKind) => {
   const setupName = setup === EntrySetup.SupportRecovery ? 'support_recovery' : 'base_breakout'
@@ -82,7 +88,7 @@ enum StructureCloseLocation {
 
 export const retainedEntryJudgmentPolicy = {
   stateDefinition: 'bayn.jev-proposal-evidence.v1',
-  model: jevModel,
+  model: retainedJevModel,
   thresholds: entryJudgmentThresholds,
   evidenceInstructions: jevInstructions.entry,
   markets: {
@@ -93,6 +99,7 @@ export const retainedEntryJudgmentPolicy = {
 
 export const entryJudgmentPolicy = {
   ...retainedEntryJudgmentPolicy,
+  model: jevModel,
   stateDefinition: entryEvidenceStateDefinition,
   evidenceInstructions:
     jevInstructions.entry +
@@ -101,6 +108,7 @@ export const entryJudgmentPolicy = {
 }
 
 export const makeEntryJudgmentRequest = (input: {
+  readonly model?: JevRequest['model']
   readonly numericalState: Readonly<Record<string, Schema.Json>>
   readonly chart: NativeChartEvidence
   readonly assessments: ChartAssessmentsMaterial
@@ -233,7 +241,7 @@ export const makeEntryJudgmentRequest = (input: {
         }
     }
     return yield* prepareJevRequest({
-      model: jevModel,
+      model: input.model ?? jevModel,
       state: {
         schemaVersion:
           state.schemaVersion === 'bayn.jev-entry-state.v24'

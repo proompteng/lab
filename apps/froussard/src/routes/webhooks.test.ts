@@ -171,9 +171,11 @@ describe('createWebhookHandler', () => {
 
   const webhooks = {
     verify: vi.fn(async () => true),
+    sign: vi.fn(async () => 'sha256=' + 'a'.repeat(64)),
   }
 
   const baseConfig: WebhookConfig = {
+    restate: { ingressOrigin: 'http://restate.test' },
     idempotency: {
       ttlMs: 60_000,
       maxEntries: 200,
@@ -235,6 +237,7 @@ describe('createWebhookHandler', () => {
 
   const provideRuntime = () => {
     const appConfig: AppConfig = {
+      restate: baseConfig.restate,
       idempotency: {
         ttlMs: baseConfig.idempotency.ttlMs,
         maxEntries: baseConfig.idempotency.maxEntries,
@@ -313,7 +316,6 @@ describe('createWebhookHandler', () => {
       fetchPullRequest: githubServiceMock.fetchPullRequest,
       markPullRequestReadyForReview: githubServiceMock.markPullRequestReadyForReview,
       createIssueComment: githubServiceMock.createIssueComment,
-      approvePullRequest: githubServiceMock.approvePullRequest,
       listCommitPullRequests: githubServiceMock.listCommitPullRequests,
       listPullRequestReviewThreads: githubServiceMock.listPullRequestReviewThreads,
       listPullRequestBlockingChecks: githubServiceMock.listPullRequestBlockingChecks,
@@ -324,7 +326,10 @@ describe('createWebhookHandler', () => {
 
   beforeEach(() => {
     publishedMessages = []
-    fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'accepted' }), { status: 202 }))
+    fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ status: 'Accepted', invocationId: 'invocation-test' }), { status: 202 }),
+    )
     vi.stubGlobal('fetch', fetchMock)
     mockVerifyDiscordRequest.mockReset()
     mockVerifyDiscordRequest.mockResolvedValue(true)
@@ -378,9 +383,6 @@ describe('createWebhookHandler', () => {
         Effect.succeed({ ok: true }),
       ),
       createIssueComment: vi.fn<GithubServiceDefinition['createIssueComment']>(() => Effect.succeed({ ok: true })),
-      approvePullRequest: vi.fn<GithubServiceDefinition['approvePullRequest']>(() =>
-        Effect.succeed({ ok: true, reviewUrl: 'https://github.com/owner/repo/pull/9#pullrequestreview-1' }),
-      ),
       listPullRequestReviewThreads: vi.fn<GithubServiceDefinition['listPullRequestReviewThreads']>(() =>
         Effect.succeed({ ok: true as const, threads: [] }),
       ),
@@ -498,126 +500,6 @@ describe('createWebhookHandler', () => {
         expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 99 }))
       },
     },
-    {
-      name: 'submits ready approval when clean pull request updates',
-      event: 'pull_request',
-      action: 'edited',
-      payload: {
-        action: 'edited',
-        repository: { full_name: 'owner/repo' },
-        sender: { login: 'user' },
-        pull_request: {
-          number: 9,
-          head: { ref: 'codex/issue-9-clean', sha: 'cleansha' },
-          base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-          user: { login: 'USER' },
-        },
-      },
-      setup: () => {
-        githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-          Effect.succeed({
-            ok: true as const,
-            pullRequest: {
-              number: 9,
-              title: 'Clean updates',
-              body: '',
-              htmlUrl: 'https://github.com/owner/repo/pull/9',
-              draft: false,
-              merged: false,
-              state: 'open',
-              additions: 12,
-              deletions: 4,
-              changedFiles: 3,
-              headRef: 'codex/issue-9-clean',
-              headSha: 'cleansha',
-              baseRef: 'main',
-              authorLogin: 'user',
-              mergeableState: 'clean',
-            },
-          }),
-        )
-        githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
-          Effect.succeed({ ok: true as const, threads: [] }),
-        )
-        githubServiceMock.listPullRequestBlockingChecks.mockReturnValueOnce(
-          Effect.succeed({ ok: true as const, checks: [] }),
-        )
-        githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: true }))
-      },
-      assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
-        expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            repositoryFullName: 'owner/repo',
-            issueNumber: 9,
-            reactionContent: '+1',
-          }),
-        )
-        expect(githubServiceMock.approvePullRequest).toHaveBeenCalledWith(
-          expect.objectContaining({ body: expect.stringContaining(':shipit:') }),
-        )
-      },
-    },
-    {
-      name: 'submits ready approval for non-codex branches once thumbs up reaction exists',
-      event: 'pull_request',
-      action: 'edited',
-      payload: {
-        action: 'edited',
-        repository: { full_name: 'owner/repo' },
-        sender: { login: 'other-user' },
-        pull_request: {
-          number: 11,
-          head: { ref: 'feature/new-ui', sha: 'xyz789' },
-          base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-          user: { login: 'OTHER-USER' },
-        },
-      },
-      setup: () => {
-        githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-          Effect.succeed({
-            ok: true as const,
-            pullRequest: {
-              number: 11,
-              title: 'Feature work',
-              body: '',
-              htmlUrl: 'https://github.com/owner/repo/pull/11',
-              draft: false,
-              merged: false,
-              state: 'open',
-              additions: 8,
-              deletions: 2,
-              changedFiles: 1,
-              headRef: 'feature/new-ui',
-              headSha: 'xyz789',
-              baseRef: 'main',
-              authorLogin: 'other-user',
-              mergeableState: 'clean',
-            },
-          }),
-        )
-        githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
-          Effect.succeed({ ok: true as const, threads: [] }),
-        )
-        githubServiceMock.listPullRequestBlockingChecks.mockReturnValueOnce(
-          Effect.succeed({ ok: true as const, checks: [] }),
-        )
-        githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: true }))
-      },
-      assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
-        expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            repositoryFullName: 'owner/repo',
-            issueNumber: 11,
-            reactionContent: '+1',
-          }),
-        )
-        expect(githubServiceMock.approvePullRequest).toHaveBeenCalledWith(
-          expect.objectContaining({ body: expect.stringContaining(':shipit:') }),
-        )
-      },
-    },
   ]
 
   it.each([
@@ -632,9 +514,6 @@ describe('createWebhookHandler', () => {
     ['pull_request_review', 'submitted', { pull_request: { number: 9 } }],
     ['pull_request_review_thread', 'resolved', { pull_request: { number: 9 } }],
   ] as const)('rechecks approval on %s %s without a PR edit', async (event, action, fields) => {
-    webhookScenarios
-      .find((scenario) => scenario.name === 'submits ready approval when clean pull request updates')
-      ?.setup?.()
     githubServiceMock.listCommitPullRequests.mockReturnValue(Effect.succeed({ ok: true, pullNumbers: [9] }))
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const response = await handler(
@@ -642,41 +521,20 @@ describe('createWebhookHandler', () => {
       'github',
     )
     expect(response.status).toBe(202)
-    expect(githubServiceMock.approvePullRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ pullNumber: 9, headSha: 'cleansha' }),
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(URL),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'idempotency-key': expect.any(String) }),
+        body: expect.stringContaining('"pullNumber":9'),
+      }),
     )
+    expect(githubServiceMock.fetchPullRequest).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(1)
   })
 
-  it.each(['queued', 'in_progress', 'failure'])('does not approve while CI is %s', async (conclusion) => {
-    webhookScenarios
-      .find((scenario) => scenario.name === 'submits ready approval when clean pull request updates')
-      ?.setup?.()
-    githubServiceMock.listPullRequestBlockingChecks.mockReset()
-    githubServiceMock.listPullRequestBlockingChecks.mockReturnValue(
-      Effect.succeed({ ok: true, checks: [{ name: 'CI', conclusion }] }),
-    )
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const response = await handler(
-      buildRequest(
-        { repository: { full_name: 'owner/repo' }, action: 'edited', pull_request: { number: 9 } },
-        scenarioHeaders('pull_request', 'edited'),
-      ),
-      'github',
-    )
-    expect(response.status).toBe(202)
-    expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
-  })
-
-  it('returns failure for a rejected approval and permits redelivery', async () => {
-    const setup = () =>
-      webhookScenarios
-        .find((scenario) => scenario.name === 'submits ready approval when clean pull request updates')
-        ?.setup?.()
-    setup()
-    githubServiceMock.approvePullRequest.mockReturnValueOnce(
-      Effect.succeed({ ok: false, reason: 'http-error', status: 503 }),
-    )
+  it('returns failure when durable enqueue is rejected and permits redelivery', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const request = () =>
       buildRequest(
@@ -684,22 +542,21 @@ describe('createWebhookHandler', () => {
         scenarioHeaders('pull_request', 'edited'),
       )
     expect((await handler(request(), 'github')).status).toBe(500)
-    setup()
     expect((await handler(request(), 'github')).status).toBe(202)
-    expect(githubServiceMock.approvePullRequest).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('bounds concurrent GitHub API calls across deliveries to four', async () => {
     const release = Promise.withResolvers<void>()
     let active = 0
     let peak = 0
-    githubServiceMock.fetchPullRequest.mockImplementation(() =>
+    githubServiceMock.listCommitPullRequests.mockImplementation(() =>
       Effect.promise(async () => {
         active++
         peak = Math.max(peak, active)
         await release.promise
         active--
-        return { ok: false as const, reason: 'not-found' as const }
+        return { ok: true as const, pullNumbers: [] }
       }),
     )
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
@@ -708,10 +565,10 @@ describe('createWebhookHandler', () => {
         buildRequest(
           {
             repository: { full_name: 'owner/repo' },
-            action: 'edited',
-            pull_request: { number: number + 1 },
+            action: 'completed',
+            check_run: { head_sha: String(number) },
           },
-          { ...scenarioHeaders('pull_request', 'edited'), 'x-github-delivery': `concurrent-${number}` },
+          { ...scenarioHeaders('check_run', 'completed'), 'x-github-delivery': `concurrent-${number}` },
         ),
         'github',
       ),
@@ -723,7 +580,7 @@ describe('createWebhookHandler', () => {
     }
     expect((await Promise.all(deliveries)).every((response) => response.status === 202)).toBe(true)
     expect(peak).toBe(4)
-    expect(githubServiceMock.fetchPullRequest).toHaveBeenCalledTimes(12)
+    expect(githubServiceMock.listCommitPullRequests).toHaveBeenCalledTimes(12)
   })
 
   it.each(webhookScenarios)('$name', async ({ event, action, payload, setup, assert, configOverride }) => {
@@ -1017,281 +874,6 @@ describe('createWebhookHandler', () => {
         }),
       }),
     )
-  })
-
-  it('submits a ready approval when a clean Codex pull request updates outside forced review actions', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 9,
-          title: 'Clean updates',
-          body: '',
-          htmlUrl: 'https://github.com/owner/repo/pull/9',
-          draft: false,
-          merged: false,
-          state: 'open',
-          additions: 24,
-          deletions: 6,
-          changedFiles: 4,
-          headRef: 'codex/issue-9-clean',
-          headSha: 'cleansha',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'clean',
-        },
-      }),
-    )
-
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'edited',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'user' },
-      pull_request: {
-        number: 9,
-        head: { ref: 'codex/issue-9-clean', sha: 'cleansha' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request',
-        'x-github-delivery': 'delivery-review-clean-update',
-        'x-github-action': 'edited',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
-
-    expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repositoryFullName: 'owner/repo',
-        issueNumber: 9,
-        reactionContent: '+1',
-      }),
-    )
-    expect(githubServiceMock.approvePullRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repositoryFullName: 'owner/repo',
-        pullNumber: 9,
-        body: expect.stringContaining(':shipit:'),
-      }),
-    )
-    expect(publishedMessages).toHaveLength(1)
-    expect(publishedMessages.some((message) => message.topic === 'raw-topic')).toBe(true)
-  })
-
-  it('does not post a codex review request comment for large pull requests', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 14,
-          title: 'Large refactor',
-          body: '',
-          htmlUrl: 'https://github.com/owner/repo/pull/14',
-          draft: false,
-          merged: false,
-          state: 'open',
-          additions: 700,
-          deletions: 350,
-          changedFiles: 18,
-          headRef: 'feature/big-change',
-          headSha: 'bigsha',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'clean',
-        },
-      }),
-    )
-    githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: false }))
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'edited',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'user' },
-      pull_request: {
-        number: 14,
-        head: { ref: 'feature/big-change', sha: 'bigsha' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(buildRequest(payload, scenarioHeaders('pull_request', 'edited')), 'github')
-
-    expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
-    expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
-  })
-
-  it('does not submit a ready approval when thumbs up reaction is absent', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 10,
-          title: 'Needs thumbs up',
-          body: '',
-          htmlUrl: 'https://github.com/owner/repo/pull/10',
-          draft: false,
-          merged: false,
-          state: 'open',
-          additions: 18,
-          deletions: 3,
-          changedFiles: 2,
-          headRef: 'codex/issue-10-clean',
-          headSha: 'cleansha2',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'clean',
-        },
-      }),
-    )
-    githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: false }))
-
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'edited',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'user' },
-      pull_request: {
-        number: 10,
-        head: { ref: 'codex/issue-10-clean', sha: 'cleansha2' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(buildRequest(payload, scenarioHeaders('pull_request', 'edited')), 'github')
-
-    expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
-    expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repositoryFullName: 'owner/repo',
-        issueNumber: 10,
-        reactionContent: '+1',
-      }),
-    )
-    expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
-  })
-
-  it('does not submit a ready approval when merge conflicts are detected', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 12,
-          title: 'Resolve conflicts',
-          body: '',
-          htmlUrl: 'https://github.com/owner/repo/pull/12',
-          draft: false,
-          merged: false,
-          state: 'open',
-          additions: 22,
-          deletions: 5,
-          changedFiles: 3,
-          headRef: 'codex/issue-12-conflict',
-          headSha: 'conflictsha',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'dirty',
-        },
-      }),
-    )
-
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'synchronize',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'user' },
-      pull_request: {
-        number: 12,
-        head: { ref: 'codex/issue-12-conflict', sha: 'conflictsha' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request',
-        'x-github-delivery': 'delivery-review-conflict',
-        'x-github-action': 'synchronize',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(response.status).toBe(202)
-    const body = await response.json()
-    expect(body).toMatchObject({ codexStageTriggered: null })
-
-    expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
-    expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
-  })
-
-  it('does not submit a ready approval for draft pull requests', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 6,
-          title: 'Ready PR',
-          body: '',
-          htmlUrl: 'https://github.com/owner/repo/pull/6',
-          draft: true,
-          merged: false,
-          state: 'open',
-          additions: 30,
-          deletions: 8,
-          changedFiles: 4,
-          headRef: 'codex/issue-6-ready',
-          headSha: 'def456',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'clean',
-        },
-      }),
-    )
-
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'synchronize',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'user' },
-      pull_request: {
-        number: 6,
-        head: { ref: 'codex/issue-6-ready', sha: 'def456' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request',
-        'x-github-delivery': 'delivery-undraft-1',
-        'x-github-action': 'synchronize',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(response.status).toBe(202)
-    expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
-    expect(publishedMessages).toHaveLength(1)
-    expect(publishedMessages.some((message) => message.topic === 'raw-topic')).toBe(true)
   })
 
   it('returns 401 when Discord signature verification fails', async () => {

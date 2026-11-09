@@ -63,6 +63,7 @@ const fixture = (
   )
   const baseProtocol = {
     ...current.request.protocol,
+    model: 'jev-1.13.0' as const,
     entrySignalPolicy: 'openai-decisions-then-jev' as const,
     executionModel:
       schemaVersion === 'bayn.jev.protocol.v36'

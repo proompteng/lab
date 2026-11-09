@@ -840,6 +840,11 @@
   },
   {
     "surface": "bff_http",
+    "operation": "GET /api/tengri/generated-images",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff_http",
     "operation": "GET /api/tengri/attachments",
     "action": "ACTION_FILES_OBSERVE"
   },

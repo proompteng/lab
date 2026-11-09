@@ -255,25 +255,12 @@ jobs:
             ' "${manifest_path}"
           }
 
-          assert_multi_arch_image() {
-            local image_ref="$1"
-            local image_digest
-
-            image_digest="${image_ref#*@}"
-            if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Release manifest image is not digest pinned: ${image_ref}"
-              exit 1
-            fi
-
-            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
-          }
-
           verify_image_contract() {
             local label="$1"
             local manifest_path="$2"
             local env_name="$3"
             local image_name="$4"
-            local source_sha image_ref
+            local source_sha image_ref image_digest base_source_sha base_image_ref
 
             source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
             if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
@@ -287,7 +274,24 @@ jobs:
               exit 1
             fi
 
-            assert_multi_arch_image "${image_ref}"
+            image_digest="${image_ref#*@}"
+            if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Release manifest image is not digest pinned: ${image_ref}"
+              exit 1
+            fi
+
+            # Configuration changes publish a new cohort; retention may have
+            # already removed an unchanged older image from the registry.
+            if git cat-file -e "${diff_base}:${manifest_path}" 2>/dev/null; then
+              base_source_sha="$(git show "${diff_base}:${manifest_path}" | resolve_source_sha /dev/stdin "${env_name}")"
+              base_image_ref="$(git show "${diff_base}:${manifest_path}" | resolve_image_ref /dev/stdin "${image_name}")"
+              if [ "${source_sha}" = "${base_source_sha}" ] && [ "${image_ref}" = "${base_image_ref}" ]; then
+                echo "${label} image and source SHA are unchanged; no image receipt needs revalidation."
+                return
+              fi
+            fi
+
+            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
             echo "${label} release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
           }
 

@@ -7,6 +7,8 @@ resources:
   - linear-webhook-topic.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml
+  - approval-worker.yaml
+  - approval-networkpolicy.yaml
   - knative-host-middleware.yaml
   - ingressroute.yaml
 patches:

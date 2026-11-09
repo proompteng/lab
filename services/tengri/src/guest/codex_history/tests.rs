@@ -99,10 +99,7 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
     .await;
     let mut history = fixture
         .client
-        .resume_codex_thread(
-            "thread-one",
-            &CodexOptions::parse("gpt-6.1-sol".into(), "high".into()).unwrap(),
-        )
+        .read_codex_thread("thread-one")
         .await
         .unwrap();
     let pages = history.by_ref().try_collect::<Vec<_>>().await.unwrap();
@@ -128,11 +125,7 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
     assert_eq!(requests.len(), 5);
     assert_eq!(
         requests[0],
-        json!({"method":"thread/resume", "params": {
-            "threadId":"thread-one", "cwd":"/workspace", "runtimeWorkspaceRoots":["/workspace"],
-            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true,
-            "model":"gpt-6.1-sol", "config":{"model_reasoning_effort":"high"}
-        }})
+        json!({"method":"thread/read", "params": {"threadId":"thread-one", "includeTurns":false}})
     );
     assert_eq!(
         requests[1],
@@ -163,7 +156,7 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
     .await;
     let mut history = fixture
         .client
-        .resume_codex_thread("thread-one", &CodexOptions::default())
+        .read_codex_thread("thread-one")
         .await
         .unwrap();
     let page = history.next().await.unwrap().unwrap();
@@ -173,11 +166,14 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
     assert!(history.next().await.is_none());
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0]["params"]["excludeTurns"], true);
-    assert_eq!(requests[0]["params"]["model"], Value::Null);
-    assert_eq!(requests[1]["method"], "thread/resume");
-    assert_eq!(requests[1]["params"]["excludeTurns"], false);
-    assert_eq!(requests[1]["params"]["model"], Value::Null);
+    assert_eq!(
+        requests[0],
+        json!({"method":"thread/read", "params": {"threadId":"thread-one", "includeTurns":false}})
+    );
+    assert_eq!(
+        requests[1],
+        json!({"method":"thread/read", "params": {"threadId":"thread-one", "includeTurns":true}})
+    );
 }
 
 #[tokio::test]
@@ -228,7 +224,7 @@ async fn rejects_broken_page_contracts_without_returning_partial_history() {
         assert!(
             fixture
                 .client
-                .resume_codex_thread("thread-one", &CodexOptions::default())
+                .read_codex_thread("thread-one")
                 .await
                 .unwrap()
                 .try_collect::<Vec<_>>()
@@ -251,7 +247,7 @@ async fn propagates_upstream_failure_and_does_not_fall_back_to_deprecated_hydrat
     assert!(matches!(
         fixture
             .client
-            .resume_codex_thread("thread-one", &CodexOptions::default())
+            .read_codex_thread("thread-one")
             .await
             .unwrap()
             .try_collect::<Vec<_>>()
@@ -276,7 +272,7 @@ async fn restores_history_larger_than_one_message_when_each_page_is_bounded() {
     .await;
     let pages = fixture
         .client
-        .resume_codex_thread("thread-one", &CodexOptions::default())
+        .read_codex_thread("thread-one")
         .await
         .unwrap()
         .try_collect::<Vec<_>>()
@@ -305,10 +301,7 @@ async fn rejects_mismatched_thread_identity_and_unknown_history_mode() {
         }
         let fixture = fixture(vec![reply(10, response)]).await;
         assert!(matches!(
-            fixture
-                .client
-                .resume_codex_thread("thread-one", &CodexOptions::default())
-                .await,
+            fixture.client.read_codex_thread("thread-one").await,
             Err(GuestError::InvalidCodexHistory(_))
         ));
         assert_eq!(fixture.requests.lock().unwrap().len(), 1);
@@ -325,7 +318,7 @@ async fn does_not_fetch_history_ahead_of_the_reader_and_stops_on_drop() {
     .await;
     let mut history = fixture
         .client
-        .resume_codex_thread("thread-one", &CodexOptions::default())
+        .read_codex_thread("thread-one")
         .await
         .unwrap();
     assert_eq!(fixture.requests.lock().unwrap().len(), 1);

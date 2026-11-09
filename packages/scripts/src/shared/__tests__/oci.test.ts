@@ -921,7 +921,7 @@ describe('native OCI build workflows', () => {
         )
       }
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
-      expect(workflow).toContain('needs: dependency-closure')
+      expect(workflow).toMatch(/needs: (dependency-closure|\[dependency-closure, test\])/)
     }
   })
 

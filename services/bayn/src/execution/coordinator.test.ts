@@ -1379,6 +1379,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const intentStore: IntentStoreService = {
     protectionForCycle: () => Effect.succeed([]),
     beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+    recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
     commit: () => Effect.die(new Error('unexpected commit')),
     read: (id) =>
       Effect.gen(function* () {

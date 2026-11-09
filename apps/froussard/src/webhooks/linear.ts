@@ -10,7 +10,7 @@ import {
 } from '@/services/agents'
 
 import type { IdempotencyStore } from './idempotency-store'
-import { linearWebhookMetrics, type LinearWebhookDownstream, type LinearWebhookMetrics } from './linear-metrics'
+import { makeLinearWebhookMetrics, type LinearWebhookDownstream, type LinearWebhookMetrics } from './linear-metrics'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
 
@@ -285,7 +285,7 @@ export const createLinearWebhookHandler = ({
   now = Date.now,
   submitAgentRun = makeAgentsServiceSubmitter(config.agents),
   publishRawEvent,
-  metrics = linearWebhookMetrics,
+  metrics = makeLinearWebhookMetrics(runtime),
   responseBudgetMs = LINEAR_WEBHOOK_RESPONSE_BUDGET_MS,
 }: LinearWebhookDependencies) => {
   const publish =

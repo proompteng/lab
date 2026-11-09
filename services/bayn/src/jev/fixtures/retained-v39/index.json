@@ -1,0 +1,61 @@
+{
+  "sourceRevision": "3975040a9cc70d62397a8bb0d139410e14c67593",
+  "runtime": {
+    "node": "24.11.1",
+    "zlib": "1.3.1"
+  },
+  "protocol": "bayn.jev.protocol.v39",
+  "model": "jev-1.13.0",
+  "parameterHash": "a03aad6fdf2c2f9d958f5922e69da57fbd2b6e3575941840076b20cebd5a0c54",
+  "cases": [
+    {
+      "name": "entry-equity",
+      "file": "entry-equity.json.gz",
+      "bytes": 1523896,
+      "contentHash": "3c4dcc35dd6d373d4442ed8638b6fa25b09dca416ef7c9894bf5200fb0beec7b",
+      "canonicalHash": "498b02646820009c381ab1a7691cb7552f3407476f602000eae305b019a604a4"
+    },
+    {
+      "name": "entry-crypto",
+      "file": "entry-crypto.json.gz",
+      "bytes": 245185,
+      "contentHash": "d3362ac131ec3d16611f0b91b888a79351ea9ba472ab02255b1ca1f48bb6ffdc",
+      "canonicalHash": "cf0de7cfd6b8c2107f662057cd2f870e34377bfaa67d7deb648eaa8e3b6333e0"
+    },
+    {
+      "name": "entry-ablation",
+      "file": "entry-ablation.json.gz",
+      "bytes": 1522165,
+      "contentHash": "0463f20a9fc44fee0ec44244ae273a948a7ce0edc81a72a478969d5e81decf5b",
+      "canonicalHash": "8e5c541307279123dd320b0b81140894d43a9afd1ed3b6c4fd41447e4c87fbdc"
+    },
+    {
+      "name": "entry-momentum",
+      "file": "entry-momentum.json.gz",
+      "bytes": 1060580,
+      "contentHash": "bf6820d8e1719b6d466b007d933dbfaea08a5a399ed81e7e08cf4d8c4c18c700",
+      "canonicalHash": "ca4fa83fa007b3e6984dc32df7d3cf4b38187814fd79e400ebbe90053b1210e2"
+    },
+    {
+      "name": "exit-native",
+      "file": "exit-native.json.gz",
+      "bytes": 34714,
+      "contentHash": "95e1be24da6688b8a711cc7099e212dbed8bd5e088782b1bb7215f4a120021b2",
+      "canonicalHash": "5dc2d2644136ee61e687231297ae86dfcf3d539d69d1009b1ec49d950b49d7d0"
+    },
+    {
+      "name": "exit-ablation",
+      "file": "exit-ablation.json.gz",
+      "bytes": 34714,
+      "contentHash": "0344e5769248b8082fd4afeca64fe73c86f13da5d39d8fb7b5b9e7a46b79dbe6",
+      "canonicalHash": "0e6d5e0f30ace73156cd3503dd92e6c7c344bc65dd01ebc31c1550d7267a7e3f"
+    },
+    {
+      "name": "exit-momentum",
+      "file": "exit-momentum.json.gz",
+      "bytes": 34714,
+      "contentHash": "3379754e5d2724924c2b74941b192015602046044dbf0bc4f4ebd7685e1c8bea",
+      "canonicalHash": "1996c0c297e6c321668fee4fa6eb594ecd9876991222227e4ac61616365fda49"
+    }
+  ]
+}
