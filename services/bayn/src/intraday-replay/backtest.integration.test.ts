@@ -523,7 +523,7 @@ durableTest.each([
               ],
               {
                 env: {
-                  BAYN_PUBLIC_INFORMATION_PROXY: '',
+                  BAYN_EGRESS_PROXY: '',
                   BAYN_JEV_API_KEY: '',
                   BAYN_BACKTEST_POSTGRES_URL: baynTestPostgresUrl,
                   BAYN_BACKTEST_TIGERBEETLE_ADDRESS: baynTestTigerBeetleAddress,

@@ -9,7 +9,7 @@ import {
   positionSnapshot,
   type PositionSnapshotInput,
 } from '../broker/observations'
-import type { ReconciliationPersistence } from '../db/execution-store'
+import type { ReconciliationPersistence } from '../db/execution-store/contract'
 import type { IntentBinding } from '../db/reconciliation'
 import {
   compareText,
