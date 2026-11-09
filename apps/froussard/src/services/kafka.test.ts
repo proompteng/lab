@@ -31,6 +31,7 @@ describe('parseBrokerList', () => {
 
 describe('KafkaProducerLayer', () => {
   const baseConfig: AppConfig = {
+    restate: { ingressOrigin: 'http://restate.test' },
     idempotency: {
       ttlMs: 60_000,
       maxEntries: 200,

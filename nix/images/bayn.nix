@@ -5,12 +5,40 @@
   repoRevision ? "dirty",
   bun,
   nodejs,
+  research ? false,
 }:
 
 let
   openCode = import ./opencode-cli.nix { inherit pkgs lib; };
   frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
-  imageRepository = "registry.ide-newton.ts.net/lab/bayn";
+  imageName = if research then "bayn-research" else "bayn";
+  imageRepository = "registry.ide-newton.ts.net/lab/${imageName}";
+  runtimeCommands = if research then [
+    "restate-research-server"
+    "inference-cost-command"
+    "forward-performance-command"
+    "system-assessment-command"
+    "research-command"
+    "jev-evaluation-command"
+    "backtest-command"
+    "frozen-control-command"
+    "control-study-command"
+    "native-arrival-export-command"
+    "webull-research-command"
+  ] else [
+    "index"
+    "forward-performance-command"
+    "control-opening-command"
+    "restate-execution-server"
+    "restate-execution-activate"
+    "market-projection-worker"
+    "inference-cost-command"
+    "streaming-diagnostics-command"
+    "glitchtip-smoke-command"
+    "valkey-command"
+    # Qualification verifies the replay executable against the actual trading image digest.
+    "backtest-command"
+  ];
   # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
   # Canonical hash of the compiled bayn.jev.protocol.v40 document.
@@ -30,6 +58,11 @@ let
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
+  '';
+  systemAssessmentCommand = pkgs.writeShellScriptBin "bayn-system-assessment" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/system-assessment-command.js" "$@"
   '';
   researchCommand = pkgs.writeShellScriptBin "bayn-research" ''
     set -eu
@@ -55,6 +88,11 @@ let
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
+  '';
+  controlOpeningCommand = pkgs.writeShellScriptBin "bayn-control-opening" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/control-opening-command.js" "$@"
   '';
   nativeArrivalExportCommand = pkgs.writeShellScriptBin "bayn-native-arrival-export" ''
     set -eu
@@ -117,11 +155,13 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "node --check services/bayn/dist/market-projection-worker.js"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/system-assessment-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/native-arrival-export-command.js --help"
+    "node services/bayn/dist/control-opening-command.js --help"
     "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
@@ -138,13 +178,16 @@ let
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
-    cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
-    rm "$out/app/services/bayn/dist/opencode-command.js"
+    for command in ${lib.concatStringsSep " " runtimeCommands}; do
+      cp "$TMPDIR/work/services/bayn/dist/$command.js" "$out/app/services/bayn/dist/"
+    done
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
+    ${lib.optionalString research ''
     cp "$TMPDIR/work/services/bayn/dist/frozen-control-compiler.json" "$out/app/services/bayn/dist/frozen-control-compiler.json"
-    cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     mkdir -p "$out/app/services/bayn/gepa"
     cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"
+    ''}
+    cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
@@ -173,6 +216,7 @@ import ./bun-workspace-service.nix {
     ;
   repoRoot = dependencySource;
   serviceName = "bayn";
+  inherit imageName;
   packageName = "@proompteng/bayn";
   # Bayn's fixed-output dependency closure is intentionally isolated from TypeScript source-tree topology.
   # Refreshed once after dependencySource became a manifest/lock/patch-only file set. Source-only tree changes
@@ -183,15 +227,17 @@ import ./bun-workspace-service.nix {
   sourcePaths = [ ];
   command = [
     "node"
-    "dist/index.js"
+    (if research then "dist/restate-research-server.js" else "dist/index.js")
   ];
   workingDir = "/app/services/bayn";
   includeBunRuntime = false;
   extraContents = [
     nodejs
     pkgs.cacert
-    forwardPerformanceCommand
     inferenceCostCommand
+    forwardPerformanceCommand
+  ] ++ lib.optionals (!research) [ controlOpeningCommand ] ++ lib.optionals research [
+    systemAssessmentCommand
     researchCommand
     gepaCommand
     gepaNativeCommand
