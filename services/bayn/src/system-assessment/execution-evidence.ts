@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { OrderSchema, OrderSide, OrderStatus, TimeInForce } from '../execution/contracts'
 import {
+  decisionSourceRows,
   isSnapshotExecutionMarketDataBinding,
   reconstructBoundIntradaySnapshot,
   reconciledPositionLiquidationBindingSchemaVersion,
@@ -246,7 +247,7 @@ export const bindExecutionEvidence = (
       if (plan.protectionIntent !== null) sources.add(plan.protectionIntent.sourceHash)
       for (const row of [root, ...group]) sources.add(row.sourceHash)
       const binding = document.bindings.executionMarketData
-      const rows = document.executionMarketDataRows ?? document.decisionMarketDataRows
+      const rows = document.executionMarketDataRows ?? decisionSourceRows(document)
       const snapshot =
         binding !== undefined && rows !== undefined && isSnapshotExecutionMarketDataBinding(binding)
           ? reconstructBoundIntradaySnapshot(binding, rows)
