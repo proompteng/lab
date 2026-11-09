@@ -72,6 +72,13 @@ A rejected intent rolls back its decision binding. Broker submission starts afte
 the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
 mutation during persistence cannot change the approved intent identities or protection.
 
+Decision binding can seed the existing byte-bounded decoded-document receipt with its private verified input.
+PostgreSQL hashes that encoded input in the binding statement. Every subsequent read still hashes the actual row,
+requires an exact digest match before reusing the body, and refreshes completion and generation guards. A missing,
+changed or rolled-back row cannot be supplied by the receipt. Replacement processes and mismatched rows continue
+through full document verification. This avoids duplicate same-process verification without changing financial
+identities, risk checks, freshness, transaction boundaries or broker authority.
+
 If PostgreSQL rejects an expired risk approval during binding, its named constraint records the intent, decision,
 and exact database clock boundary. After the entire writer transaction rolls back, the same unbound cycle can await
 fresh decision evidence within its original entry deadline. At that deadline it is blocked. Future-dated decisions,
