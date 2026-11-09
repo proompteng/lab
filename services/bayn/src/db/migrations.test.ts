@@ -3,18 +3,20 @@ import { Effect } from 'effect'
 
 import { migrationLoader } from './migrations'
 
-test('runtime migration loader schedules Box and native receipt after the retained generation-index migration', () => {
+test('runtime migration loader schedules Box, native receipts and retired settlement after the retained index', () => {
   const migrations = Effect.runSync(migrationLoader)
   expect(migrations.filter(([id]) => id >= 187).map(([id, name]) => [id, name])).toEqual([
     [187, 'inference_request_generation_index'],
     [188, 'jev_box_inference'],
     [189, 'native_protection_cancel_receipts'],
+    [190, 'settle_retired_jev_batches'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
   expect(pending).toEqual([
     [188, 'jev_box_inference'],
     [189, 'native_protection_cancel_receipts'],
+    [190, 'settle_retired_jev_batches'],
   ])
 })
 
