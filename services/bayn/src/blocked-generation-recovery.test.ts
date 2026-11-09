@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { AuthorityGenerationStoreShape } from './db/execution-store'
+import type { AuthorityGenerationStoreShape } from './db/execution-store/contract'
 import type { BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
 import type { WriterFenceService } from './execution/writer-fence'
 import {

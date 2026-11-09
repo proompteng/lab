@@ -1,5 +1,5 @@
 import { Effect, Semaphore } from 'effect'
-import type { AuthorityRestrictionStoreShape, ReconciliationPersistence } from '../db/execution-store'
+import type { AuthorityRestrictionStoreShape, ReconciliationPersistence } from '../db/execution-store/contract'
 
 const unused = () => Effect.die('Unexpected recovery containment persistence')
 

@@ -124,7 +124,7 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       const providerContext = yield* Layer.build(
         Layer.mergeAll(
           JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs),
-        ).pipe(Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')))),
+        ).pipe(Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_EGRESS_PROXY')))),
       )
       management = {
         mode: input.management,
