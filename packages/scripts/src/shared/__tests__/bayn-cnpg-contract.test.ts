@@ -27,7 +27,6 @@ test('native market capture keeps independent storage, required synchronous dura
     expect(cluster.spec[key]).toEqual(financial.spec[key])
   expect(cluster.spec.instances).toBe(2)
   expect(cluster.spec.affinity).toEqual(financial.spec.affinity)
-  expect(cluster.metadata.annotations['cnpg.io/reconciliationLoop']).toBe('enabled')
   expect(cluster.spec.walStorage).toEqual({ storageClass: 'local-path', size: '32Gi', resizeInUseVolumes: false })
   expect(cluster.spec.minSyncReplicas).toBeUndefined()
   expect(cluster.spec.storage).toEqual({ storageClass: 'local-path', size: '200Gi', resizeInUseVolumes: false })

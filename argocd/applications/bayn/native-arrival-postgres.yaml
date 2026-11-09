@@ -7,7 +7,6 @@ metadata:
     app.kubernetes.io/part-of: bayn
   annotations:
     argocd.argoproj.io/sync-wave: "-5"
-    cnpg.io/reconciliationLoop: enabled
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   description: Bayn immutable native market arrival archive
