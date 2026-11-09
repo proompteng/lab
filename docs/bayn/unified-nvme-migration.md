@@ -48,7 +48,7 @@ binary COPY over verified TLS without keeping another full dump on disk. The rec
 ordered-prefix triggers stay enabled. Each capture is verified against its source epoch identity, complete ordered
 header-hash manifest and end marker. SQL checksums bind the copied compressed bytes to each retained header.
 A retry reconciles the already copied prefix and resumes; it never overwrites differing immutable evidence. Keep
-the fenced source and its backup until the unified database has passed actual consumers and a fresh backup.
+the fenced source and its backup until the unified database has passed actual consumers and backup recovery verification.
 
 Deliver the reviewed application through normal Kargo and Argo gates only after the data merge succeeds. Resume
 retained invocations on a compatible deployment and complete the native activation handoff. Verify both PostgreSQL
@@ -82,8 +82,12 @@ canaries. Preserve all current application semantics and require both data direc
 
 ## Finish
 
-Take and verify a fresh unified PostgreSQL backup and current WAL archiving. Compare source capture manifests and
-financial readback, verify both replicas and actual application behavior, then retire the fenced archive cluster,
+Create a named restore point after the merge and verify its WAL and timeline history are archived. Restore a
+completed base backup plus the archived WAL chain to that point in an isolated CNPG cluster. Compare the recovered
+capture manifests and financial readback with the unified source, then remove the recovery cluster and its claims.
+This verifies that backups recover the newly merged data even when the base backup predates the merge; retain the
+normal full-backup schedule and retention policy. Verify both production replicas and actual application behavior,
+then retire the fenced archive cluster,
 its old claims and only the replaced active Valkey Ceph volumes. Keep the original historical backup retention.
 Remove the migration Job/ConfigMap, temporary third instance, owned deny window, diagnostic containers/forwards,
 and retained retired local directories or Ceph images after verifying exact identities. Confirm normal GitOps and
