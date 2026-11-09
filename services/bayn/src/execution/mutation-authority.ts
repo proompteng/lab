@@ -39,6 +39,10 @@ import {
 import { SubmissionDenialReason } from './submission-denial'
 import { cryptoTakerFeeBps, effectiveCryptoFeeTier, type CryptoTakerFeeBps } from '../broker/crypto-fees'
 
+/** Existing long positions may exit through the normal ownership, risk and capital checks. */
+export const currentSubmissionMarketAllowed = (intent: Pick<Intent, 'symbol' | 'side'>): boolean =>
+  currentEntryMarketEnabled(instrumentMarket(intent.symbol)) || intent.side === IntentOrderSide.Sell
+
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
 }
@@ -1175,7 +1179,7 @@ export const makeAuthorityGuardedBrokerMutation = (
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    if (intent.side !== IntentOrderSide.Sell && !currentEntryMarketEnabled(instrumentMarket(intent.symbol)))
+    if (!currentSubmissionMarketAllowed(intent))
       return Effect.fail(
         mutationAuthorizationError(
           'crypto entries are disabled',
