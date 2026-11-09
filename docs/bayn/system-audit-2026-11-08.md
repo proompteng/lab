@@ -135,6 +135,13 @@ PR [#15801](https://github.com/proompteng/lab/pull/15801) merges these changes a
 `cdb8fadf7c694a43296928253d8b9b61a46e8cec`. All 92 PR checks complete and both actionable review findings are resolved.
 Runtime delivery remains unverified until the exact merged images, promotion and deployed behavior are read back.
 
+The owning-image follow-up, PR [#15811](https://github.com/proompteng/lab/pull/15811), merges as
+`784c39819435448a812989b9d3c0a0428a5835d9`. Its 71 terminal checks include 47 successes and 24 skips, with no failures.
+The pinned OpenCode qualification now runs in its independent image build; both Bayn role builds drop the duplicate
+check and unused CLI build dependency. CLI-only changes no longer schedule Bayn qualification or image publication.
+Both OpenCode architectures and all four Bayn role/platform archives pass at the reviewed PR head. These checks
+establish source and artifact qualification; they do not establish rollout or live request behavior.
+
 - B2: Trading and research have separate artifact contents through the existing Nix builder. Financial reporting
   remains available in the API workload. Qualification and replay move to `bayn-system-assessment` in the research
   artifact; the old command rejects those flags. The two images require the same successful source/run receipts before
@@ -169,8 +176,10 @@ Runtime delivery remains unverified until the exact merged images, promotion and
   pure entry-scope module, with 253 extra emitted bytes. The submission gate now lives in mutation-authority, and its formal
   conformance caller imports it there. This keeps financial authority contracts out of the projection. Kafka and
   independent-worker tests verify catch-up, cancellation and cleanup.
-  The earlier current workers incorporated 110,244 and
-  110,681 records in 14.407 and 33.591 seconds on Turin and Altra; replacement rollout timing remains unmeasured.
+  The latest pre-cleanup starts, still on source `351b522baf`, incorporate 214,850 records in 33.392 seconds on
+  Turin and 217,752 records in 87.309 seconds on Altra. Both cover 34 partitions with zero rejections. These natural
+  restarts followed independent infrastructure work; arrival volume and background load differ from earlier starts.
+  Replacement rollout timing remains unmeasured.
   Two additional old workers remain because `BaynExecutionBootstrap` is still latest on their old deployment.
   Restate has no remaining invocation for that stateless service, and both current services point to the new
   deployment. Its registration retirement remains a separate reviewed operation under the owning runbook.
@@ -227,6 +236,12 @@ Runtime delivery remains unverified until the exact merged images, promotion and
   the earlier `cea96bc87f` baseline cannot isolate the cleanup's effect.
   A later 60-second read-only sample of the financial primary observes brief `WalSync` and `SyncRep` waits, with
   a maximum sampled query age of 120 ms and no blocking PID. It does not reproduce or explain the earlier write stall.
+  A fresh pre-cleanup sample at 12:43 UTC contains seven Turin waiting passes with a 980.636 ms advance median
+  and eight Altra passes with a 2,163.751 ms median, all on source `351b522baf`. The Turin samples precede its
+  independent worker restart; the Altra samples follow its restart. The financial primary remains `bayn-db-2`
+  with two ready instances. Archive claims have changed during the independent replica rollout, which still reports
+  two of three instances ready. The evidence records context at capture start and end. Compare per node and
+  preserve that background-load limitation; the mixed-node median cannot establish a cleanup improvement.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
