@@ -10,7 +10,8 @@ import {
   readBoundCapitalActivationGeneration,
   validateResearchCapitalRiskPolicy,
 } from './composition/capital-activation'
-import { AuthorityGenerationStore, ExecutionStoreLive } from './db/execution-store'
+import { AuthorityGenerationStore } from './db/execution-store/contract'
+import { ExecutionStoreLive } from './db/execution-store'
 import { PostgresClientLive } from './db/postgres-client'
 import { WriterFenceLive } from './execution/writer-fence'
 import { makeExecutionRiskPolicy } from './execution/risk-policy'

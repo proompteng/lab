@@ -1,10 +1,13 @@
-import { Result, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 
 import { BrokerEnvironment } from '../broker/identity'
 import { BrokerMode, PolicySchema, executionRiskPolicySchemaVersion } from '../risk'
 import { strictParseOptions } from '../schemas'
 import { OrderType, TimeInForce } from './contracts'
+import { OperationalError, operationalError } from '../errors'
+import { CycleExecutionModelSchema } from '../execution-model-contract'
+import { loadStrategyTradingProtocol, type StrategyRuntime } from '../strategy'
 
 const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
 
@@ -56,5 +59,60 @@ export const approvedExecutionRiskPolicyHashes = (accountId: string, allowedSymb
   Result.all(
     [BrokerEnvironment.Live, BrokerEnvironment.Sandbox].map((environment) =>
       Result.flatMap(makeExecutionRiskPolicy(accountId, allowedSymbols, environment), canonicalHashV1Result),
+    ),
+  )
+
+export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
+  Result.mapError(
+    loadStrategyTradingProtocol(strategy).pipe(
+      Result.flatMap((protocol) =>
+        Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)(protocol.executionModel),
+      ),
+    ),
+    (cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-loop',
+        message: 'strategy execution model is invalid',
+        cause,
+      }),
+  )
+
+export const loadStrategyExecutionRiskPolicy = (
+  accountId: string,
+  strategy: StrategyRuntime,
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
+  riskPolicyHash?: string,
+) =>
+  Effect.gen(function* () {
+    yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
+    const symbols = (yield* Effect.fromResult(loadStrategyTradingProtocol(strategy))).universe
+    const retainedPolicy = yield* Effect.fromResult(makeExecutionRiskPolicy(accountId, symbols))
+    if (
+      riskPolicyHash === undefined ||
+      riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
+    )
+      return retainedPolicy
+    if (brokerEnvironment === BrokerEnvironment.Sandbox) {
+      const paperPolicy = yield* Effect.fromResult(
+        makeExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox),
+      )
+      if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
+    }
+    return yield* operationalError({
+      component: 'strategy',
+      operation: 'risk-policy',
+      message: 'bound execution risk policy is not approved for this broker environment',
+    })
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof OperationalError
+        ? cause
+        : operationalError({
+            component: 'strategy',
+            operation: 'risk-policy',
+            message: 'source-controlled execution risk policy is invalid',
+            cause,
+          }),
     ),
   )
