@@ -144,7 +144,15 @@ Runtime delivery remains unverified until the exact merged images, promotion and
   backtest bundle and dependency receipt. Python, GEPA, Git, Bun and registry tools remain research-only.
   Opening capture also remains in the trading image to preserve the frozen plan's physical candidate-build identity.
   It is removed from the research payload; no identity override or weakened capital check is introduced.
-  The original AMD64 image has 396,205,749 compressed layer bytes; replacement OCI size remains unmeasured locally.
+  The exact-main ARM64 preparation artifact has 95,184,638 compressed layer bytes, compared with 392,756,535
+  in the deployed ARM64 artifact at `351b522baf`: a 75.765% reduction for the native image. The separate research
+  artifact has 384,766,091 compressed layer bytes. Actual Linux containers pass the selected native entry-point,
+  wrapper and role-path checks, and all four selected research wrappers plus their role-path checks. These are
+  immutable preparation artifacts, not a published cohort or a measured startup improvement. All four platform
+  builds pass in main run `42600189039`, but both index jobs reject a missing run-qualified receipt identity.
+  PR [#15812](https://github.com/proompteng/lab/pull/15812) fixes that shared workflow using its existing deferred-tag
+  mode; a new successful source/run cohort and live rollout remain required. OpenCode proposals already run through
+  the independently published OpenCode gateway; its pinned binary qualification belongs to that image build.
 - B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
   bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
   first pair give medians of 24.382 ms before and 17.687 ms after. This is a 27.46% reduction for that query, not for a

@@ -114,8 +114,8 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn's trading workloads consume `lab/bayn`; its research worker and CPU-only OpenCode proposer consume
-`lab/bayn-research`. Both images use the existing `lab-delivery/bayn` Warehouse and Stage. Publication withholds both
+Bayn's trading workloads consume `lab/bayn`; its research worker consumes `lab/bayn-research`.
+Both images use the existing `lab-delivery/bayn` Warehouse and Stage. Publication withholds both
 discovery aliases until both images pass validation with the same source revision and successful build-run receipt.
 The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains independent,
 with its pinned serving identity verified by research receipts.
