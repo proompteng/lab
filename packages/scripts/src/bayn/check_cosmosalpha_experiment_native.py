@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -47,6 +48,68 @@ PLAN = json.loads((ROOT / "plan.json").read_text())
 
 
 class NativeContracts(unittest.TestCase):
+    def test_failed_root_is_charged_and_regenerated_before_search(self):
+        for expression, rank_ic in ((None, None), ("close", None), (None, 0.0)):
+            with (
+                self.subTest(expression=expression, rank_ic=rank_ic),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                loop = unittest.mock.Mock()
+                loop.run.return_value = SimpleNamespace(experiment_ref=None)
+                controller = MCTSController(
+                    loop,
+                    LocalExperimentRepository(temp),
+                    LocalArtifactRepository(temp),
+                    field_catalog=build_base_field_catalog(),
+                    operator_catalog=build_base_operator_catalog(),
+                )
+
+                def node(**kwargs):
+                    return MCTSNode(
+                        factor_id=kwargs["factor_id"],
+                        expression=kwargs["expression"],
+                        rank_ic_mean=kwargs["rank_ic_mean"],
+                        overall_score=0.0,
+                        best_reward=0.0,
+                    )
+
+                with (
+                    patch(
+                        "cosmosalpha.pipeline.mcts.controller._extract_expression",
+                        side_effect=[expression, "close"],
+                    ),
+                    patch(
+                        "cosmosalpha.pipeline.mcts.controller._extract_eval_scores",
+                        side_effect=[{"rank_ic": rank_ic}, {"rank_ic": 0.0}],
+                    ),
+                    patch.object(controller, "_build_node", side_effect=node) as built,
+                    patch.object(controller, "_expand", return_value=None) as expanded,
+                    patch.object(controller, "run", wraps=controller.run) as searched,
+                ):
+                    result = controller.run_multi_tree(
+                        data_snapshot=None,
+                        base_context=SimpleNamespace(constraints=(), frequency="1d"),
+                        config_snapshot_ref=None,
+                        code_version="native-contract",
+                        max_total_rounds=2,
+                    )
+                self.assertEqual(loop.run.call_count, 2)
+                self.assertEqual(result.iterations, 2)
+                self.assertEqual(searched.call_count, 1)
+                self.assertEqual(
+                    searched.call_args.kwargs["run_id"], "mcts-multi-tree002"
+                )
+                self.assertEqual(built.call_count, 1)
+                self.assertEqual(built.call_args.kwargs["rank_ic_mean"], 0.0)
+                self.assertEqual(built.call_args.kwargs["expression"], "close")
+                self.assertTrue(expanded.called)
+                self.assertTrue(
+                    all(
+                        call.kwargs["parent"].expression == "close"
+                        for call in expanded.call_args_list
+                    )
+                )
+
     def test_native_node_counter_includes_missing_rank_ic(self):
         controller = MCTSController(
             None,
