@@ -54,13 +54,16 @@ Keep the pinned PostgreSQL image and existing generated credentials.
    Preserve its detached claims until final verification. Wait for its NVMe replacement to catch up, then promote
    that replacement to return the primary to a 100G host. After the Altra backup completes, retire its original
    Ceph standby and wait for the NVMe replacement. Never retire an active primary or two instances together.
-5. Prepare the final manifest: two instances, required 100G affinity, no Ryzen toleration, and annotation
-   `cnpg.io/reconciliationLoop: enabled`. Once both 100G NVMe instances are verified, pause only this cluster's
-   reconciliation with `cnpg.io/reconciliationLoop=disabled` and retire the temporary Ryzen standby with
-   `destroy --keep-pvc` before merging the final release. Argo syncs automatically, so establish this guard before
-   the release can become eligible for promotion. Publish through the normal gates and sync that reviewed final
-   revision to resume at two instances. Monitor both serving instances during this bounded maintenance interval;
-   resume reconciliation and stop the cutover if either becomes unhealthy. PostgreSQL keeps serving on both 100G hosts.
+5. Merge the final manifest only after verifying both 100G NVMe instances: two instances, required 100G affinity,
+   no Ryzen toleration, and annotation `cnpg.io/reconciliationLoop: enabled`. Keep all three members reconciled
+   while the final publisher waits in the build queue. Once its last required AMD64 platform build starts, before
+   that build finishes, pause only this cluster's reconciliation with `cnpg.io/reconciliationLoop=disabled` and
+   retire the temporary Ryzen standby with `destroy --keep-pvc`. If that guard cannot be established, cancel the
+   final publisher before cohort publication. The existing publisher withholds discovery aliases until both images,
+   index validation and receipt uploads complete; do not change those gates. Argo syncs automatically, so the guard
+   must precede eligibility. Sync that reviewed final revision to resume at two instances. Monitor both serving
+   instances during this bounded maintenance interval; resume reconciliation and stop the cutover if either becomes
+   unhealthy. PostgreSQL keeps serving on both 100G hosts.
    Do not simply scale three healthy instances down: CNPG selects the highest-numbered standby, not necessarily Ryzen.
 6. Verify physical separation, NVMe data/WAL mounts, required synchronous replication, fsync/full-page writes,
    checksums, archived WAL and capture prefixes. Exercise new durable appends and controller reads. Compare live
