@@ -1619,7 +1619,11 @@ export const readCopyReceipts = async (directory: string, baseline: KafkaSnapsho
     if (isObject(value) && isObject(value.plan)) {
       const nodeId = numberValue(value.plan.nodeId)
       if (nodeId !== null && Number.isInteger(nodeId) && nodeId >= 0) {
-        if (!receiptNodeIds.add(nodeId)) failures.push(`${name} duplicates copy receipt for node ${nodeId}`)
+        if (receiptNodeIds.has(nodeId)) {
+          failures.push(`${name} duplicates copy receipt for node ${nodeId}`)
+          continue
+        }
+        receiptNodeIds.add(nodeId)
       }
     }
     const proof = parseCopyReceipt(value, baseline, name)

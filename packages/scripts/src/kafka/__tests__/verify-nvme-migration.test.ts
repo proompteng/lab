@@ -361,6 +361,27 @@ describe('Kafka NVMe migration verifier', () => {
     }
   })
 
+  it('rejects duplicate receipts before a later file proof can mask a mismatch', async () => {
+    const baseline = snapshot()
+    const directory = await mkdtemp(join(tmpdir(), 'kafka-duplicate-receipts-'))
+    try {
+      const bad = copyReceipt(baseline)
+      bad.copyPod.logs = bad.copyPod.logs
+        .split('\n')
+        .map((line) => (line.startsWith('TARGET_FILE_MANIFEST=') ? line.replace('a'.repeat(64), 'b'.repeat(64)) : line))
+        .join('\n')
+      await writeFile(join(directory, 'a.receipt.json'), JSON.stringify(bad))
+      await writeFile(join(directory, 'b.receipt.json'), JSON.stringify(copyReceipt(baseline)))
+      const proof = await readCopyReceipts(directory, baseline)
+      expect(proof.failures).toContain('b.receipt.json duplicates copy receipt for node 3')
+      expect(proof.sourceFiles).toHaveLength(1)
+      expect(proof.targetFiles).toHaveLength(1)
+      expect(compareFileWitnesses(proof.sourceFiles, proof.targetFiles)).toHaveLength(1)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects incomplete or malformed topic describe output and requires list parity', () => {
     const incomplete =
       'Topic: bayn.native-arrival.v1 TopicId: topic-a PartitionCount: 2 ReplicationFactor: 1 Configs:\n' +
