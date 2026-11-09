@@ -27,9 +27,7 @@ data:
       ) and (
         all(.[]; .has_worker_role == true and .worker_state == "active" and .partition_id != null and
           .membership == "current" and .replay_status == "active" and .updated_at != null)
-        or (length == 1 and .[0].partition_id == null and
-          (.[0].has_worker_role == false or .[0].worker_state == "draining" or .[0].worker_state == "disabled" or
-           .[0].worker_state == "provisioning"))
+        or (length == 1 and .[0].partition_id == null and .[0].has_worker_role == false)
       )' >/dev/null
     }
 
@@ -47,7 +45,7 @@ data:
         $before[$i].partition_id == $after[$i].partition_id and
         ($after[$i].partition_id == null or $before[$i].updated_at < $after[$i].updated_at)
       )' >/dev/null
-    echo "Member recovered, or awaiting explicit activation without assignments"
+    echo "Member recovered in its current role"
 
   snapshot-restore.sh: |
     #!/bin/bash
