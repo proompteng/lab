@@ -33,15 +33,53 @@ import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
+import { OrderStatus } from '../broker/alpaca/model'
+import {
+  FillActivityRelation,
+  FillMismatchOrderRole,
+  ReconciliationError,
+} from '../simulation-reconciliation/broker-reconciler-model'
+
+const diagnosticData = (value: unknown, key: string): unknown =>
+  typeof value === 'object' && value !== null ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
+
+const snapshotFailureAnnotations = (failure: unknown): Readonly<Record<string, string>> => {
+  const cause = diagnosticData(failure, 'cause')
+  if (!isNativeError(cause) || Object.getPrototypeOf(cause) !== ReconciliationError.prototype) return {}
+  const detail = diagnosticData(cause, 'failure')
+  if (diagnosticData(detail, '_tag') !== 'Snapshot') return {}
+  const reason = diagnosticData(detail, 'reason')
+  if (
+    typeof reason !== 'string' ||
+    !['HistoryChanged', 'FillActivitiesPending', 'AccountBaselineMissing', 'TradingDayChanged'].includes(reason)
+  )
+    return {}
+  const annotations: Record<string, string> = { 'broker.snapshot_failure_reason': reason }
+  if (reason !== 'FillActivitiesPending') return annotations
+  const mismatch = diagnosticData(detail, 'fillMismatch')
+  for (const [field, key, allowed] of [
+    ['activityRelation', 'broker.fill_activity_relation', Object.values(FillActivityRelation)],
+    ['orderRole', 'broker.fill_mismatch_order_role', Object.values(FillMismatchOrderRole)],
+    ['orderStatus', 'broker.fill_mismatch_order_status', Object.values(OrderStatus)],
+  ] as const) {
+    const value = diagnosticData(mismatch, field)
+    if (typeof value === 'string' && allowed.some((entry) => entry === value)) annotations[key] = value
+  }
+  return annotations
+}
 
 export const brokerPollFailureAnnotations = (failure: unknown): Readonly<Record<string, string>> => {
   const unknown = { 'broker.poll_failure_reason': 'unknown' }
   if (!isNativeError(failure)) return unknown
   try {
-    // Only our fixed diagnostic field is inspected, never messages or nested causes.
+    // Inspect fixed data fields on the wrapper and its direct typed reconciliation cause only.
+    // Never read accessors, messages, payloads, or recursively traverse causes.
     const reason: unknown = Object.getOwnPropertyDescriptor(failure, 'pollFailureReason')?.value
     return typeof reason === 'string' && Object.values(BrokerPollFailureReason).some((value) => value === reason)
-      ? { 'broker.poll_failure_reason': reason }
+      ? {
+          'broker.poll_failure_reason': reason,
+          ...(reason === BrokerPollFailureReason.SnapshotRejected ? snapshotFailureAnnotations(failure) : {}),
+        }
       : unknown
   } catch {
     return unknown

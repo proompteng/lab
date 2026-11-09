@@ -676,6 +676,56 @@ describe('reconciliation pure decisions', () => {
     },
   )
 
+  test.each(
+    ['ORDER', 'LEG'].flatMap((orderRole) =>
+      [
+        { activityRelation: 'NO_MATCHING_FILLS', quantity: undefined },
+        { activityRelation: 'FILLS_BELOW_ORDER', quantity: '5' },
+        { activityRelation: 'FILLS_ABOVE_ORDER', quantity: '15' },
+      ].map((scenario) => ({ orderRole, ...scenario })),
+    ),
+  )('classifies the first $orderRole fill mismatch as $activityRelation without exposing values', (scenario) => {
+    const member = { ...order(1), filledQuantityAtoms: '10' }
+    const root = scenario.orderRole === 'ORDER' ? member : { ...order(0), filledQuantityAtoms: '0', legs: [member] }
+    const history = {
+      orders: { rows: [{ value: root, evidence: evidence('private-order') }], observedAt },
+      fills:
+        scenario.quantity === undefined
+          ? []
+          : [{ value: { ...fill(1, member), quantityAtoms: scenario.quantity }, evidence: evidence('private-fill') }],
+      fees: [],
+    }
+    const result = decideStableHistory(history, history)
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        failure: {
+          _tag: 'Snapshot',
+          reason: 'FillActivitiesPending',
+          fillMismatch: {
+            activityRelation: scenario.activityRelation,
+            orderRole: scenario.orderRole,
+            orderStatus: BrokerOrderStatus.Filled,
+          },
+        },
+      },
+    })
+    if (Result.isFailure(result)) {
+      expect(Object.keys(result.failure.failure ?? {}).sort()).toEqual(['_tag', 'fillMismatch', 'reason'])
+      expect(JSON.stringify(result.failure.failure)).not.toContain(member.brokerOrderId)
+      expect(JSON.stringify(result.failure.failure)).not.toContain('quantityAtoms')
+    }
+    const converged = {
+      ...history,
+      fills: [{ value: { ...fill(1, member), quantityAtoms: '10' }, evidence: evidence('converged-fill') }],
+    }
+    expect(decideStableHistory(converged, converged)).toEqual(Result.succeed(converged))
+    expect(decideStableHistory(history, converged)).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } },
+    })
+  })
+
   test('classifies stable history, missing baselines, and containment without effects', () => {
     const emptyHistory = {
       orders: { rows: [], observedAt },
