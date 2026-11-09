@@ -197,6 +197,62 @@ class NativeContracts(unittest.TestCase):
                 ],
             )
 
+    def test_native_multi_tree_charges_only_completed_rounds(self):
+        for total_rounds in (1, 3, 5):
+            with (
+                self.subTest(rounds=total_rounds),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                objects = LocalExperimentRepository(temp)
+                controller = MCTSController(
+                    None,
+                    objects,
+                    LocalArtifactRepository(temp),
+                    field_catalog=build_base_field_catalog(),
+                    operator_catalog=build_base_operator_catalog(),
+                )
+                roots = []
+
+                class Generator:
+                    def generate(self, **kwargs):
+                        roots.append(kwargs["run_id"])
+                        return MCTSNode(
+                            factor_id=kwargs["run_id"],
+                            expression="close",
+                            rank_ic_mean=0.01,
+                            overall_score=1.0,
+                            best_reward=1.0,
+                        )
+
+                def expand(**kwargs):
+                    return MCTSNode(
+                        factor_id=kwargs["run_id"] + "-child",
+                        expression="open",
+                        rank_ic_mean=0.01,
+                        overall_score=0.1,
+                        best_reward=0.1,
+                    )
+
+                with patch.object(
+                    controller, "_expand", side_effect=expand
+                ) as expanded:
+                    result = controller.run_multi_tree(
+                        data_snapshot=None,
+                        base_context=None,
+                        config_snapshot_ref=None,
+                        code_version="native-contract",
+                        max_total_rounds=total_rounds,
+                        initial_budget=1,
+                        budget_increment=0,
+                        root_generator=Generator(),
+                    )
+                self.assertEqual(result.iterations, total_rounds)
+                self.assertEqual(len(roots), total_rounds)
+                self.assertEqual(expanded.call_count, total_rounds)
+                self.assertEqual(
+                    len(objects.list_object_ids("mcts_tree")), total_rounds + 1
+                )
+
     def test_all_three_native_loop_contracts_accept_the_frozen_calculator(self):
         frozen = FrozenInputs(ROOT, PLAN["inputs"]["mining"])
         for run in PLAN["runs"]:
