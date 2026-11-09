@@ -5269,5 +5269,235 @@
       "productionBuild": "passed",
       "researchBuild": "passed"
     }
+  },
+  "currentV40Request": {
+    "capturedAt": "2026-11-09T14:34:49.761288+00:00",
+    "sourceRevision": "3c102b02a902a289700b137868c86563b052cfe4",
+    "traceId": "dcb1dafe2277cdc9fd84039b0629fc35",
+    "deploymentId": "dp_11QCH160kWhe6rCtSgMpChj",
+    "instance": "bayn-execution-controller-fbb6d5dc77-5trqh",
+    "node": "talos-192-168-1-85",
+    "outcome": "Completed",
+    "invocation": {
+      "created_at": "2026-11-09T14:30:39.941Z",
+      "running_at": "2026-11-09T14:31:02.001Z",
+      "completed_at": "2026-11-09T14:31:14.452Z",
+      "status": "completed"
+    },
+    "requestIdSha256": "67d6e48ba5b0d6b9073e9c475f37bcd758b2d2462c1f4158527e2d7ec780e69a",
+    "cycleIdSha256": "c5420a57316f7f50ec90d67387747c65b506dc04c4b760f56c0ba0777b7c44d5",
+    "batchIdSha256": "1f025db084487e9647a1eb160018a198efd23e1a943578a1cc24a7d648856fcb",
+    "decision": {
+      "decisionHash": "e0c2103664a7452c7d1f0658e224e0a509afcf3c912163d70167b815da09628e",
+      "decisionCreatedAt": "2026-11-09T14:31:11.446Z",
+      "decisionSchema": "bayn.paper-cycle-decision.v2",
+      "plannerPresent": true,
+      "plannerStoresBrokerState": false,
+      "protocol": "bayn.jev.protocol.v40",
+      "model": "jev-1.14.0"
+    },
+    "batchIdentityMatches": true,
+    "decisionHashMatches": true,
+    "nativeSpans": [
+      {
+        "name": "bayn.execution.advance",
+        "offsetMs": 0.0,
+        "durationMs": 12204.559
+      },
+      {
+        "name": "bayn.reconciliation.run",
+        "offsetMs": 30.273,
+        "durationMs": 2365.138
+      },
+      {
+        "name": "bayn.reconciliation.persist",
+        "offsetMs": 263.528,
+        "durationMs": 2131.858
+      },
+      {
+        "name": "bayn.postgres.writer-fence",
+        "offsetMs": 620.776,
+        "durationMs": 1773.583
+      },
+      {
+        "name": "bayn.reconciliation.accounting-verify",
+        "offsetMs": 1259.673,
+        "durationMs": 701.152
+      },
+      {
+        "name": "bayn.jev.observation",
+        "offsetMs": 2789.069,
+        "durationMs": 113.865
+      },
+      {
+        "name": "bayn.jev.batch-plan",
+        "offsetMs": 2903.011,
+        "durationMs": 383.531
+      },
+      {
+        "name": "bayn.jev.batch-admission",
+        "offsetMs": 3304.147,
+        "durationMs": 1668.637
+      },
+      {
+        "name": "bayn.jev.inference",
+        "offsetMs": 5002.707,
+        "durationMs": 217.346,
+        "operation": "evaluate"
+      },
+      {
+        "name": "bayn.jev.batch-completion",
+        "offsetMs": 7424.472,
+        "durationMs": 1577.2
+      },
+      {
+        "name": "bayn.jev.batch-completion.phase",
+        "offsetMs": 7425.056,
+        "durationMs": 52.792,
+        "operation": "validation"
+      },
+      {
+        "name": "bayn.jev.batch-completion.phase",
+        "offsetMs": 7491.347,
+        "durationMs": 1.135,
+        "operation": "lock"
+      },
+      {
+        "name": "bayn.jev.batch-completion.phase",
+        "offsetMs": 7493.126,
+        "durationMs": 1172.498,
+        "operation": "receipts"
+      },
+      {
+        "name": "bayn.jev.observation-integrity",
+        "offsetMs": 7520.493,
+        "durationMs": 58.581
+      },
+      {
+        "name": "bayn.jev.batch-completion.phase",
+        "offsetMs": 8665.732,
+        "durationMs": 13.043,
+        "operation": "evidence"
+      },
+      {
+        "name": "bayn.jev.batch-completion.phase",
+        "offsetMs": 8679.017,
+        "durationMs": 250.699,
+        "operation": "result"
+      },
+      {
+        "name": "bayn.jev.entry-decision-binding",
+        "offsetMs": 10284.34,
+        "durationMs": 1367.11
+      },
+      {
+        "name": "bayn.postgres.writer-fence",
+        "offsetMs": 10292.004,
+        "durationMs": 1358.561
+      },
+      {
+        "name": "bayn.cycle.decision-read",
+        "offsetMs": 11652.317,
+        "durationMs": 247.908,
+        "operation": "read-decision-document"
+      },
+      {
+        "name": "bayn.cycle.decision-read",
+        "offsetMs": 11910.157,
+        "durationMs": 21.91,
+        "operation": "read-decision-document"
+      },
+      {
+        "name": "bayn.postgres.writer-fence",
+        "offsetMs": 12090.139,
+        "durationMs": 108.176
+      },
+      {
+        "name": "bayn.cycle.decision-read",
+        "offsetMs": 12094.385,
+        "durationMs": 20.775,
+        "operation": "read-decision-document"
+      }
+    ],
+    "persistedTimeline": {
+      "model": "jev-1.14.0",
+      "claims": [
+        {
+          "stage": "CHART",
+          "claimedAt": "2026-11-09T14:31:06.094Z",
+          "expiresAt": "2026-11-09T14:31:14.705Z"
+        }
+      ],
+      "intents": [],
+      "protocol": "bayn.jev.protocol.v40",
+      "expiresAt": "2026-11-09T14:31:14.705Z",
+      "terminals": [
+        {
+          "stage": "CHART",
+          "status": "RECEIVED",
+          "recordedAt": "2026-11-09T14:31:07.252Z",
+          "failureCategory": null
+        }
+      ],
+      "cycleState": "NO_TRADE",
+      "observedAt": "2026-11-09T14:31:04.705Z",
+      "abandonedAt": null,
+      "inputSchema": "bayn.entry-inference-input.v8",
+      "cycleCreatedAt": "2026-11-09T14:30:36.95+00:00",
+      "batchPlanSchema": "bayn.jev-batch-plan.v8",
+      "batchCompletedAt": "2026-11-09T14:31:09.440Z",
+      "resolutionStatus": "RECORDED",
+      "evaluationFailure": null,
+      "evaluationOutcome": "COMPLETED",
+      "handoffRecordedAt": "2026-11-09T14:31:07.266Z",
+      "cycleTerminalReason": null,
+      "evaluationStartedAt": "2026-11-09T14:31:06.094Z",
+      "evaluationCompletedAt": "2026-11-09T14:31:09.423Z"
+    },
+    "scope": "Natural current v40 request. Exact Restate tick ancestry and pinned deployment bind the native advance; persisted request batch and decision hash independently match native span attributes. SQL joins retain cycle/snapshot/generation identity. Native offsets share one worker clock. Persisted CHART/handoff/evaluation boundaries can involve other processes; their timestamp differences are not isolated provider/CPU latency. The completed cycle is NO_TRADE, so no submission/acknowledgement/fill is present. No forced trade or data/authority mutation."
+  },
+  "newPrivateCompactDecision": {
+    "proof": {
+      "status": "MEASURED",
+      "source": "one private retained document, processed only inside its existing Pod",
+      "runtime": "Node v24.11.1",
+      "nodeVersion": "v24.11.1",
+      "fullJsonBytes": 1183892,
+      "compactJsonBytes": 728580,
+      "wallMs": {
+        "full": [76.78546100000005, 75.6738069999999, 88.64919899999995],
+        "compact": [63.607237000000055, 65.345822, 64.37078999999994]
+      },
+      "cpuMs": {
+        "full": [80.788, 87.985, 93.539],
+        "compact": [67.713, 69.532, 68.426]
+      },
+      "wallMedianMs": {
+        "full": 76.78546100000005,
+        "compact": 64.37078999999994
+      },
+      "cpuMedianMs": {
+        "full": 87.985,
+        "compact": 68.426
+      },
+      "scope": "The actual newly persisted compact document passes the current execution decoder before timing. Equivalent full and compact forms are then constructed only in memory and both fully verified. Alternating order; first pair discarded. These are one-record representation verification costs in the same existing production API Pod, not old-versus-new release latency, disk savings or a request percentile. No private document bytes leave the Pod; only sizes, timings and content identity are exported."
+    },
+    "inputCreatedAt": "2026-11-09T14:32:06.089Z",
+    "inputContentHash": "6ad42e374fe46f8ff124cd0b460e7056b50fece4331687d00339621b9d1b67b7",
+    "context": {
+      "pod": "bayn-5d56684769-9j25l",
+      "node": "turin",
+      "image": "registry.ide-newton.ts.net/lab/bayn@sha256:25f8cebd23e8b64602ffb917b32396b4eb1ab0d6c3edbb88b39f91e0368ac47f",
+      "sourceRevision": "3c102b02a902a289700b137868c86563b052cfe4"
+    },
+    "storedDocumentMetadata": {
+      "schema": "bayn.paper-cycle-decision.v2",
+      "createdAt": "2026-11-09T14:32:06.089Z",
+      "contentHash": "6ad42e374fe46f8ff124cd0b460e7056b50fece4331687d00339621b9d1b67b7",
+      "plannerPresent": true,
+      "storedJsonbTextBytes": 768254,
+      "plannerStoresBrokerState": false
+    },
+    "storedCompactDocumentVerified": true
   }
 }

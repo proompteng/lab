@@ -139,7 +139,8 @@ The cleanup is deployed in source `3c102b02a902a289700b137868c86563b052cfe4`. Su
 `kargo/bayn` commit `4bbd5ae14d55f0be6a505d03c703156fc72c9656`; Argo reconciles that exact revision.
 The native activation hook succeeds, both native services select deployment `dp_11QCH160kWhe6rCtSgMpChj`,
 and both workers and matched completed ticks report the new source. This proves the release and waiting-pass
-behavior. A current complete Jev/order request and a newly persisted compact decision remain unverified.
+behavior. A natural current Jev request later completes as `NO_TRADE`, and a new private compact decision passes
+the current decoder. Current-release order submission, acknowledgement and fill are not present in that sample.
 
 The owning-image follow-up, PR [#15811](https://github.com/proompteng/lab/pull/15811), merges as
 `784c39819435448a812989b9d3c0a0428a5835d9`. Its 71 terminal checks include 47 successes and 24 skips, with no failures.
@@ -214,9 +215,13 @@ establish source and artifact qualification; the separate release readback above
   This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
   A live sampled historical decision passes the retained Jev financial verifier. It does not satisfy the current
   execution schema, so it cannot establish decode performance for the new representation.
-  The published native runtime also verifies equivalent full and compact public fixtures. Their JSON sizes are
-  1,214,263/1,213,236 bytes and decode/verification wall medians are 94.445/93.098 ms over three retained pairs.
-  This small fixture result is not a performance claim for a new private persisted decision; that readback remains open.
+  A new compact decision created at 14:32:06.089 UTC on November 9 passes the current full execution decoder
+  inside the existing native API Pod. Independent SQL metadata agrees on its exact content hash and confirms that
+  planner input omits its duplicate broker state. The stored JSONB text is 768,254 bytes. Reconstructing equivalent
+  full/compact JSON in memory gives 1,183,892/728,580 bytes and wall verification medians of 76.785/64.371 ms
+  over three retained alternating pairs; CPU medians are 87.985/68.426 ms. The two JSON encodings are measured
+  separately from PostgreSQL's JSONB text rendering. This is one-record representation verification, not request
+  percentiles or disk savings. No historical bytes or private document contents are exported or rewritten.
   Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
   the dedicated archive. The 367 financial epochs were created through October 27; a later snapshot finds 440 dedicated
@@ -259,12 +264,19 @@ establish source and artifact qualification; the separate release readback above
   This is untraced wall time, not a CPU measurement. Its 61 SQL client spans include a 109.191 ms cycle insert,
   49.447 ms fee query and 47.837 ms inventory-debit aggregate. These observations motivate measuring the pure
   verifier separately; they do not establish an unmeasured database or CPU cause.
-  The current request path stops before inference: both the last pre-release observation and the after observation
-  report `SNAPSHOT_UNAVAILABLE` / `ALL_CANDIDATES_EXCLUDED` for 15 candidates. Matching-feature/completed-bar counts
-  change from 0/0 to 1/1. These are rejected-observation diagnostics, not proof of upstream producer health. The
-  bounded post-release timeline has no admitted request; unused entry deadlines expire before and after release.
-  Therefore new v40 CHART/Jev/order latency and the new private decision representation still require natural eligible
-  inputs. No trading authority, input validation, schedule or provider configuration is changed to obtain a trace.
+  Before the first usable regular-session input, both pre-release and after observations report
+  `SNAPSHOT_UNAVAILABLE` / `ALL_CANDIDATES_EXCLUDED` for 15 candidates. Matching-feature/completed-bar counts
+  change from 0/0 to 1/1. These are rejected-observation diagnostics, not proof of upstream producer health;
+  unused entry deadlines expire before and after release.
+  A natural request observed at 14:31:04.705 UTC then completes under v40 / Jev 1.14.0. Its exact persisted batch
+  identity and decision hash match native span attributes inside the source-bound Restate tick. CHART claim to
+  receipt is 1,158 ms, handoff is recorded 2,561 ms after observed input, the evaluation receipt interval is 3,329 ms,
+  and the batch completes at +4,735 ms. The protected decision is created at +6,741 ms. The native worker advance
+  takes 12,204.559 ms, including reconciliation 2,365.138 ms, admission 1,668.637 ms, batch completion 1,577.200 ms
+  and decision binding 1,367.110 ms. These inclusive spans are not additive. Durable record intervals can cross
+  process clocks and do not isolate model-provider latency. The cycle ends `NO_TRADE`, with no submit, acknowledgement
+  or fill; current-release order timing and a comparable eligible-request before/after distribution remain open.
+  No trading authority, input validation, schedule or provider configuration is changed to obtain this trace.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
@@ -278,6 +290,12 @@ to its own worker advance. This preserves causal correlation without assuming sy
 This comparison uses actual nested spans from one pass near each phase's advance median. Each panel has its own
 process clock. The labels distinguish representative stage durations from the separately computed sample medians;
 parent durations include their children. It does not contain an inference request or the subsequent hash candidate.
+
+![Current v40 request with durable boundaries and native worker spans](evidence/2026-11-09-current-v40-request.svg)
+
+The current request chart joins the actual batch and decision identities to a completed source-bound Restate tick.
+Its two panels keep durable record boundaries separate from worker-relative span timing. `NO_TRADE` is a completed
+strategy outcome; it supplies no evidence of a current order submission or broker fill.
 
 ![Historical v38 entry records from admission through fill recovery](evidence/2026-11-09-historical-entry.svg)
 
