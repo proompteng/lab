@@ -18,6 +18,8 @@ A packet capture caught a five-second DNS retry at 08:17:13–18 UTC for the inv
 `bayn-db-rw.bayn.svc.cluster.local.svc.cluster.local`. All 2,346 captured DNS questions eventually completed;
 the next-slowest completed in 3.42 ms. Bayn pods use `ndots:1` to resolve qualified names before search expansion.
 Short names retain normal search behavior. DNS servers, credentials, TLS identities and endpoints stay the same.
+A controlled lookup comparison in the same live pod resolved the same native archive address ten times per mode:
+defaults sent 80 DNS questions, while `ndots:1` sent 20. All twenty lookups returned the same single address.
 
 Eight alternating pairs of read-only positions requests, 15 seconds apart, compared default and retained
 Undici proxy pools in the same live controller. After warmup, default requests created two connections each and
