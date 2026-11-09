@@ -124,6 +124,21 @@ python -m pytest -q \
 
 The three native prompt regression cases failed before their respective repairs, including the case that uses the real portrait prompt builder. Earlier acceptance trials retain their empty-conversation HTTP 400 and reasoning-truncation evidence. Neither reached held-out fitting. They are not replayed or relabeled as repaired trials.
 
+## Independently verify downstream metrics
+
+After all planned models finish, use the reference Python environment with NumPy and SciPy:
+
+```sh
+python packages/scripts/src/bayn/verify_cosmosalpha_downstream.py \
+  /research/calendar-study /research/downstream-metrics.json
+python packages/scripts/src/bayn/check_cosmosalpha_downstream.py \
+  /research/calendar-study
+```
+
+The verifier checks all six output artifact hashes per model and joins every prediction target to the verified raw target artifact. It recomputes daily IC and RankIC, sample counts and all seven aggregate metrics. Correlations retain their signs, daily dispersion uses sample standard deviation, and portfolio analysis uses 238 trading days and signed arithmetic drawdown. A missing model or mismatch fails verification. Existing report files are rejected.
+
+The [repaired-source acceptance check](evidence/2026-11-09-cosmosalpha-downstream-metrics/validation.json) covers three four-factor fits and all 21 reported metrics. Its maximum aggregate-metric error is below `3e-17`. Definition cases and corrupted saved-model inputs exercise the verifier's failure paths. Portfolio calculations start from the saved zero-cost daily report; they do not independently replay fills or qualify costed strategy edge.
+
 ## Paper-to-runtime evidence
 
 The reference is [CosmosAlpha v1](https://arxiv.org/html/2611.04555v1), particularly Sections 3.2–3.4 and Appendices B–D. Evidence boundaries remain separate:
