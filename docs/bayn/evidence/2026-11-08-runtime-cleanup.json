@@ -1,0 +1,406 @@
+{
+  "sourceBaseline": "45579965308e14c07afd3d8960bc7d089de1986e",
+  "measurementScope": "Read-only production metadata and a single SQL query; no end-to-end release speedup established",
+  "intentQuery": {
+    "intents": 751,
+    "mutationEvents": 2556,
+    "resultDifferences": 0,
+    "warmExecutionMs": {
+      "before": [24.46, 24.382, 24.405, 23.55, 23.495],
+      "after": [18.403, 17.759, 17.687, 17.344, 16.905]
+    },
+    "medianMs": {
+      "before": 24.382,
+      "after": 17.687
+    },
+    "mutationRelationScansPerIntent": {
+      "before": 4,
+      "after": 1
+    },
+    "method": "Alternating EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) in a repeatable-read read-only transaction on PostgreSQL 18 replica; first pair discarded; bidirectional EXCEPT ALL checked equality"
+  },
+  "nativeImageBefore": {
+    "digest": "sha256:0629c8dd9ccbd38ddbd291aeb5539c360916f98b5cc1af09ae2df3bbb63d3fd0",
+    "platform": "linux/amd64",
+    "compressedLayerBytes": 396205749,
+    "layers": 23
+  },
+  "scheduledTicks": [
+    {
+      "traceId": "44c1751d745a527607f49d1674b5920e",
+      "sourceRevision": "45579965308e14c07afd3d8960bc7d089de1986e",
+      "scheduledDelayMs": 29910.0,
+      "startLatenessMs": 62.0,
+      "activeMs": 1025.0
+    },
+    {
+      "traceId": "bf54909f7f54096ead93ddb88b01a7f1",
+      "sourceRevision": "45579965308e14c07afd3d8960bc7d089de1986e",
+      "scheduledDelayMs": 29972.0,
+      "startLatenessMs": 862.0,
+      "activeMs": 1023.0
+    },
+    {
+      "traceId": "9942d438e6a3a92bfe17568ed5090955",
+      "sourceRevision": "45579965308e14c07afd3d8960bc7d089de1986e",
+      "scheduledDelayMs": 29904.0,
+      "startLatenessMs": 992.0,
+      "activeMs": 1163.0
+    }
+  ],
+  "marketCaptureSample": {
+    "recordsByTopic": {
+      "dorvud.webull.raw.v1": 45,
+      "bayn.market-data.crypto.v1": 91,
+      "bayn.market-data.crypto.features.v1": 1
+    },
+    "serializedBytesByTopic": {
+      "dorvud.webull.raw.v1": 2629511,
+      "bayn.market-data.crypto.v1": 158454,
+      "bayn.market-data.crypto.features.v1": 42567
+    },
+    "firstAvailableAtMs": 1794205322322,
+    "lastAvailableAtMs": 1794205328589
+  },
+  "claimInventory": {
+    "claims": [
+      {
+        "name": "bayn-db-1",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-db-1-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-db-2",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-db-2-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-1",
+        "capacity": "200Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-native-arrival-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-1-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-native-arrival-db-1"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-2",
+        "capacity": "200Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["bayn-native-arrival-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-native-arrival-db-2-wal",
+        "capacity": "32Gi",
+        "phase": "Bound",
+        "storageClass": "local-path-bayn-wal",
+        "podConsumers": ["bayn-native-arrival-db-2"],
+        "owners": [
+          {
+            "kind": "Cluster",
+            "name": "bayn-native-arrival-db"
+          }
+        ]
+      },
+      {
+        "name": "bayn-opencode-state",
+        "capacity": "2Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "data-ledger-0",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "local-path",
+        "podConsumers": ["ledger-0"],
+        "owners": []
+      },
+      {
+        "name": "data-ledger-1",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "local-path",
+        "podConsumers": ["ledger-1"],
+        "owners": []
+      },
+      {
+        "name": "data-ledger-2",
+        "capacity": "100Gi",
+        "phase": "Bound",
+        "storageClass": "local-path",
+        "podConsumers": ["ledger-2"],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-0-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-0-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-1-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-1-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-2-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-drc-bayn-valkey-2-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": [],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-rfr-bayn-valkey-0",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["rfr-bayn-valkey-0"],
+        "owners": []
+      },
+      {
+        "name": "valkey-data-rfr-bayn-valkey-1",
+        "capacity": "10Gi",
+        "phase": "Bound",
+        "storageClass": "rook-ceph-block",
+        "podConsumers": ["rfr-bayn-valkey-1"],
+        "owners": []
+      }
+    ],
+    "controllers": [
+      {
+        "kind": "Deployment",
+        "name": "bayn",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "bayn-egress-proxy",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "Deployment",
+        "name": "bayn-telemetry",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "StatefulSet",
+        "name": "ledger",
+        "replicas": 3,
+        "claimTemplates": ["data"]
+      },
+      {
+        "kind": "StatefulSet",
+        "name": "rfr-bayn-valkey",
+        "replicas": 2,
+        "claimTemplates": ["valkey-data"]
+      },
+      {
+        "kind": "RestateDeployment",
+        "name": "bayn-execution-controller",
+        "replicas": 2,
+        "claimTemplates": []
+      },
+      {
+        "kind": "RestateDeployment",
+        "name": "bayn-research",
+        "replicas": 1,
+        "claimTemplates": []
+      }
+    ]
+  },
+  "retainedArrivalInventories": {
+    "bayn-db-1": {
+      "metadata": [
+        {
+          "relation": "native_arrival_epochs",
+          "totalBytes": 1245184,
+          "approximateRows": 367
+        },
+        {
+          "relation": "native_arrival_chunks",
+          "totalBytes": 45734297600,
+          "approximateRows": 1788824
+        },
+        {
+          "relation": "native_arrival_ends",
+          "totalBytes": 237568,
+          "approximateRows": 274
+        },
+        {
+          "captures": 367,
+          "firstRecordedAt": "2026-10-18T10:27:00.79151+00:00",
+          "lastRecordedAt": "2026-10-27T18:09:43.91713+00:00"
+        }
+      ],
+      "lastArrivalAt": "unverified: bounded query timed out; newest epoch is not last appended arrival"
+    },
+    "bayn-native-arrival-db-1": {
+      "metadata": [
+        {
+          "relation": "native_arrival_schema_migrations",
+          "totalBytes": 32768,
+          "approximateRows": 0
+        },
+        {
+          "relation": "native_arrival_epochs",
+          "totalBytes": 1458176,
+          "approximateRows": 38
+        },
+        {
+          "relation": "native_arrival_chunks",
+          "totalBytes": 127915597824,
+          "approximateRows": 279852
+        },
+        {
+          "relation": "native_arrival_ends",
+          "totalBytes": 270336,
+          "approximateRows": 36
+        },
+        {
+          "captures": 436,
+          "firstRecordedAt": "2026-10-27T20:26:13.955087+00:00",
+          "lastRecordedAt": "2026-11-09T04:01:38.860412+00:00"
+        }
+      ],
+      "lastArrivalAt": "unverified: bounded query timed out; newest epoch is not last appended arrival"
+    }
+  },
+  "activeAdvanceSpans": {
+    "traceId": "44c1751d745a527607f49d1674b5920e",
+    "clock": "Offsets within the Bayn process; separate from Restate scheduling timestamps",
+    "spans": [
+      {
+        "stage": "bayn.execution.advance",
+        "offsetMs": 0.0,
+        "durationMs": 919.45
+      },
+      {
+        "stage": "bayn.reconciliation.broker-snapshot",
+        "offsetMs": 12.163,
+        "durationMs": 79.389
+      },
+      {
+        "stage": "bayn.reconciliation.accounting-verify",
+        "offsetMs": 360.17,
+        "durationMs": 274.076
+      },
+      {
+        "stage": "bayn.postgres.writer-fence",
+        "offsetMs": 156.868,
+        "durationMs": 542.248
+      },
+      {
+        "stage": "bayn.reconciliation.persist",
+        "offsetMs": 91.596,
+        "durationMs": 607.923
+      },
+      {
+        "stage": "bayn.reconciliation.run",
+        "offsetMs": 12.151,
+        "durationMs": 687.376
+      }
+    ]
+  }
+}

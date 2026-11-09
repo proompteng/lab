@@ -127,6 +127,56 @@ production and research builds, the research command smoke checks, 92 delivery t
 The GEPA tests use the pinned upstream source and dependencies. Bayn and OpenCode manifests render successfully.
 Skipped integrations still require their configured CI environments.
 
+## Runtime cleanup after PR #15794
+
+This work starts from `45579965308e14c07afd3d8960bc7d089de1986e`. The
+[measurement record](evidence/2026-11-08-runtime-cleanup.json) separates current readback from the original inventory.
+The changes below are source changes until their reviewed image receipts and deployed behavior are verified.
+
+- B2: Trading and research have separate artifact contents through the existing Nix builder. Financial reporting
+  remains available in the API workload. Qualification and replay move to `bayn-system-assessment` in the research
+  artifact; the old command rejects those flags. The two images require the same successful source/run receipts before
+  Kargo discovers the cohort. Archive checks verify required commands and reject research tools in the trading image.
+  The original AMD64 image has 396,205,749 compressed layer bytes; replacement OCI size remains unmeasured locally.
+- B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
+  bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
+  first pair give medians of 24.382 ms before and 17.687 ms after. This is a 27.46% reduction for that query, not for a
+  full reconciliation. Full accounting reconstruction, ledger verification and the writer fence remain mandatory.
+- B4: Retain crypto sources while their executable-quote and replay consumers remain. A bounded sample of eight
+  arrival chunks contains 137 records over 6.267 seconds: 45 Webull records, 91 crypto raw records and one crypto
+  feature record. Serialized arrival bytes are 2,629,511, 158,454 and 42,567 respectively. These include retained
+  transport evidence and are not Kafka wire-byte or CPU measurements. A quotes-only acquisition experiment is removed;
+  changing a captured source and its partition coverage also changes the replay contract. No traffic saving is claimed.
+- B5: The earlier removal of duplicate rows from new decisions remains verified. Cross-record content references and
+  their retained-reader/export costs are still open; they are not implemented by this change.
+- B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
+  the dedicated archive. The 367 financial epochs were created through October 27; the dedicated archive has 436
+  epochs, with a newest epoch on November 9 UTC. Epoch creation time is not last arrival time. The bounded last-arrival
+  aggregate timed out, so write quiescence and complete range overlap remain unverified. Existing exports and valuation
+  readers retain their source-specific evidence. No rows or volumes are removed or moved.
+- B7: The six old 10 GiB Valkey claims and the 2 GiB OpenCode claim still have no Pod consumer. OpenCode explicitly
+  retains `Prune=false,Delete=false`. The active Valkey StatefulSet uses two different claims. The inventory does not
+  inspect unmounted contents or establish recovery disposal; those claims remain retained.
+- B8: The native root selects the native compiler; replay selects its research compiler. Both share one decision,
+  risk and persistence implementation. The native bundle no longer emits the experimental evaluator module. All 208
+  composition tests pass, including rejection of a research policy at the native entry boundary and its explicit
+  replay evaluation. Immutable financial readers remain available.
+- B9: Matched Restate schedule records resolve the current pre-attempt interval. Three ticks intentionally wait
+  29.904–29.972 seconds, start 62–992 ms after their due time, and run for 1.023–1.163 seconds. For the first two,
+  `bayn.execution.advance` takes 919.450/916.957 ms, reconciliation persistence 607.923/606.341 ms, and accounting
+  verification 274.076/267.426 ms. Nested spans must not be added together. These are waiting passes, not entry
+  inference or order-submission waterfalls; a complete naturally eligible request and comparable release readback remain open.
+- B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
+  Keep current runtime procedures and link dated receipts through their immutable Git revision.
+
+![Matched scheduled delay and active worker timing, on separate clocks](evidence/2026-11-08-current-waiting.svg)
+
+The upper panel uses Restate's schedule records. The lower panel uses spans from the matched Bayn process, relative
+to its own worker advance. This preserves causal correlation without assuming synchronized clocks across services.
+
+The full audit remains open for the explicitly unverified items above. Smaller bundles, a faster SQL query and green
+tests do not establish a faster complete trading request or disposal authority for retained data.
+
 ## Findings and deletion decisions
 
 | ID  | Priority | Evidence                                                                                                                                                                                                                                                                                                   | Decision and smallest responsible change                                                                                                                                                                                                                                                               | Acceptance evidence                                                                                                                                                                                                         |
