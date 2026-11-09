@@ -123,6 +123,16 @@ and expiry through the existing ARC secret-sync procedure without printing its v
 For a Loki backlog, check gateway health and collector errors; do not remove the PVC or clear the outbox. An observer
 failure does not stop builds. Recover code through a reviewed Git revert and Argo reconciliation, retaining the PVC.
 
+The `ci_observability_phase_*` metrics distinguish a blocked current poll from pending-attempt collection,
+history discovery, pruning, Loki delivery, metric refresh, and sleep. Active phase and elapsed time are read
+directly from a bounded in-memory snapshot on each scrape, even while the regular GitHub/SQLite metric snapshot
+is stale. Durations use a monotonic clock. Completion counters distinguish success, error, and interruption;
+all phase diagnostics reset on process restart and add only 48 fixed series. They contain no run IDs, URLs,
+exception text, or credentials and perform no network or database reads in the HTTP thread.
+Phase completion is not proof of a successful GitHub poll: the existing last-success timestamp, stale-collection
+alert, polling order, request budgets, and retained evidence remain unchanged. These diagnostics identify the
+phase of a future stall, not its network/storage cause or a latency improvement.
+
 ## Validation
 
 ```sh
