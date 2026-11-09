@@ -1890,6 +1890,18 @@ bearer header is not retained with the result. Private activation, deactivation,
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
 
+Controller rotation commits the active successor in one exclusive transition after a fresh broker publication;
+it never persists an inactive intermediate owner. The exact predecessor epoch and binding still fence the change,
+and a failed or uncertain projection replays the same successor projection. A deactivation during preparation
+supersedes the pending rotation. Retained `activate` and `deactivate` calls remain supported.
+An unavailable initial broker capture waits for the existing serial poll owner to recover. Shared status establishes
+progress only; a fresh exclusive capture confirms publication before rotation. Readiness uses bounded journaled
+batches with durable waits and a new immutable-target/authority preflight between batches. The workflow can remain
+pending beyond the hook client's wait and finish when the broker recovers, while a superseding deployment or
+deactivation fences it. It never resumes an administratively paused Restate invocation. The broker observation
+store still has one revision-bound owner: cutover can make predecessor broker reads unavailable, and the old source
+does not regain trading permission. Native passes retain their independent freshness and authority checks.
+
 Controller completion persists the earlier of the worker's absolute next wake and the ordinary polling deadline.
 Worker completion, persistence and transport time consume that wait instead of restarting it. An elapsed wake runs
 on the next bounded continuation. A failed post-pass projection check discards both earlier scheduling hints and

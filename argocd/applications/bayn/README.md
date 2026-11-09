@@ -327,13 +327,17 @@ can retire its predecessor, a bounded read-only preflight rejects untransitioned
 Absent or existing OBSERVE authority and recognized restricted-generation recovery remain admissible; the existing
 native settlement, reconciliation, identity and capital checks still apply afterward. The preflight does not rotate
 authority, restore a mandate or prove broker exposure. A pinned stale coordinator
-cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
-activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
+cannot stop a newer owner. The authenticated handoff verifies fresh broker publication, then commits the active
+replacement through one private exclusive rotation of the exact predecessor epoch, plan and source. No inactive
+intermediate controller is persisted. Transient broker failures retain durable readiness waits in bounded batches;
+each new batch revalidates the immutable target and authority. An administrative deactivation or superseding source
+fences the pending rotation. Hook-client timeout does not cancel the durable wait or resume a paused invocation.
+GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
 source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
 
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
-`activate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+`activate`, `rotate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
 result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
 `BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
 and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait

@@ -167,7 +167,7 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(yield* Effect.promise(() => wrongKey.text())).toContain('does not match this immutable deployment')
           expect(brokerActivations).toBe(0)
           expect(controllerActivations).toBe(0)
-          for (const method of ['activate', 'tick', 'deactivate', 'prepareActivation', 'status']) {
+          for (const method of ['activate', 'rotate', 'tick', 'deactivate', 'prepareActivation', 'status']) {
             const denied = yield* invoke(config.controllerKey, method, `Bearer ${token}`)
             expect(denied.status).toBe(400)
             expect(yield* Effect.promise(() => denied.text())).toContain('the invoked service is not public')
