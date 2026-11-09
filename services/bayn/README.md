@@ -1422,6 +1422,12 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
+- Alpaca read-header spans retain request-local transport phase, attempt/start counts and the latest attempt's
+  pre-dispatch and response-wait durations. Failed or interrupted reads log only those bounded fields and the authored
+  operation. Pre-dispatch includes pool waiting and connection establishment; it cannot distinguish DNS, CONNECT or
+  TLS. A dispatch start does not prove that the broker received the request. Mock clients without the interceptor
+  report `unobserved`, not a fabricated phase. No request/response values, hostnames, credentials or account identifiers
+  enter this diagnostic. Retry, total deadline, proxy ownership and all trading safeguards are unchanged.
 - Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
   preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
 - Rejected positions responses emit one bounded schema diagnostic on the existing read span and a warning. The
