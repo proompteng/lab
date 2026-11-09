@@ -1,0 +1,871 @@
+{
+  "schemaVersion": "bayn.workload-audit-inventory.v1",
+  "capturedAt": "2026-11-08T22:59:32.506838+00:00",
+  "scope": "Read-only workload metadata and storage allocations; secret/environment values excluded except build source revision.",
+  "resources": [
+    {
+      "kind": "Pod",
+      "name": "bayn-db-1",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "postgres",
+          "image": "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "8Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "2Gi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-db-2",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "postgres",
+          "image": "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "8Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "2Gi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-df7fdfd-gq2q2",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "bayn",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:5bc855e5967aa9fb3265c17d302375865c8dde1f36a58404f57ead6be779c498",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "4Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "3a81f707f4a11a3aef67b67a98c6d58d4396fd15"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-df7fdfd-rhs8q",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "bayn",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:5bc855e5967aa9fb3265c17d302375865c8dde1f36a58404f57ead6be779c498",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "4Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "3a81f707f4a11a3aef67b67a98c6d58d4396fd15"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-egress-proxy-78d9f697bc-g2cfw",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "squid",
+          "image": "docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c",
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "ephemeral-storage": "512Mi",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "ephemeral-storage": "64Mi",
+              "memory": "64Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-egress-proxy-78d9f697bc-ls5cw",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "squid",
+          "image": "docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c",
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "ephemeral-storage": "512Mi",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "ephemeral-storage": "64Mi",
+              "memory": "64Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-execution-controller-bbbddd8c5-5922s",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "execution-controller",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:81faadf5368aae68e666912fb856672fa8fd8286b3d169ab37087352fcab2af1",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "50621bf203084b304685406a144eb13e1c2cfd91"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-execution-controller-bbbddd8c5-x6htv",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "execution-controller",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:81faadf5368aae68e666912fb856672fa8fd8286b3d169ab37087352fcab2af1",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "50621bf203084b304685406a144eb13e1c2cfd91"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-execution-controller-c4df9965b6-546hr",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "execution-controller",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:5bc855e5967aa9fb3265c17d302375865c8dde1f36a58404f57ead6be779c498",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "3a81f707f4a11a3aef67b67a98c6d58d4396fd15"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-execution-controller-c4df9965b6-9xnqt",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "execution-controller",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:5bc855e5967aa9fb3265c17d302375865c8dde1f36a58404f57ead6be779c498",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "3a81f707f4a11a3aef67b67a98c6d58d4396fd15"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-native-arrival-db-1",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "postgres",
+          "image": "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "2Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "512Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-native-arrival-db-2",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "postgres",
+          "image": "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "2Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "512Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-research-846998fc87-4s79d",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "research",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:5bc855e5967aa9fb3265c17d302375865c8dde1f36a58404f57ead6be779c498",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "192Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-telemetry-6c59d8c65c-6nlkd",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "alloy",
+          "image": "grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "bayn-telemetry-6c59d8c65c-l4cm9",
+      "ownerKinds": ["ReplicaSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "alloy",
+          "image": "grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "ledger-0",
+      "ownerKinds": ["StatefulSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "tigerbeetle",
+          "image": "ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9",
+          "resources": {
+            "limits": {
+              "memory": "8Gi"
+            },
+            "requests": {
+              "cpu": "2",
+              "memory": "8Gi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "ledger-1",
+      "ownerKinds": ["StatefulSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "tigerbeetle",
+          "image": "ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9",
+          "resources": {
+            "limits": {
+              "memory": "8Gi"
+            },
+            "requests": {
+              "cpu": "2",
+              "memory": "8Gi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "ledger-2",
+      "ownerKinds": ["StatefulSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "tigerbeetle",
+          "image": "ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9",
+          "resources": {
+            "limits": {
+              "memory": "8Gi"
+            },
+            "requests": {
+              "cpu": "2",
+              "memory": "8Gi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "rfr-bayn-valkey-0",
+      "ownerKinds": ["StatefulSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "valkey",
+          "image": "valkey/valkey:9.1",
+          "resources": {
+            "limits": {
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "1Gi"
+            }
+          },
+          "sourceRevision": null
+        },
+        {
+          "name": "exporter",
+          "image": "oliver006/redis_exporter:v1.67.0-alpine",
+          "resources": {
+            "limits": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "memory": "64Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "rfr-bayn-valkey-1",
+      "ownerKinds": ["StatefulSet"],
+      "replicas": null,
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "valkey",
+          "image": "valkey/valkey:9.1",
+          "resources": {
+            "limits": {
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "1Gi"
+            }
+          },
+          "sourceRevision": null
+        },
+        {
+          "name": "exporter",
+          "image": "oliver006/redis_exporter:v1.67.0-alpine",
+          "resources": {
+            "limits": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "memory": "64Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-db-1",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "100Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-db-1-wal",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "32Gi",
+      "storageClass": "local-path-bayn-wal",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-db-2",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "100Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-db-2-wal",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "32Gi",
+      "storageClass": "local-path-bayn-wal",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-native-arrival-db-1",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "200Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-native-arrival-db-1-wal",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "32Gi",
+      "storageClass": "local-path-bayn-wal",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-native-arrival-db-2",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "200Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-native-arrival-db-2-wal",
+      "ownerKinds": ["Cluster"],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "32Gi",
+      "storageClass": "local-path-bayn-wal",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "bayn-opencode-state",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "2Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "data-ledger-0",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "100Gi",
+      "storageClass": "local-path",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "data-ledger-1",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "100Gi",
+      "storageClass": "local-path",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "data-ledger-2",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "100Gi",
+      "storageClass": "local-path",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-drc-bayn-valkey-0-0",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-drc-bayn-valkey-0-1",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-drc-bayn-valkey-1-0",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-drc-bayn-valkey-1-1",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-drc-bayn-valkey-2-0",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-drc-bayn-valkey-2-1",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": false
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-rfr-bayn-valkey-0",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "valkey-data-rfr-bayn-valkey-1",
+      "ownerKinds": [],
+      "replicas": null,
+      "phase": "Bound",
+      "containers": [],
+      "requestedStorage": "10Gi",
+      "storageClass": "rook-ceph-block",
+      "mountedByCurrentPod": true
+    },
+    {
+      "kind": "Deployment",
+      "name": "bayn",
+      "ownerKinds": [],
+      "replicas": 2,
+      "phase": null,
+      "containers": [
+        {
+          "name": "bayn",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:5bc855e5967aa9fb3265c17d302375865c8dde1f36a58404f57ead6be779c498",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "4Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": "3a81f707f4a11a3aef67b67a98c6d58d4396fd15"
+        }
+      ]
+    },
+    {
+      "kind": "Deployment",
+      "name": "bayn-egress-proxy",
+      "ownerKinds": [],
+      "replicas": 2,
+      "phase": null,
+      "containers": [
+        {
+          "name": "squid",
+          "image": "docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c",
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "ephemeral-storage": "512Mi",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "ephemeral-storage": "64Mi",
+              "memory": "64Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "Deployment",
+      "name": "bayn-telemetry",
+      "ownerKinds": [],
+      "replicas": 2,
+      "phase": null,
+      "containers": [
+        {
+          "name": "alloy",
+          "image": "grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "StatefulSet",
+      "name": "ledger",
+      "ownerKinds": ["TigerBeetleCluster"],
+      "replicas": 3,
+      "phase": null,
+      "containers": [
+        {
+          "name": "tigerbeetle",
+          "image": "ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9",
+          "resources": {
+            "limits": {
+              "memory": "8Gi"
+            },
+            "requests": {
+              "cpu": "2",
+              "memory": "8Gi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    },
+    {
+      "kind": "StatefulSet",
+      "name": "rfr-bayn-valkey",
+      "ownerKinds": ["Failover"],
+      "replicas": 2,
+      "phase": null,
+      "containers": [
+        {
+          "name": "valkey",
+          "image": "valkey/valkey:9.1",
+          "resources": {
+            "limits": {
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "1Gi"
+            }
+          },
+          "sourceRevision": null
+        },
+        {
+          "name": "exporter",
+          "image": "oliver006/redis_exporter:v1.67.0-alpine",
+          "resources": {
+            "limits": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "memory": "64Mi"
+            }
+          },
+          "sourceRevision": null
+        }
+      ]
+    }
+  ]
+}
