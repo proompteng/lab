@@ -324,7 +324,7 @@ export const readAccountingHistory = (
     Effect.gen(function* () {
       const rows = yield* sql<Record<string, unknown>>`
       WITH inventory_debits AS MATERIALIZED (
-        SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at, posted
+        SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at
         FROM broker_inventory_debits
         WHERE account_id = ${accountId} AND posted
       ), ranked AS (
@@ -359,19 +359,21 @@ export const readAccountingHistory = (
             PARTITION BY transaction.account_id, transaction.symbol
             ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-          ), 0) - COALESCE((SELECT sum(fee.quantity_atoms) FROM inventory_debits AS fee
-            WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
-              AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_quantity_atoms,
+          ), 0) - COALESCE(debits.quantity_atoms, 0))::text AS prior_quantity_atoms,
           (COALESCE(sum(transaction.cost_basis_delta_micros) OVER (
             PARTITION BY transaction.account_id, transaction.symbol
             ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-          ), 0) - COALESCE((SELECT sum(fee.cost_basis_micros) FROM inventory_debits AS fee
-            WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
-              AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_cost_micros
+          ), 0) - COALESCE(debits.cost_basis_micros, 0))::text AS prior_cost_micros
         FROM accounting_transactions AS transaction
         JOIN fills AS historical_fill ON historical_fill.event_id = transaction.broker_event_id
         JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+        LEFT JOIN LATERAL (
+          SELECT sum(fee.quantity_atoms) AS quantity_atoms, sum(fee.cost_basis_micros) AS cost_basis_micros
+          FROM inventory_debits AS fee
+          WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
+            AND fee.effective_at <= transaction.occurred_at
+        ) AS debits ON true
         WHERE transaction.account_id = ${accountId}
       )
       SELECT * FROM ranked ORDER BY occurred_at, transaction_id COLLATE "C"

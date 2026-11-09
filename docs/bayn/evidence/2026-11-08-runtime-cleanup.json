@@ -402,5 +402,21 @@
         "durationMs": 687.376
       }
     ]
+  },
+  "accountingHistoryQuery": {
+    "warmExecutionMs": {
+      "before": [120.843, 121.191, 122.111, 119.373, 121.985],
+      "after": [71.452, 72.337, 77.13, 72.535, 69.719]
+    },
+    "medianMs": {
+      "before": 121.191,
+      "after": 72.337
+    },
+    "resultDifferences": 0,
+    "method": "Alternating EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) in a repeatable-read read-only transaction on PostgreSQL 18 replica; first pair discarded; bidirectional EXCEPT ALL checked equality",
+    "inventoryDebitScansPerTransaction": {
+      "before": 2,
+      "after": 1
+    }
   }
 }
