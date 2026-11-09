@@ -18,6 +18,41 @@ describe('CI build observability', () => {
     expect(catalog).toEqual(imageWorkflowCatalog(repoRoot))
   })
 
+  test('keeps the collector on Ryzen without changing its durable Ceph claim', () => {
+    const documents = YAML.parseAllDocuments(
+      readFileSync(resolve(repoRoot, 'argocd/applications/observability/ci/collector.yaml'), 'utf8'),
+    ).map((document) => document.toJSON()) as Array<{
+      kind: string
+      spec: {
+        storageClassName?: string
+        resources?: { requests?: { storage?: string } }
+        template?: {
+          spec?: {
+            nodeSelector?: Record<string, string>
+            tolerations?: Array<Record<string, string>>
+          }
+        }
+      }
+    }>
+    const deployment = documents.find((document) => document.kind === 'Deployment')
+    const claim = documents.find((document) => document.kind === 'PersistentVolumeClaim')
+    expect(deployment?.spec.template?.spec).toMatchObject({
+      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+      tolerations: [
+        {
+          key: 'workload.proompteng.ai/compute-local',
+          operator: 'Equal',
+          value: 'true',
+          effect: 'NoSchedule',
+        },
+      ],
+    })
+    expect(claim?.spec).toMatchObject({
+      storageClassName: 'rook-ceph-block',
+      resources: { requests: { storage: '1Gi' } },
+    })
+  })
+
   test('preserves attempt identity, timing and durable delivery behavior', () => {
     const result = Bun.spawnSync(
       [

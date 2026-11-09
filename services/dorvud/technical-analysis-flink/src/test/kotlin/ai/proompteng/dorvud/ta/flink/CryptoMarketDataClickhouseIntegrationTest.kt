@@ -33,13 +33,12 @@ class CryptoMarketDataClickhouseIntegrationTest {
     require(guard.matches(Regex("[0-9a-f]{32}")))
     val schemaPath =
       generateSequence(Path.of("").toAbsolutePath()) { it.parent }
-        .map { it.resolve("argocd/applications/torghut/clickhouse/intraday-bars-schema-job.yaml") }
+        .map { it.resolve("argocd/applications/torghut/clickhouse/schema/intraday-bars.sql") }
         .first { Files.exists(it) }
     val schema = Files.readString(schemaPath)
     val ddl =
-      requireNotNull(Regex("CREATE TABLE IF NOT EXISTS signal\\.crypto_market_events_v1 ON CLUSTER default[\\s\\S]+?;").find(schema))
+      requireNotNull(Regex("CREATE TABLE IF NOT EXISTS signal\\.crypto_market_events_v1[\\s\\S]+?;").find(schema))
         .value
-        .replace(" ON CLUSTER default", "")
         .replace(Regex("ReplicatedReplacingMergeTree\\([\\s\\S]+?\\)"), "ReplacingMergeTree()")
     val fixtureDate =
       Instant

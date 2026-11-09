@@ -1920,6 +1920,8 @@ spec:
       value: ./out
     - name: imageRepo
       value: registry.ide-newton.ts.net/lab/bayn
+    - name: researchImageRepo
+      value: registry.ide-newton.ts.net/lab/bayn-research
   requestedFreight:
     - origin:
         kind: Warehouse
@@ -1978,6 +1980,9 @@ spec:
               - image: bayn-main
                 newName: ${{ vars.imageRepo }}
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
+              - image: bayn-research
+                newName: ${{ vars.researchImageRepo }}
+                digest: ${{ imageFrom(vars.researchImageRepo).Digest }}
         - uses: yaml-update
           if: ${{ outputs.baynDeployment.hasLineage }}
           config:
