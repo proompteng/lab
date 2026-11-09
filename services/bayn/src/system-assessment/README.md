@@ -335,7 +335,9 @@ these persistence assumptions explicitly, and the qualification policy hash comm
 
 ## Private reporting command
 
-Build the service, then use `dist/forward-performance-command.js` with the existing private reporting configuration.
+Build the service, then use `dist/system-assessment-command.js` (`bayn-system-assessment` in the research image)
+with the existing private reporting configuration for the trading member of the same immutable source cohort.
+This operator command does not use the deployed research worker's restricted credential as a financial credential.
 Evidence packets contain `payload` and an `artifacts` array of `{ sha256, path }` entries. Paths resolve relative to the
 packet; their bytes must match their hashes. A hash authenticates bytes, while provider provenance remains an explicit
 evidence obligation.
@@ -347,8 +349,9 @@ evidence obligation.
 4. `--system-capture-replay <packet.json>` observes a retained replay container and persists its execution receipt.
 5. `--system-assess <packet.json>` verifies source bindings and replay images, evaluates the assessment, and appends
    its receipt.
-6. `--authority-generation <sha256> --assessment <sha256>` includes the saved assessment in the scoped financial
-   report. `--persist-receipt` also persists that forward-performance report.
+   Use `bayn-forward-performance --authority-generation <sha256> --assessment <sha256>` in the trading image
+   for the scoped financial report. `--persist-receipt` also persists that report. The financial-report command no longer
+   accepts qualification flags; each command has one owner and no compatibility route.
 
 The same history, register, capture, and assess commands accept operational packets. Their program and schema select
 the operational evaluator. Current `bayn.operational-assessment-input.v3` packets contain only the saved
