@@ -2314,7 +2314,7 @@ source manifest, native Jev build and strategy identities, opening cash, asset m
 controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
 Historical artifacts remain available for comparison and audit.
 
-Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. Current
+Set `BAYN_JEV_API_KEY` and `BAYN_EGRESS_PROXY` through the existing protected environment. Current
 requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
 `models: {"jev": "jev-1.14.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
 shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
@@ -2582,42 +2582,11 @@ feedback out of proposals and retains an unchanged-question repeat. Existing num
 common mechanical-exit comparison. Unknown costs remain explicit; all outputs are unqualified and grant no capital authority.
 Use the runbook for existing-data manifests, isolated local accounting targets, compiler source mounts and receipts.
 
-### Independent public information jobs
+### Research capture storage
 
-`BaynPublicInformation` runs one private Restate Virtual Object per `SEC_FILINGS` and `MACRO_CALENDAR` source on the
-existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
-bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
-polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
-sent to Restate. The research worker submits these activations asynchronously after listening. Before each submission,
-it checks the control endpoint's deployed source revision through ingress and retries until it matches. This prevents
-an accepted send from binding a new activation to an old deployment while the operator is registering the new endpoint.
-Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
-
-The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
-checks the BLS iCalendar and Federal Reserve FOMC calendar hourly. Requests use fixed official URLs, a dedicated public
-HTTP client, at least one second between requests, a sixteen-MiB body bound, a thirty-second capture deadline and a
-ten-minute run bound. Redirects are rejected. Broker, model and object-store credentials and trace propagation headers
-are absent from public requests. A missing ticker mapping or a company-facts 404 is an explicit exclusion.
-
-Original UTF-8 source bytes are written under `captures/v1/public-information/` in the existing private Rook research
-bucket. Before the first collection under each code revision, the job requires an owner-only private ACL and exact synthetic
-upload/readback verification. The generated `BUCKET_NAME` selects the bucket. The research worker uses its reflected OBC owner credential;
-no trading process receives it. Restate retains small artifact references, SHA-256, byte length, actual fetch/upload/check
-clocks, source revision, exclusions and failed URLs. It never journals the source documents. Unchanged content reuses its
-original artifact and fetch clock while advancing its successful check clock. A failed refresh retains the last good
-reference and its original timestamps within the current issuer universe. Retained symbol-to-CIK mappings keep a
-failed ticker refresh explicit while pruning references for removed issuers. These inputs support research; they do
-not change active entry or exit policy.
-
-The SEC artifacts are filing-history metadata and XBRL financial-fact JSON, not the full text of every filing. BLS and
-Federal Reserve artifacts retain the original calendar file and HTML. Changed content gets a new immutable object key;
-this rollout adds no automatic expiry or deletion of historical source snapshots.
-
-Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
-closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,
-upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
-attempt. Source-labelled duration, completed/incomplete polls, bytes, document counts, last-success metrics and traced
-fetch/upload spans support session diagnosis. The stale-input alert is a research warning and does not stop trading.
+GEPA uses `BAYN_RESEARCH_CAPTURE_BUCKET` and `BAYN_RESEARCH_CAPTURE_ENDPOINT` with the existing research storage
+identity. Model and research HTTP clients use `BAYN_EGRESS_PROXY`. These settings retain their existing destinations.
+The unconsumed SEC/macro collector is removed; previously captured public-source objects remain in the private bucket.
 
 ### Continuous-market reporting and replay
 
