@@ -1165,5 +1165,527 @@
       }
     ],
     "scope": "Two current-source sampling windows are deduplicated by trace ID. Every native advance has exact Restate invocation ancestry. Relative native span timing and Restate wall timestamps remain separate clock domains; nested stages are not additive. The outlier is an INSERT into broker_events and a slow COMMIT, independently timed by the primary logs. Its underlying wait reason remains unverified. These are waiting passes before the cleanup release, not eligible-entry timing or evidence of a release improvement."
+  },
+  "preCleanupReleaseBaseline": {
+    "context": {
+      "observedAt": "2026-11-09T10:30:47.286667+00:00",
+      "deploymentId": "dp_13r7o3x9uBjO7cp60wehyBH",
+      "workers": [
+        {
+          "pod": "bayn-execution-controller-6f64bb9695-q2q5d",
+          "node": "turin",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "sourceRevision": "351b522baf093501a703990d1403d986b652b8e8"
+        },
+        {
+          "pod": "bayn-execution-controller-6f64bb9695-zf5sl",
+          "node": "talos-192-168-1-85",
+          "image": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "imageId": "registry.ide-newton.ts.net/lab/bayn@sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+          "sourceRevision": "351b522baf093501a703990d1403d986b652b8e8"
+        }
+      ],
+      "databaseContext": {
+        "clusters": [
+          {
+            "name": "bayn-db",
+            "instances": 2,
+            "storageClass": "rook-ceph-block",
+            "primary": "bayn-db-2"
+          },
+          {
+            "name": "bayn-native-arrival-db",
+            "instances": 3,
+            "storageClass": "local-path",
+            "primary": "bayn-native-arrival-db-1"
+          }
+        ],
+        "claims": [
+          {
+            "name": "bayn-db-1",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-db-1-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-db-2",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-db-2-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-1",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-1-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-2",
+            "storageClass": "rook-ceph-block",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-2-wal",
+            "storageClass": "local-path-bayn-wal",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-3",
+            "storageClass": "local-path",
+            "phase": "Bound"
+          },
+          {
+            "name": "bayn-native-arrival-db-3-wal",
+            "storageClass": "local-path",
+            "phase": "Bound"
+          }
+        ]
+      },
+      "scope": "Pre-cleanup source 351b522 after independently merged DNS/proxy changes and during independent native archive storage migration. No storage mutation performed by this diagnostic."
+    },
+    "capturedAt": "2026-11-09T10:32:31.653243+00:00",
+    "uniqueSamples": 15,
+    "outcomes": ["Waiting"],
+    "columns": [
+      "traceId",
+      "runningAt",
+      "serviceInstanceId",
+      "node",
+      "restateActiveMs",
+      "bayn.execution.advance",
+      "bayn.reconciliation.run",
+      "bayn.reconciliation.broker-snapshot",
+      "bayn.reconciliation.persist",
+      "bayn.postgres.writer-fence",
+      "bayn.reconciliation.accounting-verify"
+    ],
+    "rows": [
+      [
+        "c49eafdb5af17372b92ef578d0052b47",
+        "2026-11-09T10:25:06.002Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1632.0,
+        1354.606,
+        1117.585,
+        76.153,
+        1041.251,
+        937.167,
+        266.477
+      ],
+      [
+        "53c82bca2b902b5f09a57e272b006145",
+        "2026-11-09T10:25:38.003Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1047.0,
+        942.604,
+        719.372,
+        114.025,
+        605.235,
+        541.858,
+        266.754
+      ],
+      [
+        "1ffc5ad03a7b66caceea0febec898889",
+        "2026-11-09T10:26:09.002Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1787.0,
+        996.698,
+        768.466,
+        76.565,
+        691.727,
+        576.349,
+        277.428
+      ],
+      [
+        "359b3dd08c12a8aaf24ae0d3512ebbfe",
+        "2026-11-09T10:26:41.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1111.0,
+        961.52,
+        733.698,
+        79.506,
+        654.014,
+        549.079,
+        271.115
+      ],
+      [
+        "a6a3f0a5ddf83a0758d42ba3c54f921a",
+        "2026-11-09T10:27:12.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1094.0,
+        982.787,
+        753.778,
+        78.871,
+        674.725,
+        565.676,
+        288.387
+      ],
+      [
+        "0a947d4e2035d39abbe23310b174041e",
+        "2026-11-09T10:27:44Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1089.0,
+        985.801,
+        742.832,
+        82.182,
+        660.457,
+        594.492,
+        289.156
+      ],
+      [
+        "5acd991e00ec71e903ebce38a1a090d6",
+        "2026-11-09T10:28:16.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1022.0,
+        956.227,
+        723.32,
+        79.923,
+        643.215,
+        576.057,
+        292.241
+      ],
+      [
+        "6eab5b5ef676b3a06aae658988fa1b98",
+        "2026-11-09T10:28:47.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1033.0,
+        954.52,
+        728.964,
+        75.747,
+        653.129,
+        590.438,
+        323.112
+      ],
+      [
+        "408898471c7b3b5259cb83eea6dc01d4",
+        "2026-11-09T10:29:18.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1287.0,
+        1163.856,
+        936.002,
+        89.508,
+        846.315,
+        739.953,
+        309.111
+      ],
+      [
+        "59e2cc2c914c7e38ad450ecbc3ecf4c9",
+        "2026-11-09T10:29:50.003Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1084.0,
+        957.714,
+        726.643,
+        77.441,
+        649.022,
+        582.529,
+        293.434
+      ],
+      [
+        "896befa2664d2a0fa18899b8783c7d13",
+        "2026-11-09T10:30:21Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1306.0,
+        1120.154,
+        871.758,
+        86.046,
+        785.535,
+        665.693,
+        332.839
+      ],
+      [
+        "2164b70c396f4307e4f2b92e129f3a94",
+        "2026-11-09T10:30:53.003Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1110.0,
+        1042.507,
+        817.913,
+        110.201,
+        707.618,
+        644.38,
+        267.753
+      ],
+      [
+        "31feed1880bfc8126ac0545dc4e5d6b0",
+        "2026-11-09T10:31:25.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1144.0,
+        1018.446,
+        785.251,
+        80.855,
+        704.214,
+        591.734,
+        283.871
+      ],
+      [
+        "ab98bc71f34a92852196cbe91a76d50a",
+        "2026-11-09T10:31:57.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1097.0,
+        991.052,
+        753.727,
+        81.282,
+        672.264,
+        556.465,
+        278.477
+      ],
+      [
+        "14796cac2670ea20546f5bbbb3473ec7",
+        "2026-11-09T10:32:29.001Z",
+        "bayn-execution-controller-6f64bb9695-q2q5d",
+        "turin",
+        1096.0,
+        982.461,
+        756.899,
+        80.025,
+        676.687,
+        562.635,
+        275.566
+      ]
+    ],
+    "stageMaximumDurationMedians": {
+      "bayn.execution.advance": {
+        "samples": 15,
+        "medianMs": 985.801,
+        "minimumMs": 942.604,
+        "maximumMs": 1354.606
+      },
+      "bayn.reconciliation.run": {
+        "samples": 15,
+        "medianMs": 753.778,
+        "minimumMs": 719.372,
+        "maximumMs": 1117.585
+      },
+      "bayn.reconciliation.broker-snapshot": {
+        "samples": 15,
+        "medianMs": 80.025,
+        "minimumMs": 75.747,
+        "maximumMs": 114.025
+      },
+      "bayn.reconciliation.persist": {
+        "samples": 15,
+        "medianMs": 674.725,
+        "minimumMs": 605.235,
+        "maximumMs": 1041.251
+      },
+      "bayn.postgres.writer-fence": {
+        "samples": 15,
+        "medianMs": 582.529,
+        "minimumMs": 541.858,
+        "maximumMs": 937.167
+      },
+      "bayn.reconciliation.accounting-verify": {
+        "samples": 15,
+        "medianMs": 283.871,
+        "minimumMs": 266.477,
+        "maximumMs": 332.839
+      }
+    },
+    "scheduledTicks": [
+      {
+        "traceId": "31feed1880bfc8126ac0545dc4e5d6b0",
+        "createdAt": "2026-11-09T10:30:54.117Z",
+        "scheduledStartAt": "2026-11-09T10:31:24.065Z",
+        "runningAt": "2026-11-09T10:31:25.001Z",
+        "completedAt": "2026-11-09T10:31:26.145Z",
+        "scheduledDelayMs": 29948.0,
+        "startLatenessMs": 936.0,
+        "activeMs": 1144.0
+      },
+      {
+        "traceId": "ab98bc71f34a92852196cbe91a76d50a",
+        "createdAt": "2026-11-09T10:31:26.151Z",
+        "scheduledStartAt": "2026-11-09T10:31:56.041Z",
+        "runningAt": "2026-11-09T10:31:57.001Z",
+        "completedAt": "2026-11-09T10:31:58.098Z",
+        "scheduledDelayMs": 29890.0,
+        "startLatenessMs": 960.0,
+        "activeMs": 1097.0
+      },
+      {
+        "traceId": "14796cac2670ea20546f5bbbb3473ec7",
+        "createdAt": "2026-11-09T10:31:58.101Z",
+        "scheduledStartAt": "2026-11-09T10:32:28.012Z",
+        "runningAt": "2026-11-09T10:32:29.001Z",
+        "completedAt": "2026-11-09T10:32:30.097Z",
+        "scheduledDelayMs": 29911.0,
+        "startLatenessMs": 989.0,
+        "activeMs": 1096.0
+      }
+    ],
+    "scope": "Baseline after independent DNS/proxy changes in PR #15806, before runtime cleanup release cdb8fadf7c694a43296928253d8b9b61a46e8cec. Native-arrival replica migration from that independent PR is in progress; the financial primary remains bayn-db-2 on existing rook-ceph-block data storage. Match node, database state and outcome in any comparison. Strict Restate invocation ancestry binds every native span. Nested stage durations are not additive. This does not establish any cleanup speedup."
+  },
+  "retainedDecisionReadback": {
+    "status": "NOT_MEASURED",
+    "retainedJevFinancialReaderAccepted": true,
+    "currentCycleReaderAccepted": false,
+    "method": "Latest retained decision selected by primary key after a metadata-only created_at sort. Body remains in memory inside the existing status Pod. The current and retained Jev verifiers run against the unchanged body. Only acceptance booleans leave the Pod. A historical record cannot measure the new current-execution representation; no record was rewritten.",
+    "verifierSourceRevision": "66ee055c5b75018bbf9a21780929274bf8972377",
+    "runtimeSourceRevision": "351b522baf093501a703990d1403d986b652b8e8",
+    "runtimePod": "bayn-5f4b55c84f-2xws5"
+  },
+  "financialDatabaseWaitSample": {
+    "sampleCount": 301,
+    "firstObservedAt": "2026-11-09T10:32:31.076068+00:00",
+    "lastObservedAt": "2026-11-09T10:33:30.876979+00:00",
+    "intervalMs": 200,
+    "activeBackendObservations": 8,
+    "waitObservations": [
+      {
+        "waitType": null,
+        "waitEvent": null,
+        "operation": "other",
+        "observations": 4
+      },
+      {
+        "waitType": "IPC",
+        "waitEvent": "SyncRep",
+        "operation": "other",
+        "observations": 1
+      },
+      {
+        "waitType": "IO",
+        "waitEvent": "WalSync",
+        "operation": "other",
+        "observations": 2
+      },
+      {
+        "waitType": null,
+        "waitEvent": null,
+        "operation": "select",
+        "observations": 1
+      }
+    ],
+    "maximumObservedQueryAgeMs": 120,
+    "blockingPidObservations": 0,
+    "scope": "Read-only pg_stat_activity sampling of active bayn application connections on financial primary bayn-db-2. 200 ms sampling can miss short queries and does not attribute the earlier trace. No SQL text, parameters, financial values or secret data were collected."
+  },
+  "imageRolePreparation": {
+    "buildRunId": "42600189039",
+    "buildConclusion": "failure",
+    "platformArchiveValidation": "All four native/research AMD64/ARM64 platform builds and archive checks passed; both final index jobs failed before cohort publication.",
+    "publicationFailure": "Receipt annotations require a run-qualified immutable Kargo identity. The workflow withheld that identity with the publication alias.",
+    "publicationFix": {
+      "pullRequest": "https://github.com/proompteng/lab/pull/15812",
+      "mergedRevision": "2c944ced3a",
+      "mode": "Existing deferred-tag validation preserves receipt identity without exposing preparation aliases. A new successful source/run cohort and runtime readback remain required."
+    },
+    "deployedBefore": {
+      "observedAt": "2026-11-09T11:11:02.398387+00:00",
+      "sourceRevision": "351b522baf093501a703990d1403d986b652b8e8",
+      "indexDigest": "sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+      "platform": "linux/arm64",
+      "manifestDigest": "sha256:6c3f88b23696815a360402f453e0264537359252a3d82c35ceab61009faa1d0d",
+      "compressedLayerBytes": 392756535
+    },
+    "preparationImages": [
+      {
+        "role": "native",
+        "observedAt": "2026-11-09T11:17:15.218071+00:00",
+        "reference": "registry.ide-newton.ts.net/lab/bayn@sha256:38e8cea855b659f00cd54049c4ccdede551922cf8a8e1840892d0d5848249dbb",
+        "sourceRevision": "cdb8fadf7c694a43296928253d8b9b61a46e8cec",
+        "platform": "linux/arm64",
+        "compressedLayerBytes": 95184638,
+        "layerCount": 23,
+        "commandChecks": [
+          {
+            "check": "financial-report-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "opening-capture-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "candidate-backtest-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "role-paths",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "financial-report-wrapper",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "opening-capture-wrapper",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          }
+        ],
+        "verificationScope": "Actual immutable ARM64 preparation image executed in temporary local Linux containers, with no network, credentials, persistent volumes or broker actions. All owned containers removed. This proves selected CLI entry points and role paths, not final cohort publication or product rollout."
+      },
+      {
+        "role": "research",
+        "observedAt": "2026-11-09T11:23:46.720870+00:00",
+        "reference": "registry.ide-newton.ts.net/lab/bayn-research@sha256:9a21ab3c9a7433dba98ae1e12f1f40afe8c145108ce790612dfb85595361ad32",
+        "sourceRevision": "cdb8fadf7c694a43296928253d8b9b61a46e8cec",
+        "platform": "linux/arm64",
+        "compressedLayerBytes": 384766091,
+        "layerCount": 23,
+        "commandChecks": [
+          {
+            "check": "system-assessment-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "control-study-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "frozen-control-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "arrival-export-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "role-paths",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          }
+        ],
+        "verificationScope": "Actual immutable ARM64 research preparation artifact. Selected real wrappers and role paths checked in temporary Linux containers with no network, credentials or persistent volumes. All owned containers removed. Not final cohort or runtime research acceptance."
+      }
+    ],
+    "nativeCompressedLayerReductionPercent": 75.765,
+    "scope": "Actual immutable ARM64 artifacts and isolated Linux CLI execution. Native compressed layer bytes fall by 75.765 percent relative to the deployed ARM64 artifact; this is not total cohort size, disk usage, pull traffic, startup latency, final publication or product rollout proof. No image aliases, live workloads, retained data, storage or authority were changed by these checks."
   }
 }

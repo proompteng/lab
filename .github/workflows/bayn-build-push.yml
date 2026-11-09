@@ -16,7 +16,6 @@ on:
       - '!services/bayn/README.md'
       - 'packages/scripts/src/bayn/**'
       - 'nix/images/bayn.nix'
-      - 'nix/images/opencode-cli.nix'
       - 'nix/images/bayn-runtime-root.nix'
       - 'nix/images/bayn-frozen-control.nix'
       - 'nix/images/bayn-deps-hash.nix'
