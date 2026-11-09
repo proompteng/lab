@@ -25,6 +25,9 @@ spec:
   volumeMode: Filesystem
   persistentVolumeReclaimPolicy: Retain
   storageClassName: kafka-nvme
+  claimRef:
+    namespace: kafka
+    name: data-kafka-pool-a-1
   local:
     path: /var/mnt/local-path-provisioner/kafka-nvme/controller
   nodeAffinity:
@@ -51,6 +54,9 @@ spec:
   volumeMode: Filesystem
   persistentVolumeReclaimPolicy: Retain
   storageClassName: kafka-nvme
+  claimRef:
+    namespace: kafka
+    name: data-kafka-pool-a-2
   local:
     path: /var/mnt/turin-nvme-intel/kafka-nvme/controller
   nodeAffinity:
@@ -77,6 +83,9 @@ spec:
   volumeMode: Filesystem
   persistentVolumeReclaimPolicy: Retain
   storageClassName: kafka-nvme
+  claimRef:
+    namespace: kafka
+    name: data-kafka-pool-a-0
   local:
     path: /var/mnt/local-path-provisioner/kafka-nvme/controller
   nodeAffinity:
@@ -103,6 +112,9 @@ spec:
   volumeMode: Filesystem
   persistentVolumeReclaimPolicy: Retain
   storageClassName: kafka-nvme
+  claimRef:
+    namespace: kafka
+    name: data-kafka-pool-b-4
   local:
     path: /var/mnt/local-path-provisioner/kafka-nvme/broker
   nodeAffinity:
@@ -129,6 +141,9 @@ spec:
   volumeMode: Filesystem
   persistentVolumeReclaimPolicy: Retain
   storageClassName: kafka-nvme
+  claimRef:
+    namespace: kafka
+    name: data-kafka-pool-b-5
   local:
     path: /var/mnt/turin-nvme-transcend/kafka-nvme/broker
   nodeAffinity:
@@ -155,6 +170,9 @@ spec:
   volumeMode: Filesystem
   persistentVolumeReclaimPolicy: Retain
   storageClassName: kafka-nvme
+  claimRef:
+    namespace: kafka
+    name: data-kafka-pool-b-3
   local:
     path: /var/mnt/local-path-provisioner/kafka-nvme/broker
   nodeAffinity:

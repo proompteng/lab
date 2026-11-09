@@ -1,3 +1,4 @@
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
@@ -1431,6 +1432,7 @@ durableTest.each(
                 }),
               )
               const engine = yield* makeTradingEngine({
+                buildDecision: buildResearchMutationCycleDecision,
                 authority,
                 riskPolicyHash: generation.riskPolicyHash,
                 executionMode: mode,

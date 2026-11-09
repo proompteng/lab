@@ -181,15 +181,16 @@ jobs:
           bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
             bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
-      - name: Verify Bayn forward-performance command from image
-        if: inputs.image_name == 'bayn'
+      - name: Verify Bayn image contents
+        if: inputs.image_name == 'bayn' || inputs.image_name == 'bayn-research'
         env:
           IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
           ARCH: ${{ matrix.arch }}
+          BAYN_IMAGE_ROLE: ${{ inputs.image_name == 'bayn' && 'trading' || 'research' }}
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "verify-bayn-command-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-bayn-command-${ARCH}.log" \
-            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}"
+            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}" "${BAYN_IMAGE_ROLE}"
 
       - name: Verify Headlamp frontend assets from image
         if: inputs.image_name == 'headlamp'
