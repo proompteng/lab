@@ -11,6 +11,7 @@ vi.mock('@/effect/config', () => {
   class AppConfigService extends Context.Service<AppConfigService, AppConfig>()('@test/AppConfig') {}
 
   const config: AppConfig = {
+    restate: { ingressOrigin: 'http://restate.test' },
     idempotency: {
       ttlMs: 60_000,
       maxEntries: 200,
@@ -127,7 +128,6 @@ vi.mock('@/services/github/service', () => {
       fetchPullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       markPullRequestReadyForReview: (options: unknown) => ReturnType<typeof Effect.succeed>
       listCommitPullRequests: (options: unknown) => ReturnType<typeof Effect.succeed>
-      approvePullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestReviewThreads: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestBlockingChecks: (options: unknown) => ReturnType<typeof Effect.succeed>
     }
@@ -140,7 +140,6 @@ vi.mock('@/services/github/service', () => {
     fetchPullRequest: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     markPullRequestReadyForReview: () => Effect.succeed({ ok: true }),
     listCommitPullRequests: () => Effect.succeed({ ok: true, pullNumbers: [] }),
-    approvePullRequest: () => Effect.succeed({ ok: true }),
     listPullRequestReviewThreads: () => Effect.succeed({ ok: true, threads: [] }),
     listPullRequestBlockingChecks: () => Effect.succeed({ ok: true, checks: [] }),
   })

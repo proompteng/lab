@@ -26,6 +26,7 @@ export const createApp = () => {
   const health = createHealthHandlers({ runtime, kafka })
 
   const webhookConfig: WebhookConfig = {
+    restate: config.restate,
     idempotency: config.idempotency,
     atlas: config.atlas,
     agents: config.agents,
