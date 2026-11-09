@@ -1620,6 +1620,11 @@ report outputs private; they are not public status endpoints, source fixtures, o
 Forward-performance reports discover generation-scoped expense sessions with a direct generation predicate and
 the request generation/cycle index. Account-wide discovery retains all generations and the complete-session limit.
 
+Migration 190 closes expired v3 Jev batch plans from terminal cycles once, without restoring a retired inference
+path. It verifies the original plan and request hashes and independently committed claims. Requests without claims
+remain `UNATTEMPTED`; claimed requests without receipts receive an `ABANDONED` resolution. Original evidence stays
+immutable, missing receipts do not become zero-cost evidence, and unexpected provider receipts abort the migration.
+
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
 most four pages of 64 pending terminal-cycle batches for its bound account and settles those past their original request expiry
 through the existing idempotent finalizer. This closes evidence after an admission expires or the process restarts;
