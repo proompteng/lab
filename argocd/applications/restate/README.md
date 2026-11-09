@@ -64,6 +64,11 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Resilience migration
 
+The [NVMe cutover](nvme-migration.md) replaces the immutable claim template through an orphaned controller handoff.
+Its temporary `OnDelete` strategy and storage-copy scheduling gate hold new Pods until each retained copy is verified.
+Run it only after the 1.8.1 software upgrade has recovered on the existing claims. Final desired state removes these
+transition controls and uses three physical hosts with workers on Turin/Altra and a metadata/log member on Ryzen.
+
 Restate is pinned at 1.8.1. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
 `RESTATE_AUTO_PROVISION=false` and stable StatefulSet addresses so scaling cannot create a second cluster.
 Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-minute snapshots with retention two,
@@ -148,7 +153,17 @@ Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` 
 The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).
 
 Before rollout, verify three caught-up members in the same Raft set, replication two and positive archived LSNs for all
-24 partitions. Argo replaces one retained StatefulSet member at a time. Verify the promoted digest, each replacement's
+24 partitions. Argo replaces one retained StatefulSet member at a time. A native Kubernetes startup probe checks this
+member's partition assignments through Restate's NodeCtl SQL API. It requires a non-empty assignment set, all-current
+membership and active replay, then advancing status timestamps in the same generation across two observations.
+Unexpected empty, stale, partially recovered or changing assignments keep an active worker unready. An unassigned
+worker explicitly marked `provisioning`, `draining` or `disabled` may start so the existing replication hook can
+reactivate it. This preserves recovery after singleton contraction without making the probe a configuration writer;
+the hook still requires all 48 active processors before completing. These bounded checks stop after
+startup succeeds; they do not add recurring cluster scans. The probe allows 20 minutes for recovery and each CLI
+request has a three-second deadline. The existing HTTP readiness probe runs only after this recovery gate succeeds.
+This follows the upstream [rolling-update procedure](https://docs.restate.dev/server/upgrading#rolling-updates).
+Verify the promoted digest, each replacement's
 membership, distributed dashboard queries, consecutive Bayn ticks with fresh exact reconciliation, both Bayn status
 replicas, and resolution of the existing alerts. An empty query, a healthy Application or a build alone is insufficient.
 Within 1.8, use the prior verified Kargo Freight for a targeted image rollback. Returning to 1.7 requires the VQueue

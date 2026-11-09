@@ -61,7 +61,8 @@ import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeActiveStrategyRuntime, makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from '../strategy'
+import { makeActiveStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevClient, JevError } from '../jev/client'
 import { nativeJevInference } from '../jev/native.test-support'
@@ -97,7 +98,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { CycleStore } from '../cycle/store/model'
 import { CycleTerminalReason } from '../cycle/model'
 import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'

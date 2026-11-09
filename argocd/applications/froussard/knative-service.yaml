@@ -25,7 +25,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:ce354d70c4ae9439493e8f60a6bddab765cd97b93f43b197ae2b98c37cdb2dfc
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:7885207a9977cc14f702ef8e813fe36a60a0f4b3ee84e5d32e625e5cbd6bdec3
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -74,9 +74,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: kargo-sha-8d6000317fad6a611e92cda41a535820c4e7eb69
+              value: kargo-sha-92990813164595e0733558a88ec6e4c0346da263
             - name: FROUSSARD_COMMIT
-              value: 8d6000317fad6a611e92cda41a535820c4e7eb69
+              value: 92990813164595e0733558a88ec6e4c0346da263
             - name: OTEL_TRACES_EXPORTER
               value: otlp
             - name: OTEL_METRICS_EXPORTER
