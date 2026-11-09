@@ -8,10 +8,11 @@ Use the native Python 3.12 research environment with CosmosAlpha author commit `
 
 1. [Numeric literals and Graph duplicate decisions](evidence/2026-11-07-cosmosalpha-source-repair/source.patch).
 2. [MCTS prompts, request construction and self-hosted output limits](evidence/2026-11-08-cosmosalpha-mcts-repair/source.patch).
+3. [MCTS completed-round accounting](evidence/2026-11-09-cosmosalpha-mcts-rounds/source.patch).
 
-The patches use paths relative to the author repository and apply with `patch -p1`. The second repair sends the prompt text that the original helpers discarded, normalizes boundary whitespace that the native message validator rejects, removes an unsupported request argument and aligns suggestions with the client's JSON-object response contract. It also declares output limits of 2,000 tokens for suggestions and 20,000 for portraits. It changes no search-score or evaluator math.
+The patches use paths relative to the author repository and apply in order with `patch -p1`. The second repair sends the prompt text that the original helpers discarded, normalizes boundary whitespace that the native message validator rejects, removes an unsupported request argument and aligns suggestions with the client's JSON-object response contract. It also declares output limits of 2,000 tokens for suggestions and 20,000 for portraits. The third repair charges completed MCTS rounds instead of the loop index at termination: a tree that exhausts its budget after one round previously reported two, consuming the global allowance early. Neither repair changes search-score or evaluator math.
 
-The runner accepts one registered source inventory, `65f7d303415e564d3d949f227e8c3e2ec4625f0840cd7f82d253aed3378f364f`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant.
+The runner accepts one registered source inventory, `de5aa3ca19cc3bf888ac0908527d7e6222280d962383432d7141d76987d94db3`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant. The [round-accounting regression](evidence/2026-11-09-cosmosalpha-mcts-rounds/validation.json) exercises the native tree loop, backpropagation, persistence and transitions between trees with synthetic expansion results and no inference.
 
 LightGBM's native runtime must load before freeze or execution can begin. On macOS its installed wheel needs OpenMP, available as Homebrew `libomp`. Admission records the platform and native LightGBM binary hash alongside Python package versions. The native contract check also exercises a small synthetic fit and prediction. This catches dependency failures before data preparation or model inference; it does not replace the full-data model checks.
 
@@ -99,6 +100,8 @@ The final audit independently reads the saved wire bodies, reconciles actual tok
 Set `kind` to `acceptance` for a separate functional experiment with all three arms and seed 20260823. Each arm targets four evaluable factors, with ceilings of 16 requested slots, 80 physical requests and 800,000 completion tokens. Its identity and results remain separate from the nine-arm study. Acceptance cannot establish the paper's performance advantage.
 
 The [completed functional acceptance](evidence/2026-11-08-cosmosalpha-calendar-experiment/acceptance.json) reached four qualified factors in each arm, made 42 physical model calls with zero unknown usage and completed all three native LightGBM fits. The audit verified all 18 downstream output artifacts and full-pool target consumption with zero verification failures. Its independent full-data target check found zero unexplained mismatches across 1,165,440 rows. This four-factor result does not establish that the 150-factor scientific study will complete or demonstrate an advantage.
+
+That acceptance used the prior source inventory, before the completed-round repair. The new source has offline regression evidence; a fresh live acceptance is required before a new scientific study. Existing frozen plans and evidence retain their original identities and are not relabeled as results from the new source.
 
 Portable boundary tests run without the native research dependencies:
 
