@@ -112,7 +112,9 @@ const normalizeRead = <A>(
   )
 
 const defaultProxyDispatcherDependencies: ProxyDispatcherDependencies = {
-  create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+  // Normal quota-paced polls are about fifteen seconds apart; the four-second default reconnects every poll.
+  create: (url) =>
+    new Undici.ProxyAgent({ uri: url.toString(), keepAliveTimeout: 30_000, keepAliveMaxTimeout: 30_000 }),
   destroy: (dispatcher) => dispatcher.destroy(),
 }
 
