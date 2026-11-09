@@ -802,7 +802,13 @@ Failed-capture warnings also emit the fixed `broker.poll_failure_reason`: acquis
 poll deadline, snapshot rejected, or unknown. The acquisition deadline covers the outer runtime,
 including lazy acquisition and capture; it does not identify which stage was slow. Snapshot rejection
 includes unstable history; the existing broad `TIMEOUT` kind alone does not establish a network timeout. This diagnostic
-does not inspect messages or nested causes and does not change admission, retry, quota,
+reads only allowlisted data fields from the direct typed reconciliation cause, never messages,
+accessors, payloads or recursively nested causes. Snapshot failures additionally report
+`broker.snapshot_failure_reason`. Fill convergence failures describe only the first rejected
+member: no matching fill activities, summed fills below or above the order quantity, order versus
+nested leg, and fixed broker order status. These are mismatch observations, not proof of provider
+lag or a root cause; no identifiers, symbols, amounts or quantities are logged. History-change
+rejection still precedes fill comparison, and no rejected cut is published. These diagnostics do not change admission, retry, quota,
 mutation, clock, source-revision or authority fences.
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed

@@ -7,6 +7,7 @@ import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBroke
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../../hash'
+import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
 import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
@@ -197,6 +198,10 @@ describe('durable broker observations', () => {
         if (Result.isFailure(result)) {
           expect(result.failure.cause).toMatchObject({ failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } })
           expect(result.failure).toMatchObject({ pollFailureReason: 'SNAPSHOT_REJECTED' })
+          expect(brokerPollFailureAnnotations(result.failure)).toEqual({
+            'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+            'broker.snapshot_failure_reason': 'HistoryChanged',
+          })
         }
         expect(scans).toBe(2)
         const fresh = yield* captureBrokerObservation(
