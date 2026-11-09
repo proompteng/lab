@@ -7,7 +7,7 @@ import nativeArrivalAppendLocality from '../../migrations/0142_native_arrival_ap
 import type { RuntimeConfig } from '../config/model'
 import { databaseError, DatabaseError } from './database-error'
 import { PostgresClientLive } from './postgres-client'
-import { migrationTimeoutMs, withMigrationDeadline } from './postgres-migrations'
+import { migrationTimeoutMs, withMigrationDeadline } from './migration-deadline'
 
 type ArchiveConfig = Pick<RuntimeConfig, 'postgres' | 'nativeArrivalPostgres' | 'operationTimeoutMs'>
 

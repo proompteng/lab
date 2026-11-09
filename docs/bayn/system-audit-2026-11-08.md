@@ -14,7 +14,7 @@ submission, cancellation, reconciliation, accounting, controller recovery, resea
 The evidence supports reducing the trading runtime's dependency closure, repeated historical reconstruction, and
 large repeated evidence documents. It does not support changing disks, creating storage classes, removing accounting
 checks, or deleting retained evidence. No runtime, capital authority, storage, or financial records changed during this
-audit. Recommendations below are not implemented optimizations.
+audit. The findings describe that baseline; the source cleanup below records subsequent implemented changes.
 
 The accompanying [file inventory](evidence/2026-11-08-system-inventory.json) lists each tracked Bayn file, line count,
 classification, and whether it contributes bytes to each of four locally built runtime entry points. Absence from those
@@ -26,6 +26,106 @@ The [database inventory](evidence/2026-11-08-database-inventory.json) records al
 their 742 columns and 184 indexes, relation sizes, and approximate row counts. The
 [workload inventory](evidence/2026-11-08-workload-inventory.json) records 45 workload/claim resources, their images,
 resource budgets, and current volume references. Neither contains account records, credentials or raw broker payloads.
+
+## Source cleanup after the audit
+
+The cleanup uses `8d6000317fad6a611e92cda41a535820c4e7eb69` as its before revision and Bun 1.4.2 for both
+builds. These measurements are separate from the Bun 1.4.0 inventory below. The same three entry points, target,
+externals and build options produce this comparison:
+
+| Output                   | Before bytes | After bytes | Reduction | Bayn inputs emitting bytes, before → after |
+| ------------------------ | -----------: | ----------: | --------: | -----------------------------------------: |
+| Status API               |    7,830,266 |   5,821,591 |    25.65% |                                  512 → 210 |
+| Execution endpoint       |   10,997,411 |  10,632,952 |     3.31% |                                  546 → 540 |
+| Market projection thread |    3,423,572 |   2,284,752 |    33.26% |                                   259 → 53 |
+
+The status composition now imports its resources directly. Its output contains no financial migration modules,
+`observe-composition` cycle engine, or execution persistence constructor. Contract consumers import the existing
+execution-store contract directly; the construction module no longer re-exports that contract. Risk-policy loading
+lives with execution risk policy, independently of cycle startup. The forwarding lifecycle module and resource
+aliases are removed, with all callers migrated.
+
+The projection thread now imports the migration deadline independently of the financial migration registry. Its two
+archive migrations, 15-minute deadline and failure behavior remain intact. No database schema or migration SQL changes.
+
+Unused artifact schemas, their unused type exports and the unused input-manifest filter are removed. The manifest
+filter had no runtime consumers; snapshot verification still checks provenance, hashes, calendars and coverage in
+`market-data/verification`. Ledger event and reconciliation types remain. The two planner annotations now derive
+weights from `RuntimeStrategyDecision` instead of the unused risk-balanced-trend decision artifact. The unused native
+OpenCode origin and bid-breakout helper are deleted.
+
+Reproduce the comparison at each revision with the same compiler, using different output paths:
+
+```sh
+npm exec --yes --package=bun@1.4.2 -- bun build services/bayn/src/index.ts \
+  services/bayn/src/restate/restate-execution-server.ts \
+  services/bayn/src/market-data/streaming/market-projection-worker.ts \
+  --target=node --external tigerbeetle-node --external @platformatic/kafka \
+  --outdir=/tmp/bayn-cleanup-bundles --metafile=/tmp/bayn-cleanup-metafile.json
+```
+
+These are unminified JavaScript byte counts and emitted-module counts. They establish smaller dependency closures;
+they do not measure OCI closure, cold startup, request latency or trading returns. Research commands, retained readers,
+financial history, reconciliation checks, writer fencing, permissions, storage and trading authority are preserved.
+
+Local validation: the full unit suite passes with Bun 1.4.3, matching the CI unit-test version: 5,031 passed,
+1,297 skipped, zero failed across 468 files. Both TypeScript projects, formatting, both lint modes, production and
+research builds pass with Bun 1.4.2. The 137 focused behavior tests, 92 delivery tests and research command checks also
+pass; the command checks use Node 24.11.1. Skipped tests are not established by local validation and require their
+configured CI integration environments.
+
+## System subtraction after the dependency cleanup
+
+This follow-up starts at `b466a9e5e154b5a29ce4184bd672e5925244db98` (PR #15790). It changes runtime work,
+not only imports. The measurements below use Bun 1.4.2 on the same machine and fixtures; PostgreSQL tests use a
+disposable PostgreSQL 18 instance. They are not production request-latency measurements.
+
+| Area                                                  |          Before |           After | Proof and retained behavior                                                                              |
+| ----------------------------------------------------- | --------------: | --------------: | -------------------------------------------------------------------------------------------------------- |
+| Jev no-trade decision JSON                            | 1,468,628 bytes | 1,193,564 bytes | One observation supplies the rows; every other document field except its content hash is identical       |
+| Jev selected-entry decision JSON                      | 1,491,155 bytes | 1,216,080 bytes | Independent execution-pricing rows remain; streaming snapshots reproduce identically                     |
+| Settled reconciliation accrual-history queries        |               3 |               2 | Actual SQL counted on both the initial stable cut and replay; one commit and exact reconciliation remain |
+| Research server JavaScript                            | 7,432,445 bytes | 5,083,464 bytes | Same target, externals and compiler; AWS/Smithy emitted modules fall from 171 to zero                    |
+| Validated strategy protocol copies per 10,000 lookups |          10,000 |               0 | Direct typed access returns the same object; external schema validation remains at ingress               |
+
+The SEC/macro collector had no active trading or model-research consumer. Remove its eight source/test files,
+startup activations, configuration, metric alert and unused TypeScript S3 dependency. Keep the existing capture bucket,
+credentials and stored captures: GEPA uses that store through Python. Its environment names now describe research
+captures and egress directly; all callers migrate together, with no aliases. The research endpoint serves
+`BaynResearchRun` only. Existing public-collector timers must be canceled while their old endpoint remains reachable,
+then checked again after registration of the replacement; see the owning
+[retirement procedure](../../argocd/applications/bayn/README.md#research-capture-storage).
+The two remaining scheduled collector invocations were gracefully canceled on November 8. Readback showed zero
+outstanding invocations and the same two state records with an identical SHA-256 fingerprint before and after.
+Repeat that readback after replacement-endpoint registration.
+
+New protected-entry decisions persist observation rows once, inside their verified strategy evidence. The existing
+financial reader still accepts retained documents and rejects any conflicting extra copy. Stored financial documents
+are not rewritten. `shadow-decision.test.ts` compares complete document material, verifies both retained and compact
+documents, reproduces their streaming snapshots and rejects a conflicting duplicate. Both fixture cases failed before
+the change and pass afterward.
+
+Fee posting returns its verified accrual records to reconciliation. A posting that changes `posted_at` rereads the
+records before returning; a settled pass reuses its verified read. Full-history accounting reconstruction, ledger
+verification and the writer fence remain. The PostgreSQL regression counted three queries before the change and two
+after it; the complete persistence file passes all 40 tests, including posting recovery and replay.
+
+Research-only strategy constructors move to `intraday-replay/strategy.ts`. Already validated protocol values no
+longer cross repeated decoders or a fake asynchronous loader. Risk-policy selection is pure `Result` code, lifted
+once by its effectful callers. Live and retained sandbox policy hashes and all budget limits remain unchanged.
+
+The acquisition review found concrete consumers for the remaining feeds: Webull evidence reaches model input, and
+crypto history supports retained exits and replay. Python, Git, Bun and Crane also have active research/replay
+consumers in the shared image. This change does not introduce another image, cache, service or storage class to remove
+them. Financial history, capture history and storage allocations are retained. Neither these byte reductions nor the
+protocol microbenchmark establish a faster live tick, image startup or improved trading returns.
+
+Local checks for this follow-up: 5,015 unit tests pass, 1,295 skip, zero fail across 464 files with Bun 1.4.3;
+the 40 PostgreSQL persistence tests and 49 native Jev persistence tests pass against PostgreSQL 18. The latter cover
+all nine native exit/recovery scenarios and retain the conflicting-source rejection check. Both TypeScript projects, formatting, both lint modes,
+production and research builds, the research command smoke checks, 92 delivery tests and all seven GEPA tests pass.
+The GEPA tests use the pinned upstream source and dependencies. Bayn and OpenCode manifests render successfully.
+Skipped integrations still require their configured CI environments.
 
 ## Findings and deletion decisions
 
@@ -384,7 +484,7 @@ workers or excessive steady-state replicas.
 This ordering yields independently reviewable changes. It avoids a storage migration, a framework rewrite, a new
 scheduler, a new caching layer, a strategy expansion, or relaxed financial controls as a substitute for evidence.
 
-## Verification boundary
+## Original audit verification boundary
 
 Completed: tracked-file inventory, four actual bundle builds and module attribution, critical source-path review,
 current protocol/proposal/risk/submission/recovery ownership review, read-only cluster inventory, read-only database

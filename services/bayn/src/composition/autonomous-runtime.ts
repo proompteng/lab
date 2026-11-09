@@ -1,6 +1,7 @@
 import { Effect, Layer } from 'effect'
 
 import { makeApplicationPlan, type ApplicationPlan } from '../app'
+import { operationalError } from '../errors'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations/interpreter'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
@@ -14,7 +15,9 @@ import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
 import { AutonomousRuntimeResourcesLive } from './resources'
-import { executionProgramError, observeCycle, observeCycleGenerationHash } from './lifecycle'
+import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
+import { makeObserveAutonomousCycleStartup } from '../observe-composition/startup'
+import { BrokerMutationError } from '../broker/alpaca-mutations/model'
 import { makeTradingEngine } from './trading-engine'
 import {
   executionGenerationNeedsRecovery,
@@ -76,11 +79,15 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
         const generationHash = yield* Effect.fromResult(observeCycleGenerationHash(authority)).pipe(
           Effect.mapError((message) => capitalActivationOperationalError(message)),
         )
-        const start = yield* observeCycle(
-          observePlan,
-          generationHash,
-          marketData,
-        )({
+        const start = yield* makeObserveAutonomousCycleStartup({
+          accountId: observePlan.config.alpaca.expectedAccountId,
+          authorityGenerationHash: generationHash,
+          pollIntervalMs: observePlan.config.cyclePollIntervalMs,
+          reconciliationIntervalMs: observePlan.config.alpaca.reconciliationIntervalMs,
+          reconciliationPassTimeoutMs: observePlan.config.operationTimeoutMs,
+          strategy: observePlan.strategy,
+          intradayMarketData: marketData,
+        })({
           cycleBindingId: generationHash,
           recordPass: () => Effect.void,
         }).pipe(Effect.provideContext(context))
@@ -118,7 +125,16 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
         Effect.mapError((cause) => capitalActivationOperationalError('prepared execution authority is invalid', cause)),
       )
       const brokerMutation = yield* makeMutation(services.session, authority, services.alpacaHttpClient).pipe(
-        Effect.mapError(executionProgramError),
+        Effect.mapError((cause) =>
+          cause instanceof BrokerMutationError
+            ? operationalError({ component: 'config', operation: 'broker-mutation', message: cause.message, cause })
+            : operationalError({
+                component: 'config',
+                operation: 'execution-program',
+                message: 'execution program requires validated mutation authority and risk policy',
+                cause,
+              }),
+        ),
       )
       const mode = restricted ? 'CloseOnly' : 'Mutation'
       const engine = yield* makeTradingEngine({

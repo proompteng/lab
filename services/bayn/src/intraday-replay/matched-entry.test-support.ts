@@ -189,7 +189,6 @@ export const matchedCommittedTargetFixture = (
         finalizedAt: native.snapshot.manifest.observedAt,
       },
       compiledDecision: decision,
-      decisionMarketDataRows: compiled.decisionMarketDataRows,
       ...(compiled.decisionMarketData === undefined ? {} : { decisionMarketData: compiled.decisionMarketData }),
       ...(compiled.executionMarketDataRows === undefined
         ? {}
