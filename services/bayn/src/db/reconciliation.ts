@@ -80,13 +80,7 @@ import { firstSessionEquityQuery, peakEquityQuery } from './risk-valuation-query
 import { postCashSettlements, prepareCashSettlements, type CashSettlementAccounting } from './cash-settlements'
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } from './broker-fees'
-import {
-  cashAccrualReportingOffsetMicros,
-  prepareObservedCoinFees,
-  prepareObservedCashFees,
-  readFeeAccruals,
-  type FeeAccrualRecords,
-} from './fee-accruals'
+import { cashAccrualReportingOffsetMicros, prepareObservedCoinFees, prepareObservedCashFees } from './fee-accruals'
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { FeeActivity } from '../broker/alpaca/model'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
@@ -624,13 +618,13 @@ export const makeReconciliation = (
   const readAccountingPhase = (
     snapshot: BrokerSnapshot,
     feeAccounting: BrokerFeeAccounting,
-    accruals: FeeAccrualRecords,
     cashSettlements: CashSettlementAccounting,
   ): Effect.Effect<AccountingReadPhase, ReconciliationStoreError> =>
     runStore(
       'reconcile',
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
+        const accruals = feeAccounting.accruals
         const intentRows = yield* sql<Record<string, unknown>>`
           SELECT
             intent.intent_id,
@@ -969,10 +963,7 @@ export const makeReconciliation = (
         const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle, mode).pipe(
           withObservedStage('bayn.reconciliation.fee-posting'),
         )
-        const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle).pipe(
-          withObservedStage('bayn.reconciliation.accrual-read', { dependency: 'postgresql' }),
-        )
-        const accounting = yield* readAccountingPhase(snapshot, feeAccounting, accruals, cashSettlements).pipe(
+        const accounting = yield* readAccountingPhase(snapshot, feeAccounting, cashSettlements).pipe(
           withObservedStage('bayn.reconciliation.accounting-verify'),
         )
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting).pipe(
