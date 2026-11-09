@@ -63,8 +63,18 @@ cannot prove current in-memory contents. Keep one live verified copy throughout.
 through the owning Application. If its StatefulSet template is immutable, orphan and recreate only that owned
 StatefulSet from the reviewed template, preserving its Pods and identity. Replace the replica claim first, leaving
 its source volume retained. Verify the new NVMe replica has caught up and its non-expired keys/values/absolute
-expirations match. Use coordinated Valkey FAILOVER to promote it, verify service routing and replication, then
-replace the former primary volume. Do not enable persistence, change ACLs, flush keys or extend expirations.
+expirations match. Before replacing a replica, pause the exact controller and broker-observation invocations and
+complete a manual BGSAVE on both members. Verify each snapshot succeeded without changing the disabled automatic
+persistence policy. Repeat the snapshot on each replacement after replication catches up.
+
+The operator's manual monitor reads the preferred primary from ConfigMap `rf-ha-repl-bayn-valkey`, key `master`,
+formatted as `<pod-ip>:6379`. A native FAILOVER alone is reverted by the operator. Verify the ConfigMap's UID,
+resource version and current primary address, then update that preference to the caught-up replacement and use
+coordinated Valkey FAILOVER. Require the ConfigMap, native replication roles and read/write Service endpoint to
+agree before replacing the former primary volume. Restore the original primary ordinal through the same preference
+update and coordinated failover after both replacements are healthy. Force application clients to reconnect if they
+retain connections to the former role, then resume the retained invocations. Do not change ACLs, flush keys, extend
+expirations or enable automatic persistence.
 
 Run the existing full Argo acceptance hook and `dist/valkey-command.js --broker` from API and execution replicas.
 Verify a publication-sized write, replica acknowledgement, reads, deletion and expiration. Remove only migration
