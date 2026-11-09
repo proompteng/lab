@@ -78,6 +78,40 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
+  it('keeps ARC control pods on Ryzen while ARM64 runners stay on Altra', () => {
+    const application = YAML.parse(arcApplication)
+    expect(application.spec.sources[0].helm.valuesObject).toMatchObject({
+      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+      tolerations: [
+        {
+          key: 'workload.proompteng.ai/compute-local',
+          operator: 'Equal',
+          value: 'true',
+          effect: 'NoSchedule',
+        },
+      ],
+    })
+
+    for (const name of ['arc-arm64', 'analysis-arm64']) {
+      const source = application.spec.sources.find(
+        (candidate: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
+          candidate.helm?.valuesObject?.runnerScaleSetName === name,
+      )
+      expect(source.helm.valuesObject.listenerTemplate.spec).toMatchObject({
+        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+        tolerations: [
+          {
+            key: 'workload.proompteng.ai/compute-local',
+            operator: 'Equal',
+            value: 'true',
+            effect: 'NoSchedule',
+          },
+        ],
+      })
+      expect(source.helm.valuesObject.template.spec.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+    }
+  })
+
   it('places AMD64 Nix and workspace writes on one disposable local NVMe volume', () => {
     const application = YAML.parseDocument(arcApplication)
     for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {

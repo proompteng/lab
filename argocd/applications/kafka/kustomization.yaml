@@ -74,6 +74,7 @@ patches:
       metadata:
         name: strimzi-cluster-operator
       spec:
+        replicas: 1
         template:
           spec:
             containers:

@@ -109,6 +109,7 @@ const receiptCriteriaExpression = (
   images: readonly string[],
   freightGitRepo: string,
   sourceFromImage: boolean,
+  verifyCohortSource = false,
 ): string => {
   const receiptImage = images.length === 1 ? images[0] : images[1]
   if (!receiptImage) return ''
@@ -138,6 +139,17 @@ const receiptCriteriaExpression = (
   )
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     clauses.push(`imageFrom('${image}').Tag == ${receipt}.Tag`)
+  }
+  if (verifyCohortSource) {
+    for (const image of images.filter((candidate) => candidate !== receiptImage)) {
+      const candidate = `imageFrom('${image}')`
+      clauses.push(
+        `${candidate}.Annotations['org.opencontainers.image.revision'] == ${receipt}.Annotations['org.opencontainers.image.revision']`,
+      )
+      clauses.push(
+        `${candidate}.Annotations['org.opencontainers.image.source'] == ${receipt}.Annotations['org.opencontainers.image.source']`,
+      )
+    }
   }
   return clauses.join(' && ')
 }
@@ -191,7 +203,12 @@ const expected = {
     tagRegex: runQualifiedTagRegex,
     images: [imageRepo('restate')],
     apps: ['restate'],
-    includePaths: ['services/restate', 'argocd/applications/restate'],
+    includePaths: [
+      '.github/workflows/restate-images.yml',
+      'packages/scripts/src/restate',
+      'services/restate',
+      'argocd/applications/restate',
+    ],
   },
   opencode: {
     creationCriteria: 'image-revision',
@@ -207,7 +224,10 @@ const expected = {
   },
   bayn: {
     creationCriteria: 'image-revision',
-    images: [imageRepo('bayn')],
+    requiresBuildReceipt: true,
+    verifyCohortSource: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('bayn'), imageRepo('bayn-research')],
     apps: ['bayn'],
     includePaths: [],
   },
@@ -745,7 +765,14 @@ describe('Kargo direct-push GitOps contract', () => {
       } else {
         const baseCriteria = criteriaExpression(contract.creationCriteria, contract.images, freightGitRepo)
         if ('requiresBuildReceipt' in contract && contract.requiresBuildReceipt) {
-          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo, sourceFromImage))
+          expect(criteria?.expression).toBe(
+            receiptCriteriaExpression(
+              contract.images,
+              freightGitRepo,
+              sourceFromImage,
+              'verifyCohortSource' in contract && contract.verifyCohortSource,
+            ),
+          )
         } else {
           expect(criteria?.expression).toBe(baseCriteria)
         }
