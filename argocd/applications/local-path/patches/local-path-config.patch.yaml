@@ -31,8 +31,7 @@ data:
             {
               "node": "turin",
               "paths": [
-                "/var/mnt/turin-nvme-intel",
-                "/var/mnt/turin-nvme-transcend"
+                "/var/local-path-provisioner"
               ]
             },
             {
@@ -65,12 +64,6 @@ data:
         },
         "local-path-ci-amd64": {
           "nodePathMap": [
-            {
-              "node": "turin",
-              "paths": [
-                "/var/mnt/turin-nvme-transcend"
-              ]
-            },
             {
               "node": "talos-192-168-1-194",
               "paths": [
