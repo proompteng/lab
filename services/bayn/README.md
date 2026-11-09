@@ -2168,6 +2168,9 @@ the financial PostgreSQL endpoint even when a different logical database is sele
 The archive installs only the epoch, chunk and end tables with the original SQL checksum, ordered-prefix and
 append-only guards. Both databases use separate local NVMe WAL volumes with required cross-host synchronous
 replication. Archive appends emit `bayn.native-arrival.append` spans including the durable commit and retries.
+Retryable connection failures and statement timeouts retain the same immutable batch through roughly one minute
+of reconnection attempts. Each SQL attempt and shutdown keep their existing deadlines, and the compressed queue
+keeps its byte bound. Lost commit acknowledgements still reconcile the exact prefix before returning success.
 Both databases retain TLS, checksums and the existing backup store with
 separate server prefixes. The financial database retains all historical recorder bytes for historical reads; current
 capture readers must use the archive connection. No financial history, authority, strategy, fees, freshness or inference
