@@ -864,6 +864,8 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         includePaths:
+          - .github/workflows/restate-images.yml
+          - packages/scripts/src/restate
           - services/restate
           - argocd/applications/restate
     - image:

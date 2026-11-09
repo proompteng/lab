@@ -4,7 +4,7 @@ namespace: restate
 images:
 - name: restate-runtime
   newName: registry.ide-newton.ts.net/lab/restate
-  digest: sha256:c52db9b5931765ffe4f095939f9629972e987abb50a08a992176fdc5aa515c1d
+  digest: sha256:5ea91372742bb60c4b1dd9fc3a73bcce02f19259bb7a2831fc5d18792541ce9f
 resources:
 - serviceaccount.yaml
 - request-identity-sealedsecret.yaml
@@ -16,6 +16,7 @@ resources:
 - poddisruptionbudget.yaml
 - networkpolicy.yaml
 - resilience-scripts-configmap.yaml
+- node-roles-configmap.yaml
 - snapshot-bootstrap-job.yaml
 - replication-migration-job.yaml
 - snapshot-restore-proof-job.yaml

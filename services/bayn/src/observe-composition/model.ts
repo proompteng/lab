@@ -11,7 +11,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import type { ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
 import { IntentStore } from '../execution/intents/domain'
 import { type BlockedCycleIntentStoreShape } from '../execution/intents/blocked-cycle'

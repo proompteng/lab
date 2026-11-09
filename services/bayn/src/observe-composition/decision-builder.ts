@@ -97,14 +97,9 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner/index'
-import {
-  loadStrategyTradingProtocol,
-  strategyDefinition,
-  isRepeatedMomentumRuntime,
-  type StrategyRuntime,
-} from '../strategy'
+import { strategyTradingProtocol, isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
-import type { DecisionPlan, IsoDate } from '../types'
+import type { IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import {
   adverseClosingQuotePrices,
@@ -325,7 +320,7 @@ type ObservePlannerPreparation = {
 
 type ObservePlannerOverrides = {
   readonly allocationCapitalMicros?: string
-  readonly targetWeights?: DecisionPlan['targetWeights']
+  readonly targetWeights?: RuntimeStrategyDecision['targetWeights']
   readonly submissionCutoffAt?: string
 }
 
@@ -803,13 +798,13 @@ type CompiledObserveStrategyDecision = {
   readonly askPriceMicros?: Readonly<Record<string, string>>
   readonly maximumBuyQuantityAtoms?: Readonly<Record<string, string>>
   readonly maximumSellQuantityAtoms?: Readonly<Record<string, string>>
-  readonly planningTargetWeights?: DecisionPlan['targetWeights']
+  readonly planningTargetWeights?: RuntimeStrategyDecision['targetWeights']
   readonly decisionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
   readonly executionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
 }
 
 const nativeJevProtocol = (strategy: StrategyRuntime) => {
-  const definition = strategyDefinition(strategy)
+  const definition = strategy.definition
   if (definition.name !== 'jev' || definition.holdingPeriod !== 'INTRADAY')
     return Result.fail(
       operationalError({
@@ -818,16 +813,7 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
         message: 'Native execution requires the Jev intraday strategy',
       }),
     )
-  return loadStrategyTradingProtocol(strategy).pipe(
-    Result.mapError((cause) =>
-      operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: 'Native Jev parameters are invalid',
-        cause,
-      }),
-    ),
-  )
+  return Result.succeed(strategyTradingProtocol(strategy))
 }
 
 type JevDecisionServices =
@@ -1636,7 +1622,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const runtimeMatchesCycle =
       Result.isSuccess(runtimeProtocolHash) &&
       runtimeProtocolHash.success === cycle.identity.strategyProtocolHash &&
-      strategyDefinition(input.strategy).name === cycle.identity.strategyName
+      input.strategy.definition.name === cycle.identity.strategyName
     if (!runtimeMatchesCycle) {
       return yield* mutationRunnerError({
         message: 'execution close does not match the active intraday strategy identity',

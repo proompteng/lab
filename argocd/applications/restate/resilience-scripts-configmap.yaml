@@ -11,7 +11,7 @@ data:
     read_state() {
       restatectl --single-address http://localhost:5122 \
         --connect-timeout 1000 --request-timeout 3000 sql --json "
-        SELECT n.gen_node_id AS generation, n.state, n.worker_state, r.partition_id,
+        SELECT n.gen_node_id AS generation, n.state, n.has_worker_role, n.worker_state, r.partition_id,
                r.membership, s.replay_status, s.updated_at
         FROM nodes n
         LEFT JOIN partition_replica_set r ON r.plain_node_id = n.plain_node_id
@@ -25,10 +25,10 @@ data:
       jq -e 'type == "array" and length > 0 and all(.[];
         .generation != null and .state == "alive"
       ) and (
-        all(.[]; .worker_state == "active" and .partition_id != null and
+        all(.[]; .has_worker_role == true and .worker_state == "active" and .partition_id != null and
           .membership == "current" and .replay_status == "active" and .updated_at != null)
         or (length == 1 and .[0].partition_id == null and
-          (.[0].worker_state == "draining" or .[0].worker_state == "disabled" or
+          (.[0].has_worker_role == false or .[0].worker_state == "draining" or .[0].worker_state == "disabled" or
            .[0].worker_state == "provisioning"))
       )' >/dev/null
     }
@@ -42,6 +42,7 @@ data:
       ($before | length) as $count |
       $count == ($after | length) and all(range(0; $count); . as $i |
         $before[$i].generation == $after[$i].generation and
+        $before[$i].has_worker_role == $after[$i].has_worker_role and
         $before[$i].worker_state == $after[$i].worker_state and
         $before[$i].partition_id == $after[$i].partition_id and
         ($after[$i].partition_id == null or $before[$i].updated_at < $after[$i].updated_at)
