@@ -1,8 +1,8 @@
 # CosmosAlpha reproduction contract
 
-Status: incremental configuration audit, November 8, 2026. A passing audit establishes configuration consistency only.
+Status: configuration audit and separate frozen experiment runner, November 8, 2026. A passing configuration audit establishes configuration consistency only.
 
-The first increment makes the current comparison's omissions inspectable. It does not repair labels, exercise a mining runtime, approve a launch or establish the paper's reported advantage. The active Graph/Chain study remains a separate exploratory trial.
+The configuration audit makes the historical comparison's omissions inspectable. It does not repair labels, exercise a mining runtime or establish the paper's reported advantage. The historical Graph/Chain study remains a separate exploratory trial. The [frozen calendar-target runner](cosmosalpha-frozen-experiment.md) creates a new Graph/MCTS/no-Flow experiment with its own identities and runtime evidence.
 
 ## Run the audit
 
@@ -33,8 +33,8 @@ The primary source is [CosmosAlpha v1](https://arxiv.org/html/2611.04555v1). Cod
 
 The [actual frozen-plan audit](evidence/2026-11-08-cosmosalpha-config-audit.json) matches 101 installed files to the supplied source manifest and reports missing MCTS and no-Flow configurations for all three seeds. It records the tested Bun version. Source-manifest agreement binds supplied bytes; it does not independently authenticate an upstream commit or establish method parity.
 
-## Next implementation boundary
+## Calendar-target experiment boundary
 
 The [calendar-correct target generator and independent verification](cosmosalpha-calendar-targets.md) now produce a separately identified artifact. The full 2010–2025 panel passes with zero unexplained target mismatches. Existing trials retain their original labels; they have not been migrated or reinterpreted.
 
-Next verify the multi-tree MCTS entry point and freeze the three-arm study with an explicit budget comparison and target identity. Industry-history admission and economic qualification remain separate requirements.
+The [new runner](cosmosalpha-frozen-experiment.md) binds these targets to native mining and downstream consumers, uses the multi-tree MCTS entry point and freezes all three arms for three seeds. It enforces the same evaluable-factor target and resource ceilings, retains physical self-hosted-model request evidence and independently audits the resulting artifacts. Its two additional MCTS prompt repairs are explicit source changes. Configuration admission, functional acceptance and a completed nine-arm experiment are distinct evidence boundaries; a frozen plan alone does not establish completed execution. Industry-history admission and economic qualification remain separate requirements.

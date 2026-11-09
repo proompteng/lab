@@ -1,0 +1,13 @@
+{
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "mctsRepairSha256": "3cd6b1814dad2fdcb00b02921aa2a5cb5448e3bdc8674e4d5d4ee72ce1ec4469",
+  "combinedRepairSha256": "a59255ab953ffd891e5bf1a0dbd358abfa376674cf22d53bb5991395a4b95540",
+  "registeredSourceInventoryId": "48bfb6fe9501929271e8a22b3e67f82209a39183d6326fc65a9e451b2588de49",
+  "sourceFiles": 101,
+  "changedAuthorFiles": 4,
+  "unchangedAuthorFiles": 97,
+  "before": "2 failing native prompt regressions; real MCTS empty-conversation HTTP400 retained in acceptance-v5",
+  "after": "2 native prompt regressions and 29 prior source/upstream cases pass",
+  "sampling": "Frozen client temperature; original 300/800 auxiliary output limits preserved",
+  "scope": "Prompt messages, JSON-object suggestion encoding and unsupported request argument only. No search-score or evaluator math change."
+}
