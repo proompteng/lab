@@ -79,6 +79,7 @@ import {
 
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 import { positionDecodeDiagnostic } from './response-decode-diagnostics'
+import { readTransportInterceptor, withReadTransportDiagnostics } from './transport-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -135,7 +136,15 @@ const proxyLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
+  Layer.effect(
+    NodeHttpClient.Dispatcher,
+    makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies).pipe(
+      // Bun's compatibility dispatcher lacks interceptors; keep its original behavior and report unobserved.
+      Effect.map((dispatcher) =>
+        typeof dispatcher.compose === 'function' ? dispatcher.compose(readTransportInterceptor) : dispatcher,
+      ),
+    ),
+  )
 
 export const alpacaHttpLayer = (
   connection: BrokerConnection,
@@ -166,6 +175,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           },
         })
         const response = yield* client.execute(request).pipe(
+          withReadTransportDiagnostics(operation),
           withObservedStage('bayn.alpaca.read.headers', { dependency: 'alpaca', operation, diagnosticOnly: true }),
           Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)),
         )
