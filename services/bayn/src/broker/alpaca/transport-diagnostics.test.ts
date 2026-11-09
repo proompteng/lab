@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeHttpClient } from '@effect/platform-node'
 import type * as Undici from '@effect/platform-node/Undici'
-import { Cause, Config, Deferred, Effect, Exit, Fiber, Logger, Option } from 'effect'
+import { Cause, Clock, Config, Deferred, Effect, Exit, Fiber, Logger, Option } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { readTransportInterceptor, withReadTransportDiagnostics } from './transport-diagnostics'
@@ -146,6 +146,55 @@ test.each([false, true])('deadline preserves cancellation and distinguishes disp
     }),
   )
 })
+
+test.each([-3_600_000, 3_600_000])(
+  'wall-clock correction %s cannot change elapsed transport timing',
+  async (correction) => {
+    for (const phase of ['before_dispatch', 'waiting_response', 'headers_received'] as const) {
+      await run(
+        Effect.gen(function* () {
+          const span = yield* Effect.currentSpan
+          const clock = yield* Clock.Clock
+          let wallOffset = 0
+          const wallMillis = () => clock.currentTimeMillisUnsafe() + wallOffset
+          const wallNanos = () => clock.currentTimeNanosUnsafe() + BigInt(wallOffset) * 1_000_000n
+          const correctedClock: Clock.Clock = {
+            ...clock,
+            currentTimeMillisUnsafe: wallMillis,
+            currentTimeMillis: Effect.sync(wallMillis),
+            currentTimeNanosUnsafe: wallNanos,
+            currentTimeNanos: Effect.sync(wallNanos),
+          }
+          let observed: Undici.Dispatcher.DispatchHandler = {}
+          const dispatch = readTransportInterceptor((_options, handler) => {
+            observed = handler
+            return true
+          })
+          yield* Effect.gen(function* () {
+            dispatch({ ...options, ...(yield* NodeHttpClient.UndiciOptions) }, {})
+            yield* TestClock.adjust(200)
+            wallOffset = correction
+            expect(yield* Clock.currentTimeMillis).toBe(200 + correction)
+            if (phase !== 'before_dispatch') observed.onRequestStart?.(controller, null)
+            yield* TestClock.adjust(300)
+            wallOffset = 2 * correction
+            if (phase === 'headers_received') observed.onResponseStart?.(controller, 200, {})
+            yield* TestClock.adjust(75)
+            wallOffset = 3 * correction
+          }).pipe(withReadTransportDiagnostics('account'), Effect.provideService(Clock.Clock, correctedClock))
+          expect(annotations(span)).toEqual({
+            'broker.transport.phase': phase,
+            'broker.transport.attempts': 1,
+            'broker.transport.started': phase === 'before_dispatch' ? 0 : 1,
+            'broker.transport.last_pre_dispatch_ms': phase === 'before_dispatch' ? 575 : 200,
+            'broker.transport.last_response_wait_ms':
+              phase === 'before_dispatch' ? 0 : phase === 'waiting_response' ? 375 : 300,
+          })
+        }),
+      )
+    }
+  },
+)
 
 test('late prior-attempt callbacks cannot overwrite the latest retry observation', async () => {
   await run(

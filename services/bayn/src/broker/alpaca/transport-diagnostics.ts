@@ -12,14 +12,14 @@ enum TransportPhase {
 }
 
 interface Observation {
-  readonly now: () => number
+  readonly now: () => bigint
   active: boolean
   attempts: number
   started: number
   phase: TransportPhase
-  attemptAt?: number | undefined
-  startedAt?: number | undefined
-  headersAt?: number | undefined
+  attemptAt?: bigint | undefined
+  startedAt?: bigint | undefined
+  headersAt?: bigint | undefined
 }
 
 // Only a private, request-local opaque token opts a read in. No global Undici subscribers or request values.
@@ -74,8 +74,8 @@ export const readTransportInterceptor: Undici.Dispatcher.DispatchInterceptor = (
   return dispatch(options, observed)
 }
 
-const elapsed = (start: number | undefined, end: number) =>
-  start === undefined || !Number.isFinite(start) || !Number.isFinite(end) ? 0 : Math.max(0, end - start)
+const elapsed = (start: bigint | undefined, end: bigint) =>
+  start === undefined ? 0 : Math.max(0, Number(end - start) / 1_000_000)
 
 /** Pre-dispatch includes pool wait and connection setup; it is not a DNS, CONNECT or TLS latency measurement. */
 export const withReadTransportDiagnostics =
@@ -86,7 +86,7 @@ export const withReadTransportDiagnostics =
       const options = yield* NodeHttpClient.UndiciOptions
       const token = {}
       const observation: Observation = {
-        now: () => clock.currentTimeMillisUnsafe(),
+        now: () => clock.monotonicTimeNanosUnsafe(),
         active: true,
         attempts: 0,
         started: 0,
@@ -101,7 +101,7 @@ export const withReadTransportDiagnostics =
           Effect.gen(function* () {
             observation.active = false
             observations.delete(token)
-            const end = yield* Clock.currentTimeMillis
+            const end = observation.now()
             const attributes = {
               'broker.transport.phase': observation.phase,
               'broker.transport.attempts': observation.attempts,
