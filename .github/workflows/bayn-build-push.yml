@@ -10,7 +10,7 @@ on:
       - main
     paths:
       - 'services/bayn/**'
-      # PR validation covers tests and the service README; neither should reactivate the production controller.
+      # Tests and operating guides do not reactivate the production controller.
       - '!services/bayn/**/*.test.ts'
       - '!services/bayn/formal/**'
       - '!services/bayn/README.md'
@@ -36,6 +36,7 @@ on:
       - 'patches/**'
       - 'tsconfig.base.json'
       - 'argocd/applications/bayn/**'
+      - '!argocd/applications/bayn/README.md'
       - 'argocd/applicationsets/product.yaml'
 
 concurrency:
