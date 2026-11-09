@@ -428,6 +428,155 @@ class CollectorTests(unittest.TestCase):
                 observer.poll(self.now)
         self.assertEqual(observer.last_poll, 0)
 
+    def test_blocked_poll_exposes_live_phase_without_refreshing_cached_facts(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        observer.refresh()
+        cached = observer.metrics
+        entered, release = threading.Event(), threading.Event()
+        errors = []
+
+        def blocked_poll():
+            try:
+                with observer.phases.track("poll"):
+                    entered.set()
+                    release.wait(5)
+            except BaseException as error:  # noqa: BLE001 - Relay worker failures to the test thread.
+                errors.append(error)
+
+        with patch("time.monotonic", return_value=100) as clock:
+            worker = threading.Thread(target=blocked_poll)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                clock.return_value = 880
+                # The HTTP reader must not access SQLite or refresh cached facts.
+                with patch.object(self.store, "render", side_effect=AssertionError):
+                    metrics = observer.render_metrics().decode()
+                self.assertIn(
+                    'ci_observability_phase_active{phase="poll"} 1\n', metrics
+                )
+                self.assertIn(
+                    'ci_observability_phase_elapsed_seconds{phase="poll"} 780\n',
+                    metrics,
+                )
+                self.assertIn(
+                    "ci_observability_last_poll_timestamp_seconds 0\n", metrics
+                )
+                self.assertEqual(observer.metrics, cached)
+            finally:
+                release.set()
+                worker.join(2)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIn(
+            'ci_observability_phase_active{phase="poll"} 0\n',
+            observer.render_metrics().decode(),
+        )
+
+    def test_phase_outcomes_are_bounded_and_preserve_exceptions(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        for error, outcome in (
+            (None, "success"),
+            (RuntimeError("secret-url"), "error"),
+            (KeyboardInterrupt(), "interrupted"),
+        ):
+            with patch("time.monotonic", side_effect=[10, 14]):
+                if error is None:
+                    with observer.phases.track("poll"):
+                        pass
+                else:
+                    with (
+                        self.assertRaises(type(error)) as caught,
+                        observer.phases.track("poll"),
+                    ):
+                        raise error
+                    self.assertIs(caught.exception, error)
+            metrics = observer.render_metrics().decode()
+            self.assertIn(
+                f'ci_observability_phase_completions_total{{outcome="{outcome}",phase="poll"}} 1\n',
+                metrics,
+            )
+            self.assertIn(
+                'ci_observability_phase_last_duration_seconds{phase="poll"} 4\n',
+                metrics,
+            )
+            self.assertNotIn("secret-url", metrics)
+        with self.assertRaises(ValueError), observer.phases.track("run-12345"):
+            self.fail("Unbounded phase was accepted")
+        self.assertNotIn("run-12345", observer.render_metrics().decode())
+        lines = observer.phases.render().splitlines()
+        self.assertEqual(len(lines), 48)
+        self.assertEqual(len({line.rsplit(" ", 1)[0] for line in lines}), 48)
+        with observer.phases.track("poll"):
+            with self.assertRaises(RuntimeError), observer.phases.track("history"):
+                self.fail("Overlapping phases were accepted")
+            self.assertIn(
+                'ci_observability_phase_active{phase="poll"} 1\n',
+                observer.phases.render(),
+            )
+
+    def test_loop_diagnostics_distinguish_failed_poll_from_pending_work(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        with (
+            patch.object(
+                observer, "poll", side_effect=RuntimeError("GitHub unavailable")
+            ),
+            patch.object(observer, "collect_pending") as pending,
+            patch.object(observer, "history"),
+            patch("time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            observer.run()
+        metrics = observer.render_metrics().decode()
+        self.assertEqual(pending.call_count, 1)
+        self.assertEqual(observer.errors, 1)
+        self.assertEqual(observer.last_poll, 0)
+        for phase_name, outcome in (
+            ("poll", "error"),
+            ("history", "success"),
+            ("pending_backfill", "success"),
+            ("sleep", "interrupted"),
+        ):
+            self.assertIn(
+                f'ci_observability_phase_completions_total{{outcome="{outcome}",phase="{phase_name}"}} 1\n',
+                metrics,
+            )
+        self.assertIn(
+            'ci_observability_phase_completions_total{outcome="success",phase="pending_live"} 0\n',
+            metrics,
+        )
+
+    def test_successful_loop_preserves_poll_heartbeat_and_phase_order(self):
+        api = FakeGitHub({}, {})
+        observer = Collector(self.store, api, {}, "http://unused")
+        with (
+            patch.object(api, "pages", return_value=iter([])),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+            patch.object(observer, "history"),
+            patch("time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            observer.run()
+        self.assertGreater(observer.last_poll, 0)
+        self.assertEqual(observer.errors, 0)
+        metrics = observer.render_metrics().decode()
+        for phase_name in (
+            "poll",
+            "pending_live",
+            "history",
+            "pending_backfill",
+            "prune",
+            "loki",
+        ):
+            self.assertIn(
+                f'ci_observability_phase_completions_total{{outcome="success",phase="{phase_name}"}} 1\n',
+                metrics,
+            )
+        self.assertIn(
+            'ci_observability_phase_completions_total{outcome="success",phase="refresh"} 2\n',
+            metrics,
+        )
+
     def test_active_queued_jobs_keep_architecture_pool_role_and_event(self):
         active_run, queued = run(), job()
         active_run["status"] = "in_progress"
