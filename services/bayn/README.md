@@ -19,6 +19,10 @@ protection, reconciliation and recovery; crypto entry discovery and broker buys 
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Current strategy and operating contracts follow below. Superseded activation recipes remain in the
+[prior guide](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/services/bayn/README.md);
+immutable financial codecs, records and migrations retain their original identities.
+
 Replacement execution workers start their read-only Kafka projection before exposing the Restate endpoint. Their
 `/startup-ready` check remains unavailable until each worker has completed its original history rebuild. Kubernetes
 requires both current replicas ready before the deployment activation hook runs. TCP startup and liveness probes stay
@@ -81,7 +85,7 @@ session boundary or backward clock movement requires a fresh read; failed or int
 Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
 crypto buys before final authorization or transmission. Retained crypto sells still require normal capital, ownership,
-funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v38 requires its reviewed
+funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Activation requires a reviewed, protocol-bound
 PAPER mandate while preserving the broker identity, monetary limits, financial records and loss history.
 Historical crypto codecs, replay evidence and shared market data remain available for accounting and position recovery.
 
@@ -262,7 +266,8 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 178 admits only v38 requests and dispatch after the existing flat, reconciled cutover. Original v35, v36 and v37 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
+Retained requests, receipts, cost quotes and authority generations remain immutable and readable for financial history;
+new request admission and dispatch use the current protocol below.
 
 The current source uses protocol v40, numerical input v24, batch v8, entry input v8 and handoff v5.
 The [Jev 1.14 cutover](../../docs/bayn/jev114-box-cutover.md) first settles v39 into clear OBSERVE, then admits
@@ -376,62 +381,20 @@ resolutions and source observations, then commits the complete result with one i
 does not require another locking transaction. Concurrent finalizers retain the first committed result; pending claims
 still use the locked recovery and abandonment path. The result must remain usable at the actual post-commit clock.
 
-Migration 140 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
-complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
-retained generations remain immutable audit evidence. New authority requires the v18 strategy identity.
+Current entry contracts and pricing are described under [Active strategy](#active-strategy). Retained benchmark-based
+observations preserve their original source, calendar, revision, availability and pricing proofs for financial replay;
+those retired protocols cannot admit new requests. Current candidates do not require a benchmark.
 
-Migration 136 closed the remaining retired authority write paths at Jev v16. Migration 137 advances that same
-research v3 activation contract to Jev v17, while OBSERVE initialization and recovery remain available. It changes constraints
-only, without rotating active authority, rewriting retained generations or changing accounting history. Historical
-qualified and retired-strategy generations remain readable and can still recover through their existing OBSERVE path.
-
-Crypto benchmarks use verified completed bars and their matching Dorvud feature. Candidate and benchmark relative
-returns use the same starting minute and completed ending minute. Their comparison is labeled `COMPLETED_BAR_CLOSE`
-and ends at `relativeSignals.comparisonAt`; it never compares a live candidate quote against an older benchmark close.
-The candidate's current quote return, spread, breakout and range location remain in `candidate.currentPriceSignals`,
-separate from the relative returns. Crypto breakout uses the fresh executable bid against the completed window's
-range high and labels `breakoutPricingBasis=CURRENT_BID`. An older actual trade remains contextual; it cannot cap
-the current breakout. The current candidate policy also uses the bid for equity breakout and retains its required actual
-window trade. Executable quote pricing, fee estimates and funding use the fresh candidate quote. Equity relative returns
-retain the current-quote comparison and label it `CURRENT_QUOTES`.
-BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
-or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate.
-Protocol v31 uses `bayn.candidate-evidence.market-quotes.v2`: crypto candidates require a fresh two-sided quote and
-verified bars and features; an actual window trade is optional context. `candidate.latestTrade` is `null` when none
-was observed, and no quote or bar is relabeled as a trade. Alpaca can publish crypto bars from quote midpoints with
-zero volume when no trades occur ([provider contract](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)).
-Missing trade context therefore does not exclude ETH before assessment. A valid model-assessed setup, protective price
-choices, fee-inclusive funding and all execution and financial gates remain required. Equity candidates still require
-an actual window trade. SPY also requires a real window trade and verified bars and features, while its executable
-quote retains the ten-second freshness limit. A missing post-boundary SPY print cannot veto all equity candidates
-when that price and contextual evidence exist. The actual print age stays visible to Jev. Missing or stale benchmark
-quotes, missing real window trades, unavailable features and malformed evidence still fail the whole observation.
-Migration 162 retires v30 execution, preserving its immutable financial receipts and original verification semantics.
-It retains terminal-cycle, flat-inventory, settled-order, complete-accounting and fresh exact-reconciliation cutover
-requirements. Broker identity, capital history, monetary limits, price ceilings, stops and holding time are unchanged.
-Migration 160 rejects retired protocol writes and dispatch while preserving immutable financial receipts and late
-provider cost outcomes. Cutover requires terminal cycles, flat inventory, settled orders, complete accounting and fresh
-exact reconciliation, followed by native OBSERVE recovery and a reviewed same-account PAPER mandate for the new image.
-The immutable query records canonical `benchmarkSymbols`, including symbols that are also candidates. Missing
-required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
-Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
-Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; the replacement protocol v24 uses entry state v22.
-Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
-allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
-per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
-predictive edge or profit.
-The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
-including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
+Equity entries use the broker exchange calendar. Retained BTC/USD, ETH/USD and SOL/USD position management and
+accounting preserve continuous-market and UTC-date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
-and at most one open position. Ordinary entries and application closes use quantity-based LIMIT orders: DAY for equities and IOC for crypto.
+and at most one open position. Equity entries and application closes use quantity-based LIMIT/DAY orders; retained crypto closes use LIMIT/IOC orders.
 Regular-session native equity brackets/OCO disable extended hours; individual crypto protective stops use STOP_LIMIT/GTC.
 Crypto uses cash buying power; shorting and margin remain disabled.
 Current `bayn.execution-intent.v5` intents store an explicit `limitPriceMicros` and their native protection terms when applicable. That price binds the deterministic
 intent identity, immutable SQL row, request, recovery checks and replay checkpoint. Buy spending rounds up to a micro;
 sell proceeds round down. Risk caps and turnover use the conservative ceiling on either side. The adapter preserves
-the explicit price rather than reconstructing it from rounded notional. Migrations 121 and 122 refuse nonterminal intents,
-unfinished bound cycles or unresolved mutations before installing the new write constraints. Decision documents use
+the explicit price rather than reconstructing it from rounded notional. Decision documents use
 `bayn.observe-shadow-decision.v2` and `bayn.paper-cycle-decision.v2`; SQL lifecycle and completion guards require this
 same version. Historical rows retain their original bytes and cannot enter the current executable codecs. Accounting
 reads retain historical identities and report unsupported execution evidence as unknown rather than inventing prices.
@@ -497,10 +460,6 @@ inference-bound ceiling is rejected before decision construction and again at th
 before a completed-minute boundary remains usable only within its original quote-age limit. Neither provider calls,
 persistence nor a new minute renew the original ten-second inference lifetime.
 
-Protocol v24, entry state v22 and entry input v3 define the current executable contracts. Migration 147 requires flat settled inventory,
-terminal mutation cycles, fresh exact reconciliation, complete accounting and no unexpired provider claims before
-restricting new authority to v24. Activation uses the same account, preserved financial history and native PAPER
-mandate against the verified image delivered through Kargo and GitOps. Historical financial evidence remains immutable.
 Held positions use their sealed code-owned stop, profit target and maximum hold. See
 [strategy protection](../../docs/bayn/strategy-protection.md) for broker protection, failure behavior and evidence.
 
@@ -520,10 +479,6 @@ Alpaca response decoding converts compact crypto pair identifiers such as `ETHUS
 symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
 outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
 
-Migration 97
-requires flat, settled inventory and complete accounting, archives the original projections and preserves existing
-ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
-published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).
 Retained history is audit evidence; retired protocols and order encodings cannot create or submit current orders.
 Crypto settlement records gross fills unchanged and accrues only debits observed in fresh broker positions or cash.
 Accruals require the active native cycle, accounted fills, the complete observed order quantity and the corresponding
@@ -579,13 +534,12 @@ Producer-clock rejections include validated collector receipt and Kafka timestam
 the permitted 5,000 ms difference and the observed ordering. These diagnostics do not attribute a queue or clock
 cause. The existing clock bound, independent ten-second first-arrival cutoff and context withholding remain enforced.
 
-Protocol v38 carries `webullContext` in numerical input v24 and final proposal evidence v2. It contains one independently
+Current candidates carry `webullContext` in numerical input v24 and final proposal evidence v2. It contains one independently
 labeled completed M1 bar for the candidate, with exact native decimal strings and original receipt timing. The
 existing snapshot proof supplies it; no new query or service runs on the decision path. Jev questions explicitly
 consider this supplemental observation. Unavailable context is `null`. IEX remains the chart, execution-price and
 liquidity source, and its original candidate exclusions still apply. Nasdaq Basic and IEX retain separate prices
-and volume. The protocol cutover runs OBSERVE first. A reviewed, protocol-bound PAPER mandate is required to activate
-the revised strategy.
+and volume. Activation follows the current [Jev 1.14 cutover](../../docs/bayn/jev114-box-cutover.md) and reviewed mandate procedure.
 The acceptance boundary is a deployed consumer receipt, regular-session completeness and latency measurements, then
 a comparison against IEX using recorded availability. Better returns require separate economic evidence.
 
@@ -1161,14 +1115,13 @@ account clock. This is the server acceptance boundary, not a guarantee about whe
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
-tick. Protocol v39 reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
+tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
 and `maximumEntryLimitSlippageBps`. Retained v38 inputs still record the original 10 bps values and reconstruct their
 unchanged request and batch hashes. Both versions enforce the same zero entry allowances and broker tick rounding.
 Shared protocol fields remain 10 bps because liquidation and proposal stop economics still consume them. Fees,
-funding, exit prices and thresholds are unchanged. Migration 184 requires clear OBSERVE authority and a settled,
-flat, freshly reconciled account; it does not restrict, rotate or activate authority itself. The
-[cutover procedure](../../docs/bayn/effective-entry-allowance-cutover.md) requires verified native settlement
-after migration 183 before v39 enters the automatic delivery path.
+funding, exit prices and thresholds retain their existing contracts. Retained v38/v39 inputs and the original
+[allowance cutover](../../docs/bayn/effective-entry-allowance-cutover.md) remain historical evidence; current activation
+uses the [Jev 1.14 procedure](../../docs/bayn/jev114-box-cutover.md).
 
 Quote-backed instrument-quantized closes use LIMIT/DAY equity or LIMIT/IOC crypto orders with an allowance bounded
 by the existing risk policy, currently ten basis points from the verified bid. Close prices round toward the quote
@@ -2723,8 +2676,6 @@ The documented TAF pause applies from October 1 through December 31, 2026. The d
 July 2026 through December 2028, including the published January 2027 resumption; unsupported equity dates fail with an explicit missing-schedule error. Crypto fees
 remain independent of this equity schedule. Actual broker expense evidence is separate from modeled planning costs.
 Retained fixed schedules reproduce original financial evidence without applying the new override retroactively.
-Protocol v36 commits this model change. Migration 171 admits new requests and provider dispatch only under v36,
-preserves existing generations and limits, and permits already-paid v35 outcomes to be retained.
 The sources are [Alpaca's October 12 fee schedule](https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf)
 and [SEC release 34-106409](https://www.sec.gov/files/rules/sro/finra/2026/34-106409.pdf).
 
