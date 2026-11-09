@@ -98,6 +98,8 @@ The final audit independently reads the saved wire bodies, reconciles actual tok
 
 Set `kind` to `acceptance` for a separate functional experiment with all three arms and seed 20260823. Each arm targets four evaluable factors, with ceilings of 16 requested slots, 80 physical requests and 800,000 completion tokens. Its identity and results remain separate from the nine-arm study. Acceptance cannot establish the paper's performance advantage.
 
+The [completed functional acceptance](evidence/2026-11-08-cosmosalpha-calendar-experiment/acceptance.json) reached four qualified factors in each arm, made 42 physical model calls with zero unknown usage and completed all three native LightGBM fits. The audit verified all 18 downstream output artifacts and full-pool target consumption with zero verification failures. Its independent full-data target check found zero unexplained mismatches across 1,165,440 rows. This four-factor result does not establish that the 150-factor scientific study will complete or demonstrate an advantage.
+
 Portable boundary tests run without the native research dependencies:
 
 ```sh

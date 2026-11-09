@@ -36,6 +36,17 @@
       "heldOutAttempts": 3,
       "reason": "All three four-factor pools qualified. Native model fitting failed before training because libomp was missing. The trial remains inconclusive; OpenMP installation and separate downstream diagnostics do not rewrite it.",
       "resultSha256": "f95e012e979d69e50ffbc0155bc2598544489a17bdcc8642f8d1dab7931ef59a"
+    },
+    {
+      "name": "acceptance-v11",
+      "experimentId": "ac8ca5234e7e28e7064722aa77a581807ef1e32629a17f7c64d6dc4036bde00a",
+      "status": "COMPLETE",
+      "miningArmsComplete": 3,
+      "heldOutFits": 3,
+      "verificationFailures": 0,
+      "reason": "Fresh end-to-end acceptance: all three four-factor pools and native LightGBM fits completed; actual requests, complete factor consumption, target bindings and 18 downstream output artifacts passed audit. Earlier failed or stopped trials remain unchanged.",
+      "resultSha256": "1bdc338db0379e4db4801292822af7e6cc1d45a21e43f8af27960dcab2baf2e8",
+      "verificationSha256": "22e2f0012961e151b8d0fe2a2b1e717bad6fe25404aace9127379cc9d518872f"
     }
   ],
   "functionalBudgetProbes": [
