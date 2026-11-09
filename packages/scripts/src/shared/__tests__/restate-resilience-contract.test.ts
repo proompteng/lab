@@ -577,6 +577,8 @@ esac
 `,
     )
     writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    writeFileSync(`${tempDir}/seq`, '#!/bin/sh\n[ \"$*\" = \"1 60\" ] || exit 91\nprintf \"60\\n\"\n')
+    chmodSync(`${tempDir}/seq`, 0o755)
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
 
@@ -586,7 +588,7 @@ esac
       stderr: 'pipe',
     })
 
-    expect(result.exitCode).not.toBe(0)
+    expect(result.exitCode).toBe(1)
     expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
     expect(Bun.file(mutationMarker).size).toBe(0)
   } finally {

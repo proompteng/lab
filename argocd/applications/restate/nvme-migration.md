@@ -77,10 +77,14 @@ source/image, host/device, window timestamps and counts. Upgrade, storage, and r
 variables. A successful sync or Ready Pod is not a performance result. Exercise application work with one member
 unavailable in an isolated rehearsal before any authorized production failure test.
 
-If a copy or admission check fails, leave the replacement scheduling-gated and preserve both volumes. Restore the
-original claim binding on its original host under the same fenced procedure, then remove the gate only after checking
-the original data and identity. Stop moving members if quorum or data continuity fails. Do not provision empty state,
-lower replication, disable fsync or discard retained data to make readiness pass.
+If a copy or admission check fails, leave the replacement scheduling-gated and preserve both volumes. Keep the original
+RBD source read-only on its original 100G host. Fix the copy, permissions, target device or admission failure, repeat
+the full offline verification, and write the marker only on the verified NVMe destination before releasing its gate.
+Do not restore an RBD claim under this template or write a marker to the protected source. This migration fixes forward
+to one storage implementation. If the replacement already started, fence and stop that writer before another copy;
+reconcile any work acknowledged since its admission through the surviving native log replicas rather than overwriting
+newer state with the older source. Stop moving additional members if quorum or data continuity fails. Never provision
+empty state, lower replication, disable fsync or discard retained data to make readiness pass.
 
 Upstream contracts: [clusters and nodesets](https://docs.restate.dev/server/clusters),
 [rolling updates](https://docs.restate.dev/server/upgrading#rolling-updates),
