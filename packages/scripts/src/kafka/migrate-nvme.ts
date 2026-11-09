@@ -75,11 +75,21 @@ const marked = (resource: Obj, operationId: string): Obj => {
   return resource
 }
 
-const matchesDesired = (actual: Json | undefined, desired: Json): boolean => {
+const matchesDesired = (actual: Json | undefined, desired: Json, path = ''): boolean => {
   if (Array.isArray(desired))
-    return Array.isArray(actual) && desired.every((value, index) => matchesDesired(actual[index], value))
+    return Array.isArray(actual) && desired.every((value, index) => matchesDesired(actual[index], value, path + '[]'))
   if (desired !== null && typeof desired === 'object')
-    return Object.entries(desired).every(([key, value]) => matchesDesired(object(actual)[key], value))
+    return Object.entries(desired).every(([key, value]) => matchesDesired(object(actual)[key], value, path + '.' + key))
+  if (typeof actual === 'string' && typeof desired === 'string' && /\.resources\.(requests|limits)\./.test(path)) {
+    const resourceQuantity = (value: string) => {
+      if (!path.endsWith('.cpu')) return quantity(value)
+      const match = /^([0-9]+(?:\.[0-9]+)?)([mun]?)$/.exec(value)
+      if (!match) return undefined
+      return Number(match[1]) * ({ m: 1e-3, u: 1e-6, n: 1e-9 }[match[2]] ?? 1)
+    }
+    const expected = resourceQuantity(desired)
+    return expected !== undefined && resourceQuantity(actual) === expected
+  }
   return actual === desired
 }
 

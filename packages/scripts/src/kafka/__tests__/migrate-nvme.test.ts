@@ -98,7 +98,9 @@ const resources = () => {
       spec: {
         nodeName: 'old-node',
         nodeSelector: { zone: 'kafka' },
-        containers: [{ name: 'kafka', image: 'strimzi/kafka:4.3.1' }],
+        containers: [
+          { name: 'kafka', image: 'strimzi/kafka:4.3.1', resources: { requests: { cpu: '2000m', memory: '1024Mi' } } },
+        ],
       },
     },
     sourcePvcName: sourcePvc.metadata.name,
@@ -647,6 +649,10 @@ describe('Kafka NVMe migration plan contract', () => {
             target.spec.claimRef = { name: temp.metadata.name, namespace: plan.namespace, uid: 'temp-uid' }
             inject('temp-create')
           } else if (resource.metadata.name === plan.pod) {
+            const containers = resource.spec.containers as Array<{
+              resources: { requests: { cpu: string; memory: string } }
+            }>
+            containers[0].resources.requests = { cpu: '2', memory: '1Gi' }
             sourcePod = { ...resource, metadata: { ...resource.metadata, uid: 'started-uid' } }
             inject('start-create')
           } else {
