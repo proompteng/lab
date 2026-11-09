@@ -637,43 +637,23 @@ export const makeReconciliation = (
             intent.notional_limit_micros::text AS notional_limit_micros,
             intent.state,
             intent.terminal_outcome,
-            accepted.broker_order_id,
-            latest.operation AS mutation_operation,
-            latest.event_type AS mutation_event_type,
-            to_char(latest.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS mutation_occurred_at,
-            submitted.request_hash AS submit_request_hash,
-            started.request_body AS submit_request_body
+            events.broker_order_id,
+            events.operation AS mutation_operation,
+            events.event_type AS mutation_event_type,
+            to_char(events.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS mutation_occurred_at,
+            events.request_hash AS submit_request_hash,
+            events.request_body AS submit_request_body
           FROM intents AS intent
           LEFT JOIN LATERAL (
-            SELECT operation, event_type, occurred_at
-            FROM mutation_events
-            WHERE intent_id = intent.intent_id
-            ORDER BY
-              CASE operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
-              sequence DESC
-            LIMIT 1
-          ) AS latest ON true
-          LEFT JOIN LATERAL (
-            SELECT broker_order_id
-            FROM mutation_events
-            WHERE intent_id = intent.intent_id AND broker_order_id IS NOT NULL
-            ORDER BY
-              CASE operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
-              sequence DESC
-            LIMIT 1
-          ) AS accepted ON true
-          LEFT JOIN LATERAL (
-            SELECT request_hash
-            FROM mutation_events
-            WHERE intent_id = intent.intent_id AND operation = 'SUBMIT'
-            ORDER BY sequence DESC
-            LIMIT 1
-          ) AS submitted ON true
-          LEFT JOIN LATERAL (
-            SELECT request_body FROM mutation_events WHERE intent_id = intent.intent_id AND event_type = 'SUBMIT_STARTED'
-            ORDER BY sequence DESC LIMIT 1
-          ) AS started ON true
-          WHERE intent.account_id = ${accountId}
+ SELECT (array_agg(operation ORDER BY CASE operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC, sequence DESC))[1] AS operation,
+ (array_agg(event_type ORDER BY CASE operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC, sequence DESC))[1] AS event_type,
+ (array_agg(occurred_at ORDER BY CASE operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC, sequence DESC))[1] AS occurred_at,
+ (array_agg(broker_order_id ORDER BY CASE operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC, sequence DESC) FILTER (WHERE broker_order_id IS NOT NULL))[1] AS broker_order_id,
+ (array_agg(request_hash ORDER BY sequence DESC) FILTER (WHERE operation = 'SUBMIT'))[1] AS request_hash,
+ (array_agg(request_body ORDER BY sequence DESC) FILTER (WHERE event_type = 'SUBMIT_STARTED'))[1] AS request_body
+ FROM mutation_events WHERE intent_id=intent.intent_id
+ ) AS events ON true
+ WHERE intent.account_id = ${accountId}
           ORDER BY intent.client_order_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeIntents))
         const projected = yield* fromDecision('reconcile', projectIntentExpectations(intentRows))
