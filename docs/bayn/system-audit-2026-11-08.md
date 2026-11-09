@@ -131,13 +131,15 @@ Skipped integrations still require their configured CI environments.
 
 This work starts from `45579965308e14c07afd3d8960bc7d089de1986e`. The
 [measurement record](evidence/2026-11-08-runtime-cleanup.json) separates current readback from the original inventory.
-The changes below are source changes until their reviewed image receipts and deployed behavior are verified.
+PR [#15801](https://github.com/proompteng/lab/pull/15801) merges these changes as
+`cdb8fadf7c694a43296928253d8b9b61a46e8cec`. All 92 PR checks complete and both actionable review findings are resolved.
+Runtime delivery remains unverified until the exact merged images, promotion and deployed behavior are read back.
 
 - B2: Trading and research have separate artifact contents through the existing Nix builder. Financial reporting
   remains available in the API workload. Qualification and replay move to `bayn-system-assessment` in the research
   artifact; the old command rejects those flags. The two images require the same successful source/run receipts before
   Kargo discovers the cohort. Archive checks verify required commands and reject research tools in the trading image.
-  CI run `42577558311` verifies the actual trading and research archives on AMD64 and ARM64 at `4cc29d4350`.
+  CI run `42596127173` verifies the actual trading and research archives on AMD64 and ARM64 at PR head `66ee055c5b`.
   The trading image retains the two files required by physical candidate-image qualification, including its
   backtest bundle and dependency receipt. Python, GEPA, Git, Bun and registry tools remain research-only.
   Opening capture also remains in the trading image to preserve the frozen plan's physical candidate-build identity.
@@ -175,6 +177,8 @@ The changes below are source changes until their reviewed image receipts and dep
   freezing and status readers use the complete state. All 90 targeted PostgreSQL cases pass. The eight latest sampled
   documents contain identical states: a read-only projection removes 3,834,137 of 38,759,681 JSONB text bytes, or 9.89%.
   This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
+  A live sampled historical decision passes the retained Jev financial verifier. It does not satisfy the current
+  execution schema, so it cannot establish decode performance for the new representation.
   Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
   the dedicated archive. The 367 financial epochs were created through October 27; a later snapshot finds 440 dedicated
@@ -207,6 +211,14 @@ The changes below are source changes until their reviewed image receipts and dep
   The underlying database wait reason remains unverified; the optimized history-read queries do not explain that
   write stall. Three observed schedules also separate 29.907–29.934 seconds of requested delay from 25–705 ms of
   start lateness. Comparable cleanup-release timing and the complete naturally eligible v40 request remain open.
+  An additional baseline on deployed source `351b522baf` contains 15 waiting passes, all executed on Turin.
+  Advance has a 985.801 ms median and a 1,354.606 ms maximum; persistence has a 674.725 ms median.
+  This baseline follows the independently merged DNS and proxy changes in PR #15806 and records its concurrent
+  native-arrival replica migration. The financial primary remains `bayn-db-2` on its existing storage.
+  Compare the cleanup release against this baseline with the same worker node and database state. Differences from
+  the earlier `cea96bc87f` baseline cannot isolate the cleanup's effect.
+  A later 60-second read-only sample of the financial primary observes brief `WalSync` and `SyncRep` waits, with
+  a maximum sampled query age of 120 ms and no blocking PID. It does not reproduce or explain the earlier write stall.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
