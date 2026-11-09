@@ -36,7 +36,12 @@ from cosmosalpha.pipeline.runtime import (
 )
 from cosmosalpha.storage import LocalArtifactRepository, write_run_reports
 
-from cosmosalpha_experiment import CheckedModelClient, digest, write_json
+from cosmosalpha_experiment import (
+    CheckedModelClient,
+    EvaluableTargetReached,
+    digest,
+    write_json,
+)
 
 
 def admit_config(path, run_id):
@@ -358,23 +363,27 @@ def run_arm(root, plan, run, budget, transport, output):
             correlation_min_daily_effective_stock_ratio=config.evaluation.min_daily_effective_stock_ratio,
             correlation_min_pair_window_ratio=config.evaluation.min_effective_date_ratio,
         )
-        result = controller.run_multi_tree(
-            data_snapshot=snapshot,
-            base_context=_base_context(config, snapshot),
-            config_snapshot_ref=runtime._config_snapshot_ref,
-            code_version=__import__("cosmosalpha").__version__,
-            max_total_rounds=config.mcts.max_iterations,
-            max_evaluated_factors=budget.limits.evaluable_factors,
-            initial_budget=config.mcts.initial_budget,
-            budget_increment=config.mcts.budget_increment,
-            breakthrough_relax=config.mcts.breakthrough_relax,
-            run_id=run["runId"],
-        )
+        try:
+            result = controller.run_multi_tree(
+                data_snapshot=snapshot,
+                base_context=_base_context(config, snapshot),
+                config_snapshot_ref=runtime._config_snapshot_ref,
+                code_version=__import__("cosmosalpha").__version__,
+                max_total_rounds=config.mcts.max_iterations,
+                max_evaluated_factors=budget.limits.evaluable_factors,
+                initial_budget=config.mcts.initial_budget,
+                budget_increment=config.mcts.budget_increment,
+                breakthrough_relax=config.mcts.breakthrough_relax,
+                run_id=run["runId"],
+            )
+            termination = {"iterations": result.iterations}
+        except EvaluableTargetReached:
+            termination = {"terminationReason": "evaluable-factor-target"}
         write_json(
             output / "native-result.json",
             {
                 "entrypoint": "MCTSController.run_multi_tree",
-                "iterations": result.iterations,
+                **termination,
                 "trees": len(runtime._objects.list_object_ids("mcts_tree")),
             },
         )

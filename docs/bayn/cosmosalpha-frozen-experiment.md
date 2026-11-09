@@ -49,16 +49,18 @@ The study contains all nine runs in this order:
 | 20260824 | MCTS, no-Flow, Graph |
 | 20260825 | no-Flow, Graph, MCTS |
 
+MCTS stops at the next expansion boundary after the shared target is met. Its final cycle feedback can complete, and the native helper fallback cannot turn the stop into more model calls.
+
 Each run targets exactly 150 unique, technically evaluable factors. Both accepted and threshold-rejected factors count when they satisfy the native coverage gate. Failed evaluations and duplicates do not count. Concurrent evaluations reserve capacity before computation so they cannot overshoot the target.
 
 Every arm has the same hard ceilings:
 
-| Resource                                  |    Per arm |
-| ----------------------------------------- | ---------: |
-| Requested proposal slots                  |        600 |
-| Physical HTTP requests, including retries |      2,000 |
-| Actual completion tokens                  | 20,000,000 |
-| Maximum output tokens on any request      |     20,000 |
+| Resource                                            |    Per arm |
+| --------------------------------------------------- | ---------: |
+| Requested proposal slots                            |        600 |
+| Physical inference HTTP requests, including retries |      2,000 |
+| Actual completion tokens                            | 20,000,000 |
+| Maximum output tokens on any request                |     20,000 |
 
 The 600-slot ceiling leaves room for MCTS cycles that emit one factor while requesting up to two. This is a common ceiling, not a claim that every requested slot becomes a parsed or evaluable factor. Failed cycles keep their charged slots. The runner retains proposal, evaluation and physical-request events separately.
 

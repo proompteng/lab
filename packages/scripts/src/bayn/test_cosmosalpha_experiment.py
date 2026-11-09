@@ -128,6 +128,27 @@ class BudgetTests(unittest.TestCase):
 
 
 class AuxiliaryResponseTests(unittest.TestCase):
+    def test_target_stops_new_expansions_and_allows_final_cycle_feedback(self):
+        budget = experiment.ArmBudget(experiment.Limits(evaluable_factors=1))
+        budget.evaluable["complete"] = object()
+        delegate = unittest.mock.Mock()
+        delegate.complete.return_value = types.SimpleNamespace(
+            content='{"suggestions":["fixture"]}'
+        )
+        client = experiment.CheckedModelClient(delegate, budget)
+        feedback = types.SimpleNamespace(
+            prompt=types.SimpleNamespace(prompt_id="factor_feedback")
+        )
+        self.assertIs(client.complete(feedback), delegate.complete.return_value)
+        delegate.complete.reset_mock()
+        request = types.SimpleNamespace(
+            prompt=types.SimpleNamespace(prompt_id="suggestion")
+        )
+        with self.assertRaises(experiment.EvaluableTargetReached):
+            client.complete(request)
+        delegate.complete.assert_not_called()
+        self.assertEqual(budget.summary()["failedAuxiliaryResponses"], 0)
+
     def test_empty_truncated_or_malformed_auxiliary_responses_are_retained_as_failures(
         self,
     ):

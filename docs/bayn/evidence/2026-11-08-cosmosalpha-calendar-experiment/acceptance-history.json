@@ -17,6 +17,15 @@
       "reason": "MCTS auxiliary reasoning exhausts original output caps without usable JSON; stop before held-out fitting. Preserve trial without replay.",
       "emptyAuxiliaryResponsesCapturedAtStop": 5,
       "externalStopSha256": "a9bb2da1d3619b3b6b0dab4231f890d4558baa2f6e9ff0ac2b717fbab2684006"
+    },
+    {
+      "name": "acceptance-v8",
+      "experimentId": "069db8686821d332c214a555c754658d107f5669e276d20a814125ec4cc09d1d",
+      "status": "STOPPED_INCONCLUSIVE",
+      "heldOutFits": 0,
+      "evaluableMCTSFactorsAtStop": 4,
+      "reason": "Native MCTS starts additional portraits after the common evaluable target; stop at the next-expansion boundary is required. No held-out fitting started.",
+      "externalStopSha256": "40017433ff8438fc1be3cfe8eaeaccf0442d2991f2748d09beeea6032515b28a"
     }
   ],
   "functionalBudgetProbes": [

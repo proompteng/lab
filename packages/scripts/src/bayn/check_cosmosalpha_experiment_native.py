@@ -28,7 +28,12 @@ from cosmosalpha.pipeline.mcts.controller import MCTSController, MCTSResult
 from cosmosalpha.pipeline.mcts.core import MCTSNode, MCTSTree
 from cosmosalpha.storage import LocalArtifactRepository, LocalExperimentRepository
 
-from cosmosalpha_experiment import ArmBudget, Limits
+from cosmosalpha_experiment import (
+    ArmBudget,
+    CheckedModelClient,
+    EvaluableTargetReached,
+    Limits,
+)
 from cosmosalpha_native_experiment import (
     FrozenInputs,
     admit_model_config,
@@ -42,6 +47,25 @@ PLAN = json.loads((ROOT / "plan.json").read_text())
 
 
 class NativeContracts(unittest.TestCase):
+    def test_target_stop_escapes_native_suggestion_fallback_without_a_model_call(self):
+        budget = ArmBudget(Limits(evaluable_factors=1))
+        budget.evaluable["completed"] = object()
+        delegate = unittest.mock.Mock()
+        controller = MCTSController(
+            None,
+            None,
+            None,
+            llm_client=CheckedModelClient(delegate, budget),
+            field_catalog=build_base_field_catalog(),
+            operator_catalog=build_base_operator_catalog(),
+        )
+        with self.assertRaises(EvaluableTargetReached):
+            controller._step_a_suggest(
+                MCTSNode(factor_id="completed", expression="close")
+            )
+        delegate.complete.assert_not_called()
+        self.assertEqual(budget.summary()["failedAuxiliaryResponses"], 0)
+
     def test_native_multi_tree_rotates_free_roots_and_never_supplies_a_fixed_seed(self):
         run = next(run for run in PLAN["runs"] if run["arm"] == "mcts")
         frozen = FrozenInputs(ROOT, PLAN["inputs"]["mining"])

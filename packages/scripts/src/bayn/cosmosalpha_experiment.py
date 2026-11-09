@@ -211,6 +211,10 @@ class BudgetReached(Exception):
     pass
 
 
+class EvaluableTargetReached(BaseException):
+    """Exit native search without entering its broad proposal-failure handlers."""
+
+
 def auxiliary_response_valid(purpose, content):
     try:
         value = json.loads(content)
@@ -244,6 +248,16 @@ class CheckedModelClient:
         purpose = request.prompt.prompt_id
         if purpose not in {"suggestion", "portrait"}:
             return self.delegate.complete(request)
+        with self.budget.lock:
+            if len(self.budget.evaluable) >= self.budget.limits.evaluable_factors:
+                self.budget.record(
+                    {
+                        "event": "search-stop",
+                        "reason": "evaluable-factor-target",
+                        "boundary": purpose,
+                    }
+                )
+                raise EvaluableTargetReached()
         content = None
         try:
             response = self.delegate.complete(request)
