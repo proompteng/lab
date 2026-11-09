@@ -14,6 +14,12 @@ spec:
         valuesObject:
           nodeSelector:
             kubernetes.io/arch: amd64
+            kubernetes.io/hostname: talos-192-168-1-194
+          tolerations:
+            - key: workload.proompteng.ai/compute-local
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
@@ -34,6 +40,12 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
+                kubernetes.io/hostname: talos-192-168-1-194
+              tolerations:
+                - key: workload.proompteng.ai/compute-local
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -330,6 +342,12 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
+                kubernetes.io/hostname: talos-192-168-1-194
+              tolerations:
+                - key: workload.proompteng.ai/compute-local
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
               dnsConfig:
                 searches:
                   - ide-newton.ts.net

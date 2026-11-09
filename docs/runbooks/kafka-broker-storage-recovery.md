@@ -1,133 +1,86 @@
-# Kafka Broker Storage Recovery Runbook
+# Kafka storage migration and recovery
 
-## Overview
+Kafka has three controller-only nodes in `pool-a` and three broker-only nodes in `pool-b`.
+Keep the existing cluster ID, node IDs, directory IDs, original PVC names and non-JBOD mount paths when moving data.
+A new cluster or translated consumer offsets cannot preserve the immutable offsets recorded by Kafka clients.
 
-Use this runbook when a Kafka broker is crash-looping with storage I/O errors (for example, `meta.properties` read failures or `No available log directories to format`). The fastest recovery is to replace the broker volume and let Kafka re-sync from the remaining replicas. If you must preserve local data, attempt a filesystem repair first.
+## Storage and placement
 
-## Before you start
+The [Kafka application](../../argocd/applications/kafka/README.md) owns the `kafka-nvme` StorageClass and six
+static local PVs. Each PV uses `Retain`, an explicit local path and required host affinity.
+One controller and one broker belong on each host:
 
-- Ensure at least two brokers are healthy before removing the failing broker (replication factor = 3, `min.insync.replicas = 2`).
-- Capture logs and PVC identifiers for the incident timeline.
+| Host | Controller, 30 GiB | Broker, 200 GiB |
+| --- | --- | --- |
+| Altra | `/var/mnt/local-path-provisioner/kafka-nvme/controller` | `/var/mnt/local-path-provisioner/kafka-nvme/broker` |
+| Turin | `/var/mnt/turin-nvme-intel/kafka-nvme/controller` | `/var/mnt/turin-nvme-transcend/kafka-nvme/broker` |
+| Ryzen | `/var/mnt/local-path-provisioner/kafka-nvme/controller` | `/var/mnt/local-path-provisioner/kafka-nvme/broker` |
 
-## 1) Triage the failing broker
+Local PV capacity is a reservation, not a filesystem quota. Verify the mount device, filesystem, free bytes and
+other reservations before preparing a path. Never format a disk, reuse an unrelated directory or allocate on
+Ceph's NVMe DB/WAL devices. Turin's CI must drain to Ryzen before its Transcend disk receives Kafka data.
 
-```bash
-kubectl -n kafka get kafka
-kubectl -n kafka get pods -o wide
-kubectl -n kafka logs kafka-pool-a-2 --tail=200
-kubectl -n kafka describe pod kafka-pool-a-2
-```
+## Establish the recovery boundary
 
-Confirm the I/O error in the broker logs and record the PVC name (usually `data-kafka-pool-a-2`).
+Use an explicit Kubernetes context and namespace for every operation. Capture the Kafka resource, NodePools,
+StrimziPodSets, exact pod/PVC/PV UIDs, source image handles, cluster and directory identities, complete topic
+inventory, partition cuts, consumer offsets and replication state outside Git. Do not capture Secrets.
 
-## 2) Check Longhorn volume state + minimal available threshold
+Rehearse the exact copy, PVC handoff and operator adoption on a disposable cluster with the same Kafka and
+Strimzi versions before production. Include numbered records, committed group offsets, writes during recovery,
+operator restart and an operator-managed pod recreation. A Pod becoming Ready does not establish data preservation.
 
-When brokers crash-loop with I/O errors, verify the Longhorn volume is attached and healthy. If the volume is `faulted/detached` and logs show `no healthy or scheduled replica for starting`, the minimal available threshold may be blocking salvage/attach.
+Pause reconciliation only for the bounded maintenance interval. The Kafka Application's
+`argocd.argoproj.io/skip-reconcile` annotation survives ApplicationSet reconciliation; changing its automated
+policy alone does not. Preserve and restore its previous annotation and policy. A Kafka pause annotation alone
+does not stop the independent StrimziPodSet controller. Stop the operator during the handoff and keep Kafka serving.
+Do not disrupt production nodes while rehearsing an operator pause.
 
-```bash
-PVC=data-kafka-pool-a-2
-PV=$(kubectl -n kafka get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
-VOLUME=$(kubectl get pv "$PV" -o jsonpath='{.spec.csi.volumeHandle}')
+## Move one stopped node
 
-kubectl -n longhorn-system get volume "$VOLUME" -o wide
-```
+1. Require healthy controller quorum, all brokers available and full ISR before stopping a node. Save the desired
+   Pod from its StrimziPodSet. Stop only that node gracefully and confirm it is gone before mounting its data elsewhere.
+2. Change the exact source PV to `Retain` and read it back before deleting any claim. Keep its source claim mounted
+   read-only for the copy. Bind the temporary destination claim to the exact target `volumeName` on the stopped node's host.
+3. Copy the entire filesystem with sparse files, ownership, modes and extended attributes preserved. Flush the target.
+   Compare the complete file inventory, lengths, SHA-256 hashes and `meta.properties` before Kafka starts.
+   A partial copy, count-only comparison or missing identity is a failed gate.
+   Exclude only an empty root `lost+found` administration directory from the Kafka manifest. A nonempty or
+   symlink recovery directory aborts the copy; all Kafka file attributes, including security labels, remain strict.
+4. Release the original claim and temporary target claim only after the verified copy. Rebind the target PV to the
+   original PVC name with its new UID and explicit `volumeName`. Verify both sides of the binding and host affinity.
+5. Recreate the saved desired Pod, preserving storage type, volume name, mount path, log directory and node ID.
+   Do not reuse a live Pod's stale `nodeName`. Kafka's startup can delete metadata when its configured metadata path changes.
+6. Confirm the original cluster/node/directory identities. Wait for controller catch-up or every broker partition
+   to return to full ISR before moving another node. Never move two controllers or two brokers concurrently.
 
-If the volume cannot be scheduled due to minimal available space, temporarily lower the threshold and retry:
+Kafka changes active files during startup and catch-up. The full-copy hash gate belongs before startup;
+a later filesystem hash mismatch alone cannot diagnose data loss. Keep both copy receipts and application-level reads.
 
-```bash
-kubectl -n longhorn-system patch settings.longhorn.io storage-minimal-available-percentage \
-  --type merge -p '{"value":"20"}'
-```
+## Adopt and verify
 
-After recovery, persist the intended value in `argocd/applications/longhorn/longhorn-values.yaml`.
+After all copies, the reviewed desired NodePool classes and each StrimziPodSet's `strimzi.io/storage` annotation
+must describe the same non-JBOD NVMe storage. Ordinary edits to a NodePool storage class are rejected by Strimzi.
+Validate the complete handoff before restarting the operator, then restore normal GitOps reconciliation.
 
-## 3) Pause Argo CD autosync (recommended)
+Require successful subsequent reconciliation and an operator-managed recreation that keeps the correct NVMe binding.
+Compare cluster and topic IDs, all managed and unmanaged topics, partition assignments, retained offsets, committed
+consumer positions and record witnesses. Check full ISR, controller quorum and replica lag. Exercise a producer and
+consumer through the unchanged bootstrap listeners and verify real application ingestion and consumer progress.
+Ryzen has a slower network link than Altra and Turin; measure its catch-up and client behavior rather than inferring
+performance from the storage device or health indicators.
 
-```bash
-argocd app patch argocd/kafka --type json \
-  --patch '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
-```
+## Recovery and retirement
 
-Restore it after recovery.
+A retained source is a recovery source for that individual node at its copy time. Six rolling source copies are
+not a coherent whole-cluster snapshot. Never restore all old volumes together. Recover one node while the other
+members remain authoritative, or reverse-copy the current quiescent NVMe data before rebinding to a recovery volume.
+Do not scale a pool down to replace a disk: that changes node identity and can remove replica assignments.
 
-## 4) Replace the broker volume (fastest path)
+Retire only the six captured old Kafka Ceph PVs after copy, reconciliation, recreation, data and client gates pass.
+Verify they have no current PVC, Pod or VolumeAttachment users. Delete their exact backing images through the CSI
+reclaim path, then prove both Kubernetes objects and Ceph images are absent. Keep all unrelated Ceph pools, claims
+and database WAL devices intact. Remove temporary proof resources and paths, and restore the saved reconciliation state.
 
-Scale the node pool down to remove the failing broker, delete its PVC, then scale back up.
-
-```bash
-kubectl -n kafka patch kafkanodepool pool-a --type merge -p '{"spec":{"replicas":2}}'
-
-kubectl -n kafka delete pvc data-kafka-pool-a-2
-
-kubectl -n kafka patch kafkanodepool pool-a --type merge -p '{"spec":{"replicas":3}}'
-```
-
-Wait for `kafka-pool-a-2` to recreate and reach `Ready`.
-
-## 5) Optional: attempt filesystem repair before replacement
-
-If you need to preserve the data volume, run fsck on the Longhorn device while the broker is scaled down.
-
-```bash
-PVC=data-kafka-pool-a-2
-PV=$(kubectl -n kafka get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
-VOLUME=$(kubectl get pv "$PV" -o jsonpath='{.spec.csi.volumeHandle}')
-NODE=$(kubectl -n longhorn-system get volume "$VOLUME" -o jsonpath='{.status.currentNodeID}')
-
-kubectl -n longhorn-system apply -f - <<POD
-apiVersion: v1
-kind: Pod
-metadata:
-  name: fsck-${VOLUME}
-  namespace: longhorn-system
-spec:
-  nodeName: ${NODE}
-  restartPolicy: Never
-  tolerations:
-    - operator: Exists
-  containers:
-    - name: fsck
-      image: alpine:3.20
-      securityContext:
-        privileged: true
-      command:
-        - sh
-        - -c
-        - |
-          set -eux
-          apk add --no-cache e2fsprogs
-          e2fsck -f -y /dev/longhorn/${VOLUME}
-      volumeMounts:
-        - name: dev
-          mountPath: /dev/longhorn
-  volumes:
-    - name: dev
-      hostPath:
-        path: /dev/longhorn
-POD
-```
-
-If `NODE` is empty, attach the volume in Longhorn first or set `nodeName` manually to the node hosting the volume device.
-If fsck fails or I/O errors persist, proceed with the volume replacement in step 3.
-
-## 6) Verify Kafka and remaining KafkaSource health
-
-```bash
-kubectl -n kafka get kafka
-kubectl -n kafka get pods -o wide
-kubectl -n jangar get kafkasources.sources.knative.dev
-```
-
-Ensure Kafka reports `Ready=True`. The retired Codex workflow completion bridge no longer has a Jangar
-KafkaSource; only currently rendered application-specific sources should be checked here.
-
-## 7) Re-enable Argo CD autosync
-
-```bash
-argocd app set argocd/kafka --sync-policy automated --self-heal --auto-prune
-```
-
-## Notes
-
-- Replacing a single broker volume will temporarily under-replicate partitions. Allow time for ISR to recover.
-- If the broker keeps reusing a corrupted PVC, double-check that the PVC was deleted and that a fresh PV/volume was created.
+References: [Strimzi 1.2 recovery from persistent volumes](https://strimzi.io/docs/operators/1.2.0/deploying.html#assembly-cluster-recovery-from-persistent-volumes-str),
+[Strimzi Kafka startup](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/docker-images/kafka-based/kafka/scripts/kafka_run.sh#L55).

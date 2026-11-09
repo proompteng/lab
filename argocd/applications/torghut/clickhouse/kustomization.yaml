@@ -15,13 +15,22 @@ resources:
   - clickhouse-service.yaml
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
-  - intraday-bars-schema-job.yaml
-  - intraday-features-schema-job.yaml
-  - historical-datasets-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
   - signal-publisher-cronjob.yaml
+configMapGenerator:
+  - name: signal-schema
+    files:
+      - schema/reconcile.sh
+      - schema/adjusted-daily.sql
+      - schema/adjusted-daily.verify.sql
+      - schema/intraday-bars.sql
+      - schema/intraday-bars.verify.sql
+      - schema/intraday-features.sql
+      - schema/intraday-features.verify.sql
+      - schema/historical-datasets.sql
+      - schema/historical-datasets.verify.sql
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-92990813164595e0733558a88ec6e4c0346da263
-    digest: sha256:b73f4c78c1ee807c3b88eca6d71377c7274b87c5d4525f25f105c292d941e5e2
+    newTag: kargo-sha-f7076cc2206ee80c13340c08224a4cc3ff2c3645
+    digest: sha256:c19546f6d43d4f2edd9f0851d07d8876e9ee997ac8c14adab66471508615f894
