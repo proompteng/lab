@@ -1585,5 +1585,107 @@
     "maximumObservedQueryAgeMs": 120,
     "blockingPidObservations": 0,
     "scope": "Read-only pg_stat_activity sampling of active bayn application connections on financial primary bayn-db-2. 200 ms sampling can miss short queries and does not attribute the earlier trace. No SQL text, parameters, financial values or secret data were collected."
+  },
+  "imageRolePreparation": {
+    "buildRunId": "42600189039",
+    "buildConclusion": "failure",
+    "platformArchiveValidation": "All four native/research AMD64/ARM64 platform builds and archive checks passed; both final index jobs failed before cohort publication.",
+    "publicationFailure": "Receipt annotations require a run-qualified immutable Kargo identity. The workflow withheld that identity with the publication alias.",
+    "publicationFix": {
+      "pullRequest": "https://github.com/proompteng/lab/pull/15812",
+      "mergedRevision": "2c944ced3a",
+      "mode": "Existing deferred-tag validation preserves receipt identity without exposing preparation aliases. A new successful source/run cohort and runtime readback remain required."
+    },
+    "deployedBefore": {
+      "observedAt": "2026-11-09T11:11:02.398387+00:00",
+      "sourceRevision": "351b522baf093501a703990d1403d986b652b8e8",
+      "indexDigest": "sha256:24c5ff9a7c81102a27c366f28c3f89c9b8f3d98c0fb15b865c78d6594e9a2e23",
+      "platform": "linux/arm64",
+      "manifestDigest": "sha256:6c3f88b23696815a360402f453e0264537359252a3d82c35ceab61009faa1d0d",
+      "compressedLayerBytes": 392756535
+    },
+    "preparationImages": [
+      {
+        "role": "native",
+        "observedAt": "2026-11-09T11:17:15.218071+00:00",
+        "reference": "registry.ide-newton.ts.net/lab/bayn@sha256:38e8cea855b659f00cd54049c4ccdede551922cf8a8e1840892d0d5848249dbb",
+        "sourceRevision": "cdb8fadf7c694a43296928253d8b9b61a46e8cec",
+        "platform": "linux/arm64",
+        "compressedLayerBytes": 95184638,
+        "layerCount": 23,
+        "commandChecks": [
+          {
+            "check": "financial-report-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "opening-capture-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "candidate-backtest-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "role-paths",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "financial-report-wrapper",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "opening-capture-wrapper",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          }
+        ],
+        "verificationScope": "Actual immutable ARM64 preparation image executed in temporary local Linux containers, with no network, credentials, persistent volumes or broker actions. All owned containers removed. This proves selected CLI entry points and role paths, not final cohort publication or product rollout."
+      },
+      {
+        "role": "research",
+        "observedAt": "2026-11-09T11:23:46.720870+00:00",
+        "reference": "registry.ide-newton.ts.net/lab/bayn-research@sha256:9a21ab3c9a7433dba98ae1e12f1f40afe8c145108ce790612dfb85595361ad32",
+        "sourceRevision": "cdb8fadf7c694a43296928253d8b9b61a46e8cec",
+        "platform": "linux/arm64",
+        "compressedLayerBytes": 384766091,
+        "layerCount": 23,
+        "commandChecks": [
+          {
+            "check": "system-assessment-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "control-study-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "frozen-control-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "arrival-export-help",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          },
+          {
+            "check": "role-paths",
+            "exitCode": 0,
+            "expectedOutputVerified": true
+          }
+        ],
+        "verificationScope": "Actual immutable ARM64 research preparation artifact. Selected real wrappers and role paths checked in temporary Linux containers with no network, credentials or persistent volumes. All owned containers removed. Not final cohort or runtime research acceptance."
+      }
+    ],
+    "nativeCompressedLayerReductionPercent": 75.765,
+    "scope": "Actual immutable ARM64 artifacts and isolated Linux CLI execution. Native compressed layer bytes fall by 75.765 percent relative to the deployed ARM64 artifact; this is not total cohort size, disk usage, pull traffic, startup latency, final publication or product rollout proof. No image aliases, live workloads, retained data, storage or authority were changed by these checks."
   }
 }
