@@ -417,14 +417,15 @@ jobs:
           if [ "${LATEST}" = "true" ]; then
             args+=(--latest)
           fi
-          if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = "true" ] ||
+          # Receipt validation needs the exact future alias even when a cohort publishes it later.
+          if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ] ||
             { [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; then
             kargo_tag="kargo-sha-${SOURCE_SHA}"
             if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ]; then
               kargo_tag="${kargo_tag}-run-${GITHUB_RUN_ID}"
             fi
             args+=(--kargo-tag "${kargo_tag}")
-            if [ "${PUBLISH_KARGO_TAG}" != 'true' ] || [ "${GITHUB_REF}" != 'refs/heads/main' ]; then
+            if [ "${PUBLISH_KARGO_TAG}" != "true" ] || [ "${GITHUB_REF}" != "refs/heads/main" ]; then
               args+=(--defer-kargo-tag)
             fi
           fi
