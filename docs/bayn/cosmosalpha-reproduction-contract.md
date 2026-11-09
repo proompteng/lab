@@ -1,8 +1,8 @@
 # CosmosAlpha reproduction contract
 
-Status: incremental configuration audit, November 8, 2026. A passing audit establishes configuration consistency only.
+Status: configuration audit and separate frozen experiment runner, November 8, 2026. A passing configuration audit establishes configuration consistency only.
 
-The first increment makes the current comparison's omissions inspectable. It does not repair labels, exercise a mining runtime, approve a launch or establish the paper's reported advantage. The active Graph/Chain study remains a separate exploratory trial.
+The configuration audit makes the historical comparison's omissions inspectable. It does not repair labels, exercise a mining runtime or establish the paper's reported advantage. The historical Graph/Chain study remains a separate exploratory trial. The [frozen calendar-target runner](cosmosalpha-frozen-experiment.md) creates a new Graph/MCTS/no-Flow experiment with its own identities and runtime evidence.
 
 ## Run the audit
 
@@ -18,11 +18,11 @@ It compares data, universe, return convention, preprocessing, operators, proposa
 
 Exit 0 means `configuration-consistent`. Exit 1 reports a mismatch or invalid input. Neither exit supplies native config admission, MCTS method parity, data correctness, comparable realized budgets, downstream performance or trading authority. The command is an audit, not a launcher or a mandatory wrapper around existing runners.
 
-## Paper and implementation reconciliation
+## Historical trial audit against the paper
 
 The primary source is [CosmosAlpha v1](https://arxiv.org/html/2611.04555v1). Code references below pin author commit `237f0a56895fd295542e202be8f62be48d6e9995`; the local study also declares its [two-file repair](cosmosalpha-reference-budget-2026-11-07.md#source-repairs).
 
-| Requirement                                                      | Owning source                                                                                                                                                                                                                                                                                            | Current evidence and unresolved boundary                                                                                                                                                                                           |
+| Requirement                                                      | Owning source                                                                                                                                                                                                                                                                                            | Historical trial evidence and unresolved boundary                                                                                                                                                                                  |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Typed graph relations and propagated utilities, Sections 3.2–3.4 | [Graph Flow](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a56895fd295542e202be8f62be48d6e9995/src/cosmosalpha/pipeline/graph/flow.py) and [controller](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a56895fd295542e202be8f62be48d6e9995/src/cosmosalpha/pipeline/graph/controller.py)      | Prior numerical checks exist. Config/source hashes do not repeat those mathematical checks.                                                                                                                                        |
 | Controlled MCTS comparison, Section 4.1                          | [Formal runtime](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a56895fd295542e202be8f62be48d6e9995/src/cosmosalpha/pipeline/runtime.py) and [MCTS controller](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a56895fd295542e202be8f62be48d6e9995/src/cosmosalpha/pipeline/mcts/controller.py) | `_run_mcts` invokes `controller.run` with a fixed seed expression. The controller separately exposes `run_multi_tree`; the paper describes multiple subtrees. Trace and verify the intended entry point before using this control. |
@@ -33,8 +33,8 @@ The primary source is [CosmosAlpha v1](https://arxiv.org/html/2611.04555v1). Cod
 
 The [actual frozen-plan audit](evidence/2026-11-08-cosmosalpha-config-audit.json) matches 101 installed files to the supplied source manifest and reports missing MCTS and no-Flow configurations for all three seeds. It records the tested Bun version. Source-manifest agreement binds supplied bytes; it does not independently authenticate an upstream commit or establish method parity.
 
-## Next implementation boundary
+## Calendar-target experiment boundary
 
 The [calendar-correct target generator and independent verification](cosmosalpha-calendar-targets.md) now produce a separately identified artifact. The full 2010–2025 panel passes with zero unexplained target mismatches. Existing trials retain their original labels; they have not been migrated or reinterpreted.
 
-Next verify the multi-tree MCTS entry point and freeze the three-arm study with an explicit budget comparison and target identity. Industry-history admission and economic qualification remain separate requirements.
+The [new runner](cosmosalpha-frozen-experiment.md) binds these targets to native mining and downstream consumers, uses the multi-tree MCTS entry point and freezes all three arms for three seeds. It enforces the same evaluable-factor target and resource ceilings, retains physical self-hosted-model request evidence and independently audits the resulting artifacts. Its MCTS prompt repairs and auxiliary output limits are explicit source changes. Configuration admission, functional acceptance and a completed nine-arm experiment are distinct evidence boundaries; a frozen plan alone does not establish completed execution. Industry-history admission and economic qualification remain separate requirements.
