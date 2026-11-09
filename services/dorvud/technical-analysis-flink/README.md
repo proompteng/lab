@@ -104,8 +104,10 @@ incompatible schema fails startup under the existing strict retry policy. It nev
 `ta-schema.sql` automatically: distributed no-op DDL can block the application thread while the JobManager remains
 Ready and no streaming job exists. Provision or repair schema through the reviewed migration process before rollout.
 The retained SQL resource remains the migration contract, including the separate options tables; TA startup does
-not migrate options tables. Connection and socket deadlines are 5 and 15 seconds, and each metadata query has a
-15-second server deadline. These are per-attempt bounds, not a total bound across the configured retries.
+not migrate options tables. The connection timeout is 5 seconds and socket idle timeout is 15 seconds. Both metadata
+queries explicitly set the server's `max_execution_time` to 15 seconds in addition to the JDBC statement timeout.
+JDBC 0.9.5 can block synchronously before its future timeout, so that timeout alone does not bound execution. Server
+timeout checks are cooperative; these settings do not promise a hard wall-clock limit or a total retry deadline.
 
 Recovery acceptance must verify the restored savepoint, completed checkpoints, current feature production and
 matching consumption in Bayn. Pod readiness and a cleared alert alone do not establish recovery. Preserve operator

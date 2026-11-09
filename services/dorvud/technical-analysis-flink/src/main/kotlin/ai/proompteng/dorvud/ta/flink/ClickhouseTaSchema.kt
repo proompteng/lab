@@ -54,8 +54,41 @@ internal val requiredClickhouseTaColumns =
       ),
   )
 
+internal const val CLICKHOUSE_TA_METADATA_QUERY_SETTINGS = "SETTINGS max_execution_time = 15"
+
 private val taRetention =
-  Regex("""\bTTL\s+toDateTime\(event_ts\)\s*\+\s*(?:toIntervalDay\(35\)|INTERVAL\s+35\s+DAY)(?:\s|$)""")
+  Regex("""toDateTime\(event_ts\)\s*\+\s*(?:toIntervalDay\(35\)|INTERVAL\s+35\s+DAY)(?:\s+DELETE)?""")
+
+private val ddlTokens =
+  Regex("""'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`(?:[^`\\]|\\.|``)*`|[A-Za-z_][A-Za-z_0-9]*|[()]""")
+
+private fun hasRequiredTaRetention(definition: String): Boolean {
+  var depth = 0
+  var engineSeen = false
+  var ttlStart: Int? = null
+  var ttlEnd = definition.length
+  for (token in ddlTokens.findAll(definition)) {
+    when (token.value) {
+      "(" -> depth++
+      ")" -> depth--
+      "ENGINE" -> if (depth == 0) engineSeen = true
+      "TTL" ->
+        if (depth == 0 && engineSeen) {
+          if (ttlStart != null) return false
+          ttlStart = token.range.last + 1
+        }
+      "SETTINGS" ->
+        if (depth == 0 && ttlStart != null) {
+          ttlEnd = token.range.first
+          break
+        }
+    }
+    if (depth < 0) return false
+  }
+  val start = ttlStart ?: return false
+  // Match the entire table-level action, never a column TTL or a conditional/move TTL prefix.
+  return depth == 0 && taRetention.matches(definition.substring(start, ttlEnd).trim().removeSuffix(";").trim())
+}
 
 /**
  * Startup verifies the schema it will write, but never runs migrations. In particular, a healthy
@@ -77,7 +110,7 @@ internal fun verifyClickhouseTaSchema(
     statement
       .executeQuery(
         "SELECT name, engine, create_table_query FROM system.tables " +
-          "WHERE database = '$escapedDatabase' AND name IN ($tables)",
+          "WHERE database = '$escapedDatabase' AND name IN ($tables) $CLICKHOUSE_TA_METADATA_QUERY_SETTINGS",
       ).use { rows ->
         while (rows.next()) {
           val table = rows.getString("name")
@@ -88,7 +121,7 @@ internal fun verifyClickhouseTaSchema(
     statement
       .executeQuery(
         "SELECT table, name, type FROM system.columns " +
-          "WHERE database = '$escapedDatabase' AND table IN ($tables)",
+          "WHERE database = '$escapedDatabase' AND table IN ($tables) $CLICKHOUSE_TA_METADATA_QUERY_SETTINGS",
       ).use { rows ->
         while (rows.next()) {
           columns.getOrPut(rows.getString("table")) { mutableMapOf() }[rows.getString("name")] = rows.getString("type")
@@ -103,7 +136,7 @@ internal fun verifyClickhouseTaSchema(
       issues += "$table=missing"
       continue
     }
-    if (!taRetention.containsMatchIn(definitions[table].orEmpty())) {
+    if (!hasRequiredTaRetention(definitions[table].orEmpty())) {
       issues += "$table retention must be 35 days"
     }
     for ((column, expectedType) in expectedColumns) {

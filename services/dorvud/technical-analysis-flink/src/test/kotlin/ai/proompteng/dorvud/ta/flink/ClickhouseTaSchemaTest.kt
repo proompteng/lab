@@ -17,17 +17,21 @@ class ClickhouseTaSchemaTest {
     var closed = false
     var failure: SQLException? = null
     val tables =
-      requiredClickhouseTaColumns.keys.associateWith {
-        mutableMapOf(
-          "name" to it,
-          "engine" to "ReplicatedReplacingMergeTree",
-          "create_table_query" to "CREATE TABLE $it (...) TTL toDateTime(event_ts) + toIntervalDay(35) SETTINGS index_granularity = 8192",
-        )
-      }.toMutableMap()
+      requiredClickhouseTaColumns.keys
+        .associateWith {
+          mutableMapOf(
+            "name" to it,
+            "engine" to "ReplicatedReplacingMergeTree",
+            "create_table_query" to
+              "CREATE TABLE $it (...) ENGINE = ReplicatedReplacingMergeTree(ingest_ts) " +
+              "ORDER BY (symbol, event_ts, seq) TTL toDateTime(event_ts) + toIntervalDay(35) SETTINGS index_granularity = 8192",
+          )
+        }.toMutableMap()
     val columns =
-      requiredClickhouseTaColumns.flatMap { (table, fields) ->
-        fields.map { (name, type) -> mutableMapOf("table" to table, "name" to name, "type" to type) }
-      }.toMutableList()
+      requiredClickhouseTaColumns
+        .flatMap { (table, fields) ->
+          fields.map { (name, type) -> mutableMapOf("table" to table, "name" to name, "type" to type) }
+        }.toMutableList()
 
     private fun rows(values: List<Map<String, String>>): ResultSet {
       var index = -1
@@ -79,6 +83,34 @@ class ClickhouseTaSchemaTest {
     assertEquals(listOf(15), fixture.timeouts)
     assertTrue(fixture.closed)
     assertTrue(fixture.queries.all { "database = 'torghut'" in it })
+    assertTrue(fixture.queries.all { it.endsWith("SETTINGS max_execution_time = 15") })
+  }
+
+  @Test
+  fun `retention requires a complete unconditional table delete action`() {
+    val prefix = "CREATE TABLE ta_signals (...) ENGINE = ReplicatedReplacingMergeTree(ingest_ts) ORDER BY (symbol, event_ts, seq) "
+    val interval = "toDateTime(event_ts) + toIntervalDay(35)"
+    val invalid =
+      listOf(
+        "${prefix}TTL $interval DELETE WHERE symbol = 'BTC/USD'",
+        "${prefix}TTL $interval TO VOLUME 'cold'",
+        "${prefix}TTL $interval TO DISK 'cold'",
+        "${prefix}TTL $interval GROUP BY symbol SET seq = max(seq)",
+        "${prefix}TTL $interval, toDateTime(event_ts) + toIntervalDay(40) DELETE",
+        "CREATE TABLE ta_signals (event_ts DateTime, payload String TTL $interval) " +
+          "ENGINE = ReplicatedReplacingMergeTree(ingest_ts) ORDER BY (symbol, event_ts, seq)",
+        "${prefix}SETTINGS comment = 'TTL $interval'",
+      )
+    for (definition in invalid) {
+      val fixture = Fixture()
+      fixture.tables.getValue("ta_signals")["create_table_query"] = definition
+      assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(fixture.connection, "torghut", true) }
+    }
+    for (action in listOf("$interval", "$interval DELETE", "toDateTime(event_ts) + INTERVAL 35 DAY")) {
+      val fixture = Fixture()
+      fixture.tables.getValue("ta_signals")["create_table_query"] = "${prefix}TTL $action SETTINGS index_granularity = 8192"
+      verifyClickhouseTaSchema(fixture.connection, "torghut", true)
+    }
   }
 
   @Test
@@ -146,4 +178,3 @@ class ClickhouseTaSchemaTest {
       } as T
   }
 }
-

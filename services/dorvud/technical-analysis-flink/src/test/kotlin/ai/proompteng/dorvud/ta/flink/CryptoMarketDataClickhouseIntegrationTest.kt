@@ -16,6 +16,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
+import java.sql.SQLException
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -41,6 +42,26 @@ class CryptoMarketDataClickhouseIntegrationTest {
           assertEquals(guard, result.getString(1))
           assertFalse(result.next())
         }
+        statement.executeQuery("SELECT getSetting('max_execution_time') $CLICKHOUSE_TA_METADATA_QUERY_SETTINGS").use { result ->
+          assertTrue(result.next())
+          assertEquals(15, result.getInt(1))
+          assertFalse(result.next())
+        }
+        // Exercise the real driver's synchronous path: the server rejects a long query even without a JDBC timeout.
+        statement.queryTimeout = 0
+        val timeout =
+          assertFailsWith<SQLException> {
+            statement
+              .executeQuery(
+                "SELECT sleepEachRow(0.01) FROM numbers(2000) " +
+                  "SETTINGS max_execution_time = 1, timeout_before_checking_execution_speed = 0, max_block_size = 1",
+              ).use { result ->
+                while (result.next()) {
+                  result.getInt(1)
+                }
+              }
+          }
+        assertTrue(timeout.message.orEmpty().contains("TIMEOUT_EXCEEDED"), timeout.message)
         statement.execute("CREATE DATABASE $database")
         try {
           for (table in requiredClickhouseTaColumns.keys) {
@@ -63,6 +84,8 @@ class CryptoMarketDataClickhouseIntegrationTest {
           assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
           statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY")
           verifyClickhouseTaSchema(connection, database, false)
+          statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY DELETE WHERE symbol = 'BTC/USD'")
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
         } finally {
           statement.execute("DROP DATABASE $database")
         }
