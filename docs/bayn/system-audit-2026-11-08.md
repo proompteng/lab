@@ -242,6 +242,11 @@ establish source and artifact qualification; they do not establish rollout or li
   with two ready instances. Archive claims have changed during the independent replica rollout, which still reports
   two of three instances ready. The evidence records context at capture start and end. Compare per node and
   preserve that background-load limitation; the mixed-node median cannot establish a cleanup improvement.
+  The latest before sample follows the archive reaching three ready instances: 15 Altra waiting passes have a
+  2,138.207 ms advance median and 1,674.623 ms persistence median. All three newly observed schedules complete.
+  Both databases are healthy and their primary, instance counts and claim metadata match at the capture boundaries.
+  The subsequent independent change `3c102b02a9` also changes archive replica count and append retries; report that
+  context with the after observations rather than attributing every difference to this cleanup.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
