@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: research
-          image: bayn-main
+          image: bayn-research
           command: [node, dist/restate-research-server.js]
           ports:
             - name: restate
