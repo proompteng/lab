@@ -101,7 +101,11 @@ import {
   prepareClosingExecutionCycleDecision,
 } from '../observe-composition/decision-builder'
 import type { ReconciliationPassResult } from '../reconciler'
-import { ExecutionDecisionDocumentSchema, type ExecutionDecisionDocument } from '../shadow-decision-contract'
+import {
+  decisionSourceRows,
+  ExecutionDecisionDocumentSchema,
+  type ExecutionDecisionDocument,
+} from '../shadow-decision-contract'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -2379,11 +2383,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)(JSON.parse(JSON.stringify(document))),
           ),
         ).toBe(true)
-        if (document.decisionMarketDataRows === undefined) throw new Error('Missing bound Jev source rows')
+        const sourceRows = decisionSourceRows(document)
+        if (sourceRows === undefined) throw new Error('Missing bound Jev source rows')
         const { contentHash: _documentHash, ...documentMaterial } = document
         const substitutedSource = {
           ...documentMaterial,
-          decisionMarketDataRows: { ...document.decisionMarketDataRows, bars: [] },
+          decisionMarketDataRows: { ...sourceRows, bars: [] },
         }
         expect(
           Result.isFailure(
