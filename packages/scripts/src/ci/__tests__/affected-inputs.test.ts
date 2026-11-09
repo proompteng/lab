@@ -68,7 +68,9 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       'packages/scripts/src/tengri/__tests__/schema.test.ts',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
     ])
-      expect(matchesPaths(file, patterns)).toBe(false)
+      expect(matchesPaths(file, patterns)).toBe(
+        filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml',
+      )
     for (const file of [
       'nix/cache-push.sh',
       'nix/oci-push.sh',
