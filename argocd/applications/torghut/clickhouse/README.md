@@ -26,7 +26,7 @@ older data must run and verify that migration through the existing ClickHouse id
 v2 archive; the SQL retains the anti-join coverage assertion and does not erase legacy data.
 
 The native fixture runs the actual schema runner against two disposable ClickHouse replicas and Keeper. It
-covers empty bootstrap, a read-only repeat, second-replica view drift, recovery after a missing replicated table,
+covers empty bootstrap, a read-only repeat, second-replica view and security drift, recovery after a missing replicated table,
 precision-column repair and failure on incompatible extra columns:
 
 ```sh

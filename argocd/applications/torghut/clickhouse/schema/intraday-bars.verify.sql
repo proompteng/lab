@@ -272,7 +272,7 @@ SELECT throwIf(
   'intraday-bars columns differ from the archive contract'
 ) FROM system.columns WHERE database = 'signal' AND table IN ('webull_market_events_v1', 'crypto_market_features_v1', 'crypto_market_events_v1', 'intraday_bars_1m_v1', 'intraday_bars_1m_v2', 'intraday_quotes_v1', 'intraday_trades_v1');
 
-SELECT throwIf(count() != 1 OR countIf(engine = 'View' AND formatQuerySingleLine(as_select) = formatQuerySingleLine('SELECT provider, feed, capture_id, channel, received_at, archived_at,
+SELECT throwIf(count() != 1 OR countIf(engine = 'View' AND definer = currentUser() AND position(create_table_query, 'SQL SECURITY DEFINER') > 0 AND formatQuerySingleLine(as_select) = formatQuerySingleLine('SELECT provider, feed, capture_id, channel, received_at, archived_at,
   source_topic, source_partition, source_offset, payload_sha256,
   validation_status, validation_error, minute_bars, bar_requests,
   if(channel = \'gap\', JSONExtractString(base64Decode(JSONExtractString(capture, \'payloadBase64\')), \'channel\'), \'\') AS gap_channel,

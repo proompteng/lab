@@ -198,6 +198,24 @@ with tempfile.TemporaryDirectory(prefix=PREFIX) as directory:
         assert result.stdout.count("Applying ") == 1
         assert f"Applying intraday-bars on {NAMES[2]}" in result.stdout
         passed("drift on only the second replica is detected and repaired")
+
+        source = (ROOT / "schema/intraday-bars.sql").read_text()
+        select = source.split("SQL SECURITY DEFINER AS\n", 1)[1].split(";", 1)[0]
+        query(
+            NAMES[2],
+            "CREATE OR REPLACE VIEW signal.webull_research_events_v1 SQL SECURITY INVOKER AS "
+            + select,
+        )
+        result = reconcile()
+        assert result.stdout.count("Applying ") == 1
+        assert (
+            query(
+                NAMES[2],
+                "SELECT definer FROM system.tables WHERE database='signal' AND name='webull_research_events_v1'",
+            )
+            == "fixture"
+        )
+        passed("view security and definer are restored with the source contract")
         query(
             NAMES[1],
             "INSERT INTO signal.historical_datasets_v1 VALUES (repeat('a',64),'retained','coverage','calendar',now64(3))",
