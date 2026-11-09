@@ -84,7 +84,10 @@ class CryptoMarketDataClickhouseIntegrationTest {
           assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
           statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY")
           verifyClickhouseTaSchema(connection, database, false)
-          statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY DELETE WHERE symbol = 'BTC/USD'")
+          statement.execute(
+            "ALTER TABLE $database.ta_microbars MODIFY TTL " +
+              "toDateTime(event_ts) + INTERVAL 35 DAY DELETE WHERE symbol = 'BTC/USD'",
+          )
           assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
         } finally {
           statement.execute("DROP DATABASE $database")
