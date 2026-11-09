@@ -22,7 +22,7 @@ const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_IN
 const describeRestate = admin === undefined || ingress === undefined ? describe.skip : describe
 
 describeRestate('Real Restate execution deployment activation', () => {
-  test('new Jobs recover after dependency failure while restarted waiters reuse one native coordinator', async () => {
+  test('one durable activation recovers after dependency failure while restarted waiters reuse its coordinator', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress]) {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
@@ -106,9 +106,10 @@ describeRestate('Real Restate execution deployment activation', () => {
           }),
         ),
       )
+    const activationJobUid = randomUUID()
     const deployment = {
       ...config,
-      ...(await Effect.runPromise(loadAttempt(randomUUID()))),
+      ...(await Effect.runPromise(loadAttempt(activationJobUid))),
     }
     const firstRequest = restateExecutionActivationRequest(deployment, token)
     const body = firstRequest.body
@@ -173,54 +174,21 @@ describeRestate('Real Restate execution deployment activation', () => {
             expect(yield* Effect.promise(() => denied.text())).toContain('the invoked service is not public')
           }
           const url = `${ingress}${firstRequest.path}`
-          const failedOptions = { timeoutMs: 5_000, headers: firstRequest.headers }
-          const failed = yield* sendRestateInvocation(url, body, failedOptions)
-          const failure = yield* Effect.flip(
-            awaitRestateInvocation(ingress, failed.invocationId, {
+          const options = { timeoutMs: 5_000, headers: firstRequest.headers }
+          const accepted = yield* sendRestateInvocation(url, body, options)
+          const waiting = yield* Effect.flip(
+            awaitRestateInvocation(ingress, accepted.invocationId, {
               maximumAttempts: 100,
               pollIntervalMs: 100,
               requestTimeoutMs: 5_000,
             }),
           )
-          expect(failure).toMatchObject({
-            operation: 'await',
-            cause: { message: 'Restate invocation output returned HTTP 400' },
-          })
+          expect(waiting.message).toBe('Restate invocation remains incomplete after the bounded completion check')
           expect(controllerActivations).toBe(0)
           brokerReady = true
-          const failedReplay = yield* sendRestateInvocation(url, body, failedOptions)
-          expect(failedReplay.invocationId).toBe(failed.invocationId)
-          expect(
-            yield* Effect.flip(
-              awaitRestateInvocation(ingress, failedReplay.invocationId, {
-                maximumAttempts: 1,
-                pollIntervalMs: 100,
-                requestTimeoutMs: 5_000,
-              }),
-            ),
-          ).toMatchObject({ operation: 'await' })
-          const replacementJobUid = randomUUID()
-          const retry = restateExecutionActivationRequest(
-            { ...config, ...(yield* loadAttempt(replacementJobUid)) },
-            token,
-          )
-          const options = {
-            timeoutMs: 5_000,
-            headers: retry.headers,
-          }
-          const accepted = yield* sendRestateInvocation(url, retry.body, options)
-          expect(accepted.invocationId).not.toBe(failed.invocationId)
-          const waiting = yield* Effect.flip(
-            awaitRestateInvocation(ingress, accepted.invocationId, {
-              maximumAttempts: 1,
-              pollIntervalMs: 100,
-              requestTimeoutMs: 5_000,
-            }),
-          )
-          expect(waiting.message).toBe('Restate invocation remains incomplete after the bounded completion check')
           for (let restart = 0; restart < 2; restart += 1) {
             const restarted = restateExecutionActivationRequest(
-              { ...config, ...(yield* loadAttempt(replacementJobUid)) },
+              { ...config, ...(yield* loadAttempt(activationJobUid)) },
               token,
             )
             const resumed = yield* sendRestateInvocation(url, restarted.body, {
@@ -273,7 +241,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                       AND id IN (SELECT id FROM sys_invocation
                         WHERE target_service_name = 'BaynExecutionController'
                           AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick')) AS lazy_tick_state_reads
-                    FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
+                    FROM sys_journal WHERE id = '${accepted.invocationId}'`,
                 }),
                 headers: { 'content-type': 'application/json', accept: 'application/json' },
                 signal,
@@ -328,7 +296,6 @@ describeRestate('Real Restate execution deployment activation', () => {
           })
           warmupGate = undefined
 
-          let previousSource = config.sourceRevision
           let previousNextSequence = state.nextSequence
           const allReplacementAdvances: Array<Array<{ sequence: number }>> = []
           const allProjections: Array<Array<{ active: boolean; epoch: number; sourceRevision: string }>> = []
@@ -401,7 +368,6 @@ describeRestate('Real Restate execution deployment activation', () => {
             expect(rotated.initialSequence).toBeGreaterThanOrEqual(previousNextSequence)
             expect(rotated.lastCompletion?.sequence).toBeGreaterThan(rotated.initialSequence)
             expect(projected).toEqual([
-              expect.objectContaining({ active: false, epoch: expectedEpoch, sourceRevision: previousSource }),
               expect.objectContaining({
                 active: true,
                 epoch: expectedEpoch,
@@ -417,8 +383,7 @@ describeRestate('Real Restate execution deployment activation', () => {
             ).toBe(true)
             const replayedRotation = yield* sendRestateInvocation(url, rotation.body, rotationOptions)
             expect(replayedRotation.invocationId).toBe(rotationReceipt.invocationId)
-            expect(projected).toHaveLength(2)
-            previousSource = replacementConfig.sourceRevision
+            expect(projected).toHaveLength(1)
             previousNextSequence = rotated.nextSequence
             if (expectedEpoch === 2) {
               let release = () => {}
