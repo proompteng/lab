@@ -1,23 +1,15 @@
-import { Effect, Result, Schema } from 'effect'
+import { Effect, Result } from 'effect'
 import { entryAblationBehaviorHash, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { jevBehaviorHash } from '../jev/protocol'
 import { makeRepeatedMomentumPolicy, repeatedMomentumBehaviorHash } from '../strategy/repeated-momentum/policy'
-import { BrokerEnvironment } from '../broker/identity'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
-import { AuthorityGenerationStore } from '../db/execution-store'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
-import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
-import { strictParseOptions } from '../schemas'
-import {
-  loadActiveStrategyProtocol,
-  loadStrategyTradingProtocol,
-  strategyDefinition,
-  type StrategyRuntime,
-} from '../strategy'
+import { loadActiveStrategyProtocol, strategyDefinition } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -26,7 +18,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { decodeStrategyExecutionModel, loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { validateMutationExecutionProgram } from './execution-cycle'
 import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
 
@@ -135,61 +127,6 @@ export const prepareObserveStartup = (
           ),
   )
 }
-
-export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
-  Result.mapError(
-    loadStrategyTradingProtocol(strategy).pipe(
-      Result.flatMap((protocol) =>
-        Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)(protocol.executionModel),
-      ),
-    ),
-    (cause) =>
-      operationalError({
-        component: 'strategy',
-        operation: 'cycle-loop',
-        message: 'strategy execution model is invalid',
-        cause,
-      }),
-  )
-
-export const loadStrategyExecutionRiskPolicy = (
-  accountId: string,
-  strategy: StrategyRuntime,
-  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
-  riskPolicyHash?: string,
-) =>
-  Effect.gen(function* () {
-    yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
-    const symbols = (yield* Effect.fromResult(loadStrategyTradingProtocol(strategy))).universe
-    const retainedPolicy = yield* Effect.fromResult(makeExecutionRiskPolicy(accountId, symbols))
-    if (
-      riskPolicyHash === undefined ||
-      riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
-    )
-      return retainedPolicy
-    if (brokerEnvironment === BrokerEnvironment.Sandbox) {
-      const paperPolicy = yield* Effect.fromResult(
-        makeExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox),
-      )
-      if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
-    }
-    return yield* operationalError({
-      component: 'strategy',
-      operation: 'risk-policy',
-      message: 'bound execution risk policy is not approved for this broker environment',
-    })
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof OperationalError
-        ? cause
-        : operationalError({
-            component: 'strategy',
-            operation: 'risk-policy',
-            message: 'source-controlled execution risk policy is invalid',
-            cause,
-          }),
-    ),
-  )
 
 const validateObserveAuthorityInitialization = (
   authority: AuthorityState,
