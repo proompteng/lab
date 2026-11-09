@@ -133,14 +133,20 @@ This work starts from `45579965308e14c07afd3d8960bc7d089de1986e`. The
 [measurement record](evidence/2026-11-08-runtime-cleanup.json) separates current readback from the original inventory.
 PR [#15801](https://github.com/proompteng/lab/pull/15801) merges these changes as
 `cdb8fadf7c694a43296928253d8b9b61a46e8cec`. All 92 PR checks complete and both actionable review findings are resolved.
-Runtime delivery remains unverified until the exact merged images, promotion and deployed behavior are read back.
+The cleanup is deployed in source `3c102b02a902a289700b137868c86563b052cfe4`. Successful main run
+`42621043003` publishes both role images with matching immutable source/run receipts. Freight
+`412a043e45cf37281dc43d7fc4d0934212534d63` automatically promotes through Bayn's existing Stage to
+`kargo/bayn` commit `4bbd5ae14d55f0be6a505d03c703156fc72c9656`; Argo reconciles that exact revision.
+The native activation hook succeeds, both native services select deployment `dp_11QCH160kWhe6rCtSgMpChj`,
+and both workers and matched completed ticks report the new source. This proves the release and waiting-pass
+behavior. A current complete Jev/order request and a newly persisted compact decision remain unverified.
 
 The owning-image follow-up, PR [#15811](https://github.com/proompteng/lab/pull/15811), merges as
 `784c39819435448a812989b9d3c0a0428a5835d9`. Its 71 terminal checks include 47 successes and 24 skips, with no failures.
 The pinned OpenCode qualification now runs in its independent image build; both Bayn role builds drop the duplicate
 check and unused CLI build dependency. CLI-only changes no longer schedule Bayn qualification or image publication.
 Both OpenCode architectures and all four Bayn role/platform archives pass at the reviewed PR head. These checks
-establish source and artifact qualification; they do not establish rollout or live request behavior.
+establish source and artifact qualification; the separate release readback above establishes rollout.
 
 - B2: Trading and research have separate artifact contents through the existing Nix builder. Financial reporting
   remains available in the API workload. Qualification and replay move to `bayn-system-assessment` in the research
@@ -151,21 +157,30 @@ establish source and artifact qualification; they do not establish rollout or li
   backtest bundle and dependency receipt. Python, GEPA, Git, Bun and registry tools remain research-only.
   Opening capture also remains in the trading image to preserve the frozen plan's physical candidate-build identity.
   It is removed from the research payload; no identity override or weakened capital check is introduced.
-  The exact-main ARM64 preparation artifact has 95,184,638 compressed layer bytes, compared with 392,756,535
-  in the deployed ARM64 artifact at `351b522baf`: a 75.765% reduction for the native image. The separate research
-  artifact has 384,766,091 compressed layer bytes. Actual Linux containers pass the selected native entry-point,
+  The published ARM64 native artifact has 95,185,246 compressed layer bytes, compared with 392,756,535
+  in the preceding ARM64 artifact at `351b522baf`: a 75.765% reduction for that image. The separate research
+  artifact has 384,746,220 compressed layer bytes. Actual Linux containers pass the selected native entry-point,
   wrapper and role-path checks, and all four selected research wrappers plus their role-path checks. These are
-  immutable preparation artifacts, not a published cohort or a measured startup improvement. All four platform
-  builds pass in main run `42600189039`, but both index jobs reject a missing run-qualified receipt identity.
-  PR [#15812](https://github.com/proompteng/lab/pull/15812) fixes that shared workflow using its existing deferred-tag
-  mode; a new successful source/run cohort and live rollout remain required. OpenCode proposals already run through
+  published artifacts, not measurements of total cohort storage or image-pull latency. All four platform configs
+  report the same source, and both indexes carry the exact successful main run's source/run receipts. PR
+  [#15812](https://github.com/proompteng/lab/pull/15812) fixes the shared workflow's deferred-tag validation;
+  the receipt validator remains strict. OpenCode proposals already run through
   the independently published OpenCode gateway; its pinned binary qualification belongs to that image build.
 - B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
   bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
   first pair give medians of 24.382 ms before and 17.687 ms after. This is a 27.46% reduction for that query, not for a
   full reconciliation. A second ordered aggregate combines the quantity and cost inventory-debit reads in accounting
   reconstruction: its warm median falls from 121.191 to 72.337 ms with zero row differences. Full accounting
-  reconstruction, ledger verification and the writer fence remain mandatory.
+  reconstruction, ledger verification and the writer fence remain mandatory. Matched full-pass timing below shows
+  little overall improvement from this first release.
+  A subsequent locally verified change removes one repeated canonical hash per accounting transaction by reusing
+  the expected material hash already produced by reconstruction. It still hashes every stored body and verifies its
+  claimed hash, every receipt and the full ledger. The active account contains 1,133 transactions. In an isolated
+  1,000-record public fixture, seven alternating samples in the same published ARM64 Node runtime have wall medians
+  of 48.421/41.581 ms and CPU medians of 48.815/43.726 ms: 14.1% and 10.4% lower respectively. Complete prepared
+  output and four corruption failures agree. All 5,026 unit tests, 40 persistence and 49 native-Jev PostgreSQL tests,
+  both type checks, all linters and both production/research builds pass; the unit run skips 1,298 cases. This hash
+  change is not yet deployed, and its isolated result does not establish production latency.
 - B4: Native startup requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
   accepts only the latest completed bar with a 10-second availability limit. Markets disabled for new entries also
   request two minutes of pricing history, replacing the unconditional two-hour crypto rebuild. The existing entry
@@ -179,7 +194,10 @@ establish source and artifact qualification; they do not establish rollout or li
   The latest pre-cleanup starts, still on source `351b522baf`, incorporate 214,850 records in 33.392 seconds on
   Turin and 217,752 records in 87.309 seconds on Altra. Both cover 34 partitions with zero rejections. These natural
   restarts followed independent infrastructure work; arrival volume and background load differ from earlier starts.
-  Replacement rollout timing remains unmeasured.
+  On source `3c102b02a9`, the corresponding natural starts incorporate 9,898 records in 5.065 seconds on Turin and
+  9,988 in 7.365 seconds on Altra: about 95.4% fewer records on each node. Both still cover 34 partitions with zero
+  rejections. These are one start per node, with different arrivals, background load and an independently changed
+  archive replica/retry configuration; the elapsed-time differences are observations, not controlled causal gains.
   Two additional old workers remain because `BaynExecutionBootstrap` is still latest on their old deployment.
   Restate has no remaining invocation for that stateless service, and both current services point to the new
   deployment. Its registration retirement remains a separate reviewed operation under the owning runbook.
@@ -196,6 +214,9 @@ establish source and artifact qualification; they do not establish rollout or li
   This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
   A live sampled historical decision passes the retained Jev financial verifier. It does not satisfy the current
   execution schema, so it cannot establish decode performance for the new representation.
+  The published native runtime also verifies equivalent full and compact public fixtures. Their JSON sizes are
+  1,214,263/1,213,236 bytes and decode/verification wall medians are 94.445/93.098 ms over three retained pairs.
+  This small fixture result is not a performance claim for a new private persisted decision; that readback remains open.
   Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
   the dedicated archive. The 367 financial epochs were created through October 27; a later snapshot finds 440 dedicated
@@ -211,6 +232,8 @@ establish source and artifact qualification; they do not establish rollout or li
   risk and persistence implementation. The native bundle no longer emits the experimental evaluator module. All 208
   composition tests pass, including rejection of a research policy at the native entry boundary and its explicit
   replay evaluation. Immutable financial readers remain available.
+  After rollout, the retired public-information collectors have zero nonterminal invocations. Their two retained
+  Restate state rows have the same aggregate fingerprint as before rollout; neither registration nor state is deleted.
 - B9: Matched Restate schedule records resolve the current pre-attempt interval. Three ticks intentionally wait
   29.904–29.972 seconds, start 62–992 ms after their due time, and run for 1.023–1.163 seconds. For the first two,
   `bayn.execution.advance` takes 919.450/916.957 ms, reconciliation persistence 607.923/606.341 ms, and accounting
@@ -221,32 +244,27 @@ establish source and artifact qualification; they do not establish rollout or li
   In the newest sample, intent creation precedes submission by 4.160 seconds, the submit acknowledgement takes
   383 ms, and the recovery event is recorded 16.776 seconds after acknowledgement. These are differences between
   retained timestamps, not isolated CPU, SQL or provider latency. Cross-process clock offset remains unmeasured.
-  A fresh pre-release baseline on source `cea96bc87f` binds 27 completed waiting passes to their exact Restate
-  invocation ancestry. Worker advance has a 951.300 ms median and a 9,074.354 ms maximum; persistence has a
-  644.526 ms median. The outlier spends 6,922.463 ms inserting a broker event and 1,094.850 ms committing.
-  The primary's logs independently record 6,921.870 and 1,093.963 ms for those operations on the same backend.
-  The underlying database wait reason remains unverified; the optimized history-read queries do not explain that
-  write stall. Three observed schedules also separate 29.907–29.934 seconds of requested delay from 25–705 ms of
-  start lateness. Comparable cleanup-release timing and the complete naturally eligible v40 request remain open.
-  An additional baseline on deployed source `351b522baf` contains 15 waiting passes, all executed on Turin.
-  Advance has a 985.801 ms median and a 1,354.606 ms maximum; persistence has a 674.725 ms median.
-  This baseline follows the independently merged DNS and proxy changes in PR #15806 and records its concurrent
-  native-arrival replica migration. The financial primary remains `bayn-db-2` on its existing storage.
-  Compare the cleanup release against this baseline with the same worker node and database state. Differences from
-  the earlier `cea96bc87f` baseline cannot isolate the cleanup's effect.
-  A later 60-second read-only sample of the financial primary observes brief `WalSync` and `SyncRep` waits, with
-  a maximum sampled query age of 120 ms and no blocking PID. It does not reproduce or explain the earlier write stall.
-  A fresh pre-cleanup sample at 12:43 UTC contains seven Turin waiting passes with a 980.636 ms advance median
-  and eight Altra passes with a 2,163.751 ms median, all on source `351b522baf`. The Turin samples precede its
-  independent worker restart; the Altra samples follow its restart. The financial primary remains `bayn-db-2`
-  with two ready instances. Archive claims have changed during the independent replica rollout, which still reports
-  two of three instances ready. The evidence records context at capture start and end. Compare per node and
-  preserve that background-load limitation; the mixed-node median cannot establish a cleanup improvement.
-  The latest before sample follows the archive reaching three ready instances: 15 Altra waiting passes have a
-  2,138.207 ms advance median and 1,674.623 ms persistence median. All three newly observed schedules complete.
-  Both databases are healthy and their primary, instance counts and claim metadata match at the capture boundaries.
-  The subsequent independent change `3c102b02a9` also changes archive replica count and append retries; report that
-  context with the after observations rather than attributing every difference to this cleanup.
+  Earlier source-bound baselines and the financial-primary wait sample remain in the measurement record. One
+  `cea96bc87f` outlier spends 6,922.463 ms inserting a broker event and 1,094.850 ms committing; the same backend's
+  PostgreSQL logs independently confirm both durations. A later sample observes brief `WalSync` and `SyncRep` waits
+  without a blocking PID, but does not reproduce that stall or establish its underlying cause. Independent DNS/proxy
+  changes and archive rollouts also occur between those baselines; their mixed-node medians cannot isolate cleanup.
+  The comparable full-history selection contains 30 before and 27 after passes on Altra, all `Waiting`, with exactly
+  one reconciliation and accounting verification, matched to the same controller through exact Restate invocation
+  ancestry. Three after passes with another outcome are excluded explicitly. Advance medians are 2,179.880/2,159.550 ms,
+  persistence 1,651.818/1,574.174 ms, writer fence 1,416.744/1,320.600 ms, and accounting verification
+  642.084/616.620 ms. The 0.93% advance difference is small; concurrent archive retry/replica changes prevent attributing
+  it to this cleanup. The financial primary remains `bayn-db-2`. Cheap cached waits are not mixed into this comparison.
+  In the representative after pass, accounting takes 603.642 ms; about 488.816 ms lies outside its child spans.
+  This is untraced wall time, not a CPU measurement. Its 61 SQL client spans include a 109.191 ms cycle insert,
+  49.447 ms fee query and 47.837 ms inventory-debit aggregate. These observations motivate measuring the pure
+  verifier separately; they do not establish an unmeasured database or CPU cause.
+  The current request path stops before inference: both the last pre-release observation and the after observation
+  report `SNAPSHOT_UNAVAILABLE` / `ALL_CANDIDATES_EXCLUDED` for 15 candidates. Matching-feature/completed-bar counts
+  change from 0/0 to 1/1. These are rejected-observation diagnostics, not proof of upstream producer health. The
+  bounded post-release timeline has no admitted request; unused entry deadlines expire before and after release.
+  Therefore new v40 CHART/Jev/order latency and the new private decision representation still require natural eligible
+  inputs. No trading authority, input validation, schedule or provider configuration is changed to obtain a trace.
 - B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
   Keep current runtime procedures and link dated receipts through their immutable Git revision.
 
@@ -254,6 +272,12 @@ establish source and artifact qualification; they do not establish rollout or li
 
 The upper panel uses Restate's schedule records. The lower panel uses spans from the matched Bayn process, relative
 to its own worker advance. This preserves causal correlation without assuming synchronized clocks across services.
+
+![Measured complete reconciliation passes before and after the deployed cleanup](evidence/2026-11-09-cleanup-before-after.svg)
+
+This comparison uses actual nested spans from one pass near each phase's advance median. Each panel has its own
+process clock. The labels distinguish representative stage durations from the separately computed sample medians;
+parent durations include their children. It does not contain an inference request or the subsequent hash candidate.
 
 ![Historical v38 entry records from admission through fill recovery](evidence/2026-11-09-historical-entry.svg)
 
