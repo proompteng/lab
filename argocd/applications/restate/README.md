@@ -64,7 +64,12 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Resilience migration
 
-Restate stays pinned at 1.7.9. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
+The [NVMe cutover](nvme-migration.md) replaces the immutable claim template through an orphaned controller handoff.
+Its temporary `OnDelete` strategy and storage-copy scheduling gate hold new Pods until each retained copy is verified.
+Run it only after the 1.8.1 software upgrade has recovered on the existing claims. Final desired state removes these
+transition controls and uses three physical hosts with workers on Turin/Altra and a metadata/log member on Ryzen.
+
+Restate is pinned at 1.8.1. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
 `RESTATE_AUTO_PROVISION=false` and stable StatefulSet addresses so scaling cannot create a second cluster.
 Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-minute snapshots with retention two,
 and require all 24 partitions archived before replication changes. In Restate 1.7.9, `ARCHIVED=0` is the invalid-LSN
@@ -81,13 +86,44 @@ processors per partition. `default-replication` is initial-provisioning only.
 
 Official contracts: [HA](https://docs.restate.dev/server/deploy/ha), [metadata](https://docs.restate.dev/server/deploy/metadata), and [snapshots](https://docs.restate.dev/server/deploy/snapshots).
 
+### Upgrade from 1.7.9 to 1.8.1
+
+Follow the upstream [1.8 migration requirements](https://github.com/restatedev/restate/blob/v1.8.1/release-notes/v1.8.0.md#upgrade--rollback-guidance)
+and [1.8.1 release notes](https://github.com/restatedev/restate/blob/v1.8.1/release-notes/v1.8.1.md).
+All members must already run at least 1.7.3. Before promotion, use the admin query API to check:
+
+```sql
+SELECT status, count(*) AS invocations
+FROM sys_invocation_status WHERE vqueue_id IS NULL GROUP BY status;
+
+SELECT id, target, pinned_deployment_id, pinned_service_protocol_version
+FROM sys_invocation_status WHERE pinned_service_protocol_version <= 3;
+```
+
+The protocol query must be empty. Each partition migrates its retained invocations to VQueues on its first 1.8 leader
+election and cannot serve requests until that migration finishes. Track `[VQueues Migration Progress]` and
+`[VQueues Migration Completed]` in the replacement nodes' logs. Preserve the same PVCs, node IDs, metadata membership,
+replication, snapshots and signing key throughout the one-member-at-a-time rollout. The invoker concurrency default
+changes from 1,000 per partition to 24,000 per node; this application does not override it.
+
+The restore proof and daily drill use the promoted runtime image's same-version `restate-doctor`, so snapshot readers
+advance with the server. Kargo must select the qualified custom image before syncing this application; the upstream
+image in the unpromoted Kustomize input does not include the doctor binary.
+
+After migration, a plain image rollback to 1.7.9 is insufficient. Rolled-back nodes require
+`experimental-enable-vqueues = true`; any rollback must promote reviewed configuration with that setting and the prior
+qualified image. Do not enable the irreversible schema encoding, inconsistent-state cleanup or preflight signal
+recording options as part of this upgrade. Prefer fixing forward on 1.8.1.
+
 ### Software responsiveness and failure detection
 
-The runtime retains upstream Restate 1.7.9 and its storage format. The [runtime build](../../../services/restate/README.md)
+The runtime uses upstream Restate 1.8.1 and its storage format. The [runtime build](../../../services/restate/README.md)
 changes one metadata write-dispatch argument to `IoMode::AlwaysBackground`. Log-server and partition writes use their
 existing `always-commit-in-background` options. Each write still awaits completion with the original WAL and fsync
 requirements. Slow successful writes therefore use the existing background I/O executor instead of occupying an async
-worker. This corrects a scheduling hazard; it does not establish how much of the historical 38-second pause it caused.
+worker. The second patch retains bounded cold-peer election requests until their connection is ready. Both patches
+still apply to 1.8.1 and retain their regression proofs. This does not establish how much of the historical 38-second
+pause either hazard caused.
 
 The liveness settings are coordinated:
 
@@ -103,9 +139,9 @@ The liveness settings are coordinated:
 Metadata heartbeats remain two ticks apart. A lost leader takes longer to replace; Bayn may restrict itself at its
 existing 30s pass deadline and must use its normal settlement/recovery process. Disk latency, volumes, replication,
 durability, placement, PDB, broker authority and alert thresholds retain their settings. Delays beyond this tested
-envelope can still cause failover. See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.7.9/crates/metadata-server/src/raft/server/member.rs),
-[gossip options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/gossip.rs) and
-[networking options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/networking.rs).
+envelope can still cause failover. See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.8.1/crates/metadata-server/src/raft/server/member.rs),
+[gossip options](https://github.com/restatedev/restate/blob/v1.8.1/crates/types/src/config/gossip.rs) and
+[networking options](https://github.com/restatedev/restate/blob/v1.8.1/crates/types/src/config/networking.rs).
 
 The container runtime fault-injection fixture has been removed. CI no longer establishes the delayed-message,
 process-pause or node-loss acceptance behavior described by the runtime settings above.
@@ -117,10 +153,21 @@ Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` 
 The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).
 
 Before rollout, verify three caught-up members in the same Raft set, replication two and positive archived LSNs for all
-24 partitions. Argo replaces one retained StatefulSet member at a time. Verify the promoted digest, each replacement's
+24 partitions. Argo replaces one retained StatefulSet member at a time. A native Kubernetes startup probe checks this
+member's partition assignments through Restate's NodeCtl SQL API. It requires a non-empty assignment set, all-current
+membership and active replay, then advancing status timestamps in the same generation across two observations.
+Unexpected empty, stale, partially recovered or changing assignments keep an active worker unready. An unassigned
+worker explicitly marked `provisioning`, `draining` or `disabled` may start so the existing replication hook can
+reactivate it. This preserves recovery after singleton contraction without making the probe a configuration writer;
+the hook still requires all 48 active processors before completing. These bounded checks stop after
+startup succeeds; they do not add recurring cluster scans. The probe allows 20 minutes for recovery and each CLI
+request has a three-second deadline. The existing HTTP readiness probe runs only after this recovery gate succeeds.
+This follows the upstream [rolling-update procedure](https://docs.restate.dev/server/upgrading#rolling-updates).
+Verify the promoted digest, each replacement's
 membership, distributed dashboard queries, consecutive Bayn ticks with fresh exact reconciliation, both Bayn status
 replicas, and resolution of the existing alerts. An empty query, a healthy Application or a build alone is insufficient.
-Use the prior verified Kargo Freight for a targeted image rollback. Configuration recovery is a reviewed Git revert
+Within 1.8, use the prior verified Kargo Freight for a targeted image rollback. Returning to 1.7 requires the VQueue
+configuration described above. Configuration recovery is a reviewed Git revert
 and a normal new image promotion; preserve node identities and all retained data.
 
 The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
@@ -146,7 +193,7 @@ replication two and healthy three-node quorum are proven live.
 `restate-replication-migration` is a PostSync hook and is the only component allowed to change the already-provisioned
 cluster replication setting. It first requires all three stable node names to be alive and ready, all three metadata
 servers to report the same three-member Raft configuration, and partition snapshots to remain archived. It then uses
-the Restate 1.7.9-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
+the Restate 1.8.1-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
 replication state and succeeds only after all 24 logs are replication two and all 24 partitions have exactly two active
 processors. A sealed idle log tail is accepted only when `logs describe --all --extra` proves its latest replicated
 segment is replication two. On roll-forward after singleton rollback it reactivates only the exact retained
@@ -160,7 +207,7 @@ All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum healt
 restore-drill freshness. Snapshot failures are aggregated once per Restate cluster rather than once per node. Recurring
 operational monitoring uses these exported NodeCtl metrics; distributed SQL introspection is reserved for bounded,
 operator-initiated troubleshooting because a recurring full-cluster scan competes with the control plane it observes.
-The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs read-only SQL
+The promoted runtime's same-version `restate-doctor` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs read-only SQL
 without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
 
 Do not use `restate_partition_applied_lsn_lag` as the workload-backlog alert. In Restate 1.7.9 it is a per-processor

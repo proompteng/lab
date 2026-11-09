@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: replication-migration
-          image: docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595
+          image: docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash
@@ -32,36 +32,57 @@ spec:
               set -o pipefail
               address=http://restate-0.restate-cluster:5122
 
+              read_nodes() {
+                restatectl --address "$address" sql --json \
+                  "SELECT plain_node_id, name, state, has_worker_role, has_admin_role,
+                          has_log_server_role, has_metadata_server_role, storage_state, worker_state
+                   FROM nodes ORDER BY name"
+              }
+
+              valid_nodes() {
+                jq -e 'length == 3 and ([.[].name] | sort) == ["restate-0", "restate-1", "restate-2"]
+                  and ([.[].plain_node_id] | unique | length) == 3
+                  and all(.[]; .has_admin_role and .has_log_server_role and .has_metadata_server_role
+                    and (.has_worker_role | type) == "boolean")' >/dev/null
+              }
+
               nodes_ready() {
-                nodes="$(restatectl --address "$address" nodes list --extra)" || return 1
+                nodes="$(read_nodes)" || return 1
                 printf '%s\n' "$nodes"
+                valid_nodes <<< "$nodes" || return 1
+                jq -e 'all(.[]; .state == "alive" and .storage_state == "read-write"
+                  and (.has_worker_role == false or .worker_state == "active"))' <<< "$nodes" >/dev/null || return 1
+                status="$(restatectl --address "$address" nodes list --extra)" || return 1
+                printf '%s\n' "$status"
                 for node in restate-0 restate-1 restate-2; do
-                  printf '%s\n' "$nodes" | grep -Eq "[[:space:]]${node}[[:space:]].*Alive[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Member" || return 1
+                  worker_status=Ready
+                  if jq -e --arg name "$node" '.[] | select(.name == $name) | .has_worker_role == false' <<< "$nodes" >/dev/null; then
+                    worker_status=-
+                  fi
+                  printf '%s\n' "$status" | grep -Eq "[[:space:]]${node}[[:space:]].*Alive[[:space:]]+Ready[[:space:]]+${worker_status}[[:space:]]+Ready[[:space:]]+Member" || return 1
                 done
               }
 
               reactivate_retained_nodes() {
-                nodes="$(restatectl --address "$address" nodes list --extra)" || return 1
-                unexpected="$(printf '%s\n' "$nodes" | awk '$1 ~ /^N[0-9]+$/ && $3 !~ /^restate-[0-2]$/ { print $3; exit }')"
-                [ -z "$unexpected" ] || { echo "Unexpected Restate node identity: $unexpected" >&2; return 1; }
-                for node in restate-1 restate-2; do
-                  line="$(printf '%s\n' "$nodes" | awk -v name="$node" '$1 ~ /^N[0-9]+$/ && $3 == name { if (seen++) exit 2; print }')" || return 1
-                  [ -n "$line" ] || return 1
-                  id="$(printf '%s\n' "$line" | awk '{print $1}')"
-                  if printf '%s\n' "$line" | grep -Fq 'read-only'; then
-                    restatectl --yes --address "$address" nodes set-storage-state --nodes "$id" --storage-state read-write || return 1
-                  elif ! printf '%s\n' "$line" | grep -Eq 'read-write|provisioning'; then
-                    echo "Unexpected Restate storage state for $node" >&2
-                    return 1
-                  fi
-                  if printf '%s\n' "$line" | grep -Eq 'draining|disabled'; then
-                    restatectl --yes --address "$address" nodes set-worker-state --nodes "$id" --worker-state active || return 1
-                  elif ! printf '%s\n' "$line" | grep -Eq 'active|provisioning'; then
-                    echo "Unexpected Restate worker state for $node" >&2
-                    return 1
+                nodes="$(read_nodes)" || return 1
+                valid_nodes <<< "$nodes" || return 1
+                retained="$(jq -r '.[] | select(.name == "restate-1" or .name == "restate-2") |
+                  [.plain_node_id, .has_worker_role, .storage_state, (.worker_state // "absent")] | @tsv' <<< "$nodes")" || return 1
+                while IFS=$'\t' read -r id has_worker storage_state worker_state; do
+                  case "$storage_state" in
+                    read-only) restatectl --yes --address "$address" nodes set-storage-state --nodes "$id" --storage-state read-write || return 1 ;;
+                    read-write|provisioning) ;;
+                    *) echo "Unexpected Restate storage state for $id: $storage_state" >&2; return 1 ;;
+                  esac
+                  if [ "$has_worker" = true ]; then
+                    case "$worker_state" in
+                      draining|disabled) restatectl --yes --address "$address" nodes set-worker-state --nodes "$id" --worker-state active || return 1 ;;
+                      active|provisioning) ;;
+                      *) echo "Unexpected Restate worker state for $id: $worker_state" >&2; return 1 ;;
+                    esac
                   fi
                   restatectl --yes --address "$address" metadata-server add-node "$id" || return 1
-                done
+                done <<< "$retained"
               }
 
               metadata_quorum_ready() {

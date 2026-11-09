@@ -1,17 +1,23 @@
+import { approvalBody } from '@/approvals/contracts'
+import type { ApprovalReviewReference } from '@/services/github/types'
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 
-import { approvePullRequest, listCommitPullRequests } from '@/services/github/reviews'
+import {
+  preparePullRequestApproval,
+  submitPullRequestApproval,
+  listCommitPullRequests,
+} from '@/services/github/reviews'
 import type { FetchLike } from '@/services/github/types'
 
-const body = '<!-- codex:ready -->\n:shipit:'
+const body = approvalBody('head')
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
 const review = (id = 1, state = 'PENDING', commit = 'head') => ({
   id,
   state,
   commit_id: commit,
   user: { login: 'tuslagch' },
-  body,
+  body: approvalBody(commit),
   html_url: `https://github.com/owner/repo/pull/7#pullrequestreview-${id}`,
 })
 
@@ -31,6 +37,7 @@ const server = () => {
     loseSubmitResponse: false,
     changeHeadOnCreate: false,
     approvals: 0,
+    hideListedReviews: false,
     nextId: 1,
     pullReads: 0,
     failPullRead: 0,
@@ -76,7 +83,7 @@ const server = () => {
         },
       ])
     if (url.pathname.endsWith('/reviews')) {
-      if (method === 'GET') return response(state.reviews)
+      if (method === 'GET') return response(state.hideListedReviews ? [] : state.reviews)
       if (state.reviews.some((entry) => entry.state === 'PENDING'))
         return response({ message: 'Pending review exists' }, 422)
       const pending = { ...review(state.nextId++), commit_id: data.commit_id, body: data.body }
@@ -88,6 +95,7 @@ const server = () => {
     const match = /\/reviews\/(\d+)(\/events)?$/.exec(url.pathname)
     if (match) {
       const entry = state.reviews.find((entry) => entry.id === Number(match[1]))
+      if (method === 'GET') return entry ? response(entry) : response({ message: 'Not found' }, 404)
       if (!entry || entry.state !== 'PENDING') return response({ message: 'Not pending' }, 422)
       if (method === 'DELETE') {
         state.reviews = state.reviews.filter((item) => item !== entry)
@@ -101,19 +109,30 @@ const server = () => {
     }
     throw new Error(`Unexpected request ${method} ${url.pathname}`)
   }
-  const approve = () =>
-    Effect.runPromise(
-      approvePullRequest({
-        repositoryFullName: 'owner/repo',
-        pullNumber: 7,
-        headSha: 'head',
-        body,
-        token: 'test-token',
-        apiBaseUrl: 'https://github.test',
-        fetchImplementation: fetch,
-      }),
-    )
-  return { state, writes, approve }
+  let previousReview: ApprovalReviewReference | null = null
+  const options = {
+    repositoryFullName: 'owner/repo',
+    pullNumber: 7,
+    headSha: 'head',
+    body,
+    token: 'test-token',
+    apiBaseUrl: 'https://github.test',
+    fetchImplementation: fetch,
+  }
+  const prepare = () => Effect.runPromise(preparePullRequestApproval({ ...options, previousReview }))
+  const approve = async () => {
+    const prepared = await prepare()
+    if (!prepared.ok) return prepared
+    previousReview = {
+      headSha: options.headSha,
+      reviewId: prepared.review.id,
+      state: prepared.review.state === 'APPROVED' ? 'APPROVED' : 'PENDING',
+    }
+    const submitted = await Effect.runPromise(submitPullRequestApproval({ ...options, reviewId: prepared.review.id }))
+    if (submitted.ok) previousReview = { ...previousReview, state: 'APPROVED' }
+    return submitted
+  }
+  return { state, writes, approve, prepare }
 }
 
 describe('approvePullRequest', () => {
@@ -159,11 +178,21 @@ describe('approvePullRequest', () => {
     },
   )
 
-  it('reconciles concurrent deliveries through the same pending review', async () => {
+  it('prepares a draft without submitting it before its ID is persisted', async () => {
     const api = server()
-    const results = await Promise.all([api.approve(), api.approve()])
-    expect(results.every((result) => result.ok)).toBe(true)
+    expect(await api.prepare()).toMatchObject({ ok: true, review: { id: 1, state: 'PENDING' } })
+    expect(api.state.approvals).toBe(0)
+    expect(await api.approve()).toMatchObject({ ok: true })
     expect(api.state.approvals).toBe(1)
+  })
+
+  it('reuses the persisted review ID when GitHub list reads are stale', async () => {
+    const api = server()
+    expect(await api.approve()).toMatchObject({ ok: true })
+    api.state.hideListedReviews = true
+    expect(await api.approve()).toMatchObject({ ok: true })
+    expect(api.state.approvals).toBe(1)
+    expect(api.state.reviews).toHaveLength(1)
   })
 
   it('leaves unrelated pending work untouched', async () => {
@@ -171,6 +200,15 @@ describe('approvePullRequest', () => {
     api.state.reviews = [{ ...review(), body: 'Human draft' }]
     expect(await api.approve()).toMatchObject({ ok: false, reason: 'pending-review' })
     expect(api.writes).toHaveLength(0)
+  })
+
+  it('retains the approved receipt when its exact lookup is unavailable', async () => {
+    const api = server()
+    expect(await api.approve()).toMatchObject({ ok: true })
+    api.state.reviews = []
+    expect(await api.approve()).toMatchObject({ ok: false, reason: 'http-error', status: 404 })
+    expect(api.state.approvals).toBe(1)
+    expect(api.writes.filter((write) => write.path.endsWith('/reviews'))).toHaveLength(1)
   })
 
   it('replaces only its own obsolete pending draft', async () => {
@@ -199,7 +237,8 @@ describe('approvePullRequest', () => {
   it('preserves HTTP errors instead of calling them invalid JSON', async () => {
     expect(
       await Effect.runPromise(
-        approvePullRequest({
+        preparePullRequestApproval({
+          previousReview: null,
           repositoryFullName: 'owner/repo',
           pullNumber: 7,
           headSha: 'head',

@@ -75,7 +75,7 @@ test.each([
   expect(matchesPaths(path, workflow.on.push.paths)).toBe(affected)
 })
 
-test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runtime image selection', () => {
+test('Restate 1.8.1 preserves retained HA state while Kargo owns runtime image selection', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -91,8 +91,8 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
     {
       name: 'restate-runtime',
       newName: 'docker.restate.dev/restatedev/restate',
-      newTag: '1.7.9',
-      digest: 'sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+      newTag: '1.8.1',
+      digest: 'sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
     },
   ])
   expect(env.get('RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK')).toBe('450')
@@ -106,6 +106,7 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT')).toBe('10s')
   expect(env.get('RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
+  expect(env.has('RESTATE_TRACING_FILTER')).toBe(false)
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('ScheduleAnyway')
@@ -131,12 +132,61 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__DESTINATION')).toBe('s3://restate-snapshots/partitions')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL')).toBe('30m')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED')).toBe('2')
-  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(1)
-  expect(statefulSet.spec.template.spec.initContainers[0]).toMatchObject({
+  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(2)
+  expect(
+    statefulSet.spec.template.spec.initContainers.find(
+      (entry: { name: string }) => entry.name === 'snapshot-scale-up-gate',
+    ),
+  ).toMatchObject({
     name: 'snapshot-scale-up-gate',
     image:
-      'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+      'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   })
+})
+
+test('Restate NVMe transition holds new members until a verified retained copy is admitted', () => {
+  const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml'))
+  const spec = statefulSet.spec.template.spec
+  expect(statefulSet.spec.updateStrategy).toEqual({ type: 'OnDelete' })
+  expect(statefulSet.spec.volumeClaimTemplates[0].spec.storageClassName).toBe('local-path')
+  expect(statefulSet.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe('16Gi')
+  expect(spec.schedulingGates).toEqual([{ name: 'restate.proompteng.ai/verified-storage-copy' }])
+  expect(spec.tolerations).toEqual([
+    {
+      key: 'workload.proompteng.ai/compute-local',
+      operator: 'Equal',
+      value: 'true',
+      effect: 'NoSchedule',
+    },
+  ])
+  const roles = YAML.parse(readRepoFile('argocd/applications/restate/node-roles-configmap.yaml')).data
+  expect(roles['node-0.toml']).toContain('"worker"')
+  expect(roles['node-1.toml']).not.toContain('"worker"')
+  expect(roles['node-2.toml']).toContain('"worker"')
+  const env = spec.containers[0].env
+  expect(env.find((entry: { name: string }) => entry.name === 'POD_INDEX').valueFrom.fieldRef.fieldPath).toBe(
+    "metadata.labels['apps.kubernetes.io/pod-index']",
+  )
+  expect(env.find((entry: { name: string }) => entry.name === 'RESTATE_CONFIG').value).toBe(
+    '/etc/restate/node-$(POD_INDEX).toml',
+  )
+  const tempDir = mkdtempSync('/tmp/restate-verified-copy-')
+  try {
+    const script = spec.initContainers[0].command[2].replaceAll('/restate-data', tempDir)
+    const run = () =>
+      Bun.spawnSync(['/bin/bash', '-ceu', script], {
+        env: { ...process.env, POD_NAME: 'restate-0' },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }).exitCode
+    expect(run()).not.toBe(0)
+    writeFileSync(`${tempDir}/.verified-nvme-copy`, 'restate-1\n')
+    expect(run()).not.toBe(0)
+    writeFileSync(`${tempDir}/.verified-nvme-copy`, 'restate-0\n')
+    expect(run()).toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test.each([
@@ -182,7 +232,9 @@ test.each([
   },
 ] as const)('Restate snapshot startup gate: $scenario', (scenario) => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
-  const script = statefulSet.spec.template.spec.initContainers[0].command[2] as string
+  const script = statefulSet.spec.template.spec.initContainers.find(
+    (entry: { name: string }) => entry.name === 'snapshot-scale-up-gate',
+  ).command[2] as string
   const tempDir = mkdtempSync('/tmp/restate-follower-snapshot-gate-')
   const restatectl = `${tempDir}/restatectl`
   const sleep = `${tempDir}/sleep`
@@ -255,6 +307,18 @@ esac
   }
 })
 
+const healthyNodeRows = [0, 1, 2].map((ordinal) => ({
+  plain_node_id: `N${ordinal + 1}`,
+  name: `restate-${ordinal}`,
+  state: 'alive',
+  has_worker_role: true,
+  has_admin_role: true,
+  has_log_server_role: true,
+  has_metadata_server_role: true,
+  storage_state: 'read-write',
+  worker_state: 'active',
+}))
+
 test('Restate HA migration preserves quorum and changes existing replication only after membership converges', () => {
   const pdb = readRepoFile('argocd/applications/restate/poddisruptionbudget.yaml')
   const migration = readRepoFile('argocd/applications/restate/replication-migration-job.yaml')
@@ -272,7 +336,7 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(migration).toContain('rows != 48')
   expect(migration).toContain('if nodes_ready && \\')
   expect(migration).toContain(
-    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+    'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   )
   expect(migration).toContain('activeDeadlineSeconds: 1500')
   expect(migration).toContain('nodes set-storage-state --nodes "$id" --storage-state read-write')
@@ -419,11 +483,16 @@ test(
         `#!/bin/sh
 set -eu
 case " $* " in
+  *" sql --json "*)
+    cat <<'OUT'
+${JSON.stringify(healthyNodeRows)}
+OUT
+    ;;
   *" nodes list --extra "*)
     cat <<'OUT'
-N1 6 restate-0 http://restate-0 roles read-write active x Alive Ready Ready Ready Member
-N2 1 restate-2 http://restate-2 roles read-write active x Alive Ready Ready Ready Member
-N3 1 restate-1 http://restate-1 roles read-write active x Alive Ready Ready Ready Member
+N1 1 restate-0 http://restate-0 Alive Ready Ready Ready Member
+N2 1 restate-1 http://restate-1 Alive Ready Ready Ready Member
+N3 1 restate-2 http://restate-2 Alive Ready Ready Ready Member
 OUT
     ;;
   *" metadata-server add-node "*) exit 0 ;;
@@ -484,6 +553,12 @@ test('Restate replication migration refuses to mutate when any one node is not f
       `#!/bin/sh
 set -eu
 case " $* " in
+  *" sql --json "*)
+    cat <<'OUT'
+${JSON.stringify(healthyNodeRows)}
+OUT
+    ;;
+  *" metadata-server add-node "*) exit 0 ;;
   *" nodes list --extra "*)
     cat <<'OUT'
 N1 5 restate-0 http://restate-0 Alive Ready Ready Ready Member
@@ -502,6 +577,8 @@ esac
 `,
     )
     writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    writeFileSync(`${tempDir}/seq`, '#!/bin/sh\n[ "$*" = "1 60" ] || exit 91\nprintf "60\\n"\n')
+    chmodSync(`${tempDir}/seq`, 0o755)
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
 
@@ -511,7 +588,7 @@ esac
       stderr: 'pipe',
     })
 
-    expect(result.exitCode).not.toBe(0)
+    expect(result.exitCode).toBe(1)
     expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
     expect(Bun.file(mutationMarker).size).toBe(0)
   } finally {
@@ -519,13 +596,13 @@ esac
   }
 })
 
-test('Restate HA migration reactivates the exact retained nodes after singleton rollback', () => {
+test.each([true, false])('Restate HA migration only reactivates retained worker roles: %s', (hasWorkerRole) => {
   const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
     string,
     any
   >
   const script = migration.spec.template.spec.containers[0].command[2] as string
-  const start = script.indexOf('reactivate_retained_nodes() {')
+  const start = script.indexOf('read_nodes() {')
   const end = script.indexOf('\n\nmetadata_quorum_ready() {')
   expect(start).toBeGreaterThanOrEqual(0)
   expect(end).toBeGreaterThan(start)
@@ -540,11 +617,20 @@ test('Restate HA migration reactivates the exact retained nodes after singleton 
       `#!/bin/sh
 set -eu
 case " $* " in
-  *" nodes list --extra "*)
+  *" sql --json "*)
     cat <<'OUT'
-N1 5 restate-0 http://restate-0 roles read-write active Alive Ready Ready Ready Member
-N2 1 restate-1 http://restate-1 roles read-only draining Alive Ready Ready Ready Standby
-N3 1 restate-2 http://restate-2 roles read-only draining Alive Ready Ready Ready Standby
+${JSON.stringify(
+  healthyNodeRows.map((node, ordinal) =>
+    ordinal === 0
+      ? node
+      : {
+          ...node,
+          storage_state: 'read-only',
+          worker_state: 'draining',
+          has_worker_role: ordinal === 1 ? hasWorkerRole : true,
+        },
+  ),
+)}
 OUT
     ;;
   *" nodes set-storage-state "*) printf 'storage:%s\n' "$*" >>"${calls}" ;;
@@ -568,7 +654,9 @@ esac
     expect(result.exitCode).toBe(0)
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
       'storage:--yes --address http://restate-0 nodes set-storage-state --nodes N2 --storage-state read-write',
-      'worker:--yes --address http://restate-0 nodes set-worker-state --nodes N2 --worker-state active',
+      ...(hasWorkerRole
+        ? ['worker:--yes --address http://restate-0 nodes set-worker-state --nodes N2 --worker-state active']
+        : []),
       'metadata:--yes --address http://restate-0 metadata-server add-node N2',
       'storage:--yes --address http://restate-0 nodes set-storage-state --nodes N3 --storage-state read-write',
       'worker:--yes --address http://restate-0 nodes set-worker-state --nodes N3 --worker-state active',
@@ -597,7 +685,7 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(bootstrap).toContain('if (!(i in seen) || !(i in archived)) exit 1')
   expect(bootstrap).toContain('Transient failure reading partition snapshot status; retrying')
   expect(bootstrap).toContain(
-    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+    'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   )
   expect(rollback).toContain('argocd.argoproj.io/hook: PreSync')
   expect(rollback).toContain('config set --replication 1')
@@ -775,11 +863,11 @@ test('Restate recovery proof opens all snapshots offline without exposing OBC cr
   const drill = readRepoFile('argocd/applications/restate/snapshot-restore-drill-cronjob.yaml')
   const scripts = readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')
   const kustomization = readRepoFile('argocd/applications/restate/kustomization.yaml')
-  const toolsDigest =
-    'ghcr.io/restatedev/restate-tools@sha256:db618f42dbad37a79d8d4c543968f32d8d07aaa71cbcc8736f700f6c5f517209'
-
-  expect(proof).toContain(toolsDigest)
-  expect(drill).toContain(toolsDigest)
+  expect(YAML.parse(proof).spec.template.spec.containers[0].image).toBe('restate-runtime')
+  expect(YAML.parse(drill).spec.jobTemplate.spec.template.spec.containers[0].image).toBe('restate-runtime')
+  const dockerfile = readRepoFile('services/restate/Dockerfile')
+  expect(dockerfile).toContain('cargo build --locked --release -p restate-doctor')
+  expect(dockerfile).toContain('COPY --from=builder /tmp/restate-doctor /usr/local/bin/restate-doctor')
   expect(proof).toContain('secretKeyRef:')
   expect(proof).not.toContain('--aws-access-key-id')
   expect(proof).not.toContain('--aws-secret-access-key')
@@ -834,6 +922,119 @@ echo 'INVOCATION_ROWS'
     expect(result.stderr.toString()).toContain(
       'Snapshot repository is not complete yet; retrying isolated restore proof',
     )
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+const activePartition = {
+  generation: 'N1:91',
+  state: 'alive',
+  has_worker_role: true,
+  worker_state: 'active',
+  partition_id: 0,
+  membership: 'current',
+  replay_status: 'active',
+  updated_at: '2026-11-08T23:00:00.000',
+}
+const advancingPartition = { ...activePartition, updated_at: '2026-11-08T23:00:02.000' }
+const unassignedWorker = {
+  ...activePartition,
+  partition_id: null,
+  membership: null,
+  replay_status: null,
+  updated_at: null,
+}
+
+test.each([
+  { name: 'active and advancing', first: [activePartition], second: [advancingPartition], succeeds: true },
+  {
+    name: 'non-worker member has no assignments',
+    first: [{ ...unassignedWorker, has_worker_role: false, worker_state: null }],
+    second: [{ ...unassignedWorker, has_worker_role: false, worker_state: null }],
+    succeeds: true,
+  },
+  {
+    name: 'non-worker still has assignments',
+    first: [{ ...activePartition, has_worker_role: false }],
+    succeeds: false,
+  },
+  {
+    name: 'role changes during recovery check',
+    first: [{ ...unassignedWorker, has_worker_role: false, worker_state: null }],
+    second: [{ ...unassignedWorker, worker_state: 'disabled' }],
+    succeeds: false,
+  },
+  { name: 'empty assignments', first: [], second: [], succeeds: false },
+  { name: 'missing processor', first: [{ ...activePartition, replay_status: null }], succeeds: false },
+  { name: 'still catching up', first: [{ ...activePartition, replay_status: 'catching-up' }], succeeds: false },
+  { name: 'next assignment', first: [{ ...activePartition, membership: 'next' }], succeeds: false },
+  { name: 'dead member', first: [{ ...activePartition, state: 'dead' }], succeeds: false },
+  { name: 'no partition', first: [{ ...activePartition, partition_id: null }], succeeds: false },
+  ...['draining', 'disabled', 'provisioning'].map((worker_state) => ({
+    name: `${worker_state} member awaits explicit activation`,
+    first: [{ ...unassignedWorker, worker_state }],
+    second: [{ ...unassignedWorker, worker_state }],
+    succeeds: true,
+  })),
+  {
+    name: 'draining member still has assignments',
+    first: [{ ...activePartition, worker_state: 'draining' }],
+    succeeds: false,
+  },
+  {
+    name: 'member activates without assignments',
+    first: [{ ...unassignedWorker, worker_state: 'draining' }],
+    second: [unassignedWorker],
+    succeeds: false,
+  },
+  { name: 'stale status', first: [activePartition], second: [activePartition], succeeds: false },
+  {
+    name: 'new generation during check',
+    first: [activePartition],
+    second: [{ ...advancingPartition, generation: 'N1:92' }],
+    succeeds: false,
+  },
+  { name: 'lost assignments', first: [activePartition], second: [], succeeds: false },
+  {
+    name: 'one processor stops progressing',
+    first: [activePartition, { ...activePartition, partition_id: 1 }],
+    second: [advancingPartition, { ...activePartition, partition_id: 1 }],
+    succeeds: false,
+  },
+  { name: 'query failure', first: [activePartition], queryFails: true, succeeds: false },
+])('Restate startup recovery rejects incomplete state: $name', (scenario) => {
+  const configMap = YAML.parse(readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml'))
+  const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml'))
+  expect(statefulSet.spec.template.spec.containers[0].startupProbe.exec.command).toEqual([
+    '/bin/bash',
+    '/opt/restate-resilience/partition-startup.sh',
+  ])
+  const tempDir = mkdtempSync('/tmp/restate-startup-')
+  try {
+    writeFileSync(`${tempDir}/first.json`, JSON.stringify(scenario.first))
+    writeFileSync(`${tempDir}/second.json`, JSON.stringify(scenario.second ?? []))
+    writeFileSync(
+      `${tempDir}/restatectl`,
+      '#!/bin/sh\nset -eu\n[ "$QUERY_FAILS" != true ] || exit 17\n' +
+        'if [ -f "$FIXTURE_DIR/read" ]; then cat "$FIXTURE_DIR/second.json"; else\n' +
+        'touch "$FIXTURE_DIR/read"; cat "$FIXTURE_DIR/first.json"; fi\n',
+    )
+    writeFileSync(`${tempDir}/sleep`, '#!/bin/sh\nexit 0\n')
+    chmodSync(`${tempDir}/restatectl`, 0o755)
+    chmodSync(`${tempDir}/sleep`, 0o755)
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', configMap.data['partition-startup.sh']], {
+      env: {
+        ...process.env,
+        POD_NAME: 'restate-0',
+        FIXTURE_DIR: tempDir,
+        QUERY_FAILS: String(scenario.queryFails ?? false),
+        PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode === 0).toBe(scenario.succeeds)
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }

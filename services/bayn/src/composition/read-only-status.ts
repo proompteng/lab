@@ -5,7 +5,7 @@ import { makeApplicationPlan, type ApplicationPlan } from '../app'
 import { BrokerSession } from '../broker/alpaca/session'
 import type { LoadedRuntimeConfig } from '../config/model'
 import { CycleObservability } from '../cycle/store/observability'
-import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
+import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store/contract'
 import { postgresHealthCheck } from '../db/postgres-client'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
@@ -16,7 +16,7 @@ import { type CycleObservationBinding } from '../health/model'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { initialState, type RuntimeState } from '../runtime-state'
-import { observeCycleGenerationHash, runtimeBroker } from './lifecycle'
+import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
 import {
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
@@ -244,7 +244,13 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
               observePlan.config,
               state,
               dependencies,
-              runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+              {
+                read: brokerSession.read,
+                expectedAccountId: observePlan.config.alpaca.expectedAccountId,
+                executionEligible: current.capitalActivation?._tag === 'Realized',
+                executionDisabledReason:
+                  current.capitalActivation?._tag === 'Realized' ? null : 'BROKER_ACCESS_READ_ONLY',
+              },
               undefined,
               cycleObservation,
               controller === undefined
