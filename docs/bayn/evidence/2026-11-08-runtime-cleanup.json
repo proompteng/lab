@@ -9083,5 +9083,357 @@
       "format": "passed",
       "lint": "passed"
     }
+  },
+  "sharedFilledEntryStageComparison": {
+    "capturedAt": "2026-11-09T16:34:53.955224+00:00",
+    "phases": {
+      "before": {
+        "sourceRevision": "3c102b02a902a289700b137868c86563b052cfe4",
+        "traceId": "0e4ec6b69b5f2e65566f1533a0bd44ac",
+        "deploymentId": "dp_11QCH160kWhe6rCtSgMpChj",
+        "instance": "bayn-execution-controller-fbb6d5dc77-5trqh",
+        "node": "talos-192-168-1-85",
+        "outcome": "Waiting",
+        "invocation": {
+          "created_at": "2026-11-09T14:39:39.351Z",
+          "running_at": "2026-11-09T14:40:10.002Z",
+          "completed_at": "2026-11-09T14:40:22.638Z",
+          "status": "completed"
+        },
+        "requestIdSha256": "9f5b648cbb1c2875ef1c6ed247de70bb4cdb97ba697b0f7fb7c4c633f7da3395",
+        "cycleIdSha256": "eaa1b61ec52bfd43eec592057c99c31f111c821ff51167bad34d0c2224368263",
+        "batchIdSha256": "8c5588ba410c1cf7ccd628d0c596137832180be799044b62e8d073ce28c53388",
+        "decision": {
+          "decisionHash": "5b7961dca61402e60da6de1fb45cd88efde869ec6485541ab9b9566e23126b65",
+          "decisionCreatedAt": "2026-11-09T14:40:18.875Z",
+          "decisionSchema": "bayn.paper-cycle-decision.v2",
+          "plannerPresent": true,
+          "plannerStoresBrokerState": false,
+          "protocol": "bayn.jev.protocol.v40",
+          "model": "jev-1.14.0"
+        },
+        "batchIdentityMatches": true,
+        "decisionHashMatches": true,
+        "requestCut": {
+          "observedAt": "2026-11-09T14:40:12.444Z",
+          "contentHash": "5b7961dca61402e60da6de1fb45cd88efde869ec6485541ab9b9566e23126b65",
+          "candidateRequests": 3,
+          "storedDecisionJsonbTextBytes": 1626245
+        },
+        "sharedEntrySpans": [
+          {
+            "name": "bayn.jev.observation",
+            "offsetMs": 2741.996,
+            "durationMs": 255.062,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.batch-plan",
+            "offsetMs": 2997.144,
+            "durationMs": 342.461,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.batch-admission",
+            "offsetMs": 3365.66,
+            "durationMs": 2419.035,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.batch-completion",
+            "offsetMs": 6888.745,
+            "durationMs": 1394.233,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.execution.decision-build",
+            "offsetMs": 8960.897,
+            "durationMs": 1331.522,
+            "operation": "PAPER",
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.entry-decision-binding",
+            "offsetMs": 10426.529,
+            "durationMs": 775.256,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.cycle.decision-read",
+            "offsetMs": 11201.98,
+            "durationMs": 762.565,
+            "operation": "read-decision-document",
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.execution.submit",
+            "offsetMs": 11985.471,
+            "durationMs": 576.905,
+            "operation": "entry",
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          }
+        ],
+        "observationToSubmitSpanEndMs": 9820.38,
+        "fullAdvanceMs": 12577.188,
+        "fullReconciliationSpans": 1,
+        "submitAcknowledgementMs": 473.0,
+        "persistedTimeline": {
+          "model": "jev-1.14.0",
+          "claims": [
+            {
+              "stage": "CHART",
+              "claimedAt": "2026-11-09T14:40:14.249Z",
+              "expiresAt": "2026-11-09T14:40:22.444Z"
+            }
+          ],
+          "intents": [
+            {
+              "state": "TERMINAL",
+              "createdAt": "2026-11-09T14:40:18.875+00:00",
+              "mutations": [
+                {
+                  "type": "SUBMIT_STARTED",
+                  "operation": "SUBMIT",
+                  "occurredAt": "2026-11-09T14:40:22.017+00:00",
+                  "responseStatus": null
+                },
+                {
+                  "type": "SUBMIT_ACCEPTED",
+                  "operation": "SUBMIT",
+                  "occurredAt": "2026-11-09T14:40:22.49+00:00",
+                  "responseStatus": 200
+                },
+                {
+                  "type": "RECOVERY_FOUND",
+                  "operation": "SUBMIT",
+                  "occurredAt": "2026-11-09T14:41:05.867+00:00",
+                  "responseStatus": 200
+                }
+              ],
+              "fillObservation": {
+                "fillCount": 2,
+                "lastFillSourceAt": "2026-11-09T14:40:33.065276000Z",
+                "firstFillSourceAt": "2026-11-09T14:40:29.013767000Z",
+                "lastBrokerObservedAt": "2026-11-09T14:40:56.87+00:00",
+                "firstBrokerObservedAt": "2026-11-09T14:40:56.87+00:00",
+                "balancedPostedReceiptCount": 2
+              },
+              "terminalOutcome": "FILLED"
+            }
+          ],
+          "protocol": "bayn.jev.protocol.v40",
+          "expiresAt": "2026-11-09T14:40:22.444Z",
+          "terminals": [
+            {
+              "stage": "CHART",
+              "status": "RECEIVED",
+              "recordedAt": "2026-11-09T14:40:16.096Z",
+              "failureCategory": null
+            }
+          ],
+          "cycleState": "COMPLETED",
+          "observedAt": "2026-11-09T14:40:12.444Z",
+          "abandonedAt": null,
+          "inputSchema": "bayn.entry-inference-input.v8",
+          "cycleCreatedAt": "2026-11-09T14:40:12.031+00:00",
+          "batchPlanSchema": "bayn.jev-batch-plan.v8",
+          "batchCompletedAt": "2026-11-09T14:40:16.866Z",
+          "resolutionStatus": "RECORDED",
+          "evaluationFailure": null,
+          "evaluationOutcome": "COMPLETED",
+          "handoffRecordedAt": "2026-11-09T14:40:16.107Z",
+          "cycleTerminalReason": null,
+          "evaluationStartedAt": "2026-11-09T14:40:14.249Z",
+          "evaluationCompletedAt": "2026-11-09T14:40:16.807Z"
+        }
+      },
+      "after": {
+        "sourceRevision": "b3aa14bb383fb06bd5d95196e1aad63346f1a08c",
+        "traceId": "ae9a9acaf7f08fe416da593eb6812068",
+        "deploymentId": "dp_14mc4VooMcjbcrwhvtXOQa5",
+        "instance": "bayn-execution-controller-6c46c8c496-6t8sg",
+        "node": "talos-192-168-1-85",
+        "outcome": "Waiting",
+        "invocation": {
+          "created_at": "2026-11-09T16:05:52.855Z",
+          "running_at": "2026-11-09T16:06:02.003Z",
+          "completed_at": "2026-11-09T16:06:14.953Z",
+          "status": "completed"
+        },
+        "requestIdSha256": "c347fc9b2a7dd2846c639f4e0b93b0a91a4ed6e6d3a0e39d3a2ef3f2d1b73c78",
+        "cycleIdSha256": "7be28cfed65c35b8b4278888ce67dd5793d2bdf3ff3d2f94b076a8bad1d7c7e7",
+        "batchIdSha256": "fe44f2cc58c13867b20c0086854a9b61e39111a2e708b37e4a0502a9b327c91f",
+        "decision": {
+          "decisionHash": "53f4ab3b74f888d00587aa6703446aa208467258700f54dca5ebc6361a558c1b",
+          "decisionCreatedAt": "2026-11-09T16:06:07.956Z",
+          "decisionSchema": "bayn.paper-cycle-decision.v2",
+          "plannerPresent": true,
+          "plannerStoresBrokerState": false,
+          "protocol": "bayn.jev.protocol.v40",
+          "model": "jev-1.14.0"
+        },
+        "batchIdentityMatches": true,
+        "decisionHashMatches": true,
+        "requestCut": {
+          "observedAt": "2026-11-09T16:06:02.329Z",
+          "contentHash": "53f4ab3b74f888d00587aa6703446aa208467258700f54dca5ebc6361a558c1b",
+          "candidateRequests": 3,
+          "storedDecisionJsonbTextBytes": 2823900
+        },
+        "sharedEntrySpans": [
+          {
+            "name": "bayn.jev.observation",
+            "offsetMs": 720.384,
+            "durationMs": 643.686,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.batch-plan",
+            "offsetMs": 1364.196,
+            "durationMs": 634.309,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.batch-admission",
+            "offsetMs": 2039.085,
+            "durationMs": 1243.359,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.batch-completion",
+            "offsetMs": 4242.212,
+            "durationMs": 796.5,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.execution.decision-build",
+            "offsetMs": 6123.717,
+            "durationMs": 2528.305,
+            "operation": "PAPER",
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.jev.entry-decision-binding",
+            "offsetMs": 8997.862,
+            "durationMs": 1806.172,
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.cycle.decision-read",
+            "offsetMs": 10804.361,
+            "durationMs": 1324.318,
+            "operation": "read-decision-document",
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          },
+          {
+            "name": "bayn.execution.submit",
+            "offsetMs": 12161.646,
+            "durationMs": 742.313,
+            "operation": "entry",
+            "status": "STATUS_CODE_OK",
+            "exceptionEvents": 0
+          }
+        ],
+        "observationToSubmitSpanEndMs": 12183.575,
+        "fullAdvanceMs": 12912.557,
+        "fullReconciliationSpans": 0,
+        "submitAcknowledgementMs": 655.0,
+        "persistedTimeline": {
+          "model": "jev-1.14.0",
+          "claims": [
+            {
+              "stage": "CHART",
+              "claimedAt": "2026-11-09T16:06:04.993Z",
+              "expiresAt": "2026-11-09T16:06:12.329Z"
+            }
+          ],
+          "intents": [
+            {
+              "state": "TERMINAL",
+              "createdAt": "2026-11-09T16:06:07.956+00:00",
+              "mutations": [
+                {
+                  "type": "SUBMIT_STARTED",
+                  "operation": "SUBMIT",
+                  "occurredAt": "2026-11-09T16:06:14.181+00:00",
+                  "responseStatus": null
+                },
+                {
+                  "type": "SUBMIT_ACCEPTED",
+                  "operation": "SUBMIT",
+                  "occurredAt": "2026-11-09T16:06:14.836+00:00",
+                  "responseStatus": 200
+                },
+                {
+                  "type": "RECOVERY_FOUND",
+                  "operation": "SUBMIT",
+                  "occurredAt": "2026-11-09T16:06:28.676+00:00",
+                  "responseStatus": 200
+                }
+              ],
+              "fillObservation": {
+                "fillCount": 2,
+                "lastFillSourceAt": "2026-11-09T16:06:16.450786000Z",
+                "firstFillSourceAt": "2026-11-09T16:06:15.696538000Z",
+                "lastBrokerObservedAt": "2026-11-09T16:06:23.689+00:00",
+                "firstBrokerObservedAt": "2026-11-09T16:06:23.689+00:00",
+                "balancedPostedReceiptCount": 2
+              },
+              "terminalOutcome": "FILLED"
+            }
+          ],
+          "protocol": "bayn.jev.protocol.v40",
+          "expiresAt": "2026-11-09T16:06:12.329Z",
+          "terminals": [
+            {
+              "stage": "CHART",
+              "status": "RECEIVED",
+              "recordedAt": "2026-11-09T16:06:05.630Z",
+              "failureCategory": null
+            }
+          ],
+          "cycleState": "ACTIVE",
+          "observedAt": "2026-11-09T16:06:02.329Z",
+          "abandonedAt": null,
+          "inputSchema": "bayn.entry-inference-input.v8",
+          "cycleCreatedAt": "2026-11-09T16:05:52.394+00:00",
+          "batchPlanSchema": "bayn.jev-batch-plan.v8",
+          "batchCompletedAt": "2026-11-09T16:06:06.205Z",
+          "resolutionStatus": "RECORDED",
+          "evaluationFailure": null,
+          "evaluationOutcome": "COMPLETED",
+          "handoffRecordedAt": "2026-11-09T16:06:05.639Z",
+          "cycleTerminalReason": null,
+          "evaluationStartedAt": "2026-11-09T16:06:04.993Z",
+          "evaluationCompletedAt": "2026-11-09T16:06:06.139Z"
+        }
+      }
+    },
+    "matchingCriteria": {
+      "node": "talos-192-168-1-85",
+      "protocol": "bayn.jev.protocol.v40",
+      "model": "jev-1.14.0",
+      "inputSchema": "bayn.entry-inference-input.v8",
+      "candidateRequests": 3,
+      "workerOutcome": "Waiting",
+      "entryFillCount": 2,
+      "balancedPostedReceiptCount": 2
+    },
+    "scope": "One naturally filled entry per release with exact source/deployment/Restate ancestry and independent persisted batch and content-hash bindings. Shared entry stage names and three-candidate batch shape agree. Full advance is not comparable: before includes full reconciliation and after has no full reconciliation span. Inputs, document sizes, time and load differ; single-stage observations are not a causal production benchmark or latency distribution. Inclusive stages are not additive. Raw broker records and account identities remain private."
   }
 }
