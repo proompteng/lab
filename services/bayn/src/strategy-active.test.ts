@@ -8,6 +8,7 @@ import {
   activeStrategyName,
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
+  strategyTradingProtocol,
 } from './strategy'
 
 describe('active strategy composition', () => {
@@ -35,6 +36,7 @@ describe('active strategy composition', () => {
     expect(runtime.definition.name).toBe('jev')
     expect(runtime.definition.holdingPeriod).toBe('INTRADAY')
     expect(runtime.definition.parameters).toBe(protocol)
+    expect(strategyTradingProtocol(runtime)).toBe(protocol)
     expect(runtime.provenance.strategy).toEqual({
       name: 'jev',
       behaviorHash: activeStrategyBehaviorHash,
