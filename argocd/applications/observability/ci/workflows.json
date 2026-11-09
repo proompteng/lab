@@ -375,6 +375,10 @@
       "pattern": "^Restate build and fault tests \\(.*\\)(?: \\(.*\\))?$"
     },
     {
+      "id": "cache-proof",
+      "pattern": "^cache-proof(?: \\(.*\\))?$"
+    },
+    {
       "id": "publish",
       "pattern": "^publish(?: \\(.*\\))?$"
     }

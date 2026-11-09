@@ -19,7 +19,7 @@ test('Restate image promotion requires native build proofs and uploaded release 
     ...workflow.on.push.paths,
   ])
   expect(build.needs).toBe('changes')
-  expect(build.if).toBe("needs.changes.outputs.changed == 'true'")
+  expect(build.if).toBe("needs.changes.outputs.changed == 'true' && needs.changes.outputs.reuse != 'true'")
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
     'amd64',
     'arm64',
@@ -29,8 +29,12 @@ test('Restate image promotion requires native build proofs and uploaded release 
   expect(runtime.with.load).toBeUndefined()
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/docker.ts')
-  expect(publish.if).toBe(mainOnly)
-  expect(publish.needs).toEqual(['build'])
+  expect(publish.if).toContain(mainOnly)
+  expect(publish.if).toContain('!cancelled()')
+  expect(publish.if).toContain("needs.changes.result == 'success'")
+  expect(publish.if).toContain("needs.build.result == 'success'")
+  expect(publish.if).toContain("needs.build.result == 'skipped' && needs.changes.outputs.reuse == 'true'")
+  expect(publish.needs).toEqual(['changes', 'build', 'cache-proof'])
   const releaseSteps = publish.steps as { name?: string; uses?: string }[]
   const uploaded = releaseSteps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
   expect(uploaded).toBeGreaterThan(0)
@@ -65,7 +69,8 @@ test.each([
   ['bun.lock', false],
   ['services/jangar/package.json', false],
   ['packages/scripts/src/shared/docker.ts', false],
-  ['packages/scripts/src/restate/build-image.ts', false],
+  ['packages/scripts/src/restate/release-inputs.ts', true],
+  ['.github/workflows/restate-images.yml', true],
   ['argocd/applicationsets/platform.yaml', false],
   ['services/restate/Dockerfile', true],
   ['services/restate/metadata-background.patch', true],
@@ -132,12 +137,61 @@ test('Restate 1.8.1 preserves retained HA state while Kargo owns runtime image s
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__DESTINATION')).toBe('s3://restate-snapshots/partitions')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL')).toBe('30m')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED')).toBe('2')
-  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(1)
-  expect(statefulSet.spec.template.spec.initContainers[0]).toMatchObject({
+  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(2)
+  expect(
+    statefulSet.spec.template.spec.initContainers.find(
+      (entry: { name: string }) => entry.name === 'snapshot-scale-up-gate',
+    ),
+  ).toMatchObject({
     name: 'snapshot-scale-up-gate',
     image:
       'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   })
+})
+
+test('Restate NVMe transition holds new members until a verified retained copy is admitted', () => {
+  const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml'))
+  const spec = statefulSet.spec.template.spec
+  expect(statefulSet.spec.updateStrategy).toEqual({ type: 'OnDelete' })
+  expect(statefulSet.spec.volumeClaimTemplates[0].spec.storageClassName).toBe('local-path')
+  expect(statefulSet.spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe('16Gi')
+  expect(spec.schedulingGates).toEqual([{ name: 'restate.proompteng.ai/verified-storage-copy' }])
+  expect(spec.tolerations).toEqual([
+    {
+      key: 'workload.proompteng.ai/compute-local',
+      operator: 'Equal',
+      value: 'true',
+      effect: 'NoSchedule',
+    },
+  ])
+  const roles = YAML.parse(readRepoFile('argocd/applications/restate/node-roles-configmap.yaml')).data
+  expect(roles['node-0.toml']).toContain('"worker"')
+  expect(roles['node-1.toml']).not.toContain('"worker"')
+  expect(roles['node-2.toml']).toContain('"worker"')
+  const env = spec.containers[0].env
+  expect(env.find((entry: { name: string }) => entry.name === 'POD_INDEX').valueFrom.fieldRef.fieldPath).toBe(
+    "metadata.labels['apps.kubernetes.io/pod-index']",
+  )
+  expect(env.find((entry: { name: string }) => entry.name === 'RESTATE_CONFIG').value).toBe(
+    '/etc/restate/node-$(POD_INDEX).toml',
+  )
+  const tempDir = mkdtempSync('/tmp/restate-verified-copy-')
+  try {
+    const script = spec.initContainers[0].command[2].replaceAll('/restate-data', tempDir)
+    const run = () =>
+      Bun.spawnSync(['/bin/bash', '-ceu', script], {
+        env: { ...process.env, POD_NAME: 'restate-0' },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }).exitCode
+    expect(run()).not.toBe(0)
+    writeFileSync(`${tempDir}/.verified-nvme-copy`, 'restate-1\n')
+    expect(run()).not.toBe(0)
+    writeFileSync(`${tempDir}/.verified-nvme-copy`, 'restate-0\n')
+    expect(run()).toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test.each([
@@ -183,7 +237,9 @@ test.each([
   },
 ] as const)('Restate snapshot startup gate: $scenario', (scenario) => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
-  const script = statefulSet.spec.template.spec.initContainers[0].command[2] as string
+  const script = statefulSet.spec.template.spec.initContainers.find(
+    (entry: { name: string }) => entry.name === 'snapshot-scale-up-gate',
+  ).command[2] as string
   const tempDir = mkdtempSync('/tmp/restate-follower-snapshot-gate-')
   const restatectl = `${tempDir}/restatectl`
   const sleep = `${tempDir}/sleep`
@@ -255,6 +311,18 @@ esac
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+const healthyNodeRows = [0, 1, 2].map((ordinal) => ({
+  plain_node_id: `N${ordinal + 1}`,
+  name: `restate-${ordinal}`,
+  state: 'alive',
+  has_worker_role: true,
+  has_admin_role: true,
+  has_log_server_role: true,
+  has_metadata_server_role: true,
+  storage_state: 'read-write',
+  worker_state: 'active',
+}))
 
 test('Restate HA migration preserves quorum and changes existing replication only after membership converges', () => {
   const pdb = readRepoFile('argocd/applications/restate/poddisruptionbudget.yaml')
@@ -420,11 +488,16 @@ test(
         `#!/bin/sh
 set -eu
 case " $* " in
+  *" sql --json "*)
+    cat <<'OUT'
+${JSON.stringify(healthyNodeRows)}
+OUT
+    ;;
   *" nodes list --extra "*)
     cat <<'OUT'
-N1 6 restate-0 http://restate-0 roles read-write active x Alive Ready Ready Ready Member
-N2 1 restate-2 http://restate-2 roles read-write active x Alive Ready Ready Ready Member
-N3 1 restate-1 http://restate-1 roles read-write active x Alive Ready Ready Ready Member
+N1 1 restate-0 http://restate-0 Alive Ready Ready Ready Member
+N2 1 restate-1 http://restate-1 Alive Ready Ready Ready Member
+N3 1 restate-2 http://restate-2 Alive Ready Ready Ready Member
 OUT
     ;;
   *" metadata-server add-node "*) exit 0 ;;
@@ -485,6 +558,12 @@ test('Restate replication migration refuses to mutate when any one node is not f
       `#!/bin/sh
 set -eu
 case " $* " in
+  *" sql --json "*)
+    cat <<'OUT'
+${JSON.stringify(healthyNodeRows)}
+OUT
+    ;;
+  *" metadata-server add-node "*) exit 0 ;;
   *" nodes list --extra "*)
     cat <<'OUT'
 N1 5 restate-0 http://restate-0 Alive Ready Ready Ready Member
@@ -503,6 +582,8 @@ esac
 `,
     )
     writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    writeFileSync(`${tempDir}/seq`, '#!/bin/sh\n[ "$*" = "1 60" ] || exit 91\nprintf "60\\n"\n')
+    chmodSync(`${tempDir}/seq`, 0o755)
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
 
@@ -512,7 +593,7 @@ esac
       stderr: 'pipe',
     })
 
-    expect(result.exitCode).not.toBe(0)
+    expect(result.exitCode).toBe(1)
     expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
     expect(Bun.file(mutationMarker).size).toBe(0)
   } finally {
@@ -520,13 +601,13 @@ esac
   }
 })
 
-test('Restate HA migration reactivates the exact retained nodes after singleton rollback', () => {
+test.each([true, false])('Restate HA migration only reactivates retained worker roles: %s', (hasWorkerRole) => {
   const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
     string,
     any
   >
   const script = migration.spec.template.spec.containers[0].command[2] as string
-  const start = script.indexOf('reactivate_retained_nodes() {')
+  const start = script.indexOf('read_nodes() {')
   const end = script.indexOf('\n\nmetadata_quorum_ready() {')
   expect(start).toBeGreaterThanOrEqual(0)
   expect(end).toBeGreaterThan(start)
@@ -541,11 +622,20 @@ test('Restate HA migration reactivates the exact retained nodes after singleton 
       `#!/bin/sh
 set -eu
 case " $* " in
-  *" nodes list --extra "*)
+  *" sql --json "*)
     cat <<'OUT'
-N1 5 restate-0 http://restate-0 roles read-write active Alive Ready Ready Ready Member
-N2 1 restate-1 http://restate-1 roles read-only draining Alive Ready Ready Ready Standby
-N3 1 restate-2 http://restate-2 roles read-only draining Alive Ready Ready Ready Standby
+${JSON.stringify(
+  healthyNodeRows.map((node, ordinal) =>
+    ordinal === 0
+      ? node
+      : {
+          ...node,
+          storage_state: 'read-only',
+          worker_state: 'draining',
+          has_worker_role: ordinal === 1 ? hasWorkerRole : true,
+        },
+  ),
+)}
 OUT
     ;;
   *" nodes set-storage-state "*) printf 'storage:%s\n' "$*" >>"${calls}" ;;
@@ -569,7 +659,9 @@ esac
     expect(result.exitCode).toBe(0)
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
       'storage:--yes --address http://restate-0 nodes set-storage-state --nodes N2 --storage-state read-write',
-      'worker:--yes --address http://restate-0 nodes set-worker-state --nodes N2 --worker-state active',
+      ...(hasWorkerRole
+        ? ['worker:--yes --address http://restate-0 nodes set-worker-state --nodes N2 --worker-state active']
+        : []),
       'metadata:--yes --address http://restate-0 metadata-server add-node N2',
       'storage:--yes --address http://restate-0 nodes set-storage-state --nodes N3 --storage-state read-write',
       'worker:--yes --address http://restate-0 nodes set-worker-state --nodes N3 --worker-state active',
@@ -843,6 +935,7 @@ echo 'INVOCATION_ROWS'
 const activePartition = {
   generation: 'N1:91',
   state: 'alive',
+  has_worker_role: true,
   worker_state: 'active',
   partition_id: 0,
   membership: 'current',
@@ -860,6 +953,23 @@ const unassignedWorker = {
 
 test.each([
   { name: 'active and advancing', first: [activePartition], second: [advancingPartition], succeeds: true },
+  {
+    name: 'non-worker member has no assignments',
+    first: [{ ...unassignedWorker, has_worker_role: false, worker_state: null }],
+    second: [{ ...unassignedWorker, has_worker_role: false, worker_state: null }],
+    succeeds: true,
+  },
+  {
+    name: 'non-worker still has assignments',
+    first: [{ ...activePartition, has_worker_role: false }],
+    succeeds: false,
+  },
+  {
+    name: 'role changes during recovery check',
+    first: [{ ...unassignedWorker, has_worker_role: false, worker_state: null }],
+    second: [{ ...unassignedWorker, worker_state: 'disabled' }],
+    succeeds: false,
+  },
   { name: 'empty assignments', first: [], second: [], succeeds: false },
   { name: 'missing processor', first: [{ ...activePartition, replay_status: null }], succeeds: false },
   { name: 'still catching up', first: [{ ...activePartition, replay_status: 'catching-up' }], succeeds: false },

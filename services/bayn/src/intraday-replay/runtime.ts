@@ -60,7 +60,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
-import { loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
@@ -182,7 +182,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
     const jevPositions = yield* makeJevPositionStore
-    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
+    const riskPolicy = yield* Effect.fromResult(strategyExecutionRiskPolicy(identity.accountId, input.strategy))
     const plan = {
       schemaVersion: 'bayn.research-execution-plan.v1' as const,
       activation: {

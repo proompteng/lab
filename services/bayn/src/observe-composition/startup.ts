@@ -9,7 +9,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
-import { loadActiveStrategyProtocol, strategyDefinition } from '../strategy'
+import { loadActiveStrategyProtocol, strategyTradingProtocol } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -18,14 +18,14 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
-import { decodeStrategyExecutionModel, loadStrategyExecutionRiskPolicy } from '../execution/risk-policy'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { validateMutationExecutionProgram } from './execution-cycle'
 import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
 
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
-  const definition = strategyDefinition(input.strategy)
+  const definition = input.strategy.definition
   if (definition.name !== 'jev' || definition.holdingPeriod !== 'INTRADAY') {
     return Result.fail(
       operationalError({
@@ -81,18 +81,7 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
-  if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
-  const executionModel = decodedExecutionModel.success
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
-    return Result.fail(
-      operationalError({
-        component: 'strategy',
-        operation: 'cycle-loop',
-        message: 'autonomous intraday cycles require the quote-bound v5 execution model',
-      }),
-    )
-  }
+  const executionModel = strategyTradingProtocol(input.strategy).executionModel
   return Result.flatMap(
     Result.mapError(makeCycleExecutionPolicyFromModel(executionModel), (cause) =>
       operationalError({
@@ -172,11 +161,8 @@ export const makeObserveAutonomousCycleStartup =
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
-      const policy = yield* loadStrategyExecutionRiskPolicy(
-        input.accountId,
-        input.strategy,
-        input.brokerEnvironment,
-        input.riskPolicyHash,
+      const policy = yield* Effect.fromResult(
+        strategyExecutionRiskPolicy(input.accountId, input.strategy, input.brokerEnvironment, input.riskPolicyHash),
       )
       yield* initializeObserveAuthority(input)
       return yield* Effect.fromResult(
@@ -201,11 +187,8 @@ export const makeMutationAutonomousCycleStartup =
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
-      const policy = yield* loadStrategyExecutionRiskPolicy(
-        input.accountId,
-        input.strategy,
-        input.brokerEnvironment,
-        input.riskPolicyHash,
+      const policy = yield* Effect.fromResult(
+        strategyExecutionRiskPolicy(input.accountId, input.strategy, input.brokerEnvironment, input.riskPolicyHash),
       )
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(

@@ -12,7 +12,7 @@ spec:
   revisionHistoryLimit: 10
   podManagementPolicy: Parallel
   updateStrategy:
-    type: RollingUpdate
+    type: OnDelete
   persistentVolumeClaimRetentionPolicy:
     whenDeleted: Retain
     whenScaled: Retain
@@ -26,7 +26,14 @@ spec:
       annotations:
         kubectl.kubernetes.io/default-container: restate
     spec:
+      schedulingGates:
+        - name: restate.proompteng.ai/verified-storage-copy
       serviceAccountName: restate
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       terminationGracePeriodSeconds: 90
       securityContext:
         fsGroup: 2000
@@ -50,6 +57,33 @@ spec:
                     app: restate
                 topologyKey: kubernetes.io/hostname
       initContainers:
+        - name: verified-storage-copy
+          image: docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1
+          command: [/bin/bash, -ceu, 'grep -Fxq "$POD_NAME" /restate-data/.verified-nvme-copy']
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: storage
+              mountPath: /restate-data
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsGroup: 3000
+            runAsNonRoot: true
+            runAsUser: 1000
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
         - name: snapshot-scale-up-gate
           image: docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1
           imagePullPolicy: IfNotPresent
@@ -189,6 +223,12 @@ spec:
                   fieldPath: metadata.name
             - name: SERVICE_NAME
               value: restate-cluster
+            - name: POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+            - name: RESTATE_CONFIG
+              value: /etc/restate/node-$(POD_INDEX).toml
             - name: RESTATE_NODE_NAME
               value: $(POD_NAME)
             - name: RESTATE_LOG_FILTER
@@ -277,6 +317,9 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:
+            - name: node-roles
+              mountPath: /etc/restate
+              readOnly: true
             - name: resilience-scripts
               mountPath: /opt/restate-resilience
               readOnly: true
@@ -288,6 +331,9 @@ spec:
               name: request-identity
               readOnly: true
       volumes:
+        - name: node-roles
+          configMap:
+            name: restate-node-roles
         - name: resilience-scripts
           configMap:
             name: restate-resilience-scripts
@@ -305,7 +351,7 @@ spec:
           app: restate
           app.kubernetes.io/name: restate
       spec:
-        storageClassName: rook-ceph-block
+        storageClassName: local-path
         volumeMode: Filesystem
         accessModes:
           - ReadWriteOnce
