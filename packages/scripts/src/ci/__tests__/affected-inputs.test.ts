@@ -157,9 +157,9 @@ test('Bayn publication ignores Froussard-only dependencies and still selects Bay
     selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], configured, prior, next)
       .image,
   ).toBe(false)
-  expect(
-    selectAffectedInputs(['argocd/applications/bayn/native-arrival-postgres.yaml'], configured, prior, next).image,
-  ).toBe(true)
+  expect(selectAffectedInputs(['argocd/applications/bayn/postgres-cluster.yaml'], configured, prior, next).image).toBe(
+    true,
+  )
   const changedDependency = {
     ...next,
     packages: { ...next.packages, client: ['client@1.1.0', '', {}, 'new-integrity'] },
