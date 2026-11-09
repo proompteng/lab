@@ -685,6 +685,19 @@ adapter, and its tests exercise that same adapter. The current execution model i
 `src/strategy/intraday-market.ts`. Historical wire decoders and the daily snapshot readers remain available for
 retained financial evidence; they do not select a live strategy or create current execution authority.
 
+## Runtime and research images
+
+`bayn` contains status, execution, activation, projection and operating diagnostics. It retains the private
+`bayn-forward-performance` financial report. Its replay executable and compiler-dependency receipt also remain
+in the trading artifact: candidate qualification verifies them against the actual trading image digest.
+`bayn-control-opening` also stays in the trading artifact. Opening capture verifies the deployed candidate's
+embedded build, capital request and frozen plan; it cannot run under a research image identity.
+`bayn-research` contains the research server, GEPA, replay and study
+commands, frozen-control compiler receipts, Python, Git, Bun and Crane. The research artifact also owns
+`bayn-system-assessment`; `--system-*` qualification flags are removed from the financial-report command.
+Both artifacts must pass native architecture builds and publish successful receipts from the same source and CI run
+before Kargo can promote either workload. Their existing credentials and network policies remain separate.
+
 ## Reproducible image dependencies
 
 The Bayn Nix dependency build normalizes the two CLI symlinks in the
@@ -2155,6 +2168,9 @@ the financial PostgreSQL endpoint even when a different logical database is sele
 The archive installs only the epoch, chunk and end tables with the original SQL checksum, ordered-prefix and
 append-only guards. Both databases use separate local NVMe WAL volumes with required cross-host synchronous
 replication. Archive appends emit `bayn.native-arrival.append` spans including the durable commit and retries.
+Retryable connection failures and statement timeouts retain the same immutable batch through roughly one minute
+of reconnection attempts. Each SQL attempt and shutdown keep their existing deadlines, and the compressed queue
+keeps its byte bound. Lost commit acknowledgements still reconcile the exact prefix before returning success.
 Both databases retain TLS, checksums and the existing backup store with
 separate server prefixes. The financial database retains all historical recorder bytes for historical reads; current
 capture readers must use the archive connection. No financial history, authority, strategy, fees, freshness or inference
@@ -2573,7 +2589,7 @@ identity travel in the verified research receipt, with separate gateway and work
 See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
 for development access and the verified state migration.
 
-The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
+The published research image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 `bayn-jev-evaluate` is offline and never acquires provider credentials. Release and health verification must not issue
 paid inference outside admitted trading work or explicitly budgeted research with durable requests and receipts.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and

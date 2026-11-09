@@ -84,6 +84,18 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
   }
 })
 
+test('OpenCode CLI changes publish only the owning image', () => {
+  for (const [filename, expected] of [
+    ['bayn-build-push.yml', false],
+    ['opencode-build-push.yml', true],
+  ] as const) {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing publication inputs: ${filename}`)
+    expect(matchesPaths('nix/images/opencode-cli.nix', paths.map(text))).toBe(expected)
+  }
+})
+
 test('Bayn CI does not run trading qualification or native images for orchestration changes', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
@@ -111,6 +123,7 @@ test('Bayn CI does not run trading qualification or native images for orchestrat
       'nix/cache-push.sh',
       'nix/ci-run-timed.sh',
       'nix/oci-push.sh',
+      'nix/images/opencode-cli.nix',
     ])
       expect(matchesPaths(file, paths.map(text))).toBe(false)
     expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)

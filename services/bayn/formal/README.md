@@ -611,7 +611,8 @@ Statistical bounds remain conditional on the registered sampling and market assu
 identity; source capture and provenance checks must establish which actual evidence the model receives. Neither a
 successful build nor independent kernel acceptance grants capital authority or establishes profitability.
 
-`TradingScope.lean` maps to `src/execution/trading-scope.ts`, enforced by the physical broker mutation guard.
+`TradingScope.lean` maps to the entry policy in `src/execution/trading-scope.ts` and the submission gate in
+`src/execution/mutation-authority.ts`, enforced by the physical broker mutation guard.
 It proves crypto entries and crypto buys fail the current market scope while equity orders retain scope eligibility.
 Crypto sells still require every existing capital, ownership and risk check; scope eligibility is not execution authority.
 Executable conformance covers both markets and sides, and broker regressions verify zero crypto-buy transmissions.

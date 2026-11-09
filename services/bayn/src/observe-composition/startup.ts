@@ -21,6 +21,7 @@ import type {
 import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { validateMutationExecutionProgram } from './execution-cycle'
 import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
+import type { buildMutationShadowCycleDecision } from './decision-builder'
 
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
@@ -181,7 +182,8 @@ export const makeObserveAutonomousCycleStartup =
 export const makeMutationAutonomousCycleStartup =
   (
     input: MutationAutonomousCycleInput,
-    executionMode: MutationCycleExecutionMode = 'Mutation',
+    executionMode: MutationCycleExecutionMode,
+    buildDecision: typeof buildMutationShadowCycleDecision,
   ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   (startup) =>
     Effect.gen(function* () {
@@ -199,7 +201,7 @@ export const makeMutationAutonomousCycleStartup =
           executionMode === 'RecoveryOnly'
             ? { _tag: 'RecoveryOnly' }
             : { _tag: executionMode, executionProgram: input.executionProgram },
-          mutationDecisionBuilder(input, preparation, policy),
+          mutationDecisionBuilder(input, preparation, policy, buildDecision),
           'mutation autonomous cycle loop',
         ),
       )

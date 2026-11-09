@@ -1,3 +1,4 @@
+import { isProtectedEntryTarget } from './strategy/runtime-decision'
 import {
   decodeIntradayMomentumProtocol,
   defaultIntradayMomentumProtocolDocument,
@@ -88,6 +89,7 @@ import {
 } from './shadow-decision'
 import {
   decodeExecutionDecisionDocument,
+  executionDecisionPlannerInput,
   decodeObserveShadowDecisionDocument,
   makeExecutionDecisionDocument,
   type CycleDecisionDocument,
@@ -581,6 +583,63 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
+  test.each([{}, { AAPL: 0.02 }])(
+    'Jev decisions keep one copy of identical planning broker state: %j',
+    async (premiums) => {
+      const input = fixture(premiums)
+      const complete = {
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }
+      const target = input.compiledDecision
+      if (!isProtectedEntryTarget(target)) throw new Error('Expected a protected entry fixture')
+      expect(value(canonicalHashV1Result(input.plannerInput.brokerState))).toBe(
+        value(canonicalHashV1Result(target.evidence.observation.portfolio.brokerState)),
+      )
+      const document = await Effect.runPromise(buildExecutionDecision(complete))
+      expect(Object.hasOwn(document.plannerInput ?? {}, 'brokerState')).toBe(false)
+      const { contentHash: _hash, ...material } = document
+      const retained = value(makeExecutionDecisionDocument({ ...material, plannerInput: input.plannerInput }))
+      expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+      expect(Result.isSuccess(decodeExecutionDecisionDocument(retained))).toBe(true)
+      expect(document.targetPlan).toEqual(retained.targetPlan)
+      expect(document.deltaRisk).toEqual(retained.deltaRisk)
+      expect(Buffer.byteLength(JSON.stringify(document))).toBeLessThan(Buffer.byteLength(JSON.stringify(retained)))
+    },
+  )
+
+  test('a refreshed planning cut keeps its own state and cannot substitute the earlier observation', async () => {
+    const input = fixture()
+    const refreshed = brokerState(accountId, undefined, '2026-08-18T16:00:00.001Z')
+    const plannerInput = {
+      ...input.plannerInput,
+      brokerState: {
+        ...input.plannerInput.brokerState,
+        account: refreshed.account,
+        positionsObservedAt: refreshed.positionsObservedAt,
+        ordersObservedAt: refreshed.ordersObservedAt,
+        reconciliation: refreshed.reconciliation,
+      },
+    }
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        plannerInput,
+        targetPlan: value(planTargets(plannerInput)),
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }),
+    )
+    expect(Object.hasOwn(document.plannerInput ?? {}, 'brokerState')).toBe(true)
+    expect(executionDecisionPlannerInput(document)?.brokerState).toEqual(plannerInput.brokerState)
+    const { contentHash: _hash, ...material } = document
+    const { brokerState: _state, ...plannerFacts } = plannerInput
+    expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, plannerInput: plannerFacts }))).toBe(true)
+  })
+
   test.each([{}, { AAPL: 0.02 }])('Jev decisions reuse their verified observation rows: %j', async (premiums) => {
     const input = fixture(premiums)
     const complete = {
@@ -658,9 +717,11 @@ describe('intraday shadow decision', () => {
     expect(bound.document).toBe(document)
     expect(Object.isFrozen(document)).toBe(true)
     expect(Object.isFrozen(document.bindings)).toBe(true)
-    expect(Object.isFrozen(document.plannerInput?.brokerState.account)).toBe(true)
+    expect(Object.isFrozen(executionDecisionPlannerInput(document)?.brokerState.account)).toBe(true)
     expect(Object.isFrozen(input.plannerInput.brokerState.account)).toBe(false)
-    expect(document.plannerInput?.brokerState.account).not.toBe(input.plannerInput.brokerState.account)
+    expect(executionDecisionPlannerInput(document)?.brokerState.account).not.toBe(
+      input.plannerInput.brokerState.account,
+    )
     expect(() => Object.assign(document.bindings, { accountId: 'mutated' })).toThrow()
     const copy = structuredClone(document)
     Object.assign(copy.bindings, { accountId: 'mutated' })
@@ -1800,12 +1861,13 @@ describe('intraday shadow decision', () => {
         executionSession: executionSession(input),
       }),
     )
-    if (current.plannerInput === undefined) throw new Error('missing Jev planner evidence')
+    const currentPlanner = executionDecisionPlannerInput(current)
+    if (currentPlanner === undefined) throw new Error('missing Jev planner evidence')
     const { contentHash: _contentHash, ...material } = current
     for (const schemaVersion of ['bayn.intraday-momentum.target.v1', 'bayn.intraday-momentum.target.v2']) {
       const strategyDecision = { ...current.strategyDecision, schemaVersion, strategy: 'intraday-momentum' }
       const strategyDecisionHash = Result.getOrThrow(canonicalHashV1Result(strategyDecision))
-      const plannerInput = { ...current.plannerInput, decisionHash: strategyDecisionHash }
+      const plannerInput = { ...currentPlanner, decisionHash: strategyDecisionHash }
       const retired = {
         ...material,
         bindings: { ...material.bindings, strategyDecisionHash },
@@ -1889,7 +1951,7 @@ describe('intraday shadow decision', () => {
     )
     const { contentHash: _contentHash, ...material } = document
     expect(material.strategyDecision).toEqual(input.compiledDecision)
-    expect(material.plannerInput).toEqual(input.plannerInput)
+    expect(executionDecisionPlannerInput(document)).toEqual(input.plannerInput)
     const { plannerInput: _plannerInput, ...withoutPlannerInput } = material
     const missingPlannerInput = makeExecutionDecisionDocument(withoutPlannerInput)
     expect(Result.isFailure(missingPlannerInput)).toBe(true)

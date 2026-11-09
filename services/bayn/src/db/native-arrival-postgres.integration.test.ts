@@ -16,7 +16,9 @@ import {
   Stream,
 } from 'effect'
 import { ConnectionError, SqlError, StatementTimeoutError } from 'effect/sql/SqlError'
+import { TestClock } from 'effect/testing'
 
+import { provideTestLayer } from '../effect-test-support'
 import { canonicalJsonV1Result, canonicalHashV1Result, sha256 } from '../hash'
 import {
   decodeNativeArrivalChunk,
@@ -84,6 +86,84 @@ describePostgres('PostgreSQL native arrival retention', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('a 35-second connection refusal retains the capture and its exact queued prefix', async () => {
+    await runtime.runPromise(
+      provideTestLayer(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const firstCommitted = yield* Deferred.make<void>()
+            const secondCommitted = yield* Deferred.make<void>()
+            let available = false
+            let commits = 0
+            const disconnected = new SqlError({
+              reason: new ConnectionError({
+                cause: new Error('connect ECONNREFUSED during PostgreSQL switchover'),
+                message: 'PgConnection: Failed to connect',
+                operation: 'connect',
+              }),
+            })
+            const reconnecting = new Proxy(sql, {
+              get(target, property, receiver) {
+                if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
+                return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                  Effect.suspend(() =>
+                    available
+                      ? target
+                          .withTransaction(effect)
+                          .pipe(
+                            Effect.tap(() =>
+                              Deferred.succeed(++commits === 1 ? firstCommitted : secondCommitted, undefined),
+                            ),
+                          )
+                      : Effect.fail(disconnected),
+                  )
+              },
+            })
+            const capture = yield* makeNativeArrivalJournal(epoch, makeNativeArrivalStore(reconnecting), {
+              chunkBytes: 1,
+              queueBytes: 1024 * 1024,
+            })
+            yield* capture.observe(observation(1))
+            yield* TestClock.adjust('35 seconds')
+            const duringOutage = capture.status()
+            available = true
+            expect(duringOutage).toMatchObject({
+              status: 'RECORDING',
+              observedConsumerSequence: 1,
+              durableConsumerSequence: 0,
+              failure: null,
+            })
+            yield* TestClock.adjust('1 second')
+            yield* Deferred.await(firstCommitted)
+            yield* capture.observe(observation(2))
+            yield* Deferred.await(secondCommitted)
+            yield* TestClock.adjust(0)
+            expect(capture.status()).toMatchObject({
+              status: 'RECORDING',
+              observedConsumerSequence: 2,
+              durableConsumerSequence: 2,
+              failure: null,
+            })
+            const first = chunk(0, null)
+            expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([
+              first,
+              chunk(1, first.contentHash),
+            ])
+          }),
+        ),
+        TestClock.layer(),
+      ),
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [end] = yield* sql`SELECT payload FROM native_arrival_ends WHERE capture_id=${epoch.captureId}`
+        expect(end?.['payload']).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 2 })
+      }),
+    )
   })
 
   test.each(['connection', 'statement-timeout'] as const)(
@@ -242,10 +322,19 @@ describePostgres('PostgreSQL native arrival retention', () => {
         return store
       }),
     )
-    const exit = await runtime.runPromiseExit(store.append([chunk(0, null)]))
+    const exit = await runtime.runPromise(
+      provideTestLayer(
+        Effect.gen(function* () {
+          const append = yield* store.append([chunk(0, null)]).pipe(Effect.exit, Effect.forkChild)
+          yield* TestClock.adjust('61 seconds')
+          return yield* Fiber.join(append)
+        }),
+        TestClock.layer(),
+      ),
+    )
     expect(Exit.isFailure(exit)).toBe(true)
     const retryable = failure.startsWith('connection-') || failure.startsWith('statement-timeout-')
-    expect(attempts).toBe(retryable ? 3 : 1)
+    expect(attempts).toBe(retryable ? 62 : 1)
     if (Exit.isFailure(exit)) {
       if (failure === 'interruption') expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
       if (failure === 'defect' || failure === 'mixed')

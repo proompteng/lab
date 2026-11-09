@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 1 ]]; then
-  echo "Usage: verify-bayn-image-command <nix-image-tar>" >&2
+if [[ "$#" -ne 2 || ( "$2" != trading && "$2" != research ) ]]; then
+  echo "Usage: verify-bayn-image-command <nix-image-tar> <trading|research>" >&2
   exit 2
 fi
 
@@ -61,72 +61,73 @@ resolve_image_entry() {
   printf '%s\n' "${entry}"
 }
 
-forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
-forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
-opening_wrapper="$(resolve_image_entry /bin/bayn-control-opening)"
-opening_command="$(resolve_image_entry /app/services/bayn/dist/control-opening-command.js)"
-cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
-cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
-research_wrapper="$(resolve_image_entry /bin/bayn-research)"
-research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
-webull_research_wrapper="$(resolve_image_entry /bin/bayn-webull-research)"
-webull_research_command="$(resolve_image_entry /app/services/bayn/dist/webull-research-command.js)"
-gepa_wrapper="$(resolve_image_entry /bin/bayn-gepa)"
-gepa_runner="$(resolve_image_entry /app/services/bayn/gepa/runner.py)"
-evaluation_wrapper="$(resolve_image_entry /bin/bayn-jev-evaluate)"
-evaluation_command="$(resolve_image_entry /app/services/bayn/dist/jev-evaluation-command.js)"
-gepa_native_wrapper="$(resolve_image_entry /bin/bayn-gepa-native)"
-gepa_native_runner="$(resolve_image_entry /app/services/bayn/gepa/native.py)"
-backtest_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
-backtest_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
-frozen_control_wrapper="$(resolve_image_entry /bin/bayn-frozen-control-backtest)"
-frozen_control_command="$(resolve_image_entry /app/services/bayn/dist/frozen-control-command.js)"
-frozen_control_receipt="$(resolve_image_entry /app/services/bayn/dist/frozen-control-compiler.json)"
-research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
-execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
-market_projection_worker="$(resolve_image_entry /app/services/bayn/dist/market-projection-worker.js)"
-controller_command="$(resolve_image_entry /app/services/bayn/dist/index.js)"
-valkey_command="$(resolve_image_entry /app/services/bayn/dist/valkey-command.js)"
+role="$2"
 image_node="$(resolve_image_entry /bin/node)"
-streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
-
-test -x "${forward_wrapper}"
-test -f "${forward_command}"
-test -x "${cost_wrapper}"
-test -f "${cost_command}"
-test -x "${research_wrapper}"
-test -f "${research_command}"
-test -x "${webull_research_wrapper}"
-test -f "${webull_research_command}"
-test -x "${gepa_wrapper}"
-test -f "${gepa_runner}"
-test -x "${gepa_native_wrapper}"
-test -f "${gepa_native_runner}"
-test -x "${evaluation_wrapper}"
-test -f "${evaluation_command}"
-test -x "${backtest_wrapper}"
-test -f "${backtest_command}"
-test -x "${frozen_control_wrapper}"
-test -x "${opening_wrapper}"
-test -f "${opening_command}"
-test -f "${frozen_control_command}"
-test -f "${frozen_control_receipt}"
-test -f "${research_server}"
-test -f "${execution_server}"
-test -f "${market_projection_worker}"
 test -x "${image_node}"
-test -f "${streaming_diagnostics}"
 
-# Redis is bundled into these entrypoints. Inspect the archive contents so an
-# unchanged fixed-output dependency hash cannot silently package the old client.
-for bundle in "${controller_command}" "${execution_server}" "${valkey_command}"; do
-  if ! grep -Fq 'this.#connectController?.abort()' "${bundle}" ||
-    ! grep -Fq 'this.#connectWithSignal(retries, controller.signal)' "${bundle}" ||
-    ! grep -Fq 'AbortSignal.any([withDefaults.signal, signal])' "${bundle}"; then
-    echo "Bayn image bundle is missing native Redis connection cancellation: ${bundle##*/}" >&2
+if [[ "${role}" = trading ]]; then
+  for command in index restate-execution-server restate-execution-activate market-projection-worker \
+    forward-performance-command control-opening-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
+    test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
+  done
+  test -x "$(resolve_image_entry /bin/bayn-inference-cost)"
+  test -x "$(resolve_image_entry /bin/bayn-forward-performance)"
+  test -x "$(resolve_image_entry /bin/bayn-control-opening)"
+  test -f "$(resolve_image_entry /app/services/bayn/dist/jev-compiler-dependencies.json)"
+  for command in python python3 git bun crane bayn-research bayn-gepa bayn-backtest bayn-system-assessment; do
+    if [[ -e "${rootfs}/bin/${command}" || -L "${rootfs}/bin/${command}" ]]; then
+      echo "Trading image contains research executable ${command}." >&2
+      exit 1
+    fi
+  done
+  for command in restate-research-server research-command control-study-command system-assessment-command; do
+    if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
+      echo "Trading image contains research bundle ${command}." >&2
+      exit 1
+    fi
+  done
+  if [[ -d "${rootfs}/app/services/bayn/gepa" ]]; then
+    echo 'Trading image contains GEPA sources.' >&2
     exit 1
   fi
-done
 
-printf 'Bayn image command files verified in archive.\n'
-printf 'Bayn image native Redis cancellation verified in controller, execution server, and Valkey command.\n'
+  # Inspect the bundled client, not just its dependency manifest: the fixed-output
+  # dependency closure must preserve cancellation of stalled Redis connections.
+  for command in index restate-execution-server valkey-command; do
+    bundle="$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
+    if ! grep -Fq 'this.#connectController?.abort()' "${bundle}" ||
+      ! grep -Fq 'this.#connectWithSignal(retries, controller.signal)' "${bundle}" ||
+      ! grep -Fq 'AbortSignal.any([withDefaults.signal, signal])' "${bundle}"; then
+      echo "Bayn image bundle is missing native Redis connection cancellation: ${command}" >&2
+      exit 1
+    fi
+  done
+else
+  for command in system-assessment forward-performance research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export gepa gepa-native; do
+    test -x "$(resolve_image_entry "/bin/bayn-${command}")"
+  done
+  for command in restate-research-server system-assessment-command forward-performance-command research-command \
+    webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command native-arrival-export-command; do
+    test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
+  done
+  for receipt in jev-compiler-dependencies frozen-control-compiler; do
+    test -f "$(resolve_image_entry "/app/services/bayn/dist/${receipt}.json")"
+  done
+  for runner in runner native; do
+    test -f "$(resolve_image_entry "/app/services/bayn/gepa/${runner}.py")"
+  done
+  for command in git bun crane; do
+    test -x "$(resolve_image_entry "/bin/${command}")"
+  done
+  for command in restate-execution-server control-opening-command; do
+    if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
+      echo "Research image contains trading bundle ${command}." >&2
+      exit 1
+    fi
+  done
+  if [[ -e "${rootfs}/bin/bayn-control-opening" || -L "${rootfs}/bin/bayn-control-opening" ]]; then
+    echo 'Research image contains the trading opening-capture executable.' >&2
+    exit 1
+  fi
+fi
+printf 'Bayn %s image commands and role separation verified in archive.\n' "${role}"

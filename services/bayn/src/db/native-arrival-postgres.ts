@@ -125,8 +125,9 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        times: 2,
-        schedule: Schedule.spaced('100 millis'),
+        // A managed PostgreSQL switchover can refuse connections for tens of seconds.
+        // Keep the immutable batch queued while reconnecting; the existing byte bound still backpressures ingestion.
+        schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ duration: '1 minute' })),
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),
