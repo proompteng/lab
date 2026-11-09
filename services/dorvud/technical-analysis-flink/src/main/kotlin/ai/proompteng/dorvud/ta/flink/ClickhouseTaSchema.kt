@@ -87,7 +87,13 @@ private fun hasRequiredTaRetention(definition: String): Boolean {
   }
   val start = ttlStart ?: return false
   // Match the entire table-level action, never a column TTL or a conditional/move TTL prefix.
-  return depth == 0 && taRetention.matches(definition.substring(start, ttlEnd).trim().removeSuffix(";").trim())
+  val action =
+    definition
+      .substring(start, ttlEnd)
+      .trim()
+      .removeSuffix(";")
+      .trim()
+  return depth == 0 && taRetention.matches(action)
 }
 
 /**
@@ -150,4 +156,3 @@ internal fun verifyClickhouseTaSchema(
     "ClickHouse TA sink schema is incompatible; apply the reviewed schema migration before startup: ${issues.joinToString(", ")}"
   }
 }
-
