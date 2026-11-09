@@ -1,3 +1,4 @@
+import { buildMutationShadowCycleDecision } from '../observe-composition/decision-builder'
 import { Effect, Layer } from 'effect'
 
 import { makeApplicationPlan, type ApplicationPlan } from '../app'
@@ -138,6 +139,7 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
       )
       const mode = restricted ? 'CloseOnly' : 'Mutation'
       const engine = yield* makeTradingEngine({
+        buildDecision: buildMutationShadowCycleDecision,
         authority,
         riskPolicyHash: generation.riskPolicyHash,
         cycle: {
