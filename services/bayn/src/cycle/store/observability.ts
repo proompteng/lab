@@ -646,12 +646,11 @@ const makeCycleObservability = Effect.gen(function* () {
             SELECT EXISTS (
               SELECT 1
               FROM position_snapshots AS previous
-              JOIN latest_trusted_position_snapshot AS latest
-                ON previous.account_id = latest.account_id
-              WHERE previous.ingestion_order_trusted
-                AND previous.ingestion_sequence < latest.ingestion_sequence
+              WHERE previous.account_id = (SELECT account_id FROM latest_trusted_position_snapshot)
+                AND previous.ingestion_order_trusted
+                AND previous.ingestion_sequence < (SELECT ingestion_sequence FROM latest_trusted_position_snapshot)
                 AND previous.observed_at <= CURRENT_TIMESTAMP
-                AND previous.observed_at > latest.observed_at
+                AND previous.observed_at > (SELECT observed_at FROM latest_trusted_position_snapshot)
               UNION ALL
               SELECT 1
               FROM latest_legacy_position_snapshot_time AS legacy
