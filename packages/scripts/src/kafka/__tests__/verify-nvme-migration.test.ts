@@ -469,6 +469,22 @@ describe('Kafka NVMe migration verifier', () => {
     )
   })
 
+  it('allows an uncommitted transient group to disappear while retaining committed and explicit group checks', () => {
+    const baseline = snapshot()
+    baseline.groups.push({ ...baseline.groups[0], group: 'bayn-market-v1-old-run', currentOffset: null, lag: null })
+    const current = structuredClone(baseline)
+    current.groups = current.groups.filter((group) => group.group !== 'bayn-market-v1-old-run')
+
+    expect(compareSnapshots(baseline, current).pass).toBe(true)
+    expect(compareSnapshots(baseline, current, { requiredGroups: ['bayn-market-v1-old-run'] }).pass).toBe(false)
+    expect(compareSnapshots(baseline, current, { exactGroups: ['bayn-market-v1-old-run'] }).pass).toBe(false)
+
+    current.groups[0].currentOffset = '16'
+    expect(compareSnapshots(baseline, current).failures).toContain(
+      'Kafka committed offset changed for bayn-native-arrival/bayn.native-arrival.v1\u00000',
+    )
+  })
+
   it('treats exact-group as an explicit group requirement even when absent from baseline', () => {
     const report = compareSnapshots(snapshot(), snapshot(), { exactGroups: ['mistyped-group'] })
 
