@@ -32,12 +32,8 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import {
-  loadActiveStrategyProtocol,
-  makeActiveStrategyRuntime,
-  makeEntryAblationRuntime,
-  makeRepeatedMomentumRuntime,
-} from '../strategy'
+import { loadActiveStrategyProtocol, makeActiveStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { reproduceJevCandidateObservation } from '../jev/observation'

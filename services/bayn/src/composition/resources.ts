@@ -19,9 +19,7 @@ import { Effect, Layer } from 'effect'
 
 import type { ApplicationIdentity, ApplicationPlan } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
-import { live as BrokerReadOnlyResourcesLive } from '../broker/alpaca/session'
 import type { LoadedRuntimeConfig } from '../config/model'
-import { CycleObservabilityLive } from '../cycle/store/observability'
 import { WriterFencedCycleStoreLive } from '../cycle/store/postgres'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
@@ -33,7 +31,6 @@ import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-
 import { IntentStoreLive } from '../execution/intents/postgres'
 import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
-import { HttpServerLive } from '../http'
 import { JournalLive } from '../ledger'
 import { IntradayMarketData } from '../market-data/intraday/model'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
@@ -45,24 +42,12 @@ import { operationalError, type OperationalError } from '../errors'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
 
-export const PostgresClientResourceLive = (config: PostgresResourceConfig) => PostgresClientLive(config)
-
-export const JournalResourceLive = (config: LoadedRuntimeConfig) => JournalLive(config)
-
-export const CycleObservabilityResourceLive = CycleObservabilityLive
-
-export const ExecutionStoreResourceLive = (config: LoadedRuntimeConfig) => ExecutionStoreLive(config)
-
 export const ExecutionControllerStatusResourceLive = (config: PostgresResourceConfig) => {
   const postgres = PostgresLive(config)
   return Layer.merge(postgres, ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))).pipe(
     Layer.provideMerge(ApplicationPlatformLive),
   )
 }
-
-export const WriterFencedCycleStoreResourceLive = WriterFencedCycleStoreLive
-
-export const WriterFenceResourceLive = WriterFenceLive
 
 const BrokerObservationResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
   Layer.unwrap(
@@ -71,13 +56,10 @@ const BrokerObservationResourceLive = (config: Extract<LoadedRuntimeConfig, { re
     ),
   )
 
-export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
+const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
   AlpacaBrokerResourcesLive(config.alpaca).pipe(Layer.provide(BrokerObservationResourceLive(config)))
 
-export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
-
-const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
-  Layer.merge(HttpServerLive(config), ApplicationPlatformLive)
+const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
 
 const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
   {
@@ -157,26 +139,9 @@ const WorkerMarketDataLive = (
 }
 
 const PostgresLive = (config: PostgresResourceConfig) => {
-  const client = PostgresClientResourceLive(config)
+  const client = PostgresClientLive(config)
   const migrations = PostgresMigrationsLive(config)
   return Layer.merge(client, migrations)
-}
-
-/** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
-export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlan) => {
-  const postgres = PostgresClientResourceLive(plan.config)
-  const controllerStatus = ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))
-  const cycleObservability = CycleObservabilityResourceLive.pipe(Layer.provide(postgres))
-  return Layer.mergeAll(
-    postgres,
-    controllerStatus,
-    cycleObservability,
-    JournalResourceLive(plan.config),
-    BrokerReadOnlyResourcesLive(plan.config.alpaca).pipe(
-      Layer.provide(BrokerObservationResourceLive(plan.config)),
-      Layer.provide(postgres),
-    ),
-  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 export const AutonomousWorkerApplicationResourcesLive = (
@@ -188,15 +153,15 @@ export const AutonomousWorkerApplicationResourcesLive = (
   )
 
 export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
-  const postgres = PostgresClientResourceLive(plan.config)
-  const journal = JournalResourceLive(plan.config)
-  const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
+  const postgres = PostgresClientLive(plan.config)
+  const journal = JournalLive(plan.config)
+  const writerFence = WriterFenceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
     JevBatchStoreLive.pipe(Layer.provideMerge(JevEvaluationStoreLive)),
     EntryInferenceJournalLive,
     CandidateObservationStoreLive,
     JevPositionStoreLive,
-    ExecutionStoreResourceLive(plan.config),
+    ExecutionStoreLive(plan.config),
     BlockedCycleIntentStoreLive,
     IntentStoreLive,
     MutationStoreLive,
@@ -233,6 +198,6 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
         ),
     BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
-    WriterFencedCycleStoreResourceLive.pipe(Layer.provide(executionPersistence)),
+    WriterFencedCycleStoreLive.pipe(Layer.provide(executionPersistence)),
   ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }

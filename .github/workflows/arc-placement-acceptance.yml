@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Verify publication while all build slots are occupied
+      - name: Verify publication while the build slot is occupied
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -30,13 +30,13 @@ jobs:
           for _ in $(seq 1 90); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            test "$count" = 9 && break
+            test "$count" = 1 && break
             sleep 5
           done
-          test "$count" = 9
+          test "$count" = 1
           sleep 10
           start="$(date +%s)"
-          test "$ARC_RUNNER_NODE_NAME" = turin
+          test "$ARC_RUNNER_NODE_NAME" = talos-192-168-1-194
           test ! -S /var/run/docker.sock
           test -z "${DOCKER_HOST:-}"
           test -z "${BUILDKIT_HOST:-}"
@@ -56,9 +56,9 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 9
+      max-parallel: 1
       matrix:
-        slot: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        slot: [1]
     runs-on: arc-amd64
     env:
       SLOT: ${{ matrix.slot }}
@@ -69,10 +69,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          case "$ARC_RUNNER_NODE_NAME" in
-            turin|talos-192-168-1-194) ;;
-            *) exit 1 ;;
-          esac
+          test "$ARC_RUNNER_NODE_NAME" = talos-192-168-1-194
           for path in /nix /home/runner/.cache /tmp /home/runner/_work; do
             test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = xfs
           done
@@ -101,7 +98,7 @@ jobs:
           name: arc-ready-${{ github.run_attempt }}-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-ready.json
           retention-days: 1
-      - name: Require all nine slots concurrently
+      - name: Require the build slot
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -114,7 +111,7 @@ jobs:
           for _ in $(seq 1 90); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            if test "$count" = 9; then
+            if test "$count" = 1; then
               jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
               sleep 60
               jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
@@ -122,7 +119,7 @@ jobs:
             fi
             sleep 5
           done
-          echo 'All nine shared-label runner slots did not become ready concurrently' >&2
+          echo 'The Ryzen shared-label runner slot did not become ready' >&2
           exit 1
       - name: Publish concurrency proof
         uses: actions/upload-artifact@v4
@@ -142,16 +139,15 @@ jobs:
         with:
           name: arc-publication-${{ github.run_attempt }}
           path: publication
-      - name: Verify all nine slots overlapped on eligible hosts
+      - name: Verify the build and publication slots overlapped on Ryzen
         shell: bash
         run: |
           set -euo pipefail
           jq -s -e '
-            length == 9 and
-            ([.[].slot] | unique | length) == 9 and
-            ([.[].pod] | unique | length) == 9 and
-            all(.[]; .node == "talos-192-168-1-194" or .node == "turin") and
-            ([.[] | select(.node == "talos-192-168-1-194")] | length) <= 3 and
+            length == 1 and
+            ([.[].slot] | unique | length) == 1 and
+            ([.[].pod] | unique | length) == 1 and
+            all(.[]; .node == "talos-192-168-1-194") and
             ([.[].end] | min) - ([.[].start] | max) >= 45
           ' proof/*/arc-complete.json
           jq -s -e --slurpfile publication publication/arc-publication.json '

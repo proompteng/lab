@@ -89,20 +89,7 @@ describe('ARC Nix runner toolchain', () => {
 
       const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
       expect(pod.toJSON()).toMatchObject({
-        nodeSelector: { 'kubernetes.io/arch': 'amd64' },
-        affinity: {
-          nodeAffinity: {
-            requiredDuringSchedulingIgnoredDuringExecution: {
-              nodeSelectorTerms: [
-                {
-                  matchExpressions: [
-                    { key: 'kubernetes.io/hostname', operator: 'In', values: ['turin', 'talos-192-168-1-194'] },
-                  ],
-                },
-              ],
-            },
-          },
-        },
+        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
         initContainers: expect.arrayContaining([
           expect.objectContaining({
             volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
@@ -147,31 +134,26 @@ describe('ARC Nix runner toolchain', () => {
   it('keeps lab ARC runner concurrency capped', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 9')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 2')
-    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 4')
-    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 2')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 1')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
     expect(arcApplication).not.toContain('arc-amd64-turin')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
-  it('keeps all nine AMD64 slots schedulable when Ryzen has no memory for another runner', () => {
+  it('keeps all AMD64 runner scratch on Ryzen local storage', () => {
     const application = YAML.parseDocument(arcApplication)
     const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
     if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
-    expect(pod.toJSON().topologySpreadConstraints).toEqual([
-      {
-        maxSkew: 3,
-        topologyKey: 'kubernetes.io/hostname',
-        whenUnsatisfiable: 'ScheduleAnyway',
-        nodeTaintsPolicy: 'Honor',
-        labelSelector: {
-          matchLabels: { 'actions.github.com/scale-set-name': 'arc-amd64', 'app.kubernetes.io/component': 'runner' },
-        },
-      },
-    ])
+    expect(pod.toJSON().nodeSelector).toEqual({
+      'kubernetes.io/arch': 'amd64',
+      'kubernetes.io/hostname': 'talos-192-168-1-194',
+    })
+    expect(pod.toJSON().affinity).toBeUndefined()
+    expect(pod.toJSON().topologySpreadConstraints).toBeUndefined()
     expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
@@ -179,7 +161,6 @@ describe('ARC Nix runner toolchain', () => {
     const data = JSON.parse(String(config.getIn(['data', 'config.json'])))
     expect(data.nodePathMap).toEqual([])
     expect(data.storageClassConfigs['local-path-ci-amd64'].nodePathMap).toEqual([
-      { node: 'turin', paths: ['/var/mnt/turin-nvme-transcend'] },
       { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
       { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
     ])
@@ -197,7 +178,13 @@ describe('ARC Nix runner toolchain', () => {
         source.helm?.valuesObject?.runnerScaleSetName === 'arc-amd64-publish',
     )
     const pod = source.helm.valuesObject.template.spec
-    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' })
+    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' })
+    expect(pod.tolerations).toContainEqual({
+      key: 'workload.proompteng.ai/compute-local',
+      operator: 'Equal',
+      value: 'true',
+      effect: 'NoSchedule',
+    })
     expect(pod.automountServiceAccountToken).toBe(false)
     expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
     expect(pod.containers[0].securityContext.privileged).toBe(false)

@@ -20,7 +20,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'

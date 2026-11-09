@@ -581,6 +581,44 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
+  test.each([{}, { AAPL: 0.02 }])('Jev decisions reuse their verified observation rows: %j', async (premiums) => {
+    const input = fixture(premiums)
+    const complete = {
+      ...input,
+      authorityGenerationHash: hash('6'),
+      riskContext: fixtureRiskContext(input),
+      executionSession: executionSession(input),
+    }
+    const legacy = await Effect.runPromise(buildExecutionDecision(complete))
+    const { decisionMarketDataRows: rows, ...compact } = complete
+    const document = await Effect.runPromise(buildExecutionDecision(compact))
+    const baseline = {
+      documentBytes: Buffer.byteLength(JSON.stringify(legacy)),
+      duplicatedRowBytes: Buffer.byteLength(JSON.stringify(rows)),
+    }
+    expect(document.decisionMarketDataRows).toBeUndefined()
+    const { contentHash: _legacyHash, decisionMarketDataRows: _legacyRows, ...legacyMaterial } = legacy
+    const { contentHash: _compactHash, ...compactMaterial } = document
+    expect(compactMaterial).toEqual(legacyMaterial)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(legacy))).toBe(true)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+    expect(value(reproduceRecordedStreamingDecision(document)).snapshots).toHaveLength(
+      value(reproduceRecordedStreamingDecision(legacy)).snapshots.length,
+    )
+    expect(baseline.documentBytes - Buffer.byteLength(JSON.stringify(document))).toBeGreaterThanOrEqual(
+      baseline.duplicatedRowBytes,
+    )
+    const { contentHash: _hash, ...material } = document
+    expect(
+      Result.isFailure(
+        makeExecutionDecisionDocument({
+          ...material,
+          decisionMarketDataRows: { bars: [], quotes: [], trades: [] },
+        }),
+      ),
+    ).toBe(true)
+  })
+
   test.each([0, -10000])('durable Jev entry rejects a verified quote %s micros from its stop', async (offset) => {
     const input = fixture({ AAPL: 0.02 }, false, accountId, offset)
     expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
