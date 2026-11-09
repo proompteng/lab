@@ -23,12 +23,12 @@ let
     "backtest-command"
     "frozen-control-command"
     "control-study-command"
-    "control-opening-command"
     "native-arrival-export-command"
     "webull-research-command"
   ] else [
     "index"
     "forward-performance-command"
+    "control-opening-command"
     "restate-execution-server"
     "restate-execution-activate"
     "market-projection-worker"
@@ -236,7 +236,7 @@ import ./bun-workspace-service.nix {
     pkgs.cacert
     inferenceCostCommand
     forwardPerformanceCommand
-  ] ++ lib.optionals research [
+  ] ++ lib.optionals (!research) [ controlOpeningCommand ] ++ lib.optionals research [
     systemAssessmentCommand
     researchCommand
     gepaCommand
@@ -248,7 +248,6 @@ import ./bun-workspace-service.nix {
     frozenControlCommand
     controlCommand
     nativeArrivalExportCommand
-    controlOpeningCommand
     webullResearchCommand
     gepaPython
     pkgs.go-containerregistry

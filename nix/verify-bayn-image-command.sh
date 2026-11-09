@@ -67,11 +67,12 @@ test -x "${image_node}"
 
 if [[ "${role}" = trading ]]; then
   for command in index restate-execution-server restate-execution-activate market-projection-worker \
-    forward-performance-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
+    forward-performance-command control-opening-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done
   test -x "$(resolve_image_entry /bin/bayn-inference-cost)"
   test -x "$(resolve_image_entry /bin/bayn-forward-performance)"
+  test -x "$(resolve_image_entry /bin/bayn-control-opening)"
   test -f "$(resolve_image_entry /app/services/bayn/dist/jev-compiler-dependencies.json)"
   for command in python python3 git bun crane bayn-research bayn-gepa bayn-backtest bayn-system-assessment; do
     if [[ -e "${rootfs}/bin/${command}" || -L "${rootfs}/bin/${command}" ]]; then
@@ -102,10 +103,10 @@ if [[ "${role}" = trading ]]; then
     fi
   done
 else
-  for command in system-assessment forward-performance control-opening research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export gepa gepa-native; do
+  for command in system-assessment forward-performance research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export gepa gepa-native; do
     test -x "$(resolve_image_entry "/bin/bayn-${command}")"
   done
-  for command in restate-research-server system-assessment-command forward-performance-command control-opening-command research-command \
+  for command in restate-research-server system-assessment-command forward-performance-command research-command \
     webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command native-arrival-export-command; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done
@@ -118,8 +119,14 @@ else
   for command in git bun crane; do
     test -x "$(resolve_image_entry "/bin/${command}")"
   done
-  if [[ -e "${rootfs}/app/services/bayn/dist/restate-execution-server.js" ]]; then
-    echo 'Research image contains the trading execution server.' >&2
+  for command in restate-execution-server control-opening-command; do
+    if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
+      echo "Research image contains trading bundle ${command}." >&2
+      exit 1
+    fi
+  done
+  if [[ -e "${rootfs}/bin/bayn-control-opening" || -L "${rootfs}/bin/bayn-control-opening" ]]; then
+    echo 'Research image contains the trading opening-capture executable.' >&2
     exit 1
   fi
 fi

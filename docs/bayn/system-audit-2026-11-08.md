@@ -140,6 +140,8 @@ The changes below are source changes until their reviewed image receipts and dep
   CI run `42577558311` verifies the actual trading and research archives on AMD64 and ARM64 at `4cc29d4350`.
   The trading image retains the two files required by physical candidate-image qualification, including its
   backtest bundle and dependency receipt. Python, GEPA, Git, Bun and registry tools remain research-only.
+  Opening capture also remains in the trading image to preserve the frozen plan's physical candidate-build identity.
+  It is removed from the research payload; no identity override or weakened capital check is introduced.
   The original AMD64 image has 396,205,749 compressed layer bytes; replacement OCI size remains unmeasured locally.
 - B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
   bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
