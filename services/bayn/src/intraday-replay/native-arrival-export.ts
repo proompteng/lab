@@ -5,16 +5,25 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   decodeNativeArrivalChunk,
   nativeArrivalCaptureId,
+  NativeArrivalEpochSchema,
   type NativeArrivalChunk,
   type NativeArrivalEpoch,
 } from '../market-data/streaming/native-arrival'
-import { NonNegativeIntegerSchema } from '../schemas'
+import { NonNegativeIntegerSchema, Sha256Schema } from '../schemas'
 import {
   openBacktestSource,
   ReplaySourceFailure,
   validateBacktestSourceManifest,
   validateBacktestSourceReceipt,
 } from './source'
+
+export const NativeArrivalExportManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.native-arrival-export.v1'),
+  epoch: NativeArrivalEpochSchema,
+  throughOrdinal: NonNegativeIntegerSchema,
+  finalChunkHash: Sha256Schema,
+  dataSha256: Sha256Schema,
+})
 
 /** Export one immutable consumer prefix. Never filter markets, reset sequence numbers or stitch epochs. */
 export const exportNativeArrivalPrefix = <E, R>(input: {
@@ -83,7 +92,7 @@ export const exportNativeArrivalPrefix = <E, R>(input: {
     const inventory = [...positions.values()].sort((a, b) =>
       a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : a.partition - b.partition,
     )
-    const exportManifest = {
+    const exportManifest: typeof NativeArrivalExportManifestSchema.Type = {
       schemaVersion: 'bayn.native-arrival-export.v1',
       epoch,
       throughOrdinal,

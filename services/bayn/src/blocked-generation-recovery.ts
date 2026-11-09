@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect'
 
-import type { AuthorityGenerationStoreShape } from './db/execution-store'
+import type { AuthorityGenerationStoreShape } from './db/execution-store/contract'
 import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
 import { Authority, KillState } from './execution/contracts'
 import { legacyObserveSuccessorGenerationSchemaVersion } from './execution/legacy-wire'

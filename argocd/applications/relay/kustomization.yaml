@@ -12,4 +12,4 @@ configMapGenerator:
 images:
 - name: relay-main
   newName: registry.ide-newton.ts.net/lab/relay
-  digest: sha256:59b55211268550b16abbaa3077c159fe8a2ddee91ee2f8da6a18005e206efd53
+  digest: sha256:76df7334dc5fc46987ac62afa126b7844de6f9282cb4d996a7787fe15ac954d5

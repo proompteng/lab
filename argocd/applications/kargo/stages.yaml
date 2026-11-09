@@ -617,6 +617,16 @@ spec:
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
               - key: spec.template.spec.containers.0.env.16.value
                 value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/froussard/approval-worker.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.3.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.4.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
         - uses: git-commit
           as: commit
           config:

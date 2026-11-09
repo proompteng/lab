@@ -68,7 +68,9 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       'packages/scripts/src/tengri/__tests__/schema.test.ts',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
     ])
-      expect(matchesPaths(file, patterns)).toBe(false)
+      expect(matchesPaths(file, patterns)).toBe(
+        filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml',
+      )
     for (const file of [
       'nix/cache-push.sh',
       'nix/oci-push.sh',
@@ -114,6 +116,33 @@ test('Bayn CI does not run trading qualification or native images for orchestrat
     expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
     expect(matchesPaths('nix/images/bayn.nix', paths.map(text))).toBe(true)
   }
+})
+
+test('Bayn publication ignores Froussard-only dependencies and still selects Bayn runtime changes', () => {
+  const configured = parseTargets("image: ['', 'services/bayn']", '', '.github/workflows/bayn-build-push.yml', 'push')
+  const prior = {
+    ...before,
+    workspaces: { ...before.workspaces, 'apps/froussard': { name: 'froussard', dependencies: {} } },
+  }
+  const next = {
+    ...prior,
+    workspaces: {
+      ...prior.workspaces,
+      'apps/froussard': { name: 'froussard', dependencies: { '@restatedev/restate-sdk': '1.16.5' } },
+    },
+    packages: {
+      ...prior.packages,
+      '@restatedev/restate-sdk': ['@restatedev/restate-sdk@1.16.5', '', {}, 'sdk-integrity'],
+    },
+  }
+  expect(selectAffectedInputs(['bun.lock', 'apps/froussard/package.json'], configured, prior, next).image).toBe(false)
+  expect(selectAffectedInputs(['services/bayn/src/runtime.ts'], configured, prior, next).image).toBe(true)
+  expect(selectAffectedInputs(['services/bayn/package.json'], configured, prior, next).image).toBe(true)
+  const changedDependency = {
+    ...next,
+    packages: { ...next.packages, client: ['client@1.1.0', '', {}, 'new-integrity'] },
+  }
+  expect(selectAffectedInputs(['bun.lock'], configured, prior, changedDependency).image).toBe(true)
 })
 
 test('App source changes do not force dependency downloads; dependency input changes still do', () => {
@@ -593,7 +622,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     const head = commit(after)
     git('checkout', '-b', 'base', initial)
     const base = commit({ ...before, configVersion: 0 })
-    const run = (event: string, baseSha: string) => {
+    const run = (event: string, baseSha: string, dependencyAwarePush = 'false') => {
       const output = join(dir, 'output')
       writeFileSync(output, '')
       execFileSync(process.execPath, [script], {
@@ -606,6 +635,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
           INPUT_WORKSPACES: 'bayn: ["", "services/bayn"]\nlanding: ["", "apps/landing"]',
           INPUT_FILTERS: 'bayn: ["bun.lock"]\nlanding: ["bun.lock"]',
           INPUT_WORKFLOW: '',
+          INPUT_DEPENDENCY_AWARE_PUSH: dependencyAwarePush,
           GITHUB_OUTPUT: output,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -614,6 +644,9 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     }
     expect(run('pull_request', base)).toEqual({ bayn: false, landing: true })
     expect(run('push', base)).toEqual({ bayn: true, landing: true })
+    expect(run('push', initial, 'true')).toEqual({ bayn: false, landing: true })
+    expect(run('push', base, 'true')).toEqual({ bayn: true, landing: true })
+    expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({ bayn: true, landing: true })
     expect(() => changedRange('pull_request', '', head)).toThrow('valid nonzero')
   } finally {

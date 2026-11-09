@@ -12,6 +12,12 @@ contains `bayn-control-study`.
 without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
 Installing the command does not schedule a capture, run a study, or qualify the input.
 
+The [November 9 prospective commitment](prospective/2026-11-09-controls.json) records the plan, design, released
+commands, source inventory query and input metadata hashes for that session. Verify the retained private plan and
+design bytes against those hashes before use. Establish their pre-open commitment through the file's Git commit and
+the matching GitHub CI run's server-recorded creation time and head SHA. Local timestamps do not establish that proof.
+This is a descriptive policy comparison; unknown costs, calibration and statistical qualification remain explicit.
+
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). `entry: "JEV"` adds an independent native entry
 portfolio with mechanical exits. `entry: "DETERMINISTIC"` retains deterministic entries. Only
@@ -28,6 +34,61 @@ market metadata to the serialized native protocol. Preparation rejects an interv
 session before any model dispatch.
 
 ## Offline input preflight
+
+### Bind a frozen plan to native opening evidence
+
+Run `bun run --filter @proompteng/bayn control:bind` to construct the sole v10 input from a
+`bayn.control-study-plan.v1`, a retained `bayn.control-study-opening.v1`, and the native export directory:
+
+```sh
+bun run --filter @proompteng/bayn control:bind \
+  --plan /private/plan.json --plan-sha256 <independently-retained-plan-sha256> \
+  --opening /private/opening.json --opening-sha256 <retained-native-opening-sha256> \
+  --export /private/native-export --source-receipt-sha256 <independently-retained-receipt-sha256> \
+  --output /private/new-bound-input
+```
+
+Freeze the plan bytes and independently establish their existence before the first session opens. The plan contains
+the deterministic mechanical control template and the candidate's broker identity, request, authority generation and
+native risk policy. It omits source, opening cash and opening equity peak. The opening file carries the candidate's
+retained native preflight inputs, physical build, broker identity, request and actual daily turnover. Capture those
+inputs from the native broker/PostgreSQL/TigerBeetle evidence path; never hand-enter or reset balances.
+
+Capture that file with the reviewed deployed binary, using the independently frozen plan:
+
+```sh
+bayn-control-opening \
+  --plan /private/plan.json --plan-sha256 <independently-retained-plan-sha256> \
+  --output /private/new-native-opening
+```
+
+The command requires an embedded production build, the configured sealed sandbox request and the exact frozen
+account, build and native risk policy. Before reconciliation, the existing native generation verifier checks durable
+authority history against the sealed request and its configured continuation or build lineage. Capture requires that
+verified generation to match the frozen plan and checks the reconciler's returned generation again. It acquires only
+broker read access; it cannot submit orders or activate
+capital. Normal reconciliation may retain broker events, accounting and ledger effects, and restrict authority on a
+discrepancy. It does not initialize a new generation, reset balances or change limits. The captured inputs include
+the native accounting hash, original equity peak, actual daily turnover and day-start equity, including used budgets.
+An output directory is claimed before reconciliation; reusing it fails without another pass. Native clients close
+before private `opening.json` and the final `opening-receipt.json` are published. A failure leaves no completed receipt.
+The printed opening SHA-256 pins the file for binding. Capture near the first regular open; a capture made earlier
+is diagnostic evidence and will fail binding's freshness check. The capture receipt does not independently authenticate
+when the file existed or qualify an economic result.
+
+Binding requires the same account, build and risk policy, exact flat native state, fully available cash, fresh observations
+available before the first regular open, zero used daily turnover and unchanged day-start equity. The comparison interval
+must start and finish at regular-session boundaries. It inherits the actual cash and original peak, including
+used drawdown. A different request, stale state, noncash equity or a changed export is rejected. Unknown costs remain
+null and every execution assumption stays frozen. `input.json` and the final `binding.json` use private permissions in
+a new directory. Existing output is never overwritten. Pass `input.json` and its printed SHA-256 to the existing study
+or preflight command below.
+
+The binding records byte identities and capital derivation. It does not authenticate when files existed or validate
+the market-data file. The study reader retains whole-file replay verification. Source and opening provenance,
+prospective completeness, calibration, full costs and economic qualification still require their own evidence.
+
+### Check complete input coverage
 
 Run the command with `--mode preflight` and the same pinned input, arrivals and source receipt before an economic
 study. It writes `bayn.control-input-preflight.v1` to the new `--output` path without selecting signals, constructing
