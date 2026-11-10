@@ -239,6 +239,7 @@ export const acquireBrokerObservationRuntime = (
             }
             return yield* settleCompletedBrokerObservationPoll(
               Effect.gen(function* () {
+                let sessionVerified = false
                 const capture = Effect.gen(function* () {
                   const broker = yield* ScopedRef.get(brokerRuntimes)
                   const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
@@ -246,7 +247,9 @@ export const acquireBrokerObservationRuntime = (
                   return yield* Effect.promise((captureSignal) =>
                     broker.runtime.runPromiseExit(
                       Effect.gen(function* () {
-                        return yield* broker.capture((yield* BrokerSession).read, ticket, captureTimeoutMs)
+                        const session = yield* BrokerSession
+                        sessionVerified = true
+                        return yield* broker.capture(session.read, ticket, captureTimeoutMs)
                       }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                       { signal: captureSignal },
                     ),
@@ -277,16 +280,28 @@ export const acquireBrokerObservationRuntime = (
                     orElse: () =>
                       Effect.fail(
                         observationUnavailable(
-                          'Broker observation acquisition exceeded its deadline',
+                          sessionVerified
+                            ? 'Broker observation polling exceeded its deadline'
+                            : 'Broker observation acquisition exceeded its deadline',
                           undefined,
-                          BrokerPollFailureReason.AcquisitionDeadline,
+                          sessionVerified
+                            ? BrokerPollFailureReason.PollDeadline
+                            : BrokerPollFailureReason.AcquisitionDeadline,
                         ),
                       ),
                   }),
-                  // Stop lazy layer acquisition on every failed exit before any known-work quota settlement.
-                  Effect.onExit((exit) =>
-                    Exit.isFailure(exit) ? ScopedRef.set(brokerRuntimes, acquireBroker) : Effect.void,
-                  ),
+                  Effect.onExit((exit) => {
+                    if (Exit.isSuccess(exit)) return Effect.void
+                    const retryableReadFailure =
+                      exit.cause.reasons.length > 0 &&
+                      exit.cause.reasons.every((reason) => reason._tag === 'Fail' && reason.error.retryable)
+                    // A rejected or timed-out cut already discards its retained history. Keep the verified
+                    // connection for the next quota-paced poll instead of repeating startup preflight.
+                    // Acquisition failures and uncertain exits must still stop their lazy resource scope.
+                    return sessionVerified && retryableReadFailure
+                      ? Effect.void
+                      : ScopedRef.set(brokerRuntimes, acquireBroker)
+                  }),
                   Effect.result,
                 )
                 if (Result.isFailure(result)) {
