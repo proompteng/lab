@@ -4,6 +4,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
 import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
@@ -394,6 +395,10 @@ export const accountProtectionWork = (
       sourceAt: inputs.observedAt,
       correct:
         reproduced !== undefined &&
+        observation.readiness?.reason ===
+          (reproduced.reasons.length > 0
+            ? DecisionReadinessReason.AccountProtection
+            : DecisionReadinessReason.TurnoverBudgetExhausted) &&
         candidate !== undefined &&
         (yield* canonicalHashV1Result(reproduced.protection)) === (yield* canonicalHashV1Result(summary)) &&
         (yield* canonicalHashV1Result(inputs.policy)) === candidate.riskPolicyHash &&
