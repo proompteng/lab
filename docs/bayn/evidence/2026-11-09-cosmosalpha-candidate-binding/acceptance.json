@@ -1,0 +1,252 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-candidate-binding-acceptance.v1",
+  "classification": "FUNCTIONAL_ACCEPTANCE_COMPLETE",
+  "experimentId": "a03d6b441ffde7b69a5ee20def8f7eb8f7812fa79d7a283ae6a864482451f1c8",
+  "frozenAt": "2026-11-10T07:36:24.073408+00:00",
+  "freezeReceipt": "acceptance-freeze.json",
+  "freezeReceiptSha256": "fa6edcb20a14689722c503720b16d29c4b3d7bbb7044f337fafda5447a748392",
+  "planSha256": "ceadebd3c9e898057b860a5e2eda8ff8abfbe5d9a0b25fb2931b9950f0ed5287",
+  "resultSha256": "247f0fe2f314c6e59898a09c0d11f9771b4efffa4386d98318a998cf9face3d5",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "sourceInventoryId": "651a11dfc78f75893051ae809e27979365e2bda11b1a294eb7027deb9d8524a9",
+  "sourceIdentitySha256": "e26973edc6128b7bb316392993f3b78b4079a115da38de62d1abe84bf20daa5c",
+  "controllerSha256": "0f8f9a3f8d370fc867c585ee740f703b93596de89044026318f14a76c27498c6",
+  "importProvenanceSha256": "6a8e5f83625efa1ddc314851e067bcdca96554f679e3356640fff1f4daee8572",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "verifiedTargetRows": 1165440,
+  "supervisor": {
+    "startedAt": "2026-11-10T07:39:20.830634+00:00",
+    "finishedAt": "2026-11-10T08:15:05.829002+00:00",
+    "wallSeconds": 2144.9983992729976,
+    "wallLimitReached": false,
+    "exitCode": 0
+  },
+  "supervisorReceiptSha256": "bf57986e47c3c3b766cbd370978b4c574fbcff309764ed20857bed9128c1a6b5",
+  "limitsPerArm": {
+    "evaluable_factors": 4,
+    "proposal_slots": 16,
+    "physical_requests": 80,
+    "completion_tokens": 800000,
+    "max_output_tokens": 20000
+  },
+  "resources": {
+    "requestedProposalSlots": 20,
+    "physicalRequests": 39,
+    "completionTokens": 138638,
+    "promptTokens": 105245,
+    "rejectedRequests": 0,
+    "heldCompletionTokens": 0,
+    "unknownUsageRequests": 0,
+    "evaluableFactors": 12,
+    "evaluationAttempts": 12,
+    "completedEvaluations": 12,
+    "pendingEvaluations": 0,
+    "successfulAuxiliaryResponses": 3,
+    "failedAuxiliaryResponses": 0
+  },
+  "arms": [
+    {
+      "runId": "calendar-acceptance-20260823-graph",
+      "arm": "graph",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "wallSeconds": 673.9305826799828,
+      "identityUnchanged": true,
+      "resources": {
+        "requestedProposalSlots": 6,
+        "physicalRequests": 14,
+        "completionTokens": 53198,
+        "promptTokens": 37517,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 0,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      },
+      "receiptSha256": "3360b03c1214f867909cf9ec28655432a86f2ec3902f81cfde371116fa00ab94"
+    },
+    {
+      "runId": "calendar-acceptance-20260823-mcts",
+      "arm": "mcts",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "wallSeconds": 804.602119483985,
+      "identityUnchanged": true,
+      "resources": {
+        "requestedProposalSlots": 8,
+        "physicalRequests": 11,
+        "completionTokens": 47492,
+        "promptTokens": 30455,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 3,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      },
+      "receiptSha256": "d8e23befddeb730c7aec045bd3eedba20b45c6de4d2921d7ae92c1aa9cb489c8"
+    },
+    {
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "arm": "no-flow",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "wallSeconds": 480.0074585840048,
+      "identityUnchanged": true,
+      "resources": {
+        "requestedProposalSlots": 6,
+        "physicalRequests": 14,
+        "completionTokens": 37948,
+        "promptTokens": 37273,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 0,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      },
+      "receiptSha256": "1482980c06d56fbf0d214096039212d993d58cdc317d987f27b37cb7eac11e19"
+    }
+  ],
+  "modelsCompleted": 3,
+  "models": [
+    {
+      "runId": "calendar-acceptance-20260823-graph",
+      "status": "COMPLETE",
+      "metrics": {
+        "effective_sample_count": 358412,
+        "ic_ir": 0.17468267148593858,
+        "ic_mean": 0.017284470775923294,
+        "ic_std": 0.09894782710209833,
+        "rank_ic_ir": 0.3737006387735874,
+        "rank_ic_mean": 0.03539804398204535,
+        "rank_ic_std": 0.09472299565292376,
+        "schema_version": "lightgbm-signal-metrics/1.0",
+        "valid_date_count": 1210
+      },
+      "portfolioMetrics": {
+        "annualized_return": 0.042114187721282795,
+        "calmar_ratio": 0.1199306896773485,
+        "information_ratio": 0.23971693259215493,
+        "max_drawdown": -0.3511543862090953,
+        "return_mode": "absolute",
+        "schema_version": "lightgbm-portfolio-metrics/1.0"
+      }
+    },
+    {
+      "runId": "calendar-acceptance-20260823-mcts",
+      "status": "COMPLETE",
+      "metrics": {
+        "effective_sample_count": 358412,
+        "ic_ir": 0.041378051124177646,
+        "ic_mean": 0.0028317983622418367,
+        "ic_std": 0.06843720971158031,
+        "rank_ic_ir": 0.09995732443451434,
+        "rank_ic_mean": 0.007079838395955029,
+        "rank_ic_std": 0.07082861046959382,
+        "schema_version": "lightgbm-signal-metrics/1.0",
+        "valid_date_count": 1210
+      },
+      "portfolioMetrics": {
+        "annualized_return": 0.06312019585166298,
+        "calmar_ratio": 0.22462119475375625,
+        "information_ratio": 0.37229584145349925,
+        "max_drawdown": -0.28100730174131283,
+        "return_mode": "absolute",
+        "schema_version": "lightgbm-portfolio-metrics/1.0"
+      }
+    },
+    {
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "status": "COMPLETE",
+      "metrics": {
+        "effective_sample_count": 358409,
+        "ic_ir": 0.2730272095687478,
+        "ic_mean": 0.023765828498500504,
+        "ic_std": 0.0870456411140821,
+        "rank_ic_ir": 0.4530543072402207,
+        "rank_ic_mean": 0.03881874055642615,
+        "rank_ic_std": 0.0856823121115224,
+        "schema_version": "lightgbm-signal-metrics/1.0",
+        "valid_date_count": 1210
+      },
+      "portfolioMetrics": {
+        "annualized_return": 0.01808510117557238,
+        "calmar_ratio": 0.04129103473764065,
+        "information_ratio": 0.09562186207526674,
+        "max_drawdown": -0.43799098982341833,
+        "return_mode": "absolute",
+        "schema_version": "lightgbm-portfolio-metrics/1.0"
+      }
+    }
+  ],
+  "frozenAudit": {
+    "status": "PASS",
+    "verificationFailures": 0,
+    "reportSha256": "add62607154c180d9a313fbd84d49d070210add4efab3fbd0484e31da34f2bfe"
+  },
+  "independentDownstreamVerification": {
+    "status": "PASS",
+    "modelsVerified": 3,
+    "outputArtifactsVerified": 18,
+    "predictionTargetRowsVerified": 1076118,
+    "dailySignalRowsVerified": 3630,
+    "portfolioReturnRowsVerified": 3636,
+    "maximumAggregateMetricAbsoluteError": 2.7755575615628914e-17,
+    "maximumDailyCorrelationAbsoluteError": 3.885780586188048e-16,
+    "absoluteTolerance": 1e-12,
+    "reportSha256": "6768277de22ea7d0e2487c1ab3844cbe155a5e9400a1bb614976c255e640c3b8",
+    "verifierSha256": "2907c406e7938e99b08a09c8e08bc8668b9394da69818fa9c68efe9bf5ea7bee",
+    "definitionAndCorruptionCasesPassed": 9,
+    "definitionAndCorruptionLogSha256": "2f8405db67c21ad11afcaabbbd9a407cd95f59d0233da0532a00691eb93f1f65",
+    "negativeCaseLogNote": "The final printed FAIL with two models is the expected injected-missing-model case; the nine-test suite exits zero.",
+    "scope": "All planned model outputs, raw prediction-target joins, daily IC/RankIC and seven aggregate metrics. Portfolio math is conditional on saved daily returns; no independent fill replay, feature reconstruction, industry lineage or costed strategy qualification."
+  },
+  "retainedCandidateBindingVerification": {
+    "status": "PASS_RETAINED_CANDIDATE_EVIDENCE",
+    "recordsChecked": 4,
+    "candidateCountPerRecord": 1,
+    "selectedArtifactReferencesVerified": 12,
+    "artifactRowsPerReference": 685511,
+    "liveDesignBatches": 4,
+    "liveTwoDesignResults": 0,
+    "reportSha256": "0d779f849e9c223ec5e828a889ed68ddc1a08c038752043d331d73a8a94a10bc",
+    "auditScript": "audit_native_binding.py",
+    "auditScriptSha256": "958798e7ea190521966fabbffd27763ef880cbc58c46c21de6ed7c397f95a3a2",
+    "nativeTreeVerification": {
+      "status": "NOT_AVAILABLE",
+      "treeSnapshots": 0,
+      "nodesCompared": 0,
+      "checks": [],
+      "terminationReason": "evaluable-factor-target",
+      "factorArraysPersistedInNativeNodes": false,
+      "limitation": "Quota-stop can precede native tree persistence. Native node arrays are memory-only; selected artifact bytes are verified separately. Two-design node binding is proved by the exact-source regression, not by these single-design live results."
+    },
+    "scope": "Replay the exact native selector for unambiguous retained candidates; compare native records, acceptance decisions, cycle/pool CSVs and raw/evaluated/target artifact identities and alignment. No evaluation rerun or missing-node reconstruction."
+  },
+  "runtime": {
+    "python": "3.12.9",
+    "platform": "Linux-6.18.58-talos-x86_64-with-glibc2.40",
+    "lightgbmBinarySha256": "573d57e8a2c6290c2271b99b87afa7a802e796eafc9e8d66aefa0913cbc1616a",
+    "installedDistributionCount": 197,
+    "dependencySnapshot": "../2026-11-09-cosmosalpha-root-acceptance/requirements-linux.txt"
+  },
+  "externalModelFeeUsd": 0,
+  "localHardwareAndResearchCost": "UNALLOCATED",
+  "scientificMatrixRuns": 0,
+  "capitalAuthority": "NONE",
+  "scope": "Separate frozen functional acceptance of the candidate-binding source. All original failed and diagnostic experiments remain unchanged. Four factors per arm and one seed do not establish scientific superiority or costed Bayn trading edge. Native portfolios retain the reference 100-million book, zero transaction costs and signed arithmetic-return drawdown; industry PIT and historical feature-calendar semantics remain unqualified. No independent fill replay or live-capital authority."
+}
