@@ -82,6 +82,8 @@ import { positionDecodeDiagnostic } from './response-decode-diagnostics'
 import { readTransportInterceptor, withReadTransportDiagnostics } from './transport-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
+// Calendar discovery must leave time for the rest of the bounded recovery pass.
+const marketCalendarTimeoutMs = 5_000
 
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
@@ -165,6 +167,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       operation: BrokerReadOperation,
       url: URL,
       decoder: Decoder<A>,
+      timeoutMs = connection.operationTimeoutMs,
     ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> =>
       Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
@@ -288,12 +291,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             : undefined
         return { value, evidence, ...(diagnostic === undefined ? {} : { diagnostic }) }
       }).pipe(
-        Effect.timeout(`${connection.operationTimeoutMs} millis`),
+        Effect.timeout(timeoutMs),
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
             : Cause.isTimeoutError(cause)
-              ? timeoutError(operation, connection.operationTimeoutMs, cause, sensitiveValues)
+              ? timeoutError(operation, timeoutMs, cause, sensitiveValues)
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
@@ -373,9 +376,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson('market-calendar', marketCalendarUrl(connection, decoded), decodeMarketCalendar).pipe(
-            Effect.map((result) => ({ decoded, result })),
-          ),
+          readJson(
+            'market-calendar',
+            marketCalendarUrl(connection, decoded),
+            decodeMarketCalendar,
+            Math.min(connection.operationTimeoutMs, marketCalendarTimeoutMs),
+          ).pipe(Effect.map((result) => ({ decoded, result }))),
         ),
         Effect.flatMap(({ decoded, result }) =>
           normalizeRead('market-calendar', result.evidence, normalizeMarketCalendarResult(result.value, decoded)),

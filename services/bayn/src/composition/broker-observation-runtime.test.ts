@@ -11,6 +11,46 @@ import {
 } from '../simulation-reconciliation/broker-reconciler-model'
 import { brokerPollFailureAnnotations, brokerPublicationFailureAnnotations } from './broker-observation-runtime'
 
+test.each([
+  'retryable',
+  'timeout',
+  'identity',
+  'permission',
+  'mixed',
+  'defect',
+  'interruption',
+  'acquisition',
+] as const)('recovers a %s capture with the required session ownership and finalization', async (mode) => {
+  const child = Bun.spawn(['bun', `${import.meta.dir}/broker-observation-recovery.test-support.ts`, mode], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' })
+  const line = stdout.split('\n').find((value) => value.startsWith('BROKER_RECOVERY_RESULT='))
+  if (line === undefined) throw new Error(`Broker recovery worker returned no result: ${stdout}`)
+  const result = JSON.parse(line.slice('BROKER_RECOVERY_RESULT='.length))
+  const retained = mode === 'retryable' || mode === 'timeout'
+  expect(result.first).toBe(mode === 'defect' || mode === 'interruption' ? 'Failed' : 'Unavailable')
+  expect(result.recovered).toBe('Published')
+  expect(result.publications).toBe(1)
+  expect(result.acquisitions).toBe(retained ? 1 : 2)
+  expect(result.disposedAfterFirst).toBe(retained || mode === 'acquisition' ? 0 : 1)
+  expect(result.disposed).toBe(retained || mode === 'acquisition' ? 1 : 2)
+  expect(result.captures).toBe(mode === 'acquisition' ? 1 : 2)
+  expect(result.finalized).toBe(result.captures)
+  expect(result.settlements).toBe(mode === 'defect' || mode === 'interruption' ? 0 : 1)
+  if (mode === 'timeout')
+    expect(result.logs).toContainEqual({
+      message: ['Broker observation poll failed'],
+      annotations: expect.objectContaining({ 'broker.poll_failure_reason': 'POLL_DEADLINE' }),
+    })
+})
+
 test('snapshot diagnostics expose only direct typed reasons and allowlisted first-mismatch categories', () => {
   for (const reason of [
     'HistoryChanged',

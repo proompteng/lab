@@ -727,6 +727,14 @@ rechecks PostgreSQL fences, account binding, original times and content identity
 Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
 PostgreSQL payload fallback or cache-disable mode.
 
+A retryable snapshot rejection or read timeout discards the cut and its retained history,
+then waits for the existing quota boundary before polling again. The already verified
+broker session stays open, so transient fill convergence does not repeat startup preflight.
+Failed acquisition, account or permission rejection, defects and external interruption
+still dispose the session before recovery. Failed publication remains unavailable.
+Market-calendar HTTP reads share a five-second budget across headers, body and retries,
+or the configured operation deadline when shorter, leaving time for the bounded recovery pass.
+
 `bun run valkey:verify` exercises authenticated writes, replica acknowledgement,
 reads, deletion and expiry. Add `--broker` to verify the actual fenced broker
 materializations and collect 20 samples of full and compact read latency and
@@ -1881,6 +1889,18 @@ removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
+
+Controller rotation commits the active successor in one exclusive transition after a fresh broker publication;
+it never persists an inactive intermediate owner. The exact predecessor epoch and binding still fence the change,
+and a failed or uncertain projection replays the same successor projection. A deactivation during preparation
+supersedes the pending rotation. Retained `activate` and `deactivate` calls remain supported.
+An unavailable initial broker capture waits for the existing serial poll owner to recover. Shared status establishes
+progress only; a fresh exclusive capture confirms publication before rotation. Readiness uses bounded journaled
+batches with durable waits and a new immutable-target/authority preflight between batches. The workflow can remain
+pending beyond the hook client's wait and finish when the broker recovers, while a superseding deployment or
+deactivation fences it. It never resumes an administratively paused Restate invocation. The broker observation
+store still has one revision-bound owner: cutover can make predecessor broker reads unavailable, and the old source
+does not regain trading permission. Native passes retain their independent freshness and authority checks.
 
 Controller completion persists the earlier of the worker's absolute next wake and the ordinary polling deadline.
 Worker completion, persistence and transport time consume that wait instead of restarting it. An elapsed wake runs

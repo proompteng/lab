@@ -11,9 +11,11 @@ readback. Require zero open broker positions and unresolved mutations before sto
 PostgreSQL image, existing accounts and authentication. Current arrival histories must be compared by capture ID
 and exact content before merging. An empty statistics estimate does not mean a table is empty.
 
-Use a bounded, owned Argo AppProject deny window for `bayn` and `bayn-valkey`, with manual sync allowed, before
-merging. Verify neither Application is already syncing. The window prevents automatic rollout while source data
-is being moved; it does not change runtime trading authority. Retain the original project resource and remove only
+Use bounded, owned Argo AppProject deny windows for `bayn` and `bayn-valkey` before merging. Verify neither
+Application is already syncing. Block both automatic and manual Bayn application sync while source data is moving:
+Kargo can request a manual sync through `argocd-update`. Valkey may separately allow a scoped manual sync of its
+reviewed storage change before replacing its claims. Permit the full Bayn rollout only after the merge and final
+replica placement are verified. These windows do not change runtime trading authority. Retain the original project resource and remove only
 the owned entry when done. Use the reviewed immutable image, Kargo Freight and generated Stage commit for the
 application rollout. Do not bump images manually or deploy code from an unreviewed worktree.
 
@@ -26,8 +28,11 @@ existing nodes in the host selector and add Ryzen's compute-local toleration. Al
 hostname anti-affinity, synchronous `ANY 1` and NVMe data/WAL claims. The temporary third failure domain keeps two
 verified durable copies available while an original instance is replaced. Restore final placement before release.
 
-Wait for the new Ryzen instance to catch up, then promote it with the CNPG plugin. Check required synchronous
-replication and data continuity. Destroy only the verified former Turin standby instance and its original claim
+Wait for the new Ryzen instance to catch up and for CNPG to finish any Pod refresh caused by the temporary placement
+change. Require three ready instances, phase `Cluster in healthy state`, and matching current/target primary before
+promoting Ryzen with the CNPG plugin. Wait for the same stable conditions after promotion. Capture a primary WAL
+LSN and require both standbys to replay through it before replacing either one; instantaneous zero lag can race with
+ongoing WAL generation. Check required synchronous replication and data continuity. Destroy only the verified former Turin standby instance and its original claim
 identities using CNPG's native reconstruction procedure. Retain its original backing volumes until verification.
 Verify the replacement claims have new UIDs and class `local-path`, the mounts are physical NVMe and replication
 has caught up. Promote Turin, then reconstruct the original Altra standby in the same way. Never destroy the
@@ -48,7 +53,7 @@ binary COPY over verified TLS without keeping another full dump on disk. The rec
 ordered-prefix triggers stay enabled. Each capture is verified against its source epoch identity, complete ordered
 header-hash manifest and end marker. SQL checksums bind the copied compressed bytes to each retained header.
 A retry reconciles the already copied prefix and resumes; it never overwrites differing immutable evidence. Keep
-the fenced source and its backup until the unified database has passed actual consumers and a fresh backup.
+the fenced source and its backup until the unified database has passed actual consumers and backup recovery verification.
 
 Deliver the reviewed application through normal Kargo and Argo gates only after the data merge succeeds. Resume
 retained invocations on a compatible deployment and complete the native activation handoff. Verify both PostgreSQL
@@ -63,8 +68,18 @@ cannot prove current in-memory contents. Keep one live verified copy throughout.
 through the owning Application. If its StatefulSet template is immutable, orphan and recreate only that owned
 StatefulSet from the reviewed template, preserving its Pods and identity. Replace the replica claim first, leaving
 its source volume retained. Verify the new NVMe replica has caught up and its non-expired keys/values/absolute
-expirations match. Use coordinated Valkey FAILOVER to promote it, verify service routing and replication, then
-replace the former primary volume. Do not enable persistence, change ACLs, flush keys or extend expirations.
+expirations match. Before replacing a replica, pause the exact controller and broker-observation invocations and
+complete a manual BGSAVE on both members. Verify each snapshot succeeded without changing the disabled automatic
+persistence policy. Repeat the snapshot on each replacement after replication catches up.
+
+The operator's manual monitor reads the preferred primary from ConfigMap `rf-ha-repl-bayn-valkey`, key `master`,
+formatted as `<pod-ip>:6379`. A native FAILOVER alone is reverted by the operator. Verify the ConfigMap's UID,
+resource version and current primary address, then update that preference to the caught-up replacement and use
+coordinated Valkey FAILOVER. Require the ConfigMap, native replication roles and read/write Service endpoint to
+agree before replacing the former primary volume. Restore the original primary ordinal through the same preference
+update and coordinated failover after both replacements are healthy. Force application clients to reconnect if they
+retain connections to the former role, then resume the retained invocations. Do not change ACLs, flush keys, extend
+expirations or enable automatic persistence.
 
 Run the existing full Argo acceptance hook and `dist/valkey-command.js --broker` from API and execution replicas.
 Verify a publication-sized write, replica acknowledgement, reads, deletion and expiration. Remove only migration
@@ -72,8 +87,12 @@ canaries. Preserve all current application semantics and require both data direc
 
 ## Finish
 
-Take and verify a fresh unified PostgreSQL backup and current WAL archiving. Compare source capture manifests and
-financial readback, verify both replicas and actual application behavior, then retire the fenced archive cluster,
+Create a named restore point after the merge and verify its WAL and timeline history are archived. Restore a
+completed base backup plus the archived WAL chain to that point in an isolated CNPG cluster. Compare the recovered
+capture manifests and financial readback with the unified source, then remove the recovery cluster and its claims.
+This verifies that backups recover the newly merged data even when the base backup predates the merge; retain the
+normal full-backup schedule and retention policy. Verify both production replicas and actual application behavior,
+then retire the fenced archive cluster,
 its old claims and only the replaced active Valkey Ceph volumes. Keep the original historical backup retention.
 Remove the migration Job/ConfigMap, temporary third instance, owned deny window, diagnostic containers/forwards,
 and retained retired local directories or Ceph images after verifying exact identities. Confirm normal GitOps and
