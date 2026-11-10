@@ -45,25 +45,40 @@ Keep the pinned PostgreSQL image and existing generated credentials.
 2. Wait for the third instance to finish physical bootstrap and reach streaming with negligible replay lag.
    Read `pg_stat_replication`, slots, `synchronous_standby_names` and PVC node/path mappings. Check archived WAL
    and retained capture prefixes before retiring any original instance.
-3. With the original primary and new off-host synchronous standby healthy, retire the old Ceph standby:
-   `kubectl cnpg --context galactic-tailscale -n bayn destroy bayn-native-arrival-db <number> --keep-pvc`.
-   Preserve its detached claims until final verification. Let CNPG reconstruct its replacement on NVMe.
-4. Once that replacement is caught up, promote it with the same plugin's `promote` command. Verify its off-host
-   synchronous standby before retiring the former primary. Reconstruct that instance on NVMe.
-   Never retire an active primary or two instances together.
-5. Ship the final manifest: two instances, required 100G affinity, no Ryzen toleration, and annotation
-   `cnpg.io/reconciliationLoop: enabled`. Immediately before syncing it, pause only this cluster's reconciliation
-   with `cnpg.io/reconciliationLoop=disabled`, retire the temporary Ryzen standby with `destroy --keep-pvc`,
-   then sync that reviewed final revision to resume at two instances. PostgreSQL keeps serving on both 100G hosts.
-   Do not simply scale three healthy instances down: CNPG selects the highest-numbered standby, not necessarily Ryzen.
+3. Promote the caught-up NVMe replica with the CNPG plugin's `promote` command, unless CNPG's managed rolling
+   update has already promoted it. Verify its identity, off-host
+   synchronous standby, archived WAL and retained capture prefixes before retiring an original instance.
+   Subsequent replicas can then copy from NVMe instead of reading the entire archive from Ceph again.
+   Keep the original Altra standby while its full backup is running; do not interrupt that backup to reclaim its node.
+4. After verifying that the original Turin instance is a standby and Altra is caught up, retire it with
+   `kubectl cnpg --context galactic-tailscale -n bayn destroy bayn-native-arrival-db 1`.
+   Do not use `--keep-pvc` for a storage-class change: the operator can reuse those original claims and rebuild on
+   Ceph again. Verify that replacement data and WAL claims have new UIDs and class `local-path` before accepting
+   the rebuild. If an older plugin left detached claims, delete only their verified original UIDs after the new
+   primary's preservation checks pass. Remove a pending join Job after those claims are gone if it still references
+   missing claims, then let CNPG provision the replacements.
+   Wait for the new Turin member to catch up and promote it. Verify retained data again, then retire the original
+   Altra standby after its backup completes. Wait for its NVMe replacement. Never retire an active primary or two
+   instances together; keep two verified, physically separate durable copies throughout.
+5. Verify the actual member identities before merging the final two-instance manifest: members 1 and 2 must be
+   healthy on Turin and Altra with both data and WAL on NVMe, member 1 must be primary, and temporary member 3 on
+   Ryzen must be a caught-up standby. CNPG's native scale-down removes the highest-numbered standby, so this state
+   retires member 3 without pausing reconciliation or adding a publication-time guard. Keep normal image-cohort
+   validation and Kargo/Argo delivery; verify the resulting two-host placement.
 6. Verify physical separation, NVMe data/WAL mounts, required synchronous replication, fsync/full-page writes,
    checksums, archived WAL and capture prefixes. Exercise new durable appends and controller reads. Compare live
    population histograms, traces, logs and sampled DB waits while recording arrival rate and backup activity.
 7. After successful verification, remove only detached migration claims and their identified retained WAL paths.
    Remove diagnostics and forwards. Do not touch control-database claims or unrelated storage.
 
-On failure, stop retiring instances. Preserve the healthy primary, off-host synchronous standby and original claims.
+On failure, stop retiring instances. Preserve the healthy primary, off-host synchronous standby and remaining original claims.
 Investigate without permitting asynchronous commits. A missing synchronous standby must block writes.
+
+The first managed switchover refused archive connections for about 35 seconds. The recorder's two 100 ms retries
+exhausted before recovery and left its capture incomplete. Appends now retry the same immutable batch once per second
+for up to one minute of scheduled retry time. Each database operation retains its existing deadline, cancellation,
+checksum and lost-acknowledgement reconciliation. The compressed queue remains bounded and applies backpressure.
+Unrelated defects and validation failures remain terminal. An exhausted capture remains honestly incomplete.
 
 References: [CNPG storage recreation](https://cloudnative-pg.io/docs/1.30/storage/#re-creating-storage),
 [CNPG durability](https://cloudnative-pg.io/docs/1.30/replication/#data-durability-and-synchronous-replication),

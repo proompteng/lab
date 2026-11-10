@@ -36,15 +36,16 @@ jobs:
           filters: |
             bayn:
               - 'services/bayn/**'
+              - '!services/bayn/README.md'
               - '!services/bayn/formal/**'
               - 'services/dorvud/**'
               - 'packages/scripts/src/bayn/**'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
               - 'argocd/applications/bayn/**'
+              - '!argocd/applications/bayn/README.md'
               - 'argocd/applications/torghut/clickhouse/**'
               - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
-              - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/bayn-frozen-control.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
@@ -77,9 +78,9 @@ jobs:
               - '.github/workflows/bayn-ci.yml'
             image:
               - 'services/bayn/**'
+              - '!services/bayn/README.md'
               - '!services/bayn/formal/**'
               - 'nix/images/bayn.nix'
-              - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/bayn-frozen-control.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'

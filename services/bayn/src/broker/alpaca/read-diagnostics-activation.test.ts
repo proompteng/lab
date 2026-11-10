@@ -187,6 +187,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       }
       const context = {
         key: controllerKey,
+        date: { now: async () => Date.parse('2026-11-09T18:00:00.000Z') },
         request: () => ({
           id: 'blocked-activation',
           headers: new Map([['authorization', `Bearer ${token}`]]),

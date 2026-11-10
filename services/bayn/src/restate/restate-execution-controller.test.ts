@@ -69,11 +69,12 @@ type Delivery = {
   readonly idempotencyKey?: string
 }
 
-const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
-  (
+const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) => {
+  const object = (
     controller as unknown as {
       readonly object: {
         readonly activate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
+        readonly rotate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly tick: (ctx: TestContext, candidate: unknown) => Promise<void>
         readonly deactivate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly prepareActivation: (
@@ -84,6 +85,21 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
       }
     }
   ).object
+  return {
+    ...object,
+    activateDeployment: (context: ObjectSharedContext, candidate: unknown) =>
+      object.activateDeployment(
+        {
+          ...context,
+          date: {
+            ...context.date,
+            now: context.date?.now ?? (async () => fixtureTransportClock.currentTimeMillisUnsafe()),
+          },
+        } as ObjectSharedContext,
+        candidate,
+      ),
+  }
+}
 
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
 
@@ -858,7 +874,7 @@ describe('native Restate execution controller', () => {
     expect(genericCalls).toBe(1)
   })
 
-  test('does not activate execution when the initial broker poll has no published cut', async () => {
+  test('does not activate execution while the broker poll has no published cut and waiting is interrupted', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
@@ -882,6 +898,9 @@ describe('native Restate execution controller', () => {
         },
       }),
       genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1 }),
+      sleep: async () => {
+        throw new Error('readiness wait interrupted')
+      },
     } as unknown as ObjectSharedContext
     const failure = await handlers(controller)
       .activateDeployment(context, {
@@ -891,7 +910,7 @@ describe('native Restate execution controller', () => {
         sourceRevision,
       })
       .catch((cause: unknown) => cause)
-    expect(String(failure)).toContain('requires a fresh published broker observation')
+    expect(String(failure)).toContain('readiness wait interrupted')
     expect(activations).toBe(0)
   })
 
@@ -1067,7 +1086,7 @@ describe('native Restate execution controller', () => {
       objectClient: () => ({
         prepareActivation: async () => state,
         status: async () => state,
-        deactivate: (request: unknown) => object.deactivate(controllerContext, request),
+        rotate: (request: unknown) => object.rotate(controllerContext, request),
         activate: (request: unknown) => object.activate(controllerContext, request),
       }),
       sleep: async () => {
@@ -1102,12 +1121,9 @@ describe('native Restate execution controller', () => {
       lastCompletion: { sequence: 13, outcome: ExecutionControllerOutcome.Blocked },
       nextSequence: 14,
     })
-    expect(projectedStates).toHaveLength(2)
-    expect(projectedStates[0]).toMatchObject({ active: false, epoch: 5, ...previousBinding })
-    expect(projectedStates[1]).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision, nextSequence: 12 })
+    expect(projectedStates).toHaveLength(1)
+    expect(projectedStates[0]).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision, nextSequence: 12 })
     expect(events).toEqual([
-      'deactivation-projected',
-      'state-committed',
       'activation-projected',
       'state-committed',
       'first-pass-scheduled',

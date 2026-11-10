@@ -43,6 +43,58 @@ const sample = (metrics: string, phase: string, outcome: string, statistic = 'co
     )?.[1] ?? 0,
   )
 
+test.each([
+  { phase: 'headers', operationTimeoutMs: 30_000, deadlineMs: 5_000 },
+  { phase: 'body', operationTimeoutMs: 30_000, deadlineMs: 5_000 },
+  { phase: 'headers', operationTimeoutMs: 1_000, deadlineMs: 1_000 },
+  { phase: 'body', operationTimeoutMs: 1_000, deadlineMs: 1_000 },
+])(
+  'calendar $phase waits cancel within $deadlineMs ms of the whole read',
+  async ({ phase, operationTimeoutMs, deadlineMs }) => {
+    let finalized = 0
+    let calls = 0
+    await Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const blocked = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(Effect.sync(() => finalized++)),
+      )
+      const headerTimeMs = phase === 'body' ? 600 : 0
+      const client = HttpClient.make((request) => {
+        calls++
+        if (phase === 'headers') return blocked
+        return TestClock.adjust(headerTimeMs).pipe(
+          Effect.map(() =>
+            Object.defineProperty(HttpClientResponse.fromWeb(request, new Response('[]', { headers })), 'json', {
+              value: blocked,
+            }),
+          ),
+        )
+      })
+      yield* Effect.gen(function* () {
+        const broker = yield* make({ ...connection, operationTimeoutMs })
+        const pending = yield* broker
+          .marketCalendar({ start: '2026-11-09', end: '2026-11-09' })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(deadlineMs - headerTimeMs - 1)
+        expect(finalized).toBe(0)
+        yield* TestClock.adjust(1)
+        const exit = yield* Fiber.join(pending)
+        if (Exit.isSuccess(exit)) throw new Error('calendar unexpectedly exceeded its read budget')
+        expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+          operation: 'market-calendar',
+          kind: BrokerReadErrorKind.Timeout,
+          retryable: true,
+          message: `Alpaca market-calendar exceeded its ${deadlineMs}ms deadline`,
+        })
+        expect(finalized).toBe(1)
+        expect(calls).toBe(1)
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client))
+    }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([])), Effect.runPromise)
+  },
+)
+
 test('headers and body timings remain separate and preserve complete response evidence', async () => {
   let calls = 0
   const client = HttpClient.make((request) =>

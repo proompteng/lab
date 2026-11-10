@@ -79,6 +79,18 @@ are excluded from metric labels.
 
 Missing series and no-traffic quantiles remain unknown. The dashboard does not replace absent evidence with zeros.
 
+`bayn_scheduler_delay_seconds` measures the monotonic excess delay resuming a one-second diagnostic sleep in
+execution workers with OTLP metrics enabled. It shares the existing service/source identity and exporter; it makes no
+network or database calls. One completed wake-up produces one sample, with no synthetic catch-up samples after a stall.
+Scope shutdown interrupts the sleep. A diagnostic defect stops the sampler with a fixed warning and does not change trading
+or exporter behavior. Missing samples do not mean zero delay.
+
+Compare its source-bound histogram with an over-deadline operation's exact trace. For example, a SET lasting longer
+than the one-second command deadline can reflect delayed local timer processing as well as remote latency. The
+sampler measures local scheduling delay, not a specific CPU, garbage-collection, network or Valkey cause; a stall can
+overlap multiple operations. It does not change operation deadlines, the required replica acknowledgment, polling
+quota, freshness or authority. Confirm subsequent successful replicated publication separately.
+
 ## Alerts and diagnosis
 
 The `bayn-cache-performance.rules` Mimir group contains eight rules. They use the existing trading email route.

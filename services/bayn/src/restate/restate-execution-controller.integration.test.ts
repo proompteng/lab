@@ -22,7 +22,7 @@ const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_IN
 const describeRestate = admin === undefined || ingress === undefined ? describe.skip : describe
 
 describeRestate('Real Restate execution deployment activation', () => {
-  test('new Jobs recover after dependency failure while restarted waiters reuse one native coordinator', async () => {
+  test('one durable activation recovers after dependency failure while restarted waiters reuse its coordinator', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress]) {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
@@ -40,6 +40,11 @@ describeRestate('Real Restate execution deployment activation', () => {
     let brokerPolls = 0
     let brokerReady = false
     let failedPollNotBeforeMs = 0
+    const brokerPollAttempts: Array<{
+      readonly startedAtMs: number
+      readonly nextPollNotBeforeMs: number
+      readonly outcome: 'Failed' | 'QuotaWait' | 'Published'
+    }> = []
     let controllerActivations = 0
     let warmupGate: Promise<void> | undefined
     let warmupEntered = () => {}
@@ -75,17 +80,33 @@ describeRestate('Real Restate execution deployment activation', () => {
         },
         poll: async () => {
           const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
-          if (failedPollNotBeforeMs > now)
+          if (failedPollNotBeforeMs > now) {
+            brokerPollAttempts.push({
+              startedAtMs: now,
+              nextPollNotBeforeMs: failedPollNotBeforeMs,
+              outcome: 'QuotaWait',
+            })
             return {
               poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
               startedAtMs: now,
               completedAtMs: now,
             }
+          }
           brokerPolls += 1
           if (!brokerReady) {
             failedPollNotBeforeMs = now + 5_000
+            brokerPollAttempts.push({
+              startedAtMs: now,
+              nextPollNotBeforeMs: failedPollNotBeforeMs,
+              outcome: 'Failed',
+            })
             throw new Error('Broker observation dependency is temporarily unavailable')
           }
+          brokerPollAttempts.push({
+            startedAtMs: now,
+            nextPollNotBeforeMs: failedPollNotBeforeMs,
+            outcome: 'Published',
+          })
           return {
             poll: { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
             startedAtMs: now,
@@ -106,9 +127,10 @@ describeRestate('Real Restate execution deployment activation', () => {
           }),
         ),
       )
+    const activationJobUid = randomUUID()
     const deployment = {
       ...config,
-      ...(await Effect.runPromise(loadAttempt(randomUUID()))),
+      ...(await Effect.runPromise(loadAttempt(activationJobUid))),
     }
     const firstRequest = restateExecutionActivationRequest(deployment, token)
     const body = firstRequest.body
@@ -167,60 +189,29 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(yield* Effect.promise(() => wrongKey.text())).toContain('does not match this immutable deployment')
           expect(brokerActivations).toBe(0)
           expect(controllerActivations).toBe(0)
-          for (const method of ['activate', 'tick', 'deactivate', 'prepareActivation', 'status']) {
+          for (const method of ['activate', 'rotate', 'tick', 'deactivate', 'prepareActivation', 'status']) {
             const denied = yield* invoke(config.controllerKey, method, `Bearer ${token}`)
             expect(denied.status).toBe(400)
             expect(yield* Effect.promise(() => denied.text())).toContain('the invoked service is not public')
           }
           const url = `${ingress}${firstRequest.path}`
-          const failedOptions = { timeoutMs: 5_000, headers: firstRequest.headers }
-          const failed = yield* sendRestateInvocation(url, body, failedOptions)
-          const failure = yield* Effect.flip(
-            awaitRestateInvocation(ingress, failed.invocationId, {
+          const options = { timeoutMs: 5_000, headers: firstRequest.headers }
+          const accepted = yield* sendRestateInvocation(url, body, options)
+          const waiting = yield* Effect.flip(
+            awaitRestateInvocation(ingress, accepted.invocationId, {
               maximumAttempts: 100,
               pollIntervalMs: 100,
               requestTimeoutMs: 5_000,
             }),
           )
-          expect(failure).toMatchObject({
-            operation: 'await',
-            cause: { message: 'Restate invocation output returned HTTP 400' },
-          })
-          expect(controllerActivations).toBe(0)
-          brokerReady = true
-          const failedReplay = yield* sendRestateInvocation(url, body, failedOptions)
-          expect(failedReplay.invocationId).toBe(failed.invocationId)
-          expect(
-            yield* Effect.flip(
-              awaitRestateInvocation(ingress, failedReplay.invocationId, {
-                maximumAttempts: 1,
-                pollIntervalMs: 100,
-                requestTimeoutMs: 5_000,
-              }),
-            ),
-          ).toMatchObject({ operation: 'await' })
-          const replacementJobUid = randomUUID()
-          const retry = restateExecutionActivationRequest(
-            { ...config, ...(yield* loadAttempt(replacementJobUid)) },
-            token,
-          )
-          const options = {
-            timeoutMs: 5_000,
-            headers: retry.headers,
-          }
-          const accepted = yield* sendRestateInvocation(url, retry.body, options)
-          expect(accepted.invocationId).not.toBe(failed.invocationId)
-          const waiting = yield* Effect.flip(
-            awaitRestateInvocation(ingress, accepted.invocationId, {
-              maximumAttempts: 1,
-              pollIntervalMs: 100,
-              requestTimeoutMs: 5_000,
-            }),
-          )
           expect(waiting.message).toBe('Restate invocation remains incomplete after the bounded completion check')
+          expect(controllerActivations).toBe(0)
+          expect(brokerPollAttempts.some((attempt) => attempt.outcome === 'Failed')).toBe(true)
+          expect(brokerPollAttempts.some((attempt) => attempt.outcome === 'QuotaWait')).toBe(true)
+          brokerReady = true
           for (let restart = 0; restart < 2; restart += 1) {
             const restarted = restateExecutionActivationRequest(
-              { ...config, ...(yield* loadAttempt(replacementJobUid)) },
+              { ...config, ...(yield* loadAttempt(activationJobUid)) },
               token,
             )
             const resumed = yield* sendRestateInvocation(url, restarted.body, {
@@ -230,8 +221,9 @@ describeRestate('Real Restate execution deployment activation', () => {
             expect(resumed.invocationId).toBe(accepted.invocationId)
             expect(resumed.status).toBe(RestateSendStatus.PreviouslyAccepted)
           }
+          // The waiter can reconnect after the retained deadline. Prove quota from actual
+          // poll boundaries below, not from time remaining when the test resumes.
           const quotaWaitMs = Math.max(0, failedPollNotBeforeMs - (yield* Clock.currentTimeMillis))
-          expect(quotaWaitMs).toBeGreaterThan(0)
           const output = yield* awaitRestateInvocation(ingress, accepted.invocationId, {
             maximumAttempts: Math.ceil((quotaWaitMs + 15_000) / 100) + 1,
             pollIntervalMs: 100,
@@ -253,6 +245,15 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(brokerPolls).toBeGreaterThanOrEqual(1)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
+          expect(brokerPollAttempts.some((attempt) => attempt.outcome === 'Published')).toBe(true)
+          for (const [index, attempt] of brokerPollAttempts.entries()) {
+            if (attempt.outcome === 'QuotaWait') {
+              expect(attempt.startedAtMs).toBeLessThan(attempt.nextPollNotBeforeMs)
+              expect(brokerPollAttempts[index + 1]?.startedAtMs).toBeGreaterThanOrEqual(attempt.nextPollNotBeforeMs)
+            } else if (attempt.outcome === 'Published') {
+              expect(attempt.startedAtMs).toBeGreaterThanOrEqual(attempt.nextPollNotBeforeMs)
+            }
+          }
           const journal = yield* Effect.tryPromise({
             try: async (signal) => {
               const response = await fetch(`${admin}/query`, {
@@ -273,7 +274,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                       AND id IN (SELECT id FROM sys_invocation
                         WHERE target_service_name = 'BaynExecutionController'
                           AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick')) AS lazy_tick_state_reads
-                    FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
+                    FROM sys_journal WHERE id = '${accepted.invocationId}'`,
                 }),
                 headers: { 'content-type': 'application/json', accept: 'application/json' },
                 signal,
@@ -328,7 +329,6 @@ describeRestate('Real Restate execution deployment activation', () => {
           })
           warmupGate = undefined
 
-          let previousSource = config.sourceRevision
           let previousNextSequence = state.nextSequence
           const allReplacementAdvances: Array<Array<{ sequence: number }>> = []
           const allProjections: Array<Array<{ active: boolean; epoch: number; sourceRevision: string }>> = []
@@ -401,7 +401,6 @@ describeRestate('Real Restate execution deployment activation', () => {
             expect(rotated.initialSequence).toBeGreaterThanOrEqual(previousNextSequence)
             expect(rotated.lastCompletion?.sequence).toBeGreaterThan(rotated.initialSequence)
             expect(projected).toEqual([
-              expect.objectContaining({ active: false, epoch: expectedEpoch, sourceRevision: previousSource }),
               expect.objectContaining({
                 active: true,
                 epoch: expectedEpoch,
@@ -417,8 +416,7 @@ describeRestate('Real Restate execution deployment activation', () => {
             ).toBe(true)
             const replayedRotation = yield* sendRestateInvocation(url, rotation.body, rotationOptions)
             expect(replayedRotation.invocationId).toBe(rotationReceipt.invocationId)
-            expect(projected).toHaveLength(2)
-            previousSource = replacementConfig.sourceRevision
+            expect(projected).toHaveLength(1)
             previousNextSequence = rotated.nextSequence
             if (expectedEpoch === 2) {
               let release = () => {}
@@ -469,7 +467,10 @@ describeRestate('Real Restate execution deployment activation', () => {
                 operation: 'await',
                 cause: { message: 'Restate invocation output returned HTTP 400' },
               })
-              expect(allProjections.map((changes) => changes.length)).toEqual([2, 2])
+              expect(allProjections).toEqual([
+                [expect.objectContaining({ active: true, epoch: 2, sourceRevision: 'f'.repeat(40) })],
+                [expect.objectContaining({ active: true, epoch: 3, sourceRevision: 'e'.repeat(40) })],
+              ])
             }
           }
           const allSequences = [

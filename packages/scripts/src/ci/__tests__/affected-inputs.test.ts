@@ -84,7 +84,19 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
   }
 })
 
-test('Bayn CI does not run trading qualification or native images for orchestration changes', () => {
+test('OpenCode CLI changes publish only the owning image', () => {
+  for (const [filename, expected] of [
+    ['bayn-build-push.yml', false],
+    ['opencode-build-push.yml', true],
+  ] as const) {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing publication inputs: ${filename}`)
+    expect(matchesPaths('nix/images/opencode-cli.nix', paths.map(text))).toBe(expected)
+  }
+})
+
+test('Bayn CI does not run trading qualification or native images for orchestration and documentation changes', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing Bayn planner')
@@ -103,6 +115,8 @@ test('Bayn CI does not run trading qualification or native images for orchestrat
     const paths = property(filters, target)
     if (!Array.isArray(paths)) throw new Error('Missing Bayn validation inputs')
     for (const file of [
+      'services/bayn/README.md',
+      'argocd/applications/bayn/README.md',
       '.github/workflows/bayn-ci.yml',
       '.github/workflows/bayn-build-push.yml',
       '.github/workflows/common-monorepo.yml',
@@ -111,6 +125,7 @@ test('Bayn CI does not run trading qualification or native images for orchestrat
       'nix/cache-push.sh',
       'nix/ci-run-timed.sh',
       'nix/oci-push.sh',
+      'nix/images/opencode-cli.nix',
     ])
       expect(matchesPaths(file, paths.map(text))).toBe(false)
     expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
@@ -138,6 +153,13 @@ test('Bayn publication ignores Froussard-only dependencies and still selects Bay
   expect(selectAffectedInputs(['bun.lock', 'apps/froussard/package.json'], configured, prior, next).image).toBe(false)
   expect(selectAffectedInputs(['services/bayn/src/runtime.ts'], configured, prior, next).image).toBe(true)
   expect(selectAffectedInputs(['services/bayn/package.json'], configured, prior, next).image).toBe(true)
+  expect(
+    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], configured, prior, next)
+      .image,
+  ).toBe(false)
+  expect(selectAffectedInputs(['argocd/applications/bayn/postgres-cluster.yaml'], configured, prior, next).image).toBe(
+    true,
+  )
   const changedDependency = {
     ...next,
     packages: { ...next.packages, client: ['client@1.1.0', '', {}, 'new-integrity'] },
@@ -713,9 +735,11 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'bun.lock',
   ])
     expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
-  expect(selectAffectedInputs(['services/bayn/README.md'], targets, lock, lock)).toEqual({
-    bayn: true,
-    image: true,
+  expect(
+    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], targets, lock, lock),
+  ).toEqual({
+    bayn: false,
+    image: false,
     formal: false,
   })
 })
