@@ -8,6 +8,7 @@ import { Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
 import { sha256, canonicalHashV1Result } from '../hash'
+import { makeStrategyProtocolHashResult } from '../contracts'
 import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -26,11 +27,19 @@ import { matchedCommittedDecisionFixture } from './matched-entry.test-support'
 import { SignalStudyFailure } from './signal-study'
 import { CycleState } from '../cycle/model'
 import { JevPurpose } from '../jev/portfolio'
-import { defaultJevProtocolDocument } from '../jev/protocol'
+import { defaultJevProtocolDocument, jevBehaviorHash } from '../jev/protocol'
 
 const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input.inventory[0]?.sessionDate ?? '') => {
   const batch = data.input.study.batches[0]
   if (batch === undefined) throw new Error('Missing synthetic batch')
+  const protocolHash = Result.getOrThrow(
+    makeStrategyProtocolHashResult({
+      name: 'jev',
+      behaviorHash: jevBehaviorHash,
+      parameterHash: data.registration.protocolHash,
+      parameterSchemaVersion: batch.observation.protocol.schemaVersion,
+    }),
+  )
   const batches =
     sessionDate === batch.observation.manifest.sessionDate
       ? [
@@ -49,14 +58,14 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
       : [
           {
             cycleId: batch.batchPlan.cycleId,
-            protocolHash: data.registration.protocolHash,
+            protocolHash,
             state: CycleState.Completed,
             decisionHash: null,
           },
         ]),
     {
       cycleId: '0'.repeat(64),
-      protocolHash: data.registration.protocolHash,
+      protocolHash,
       state: CycleState.Blocked,
       decisionHash: null,
     },
@@ -379,6 +388,7 @@ test.each([
   'pending',
   'foreign',
   'protocol',
+  'parameter-hash',
   'pending-cycle',
   'active-cycle',
   'early',
@@ -393,9 +403,11 @@ test.each([
       yield* fs.writeFile(arrivals, gzipSync(data.body))
       const retained = inventoryFor(data)
       let cycles =
-        scenario === 'protocol'
+        scenario === 'protocol' || scenario === 'parameter-hash'
           ? retained.cycles.map((cycle) =>
-              cycle.cycleId === '0'.repeat(64) ? { ...cycle, protocolHash: '0'.repeat(64) } : cycle,
+              cycle.cycleId === '0'.repeat(64)
+                ? { ...cycle, protocolHash: scenario === 'protocol' ? '0'.repeat(64) : data.registration.protocolHash }
+                : cycle,
             )
           : retained.cycles
       if (scenario === 'pending-cycle' || scenario === 'active-cycle')
@@ -459,13 +471,17 @@ test.each([
         expect(report.inventories[0]?.cycles).toEqual(cycles)
         if (scenario === 'early')
           expect(report.summary.completenessProblems).toContain('inventory-cut-before-session-close:2026-09-04')
-        else if (scenario === 'protocol')
+        else if (scenario === 'protocol' || scenario === 'parameter-hash')
           expect(report.summary.completenessProblems).toContain('native-inventory-protocol-mismatch:2026-09-04')
         else if (scenario === 'pending-cycle' || scenario === 'active-cycle')
           expect(report.summary.completenessProblems).toContain('nonterminal-inventory-cycle:2026-09-04')
         else if (scenario !== 'complete')
           expect(report.summary.completenessProblems).toContain('native-inventory-batch-mismatch:2026-09-04')
-        else expect(report.summary.completenessProblems).not.toContain('native-inventory-batch-mismatch:2026-09-04')
+        else {
+          expect(report.summary.completenessProblems).not.toContain('native-inventory-batch-mismatch:2026-09-04')
+          expect(report.summary.completenessProblems).not.toContain('native-inventory-protocol-mismatch:2026-09-04')
+          expect(cycles.every((cycle) => cycle.protocolHash !== data.registration.protocolHash)).toBeTrue()
+        }
         expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -497,6 +513,8 @@ test('all scheduled native inventories retain zero-batch sessions without fillin
         data.receipt,
       )
       expect(report.inventories).toHaveLength(5)
+      expect(report.strategyProtocolHashes).toEqual([inventoryFor(data).cycles[0]?.protocolHash])
+      expect(report.strategyProtocolHashes).not.toContain(data.registration.protocolHash)
       expect(
         report.inventories
           .slice(1)
@@ -792,7 +810,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
       if (report === undefined) return yield* Effect.die('Expected a completed study report')
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v8')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v9')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev?.fills[0]?.symbol).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.symbol)
       expect(report.pairs[0]?.jev?.fills[0]?.observedAt).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.observedAt)
