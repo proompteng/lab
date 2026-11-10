@@ -55,6 +55,13 @@ header-hash manifest and end marker. SQL checksums bind the copied compressed by
 A retry reconciles the already copied prefix and resumes; it never overwrites differing immutable evidence. Keep
 the fenced source and its backup until the unified database has passed actual consumers and backup recovery verification.
 
+Verification reads must succeed before their output is compared. A failed read, including a partial inventory,
+aborts the Job without declaring evidence equal or corrupted; preserve the source and copied prefix for a later
+verified resume. If the writable Service refuses connections, inspect every primary Pod container, including the
+Barman sidecar, and its EndpointSlice readiness. A running PostgreSQL container alone does not establish service
+availability or successful WAL archiving. Preserve the reviewed archiver concurrency and resource budget; do not
+bypass backup health, readiness, source fencing or immutable checks to keep a copy running.
+
 Deliver the reviewed application through normal Kargo and Argo gates only after the data merge succeeds. Resume
 retained invocations on a compatible deployment and complete the native activation handoff. Verify both PostgreSQL
 replicas, durable new arrivals, historical reads/exports, broker materializations, exact reconciliation and accounting.
