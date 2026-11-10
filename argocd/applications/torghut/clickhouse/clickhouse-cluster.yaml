@@ -253,7 +253,7 @@ spec:
           resources:
             requests:
               storage: 200Gi
-          storageClassName: rook-ceph-block
+          storageClassName: local-path
   defaults:
     templates:
       podTemplate: chi-default
