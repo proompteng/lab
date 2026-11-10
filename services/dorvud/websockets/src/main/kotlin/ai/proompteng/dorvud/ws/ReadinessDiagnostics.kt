@@ -117,8 +117,8 @@ internal object ReadinessClassifier {
     return when {
       !gates.alpacaWs -> alpacaErrorClass ?: ReadinessErrorClass.Unknown
       !gates.kafka -> kafkaErrorClass ?: ReadinessErrorClass.Unknown
-      !gates.marketDataChannels -> marketDataChannelErrorClass ?: ReadinessErrorClass.MarketDataChannelStarvation
       !gates.tradeUpdates -> tradeUpdatesErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.marketDataChannels -> marketDataChannelErrorClass ?: ReadinessErrorClass.MarketDataChannelStarvation
       else -> fallbackErrorClass ?: ReadinessErrorClass.Unknown
     }
   }

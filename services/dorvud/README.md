@@ -252,7 +252,7 @@ loop runs in Kafka publication. Torghut Alloy retains these meters with the exis
 `namespace="torghut"`, `service="torghut-ws"`, and pod labels every thirty seconds.
 
 Missing upstream market events keep readiness false without escalating channel starvation into a process restart.
-The existing WebSocket idle watchdog owns reconnection. Authentication and Kafka failures retain their bounded
+The existing WebSocket idle watchdog owns reconnection. Authentication, Kafka and trade-update failures retain their bounded
 liveness escalation, and market-data freshness checks remain required for readiness.
 
 During a stall, align `torghut_ws_kafka_send_latency_seconds_{count,sum,max}`, send errors, readiness, pod restarts,

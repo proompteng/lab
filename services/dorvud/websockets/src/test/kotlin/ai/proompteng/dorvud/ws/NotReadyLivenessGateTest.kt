@@ -7,6 +7,30 @@ import kotlin.test.assertTrue
 
 class NotReadyLivenessGateTest {
   @Test
+  fun `trade update failures still restart while market channels are starved`() {
+    for (tradeError in listOf(ReadinessErrorClass.AlpacaAuth, null)) {
+      var now = 1_000L
+      val gate = NotReadyLivenessGate(killAfterMs = 120_000) { now }
+      repeat(5) {
+        val error =
+          ReadinessClassifier.readinessErrorClassForGates(
+            ready = false,
+            gates = ReadinessGates(alpacaWs = true, kafka = true, tradeUpdates = false, marketDataChannels = false),
+            alpacaErrorClass = null,
+            kafkaErrorClass = null,
+            tradeUpdatesErrorClass = tradeError,
+            fallbackErrorClass = ReadinessErrorClass.MarketDataChannelStarvation,
+            marketDataChannelErrorClass = ReadinessErrorClass.MarketDataChannelStarvation,
+          )
+        assertEquals(tradeError ?: ReadinessErrorClass.Unknown, error)
+        gate.recordReadiness(ready = false, livenessFailureEligible = requireNotNull(error).shouldEscalateToLivenessFailure())
+        now += 30_000
+      }
+      assertTrue(gate.shouldFailLiveness())
+    }
+  }
+
+  @Test
   fun `channel starvation keeps readiness false without restarting an authenticated forwarder`() {
     var now = 1_000L
     val gate = NotReadyLivenessGate(killAfterMs = 120_000) { now }
