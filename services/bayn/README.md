@@ -1448,6 +1448,12 @@ lineage. Image publication alone does not authorize the revised strategy.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+Status [economics](src/cycle/observability.ts) labels cumulative accounting `ACCOUNT_HISTORY`, spanning authority
+generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Its execution-fee
+subtotal includes recorded fill fees and posted broker fees; unposted charges and operating expenses remain outside it.
+The retained `forwardPerformance` receipt identifies its own generation, source revision and measurement window,
+independently of the current worker. When absent, it is null with `forwardPerformanceUnavailableReason=NO_PERSISTED_RECEIPT`.
+
 The private execution worker also serves `GET /startup-ready` for its initial history-rebuild barrier; it is separate
 from status-service health and current trading readiness.
 
