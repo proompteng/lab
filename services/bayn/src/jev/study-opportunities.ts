@@ -2,7 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import { AccountingTransactionSchema } from '../accounting/schema'
 import { intentPlanSchemaVersion, IntentState, NativeProtectionSchema, OrderSchema } from '../execution/contracts'
-import { makeExecutionIntentFromDecodedPlan } from '../execution/intents/domain'
+import { makeExecutionIntentFromDecodedPlan, type IntentPlan } from '../execution/intents/domain'
 import { MutationEventSchema } from '../execution/mutations/model'
 import {
   CycleDecisionRow,
@@ -20,7 +20,7 @@ import {
 } from '../inference-costs'
 import { verifyInferenceExpenseCoverage, type InferenceExpenseRecord } from '../inference-expense'
 import { IsoDateSchema, PositiveMicrosSchema, Sha256Schema, UnsignedMicrosSchema, strictParseOptions } from '../schemas'
-import { orderedExecutionPlan, type ExecutionOrderPlan } from '../system-assessment/execution-plans'
+import { executionOrderPlans, ProtectionIntentEvidenceSchema } from '../system-assessment/execution-plans'
 import { resolveExecutionOrderTerms } from '../system-assessment/execution-order-terms'
 import type { verifyJevStudyExportRow } from './study-export'
 import { JevStudyCycleSchema } from './study-inventory'
@@ -36,12 +36,14 @@ export const JevStudyIntentSchema = Schema.Struct({
   quantity_atoms: UnsignedMicrosSchema,
   notional_limit_micros: UnsignedMicrosSchema,
   authority_generation_hash: Sha256Schema,
+  risk_decision_id: Schema.NullOr(Sha256Schema),
   state: Schema.Enum(IntentState),
   protection: Schema.NullOr(NativeProtectionSchema),
 })
 
 export const JevStudyCycleSourcesSchema = Schema.Struct({
   decisions: Schema.Array(CycleDecisionRow),
+  protectionIntents: Schema.Array(ProtectionIntentEvidenceSchema),
   intents: Schema.Array(JevStudyIntentSchema),
   orders: Schema.Array(
     Schema.Struct({
@@ -126,6 +128,7 @@ export const makeJevStudyCycleOpportunity = (
     const sources = yield* Schema.decodeUnknownResult(JevStudyCycleSourcesSchema, strictParseOptions)(sourcesInput)
     if (
       !unique(sources.decisions, (row) => row.decision_hash) ||
+      !unique(sources.protectionIntents, (row) => row.intentId) ||
       !unique(sources.intents, (row) => row.intent_id) ||
       !unique(sources.orders, (row) => row.event_id) ||
       !unique(sources.fills, (row) => row.event_id) ||
@@ -205,14 +208,20 @@ export const makeJevStudyCycleOpportunity = (
                 : 'SELECTED_TARGETS_SATISFIED'
 
     const intents = new Map(sources.intents.map((row) => [row.intent_id, row]))
-    const plans = new Map<string, ExecutionOrderPlan>()
-    for (const document of documents)
-      if ('orderedIntentIds' in document)
-        for (const [index, intentId] of document.orderedIntentIds.entries()) {
-          if (plans.has(intentId)) return yield* invalid('Opportunity intent has multiple sealed owners')
-          plans.set(intentId, yield* orderedExecutionPlan(document, index))
-          if (!intents.has(intentId)) gap('MISSING_PLANNED_INTENT', intentId)
-        }
+    for (const evidence of sources.protectionIntents)
+      if (
+        evidence.plan.accountId !== accountId ||
+        evidence.plan.cycleId !== cycle.cycleId ||
+        evidence.plan.createdAt > asOf ||
+        evidence.riskDecision.decidedAt > asOf ||
+        evidence.reconciliation.reconciledAt > asOf
+      )
+        return yield* invalid('Opportunity protection evidence scope or cut differs')
+    const plans = yield* executionOrderPlans(
+      documents.filter((document) => 'orderedIntentIds' in document).map((document) => ({ document })),
+      sources.protectionIntents,
+    )
+    for (const intentId of plans.keys()) if (!intents.has(intentId)) gap('MISSING_PLANNED_INTENT', intentId)
     for (const intent of sources.intents) {
       if (
         intent.cycle_id !== cycle.cycleId ||
@@ -230,12 +239,18 @@ export const makeJevStudyCycleOpportunity = (
         return yield* invalid('Opportunity intent authority differs from its decision')
       const plan = plans.get(intent.intent_id)
       if (plan !== undefined) {
-        const index = plan.document.orderedIntentIds.indexOf(intent.intent_id)
-        const target = plan.document.targetPlan.intentTargets[index]
-        const risk = plan.document.deltaRisk[index]
-        if (target === undefined || risk === undefined) return yield* invalid('Opportunity sealed plan is incomplete')
-        const expected = yield* makeExecutionIntentFromDecodedPlan(
-          {
+        let expectedPlan: IntentPlan
+        if (plan.protectionIntent !== null) {
+          // The execution deadline starts at risk.decidedAt; immutable intent identity binds plan.createdAt.
+          expectedPlan = plan.protectionIntent.plan
+          if (plan.protectionIntent.riskDecision.decisionId !== intent.risk_decision_id)
+            return yield* invalid('Opportunity protection approval differs from its persisted intent reference')
+        } else {
+          const index = plan.document.orderedIntentIds.indexOf(intent.intent_id)
+          const target = plan.document.targetPlan.intentTargets[index]
+          const risk = plan.document.deltaRisk[index]
+          if (target === undefined || risk === undefined) return yield* invalid('Opportunity sealed plan is incomplete')
+          expectedPlan = {
             schemaVersion: intentPlanSchemaVersion,
             ...target,
             notionalLimitMicros: risk.notionalLimitMicros,
@@ -244,18 +259,18 @@ export const makeJevStudyCycleOpportunity = (
             ...(plan.document.replanGenerationHash === undefined
               ? {}
               : { replanGenerationHash: plan.document.replanGenerationHash }),
-          },
-          intent.authority_generation_hash,
-        )
+          }
+        }
+        const expected = yield* makeExecutionIntentFromDecodedPlan(expectedPlan, intent.authority_generation_hash)
         if (
           expected.intentId !== intent.intent_id ||
           expected.clientOrderId !== intent.client_order_id ||
-          (plan.document.replanGenerationHash ?? null) !== intent.replan_generation_hash ||
+          (expectedPlan.replanGenerationHash ?? null) !== intent.replan_generation_hash ||
           plan.target.symbol !== intent.symbol ||
           plan.target.side !== intent.side ||
           plan.target.quantityAtoms !== intent.quantity_atoms ||
-          plan.createdAt !== intent.created_at.toISOString() ||
-          plan.document.deltaRisk[index]?.notionalLimitMicros !== intent.notional_limit_micros ||
+          expectedPlan.createdAt !== intent.created_at.toISOString() ||
+          expectedPlan.notionalLimitMicros !== intent.notional_limit_micros ||
           (yield* canonicalHashV1Result(plan.risk.protection ?? null)) !==
             (yield* canonicalHashV1Result(intent.protection))
         )
@@ -415,6 +430,7 @@ export const makeJevStudyCycleOpportunity = (
       cycleId: intent.cycle_id,
       decisionHash: intent.decision_hash,
       authorityGenerationHash: intent.authority_generation_hash,
+      riskDecisionId: intent.risk_decision_id,
       clientOrderId: intent.client_order_id,
       symbol: intent.symbol,
       side: intent.side,
@@ -441,6 +457,7 @@ export const makeJevStudyCycleOpportunity = (
       batches,
       // Retain the complete verifier input, not a prefix claiming to be a sealed decision.
       decisions: documents,
+      protectionIntents: sources.protectionIntents,
       intents: rows,
       mutations: sources.mutations,
       orders: sources.orders.map(({ occurred_at, observed_at, ...row }) => ({

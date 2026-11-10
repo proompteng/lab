@@ -9,10 +9,15 @@ import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { exportJevStudySession } from '../jev/study-export'
+import { readJevStudyProtectionIntents } from '../jev/study-opportunities-postgres'
+import { JevStudyIntentSchema } from '../jev/study-opportunities'
 import { verifyJevStudyInventory } from '../jev/study-inventory'
 import { matchedCommittedDecisionFixture } from '../intraday-replay/matched-entry.test-support'
 import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.test-support'
 import { makeInferenceExpenseQuotes } from '../inference-expense'
+import { persistenceDocumentFixture } from '../system-assessment/decision-persistence.test-support'
+import { replacementProtectionFixture } from '../system-assessment/protection-evidence.test-support'
+import { executionOrderPlans } from '../system-assessment/execution-plans'
 import { PostgresClientLive } from './postgres-client'
 
 const testUrl = process.env['BAYN_TEST_POSTGRES_URL']
@@ -64,7 +69,7 @@ postgresTest(
             intent_id text PRIMARY KEY, account_id text, client_order_id text, cycle_id text, decision_hash text,
             symbol text, side text, quantity_atoms numeric, notional_limit_micros numeric,
             replan_generation_hash text, terminal_outcome text, created_at timestamptz, updated_at timestamptz,
-            authority_generation_hash text, state text, protection jsonb
+            authority_generation_hash text, state text, protection jsonb, risk_decision_id text
           )`
           yield* sql`CREATE TABLE broker_events (
             event_id text PRIMARY KEY, source_sequence bigint, occurred_at timestamptz, observed_at timestamptz
@@ -170,15 +175,27 @@ postgresTest(
           const { receiptHash: opportunityReceiptHash, ...opportunityMaterial } = opportunityReceipt
           expect(opportunityReceiptHash).toBe(Result.getOrThrow(canonicalHashV1Result(opportunityMaterial)))
           expect(opportunityReceipt).toMatchObject({
+            schemaVersion: 'bayn.jev-study-opportunity-export.v2',
             batchReceiptHash: pending.receiptHash,
             dataSha256: sha256(opportunityText),
             asOf: pending.asOf,
             bytes: new TextEncoder().encode(opportunityText).byteLength,
             cycleCount: 2,
+            protectionIntentCount: 0,
             fillCount: 0,
             inferenceRequestCount: 0,
             estimatedTotalInferenceCostMicros: null,
           })
+          const opportunityLines = opportunityText
+            .trimEnd()
+            .split('\n')
+            .map((line) => JSON.parse(line))
+          expect(opportunityLines[0].schemaVersion).toBe('bayn.jev-study-opportunities.v2')
+          expect(
+            opportunityLines.filter((line) => line.recordType === 'CYCLE').map((line) => line.protectionIntents),
+          ).toEqual([[], []])
+          expect(pending.schemaVersion).toBe('bayn.jev-study-export.v1')
+          expect(inventory.schemaVersion).toBe('bayn.jev-study-inventory.v1')
           expect(opportunityReceipt.unclaimedCandidateRequestIds.length).toBeGreaterThan(0)
           expect((yield* fs.stat(paths.join(pendingPath, 'opportunities.ndjson'))).mode & 0o777).toBe(0o600)
           expect((yield* fs.stat(paths.join(pendingPath, 'opportunities.receipt.json'))).mode & 0o777).toBe(0o600)
@@ -286,6 +303,161 @@ postgresTest(
           expect(yield* fs.exists(paths.join(corruptPath, 'opportunities.receipt.json'))).toBe(false)
           // The export cannot leave its pooled connection in a read-only transaction after failure.
           yield* sql`UPDATE autonomous_cycles SET state = 'BLOCKED' WHERE cycle_id = ${plan.cycleId}`
+        }),
+      ).pipe(
+        Effect.provide(
+          PostgresClientLive({
+            operationTimeoutMs: 30_000,
+            postgres: { url: Redacted.make(url.toString()), tls: false, caPath: '/unused' },
+          }).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      ),
+    )
+  },
+  30_000,
+)
+
+postgresTest(
+  'captures only original bounded protection authority and preserves missing versus contradictory evidence',
+  async () => {
+    if (testUrl === undefined) throw new Error('PostgreSQL test URL is unavailable')
+    const url = new URL(testUrl)
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
+      throw new Error('Protection capture tests require a local _test database')
+    const schema = `study_protection_${randomUUID().replaceAll('-', '')}`
+    url.searchParams.set('options', `-c search_path=${schema}`)
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const document = yield* persistenceDocumentFixture
+          const fixture = replacementProtectionFixture(document)
+          const proof = fixture.evidence
+          const plan = proof.plan
+          const risk = proof.riskDecision
+          const reconciliation = proof.reconciliation
+          const scope = { accountId: plan.accountId, asOf: fixture.at(10_000) }
+          const decisions = [
+            {
+              cycle_id: plan.cycleId,
+              decision_hash: document.contentHash,
+              document,
+              created_at: new Date(document.createdAt),
+            },
+          ]
+          const intent = yield* Schema.decodeUnknownEffect(JevStudyIntentSchema)({
+            intent_id: proof.intentId,
+            account_id: plan.accountId,
+            client_order_id: proof.clientOrderId,
+            cycle_id: plan.cycleId,
+            decision_hash: plan.decisionHash,
+            symbol: plan.symbol,
+            side: plan.side,
+            quantity_atoms: plan.quantityAtoms,
+            notional_limit_micros: plan.notionalLimitMicros,
+            replan_generation_hash: plan.replanGenerationHash,
+            terminal_outcome: 'CANCELED',
+            created_at: new Date(plan.createdAt),
+            updated_at: new Date(fixture.at(9000)),
+            authority_generation_hash: proof.authorityGenerationHash,
+            state: 'TERMINAL',
+            protection: plan.protection,
+            risk_decision_id: risk.decisionId,
+          })
+          yield* sql.unsafe(`CREATE SCHEMA ${schema}`)
+          yield* Effect.addFinalizer(() => sql.unsafe(`DROP SCHEMA ${schema} CASCADE`).pipe(Effect.orDie))
+          yield* sql`CREATE TABLE intents (
+      intent_id text PRIMARY KEY, client_order_id text, authority_generation_hash text, risk_decision_id text,
+      strategy_name text, cycle_id text, decision_hash text, policy_hash text, account_id text,
+      symbol text, side text, order_type text, time_in_force text, quantity_atoms numeric,
+      notional_limit_micros numeric, limit_price_micros numeric, protection jsonb,
+      replan_generation_hash text, created_at timestamptz
+    )`
+          yield* sql`CREATE TABLE risk_decisions (
+      schema_version text, decision_id text PRIMARY KEY, input_hash text, intent_id text,
+      policy_hash text, outcome text, reason_codes jsonb, decided_at timestamptz, expires_at timestamptz
+    )`
+          yield* sql`CREATE TABLE reconciliations (
+      schema_version text, reconciliation_id text PRIMARY KEY, account_id text, expected_hash text,
+      observed_hash text, content_hash text, status text, discrepancies jsonb, reconciled_at timestamptz
+    )`
+          yield* sql`INSERT INTO intents VALUES (
+      ${proof.intentId}, ${proof.clientOrderId}, ${proof.authorityGenerationHash}, ${risk.decisionId},
+      ${plan.strategyName}, ${plan.cycleId}, ${plan.decisionHash}, ${plan.policyHash}, ${plan.accountId},
+      ${plan.symbol}, ${plan.side}, ${plan.orderType}, ${plan.timeInForce}, ${plan.quantityAtoms},
+      ${plan.notionalLimitMicros}, ${plan.limitPriceMicros ?? null}, ${sql.json(plan.protection ?? null)},
+      ${plan.replanGenerationHash ?? null}, ${plan.createdAt}::timestamptz
+    )`
+          const insertRisk = sql`INSERT INTO risk_decisions VALUES (
+      ${risk.schemaVersion}, ${risk.decisionId}, ${risk.inputHash}, ${risk.intentId}, ${risk.policyHash},
+      ${risk.outcome}, ${sql.json(risk.reasonCodes)}, ${risk.decidedAt}::timestamptz, ${risk.expiresAt}::timestamptz
+    )`
+          const insertReconciliation = sql`INSERT INTO reconciliations VALUES (
+      ${reconciliation.schemaVersion}, ${reconciliation.reconciliationId}, ${reconciliation.accountId},
+      ${reconciliation.expectedHash}, ${reconciliation.observedHash}, ${reconciliation.contentHash},
+      ${reconciliation.status}, ${sql.json(reconciliation.discrepancies)}, ${reconciliation.reconciledAt}::timestamptz
+    )`
+          yield* insertRisk
+          yield* insertReconciliation
+          const capture = (cut = scope.asOf) =>
+            sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
+                yield* sql`SET LOCAL statement_timeout = '5s'`
+                const captured = yield* readJevStudyProtectionIntents(sql, { ...scope, asOf: cut }, decisions, [intent])
+                yield* Effect.fromResult(executionOrderPlans([{ document }], captured))
+                return captured
+              }),
+            )
+          expect(yield* capture()).toEqual([proof])
+          expect(proof.plan.createdAt).not.toBe(proof.riskDecision.decidedAt)
+
+          yield* sql`DELETE FROM risk_decisions`
+          expect(yield* capture()).toEqual([])
+          yield* insertRisk
+          yield* sql`DELETE FROM reconciliations`
+          expect(yield* capture()).toEqual([])
+          yield* insertReconciliation
+
+          yield* sql`UPDATE risk_decisions SET intent_id = ${'f'.repeat(64)}`
+          expect(Result.isFailure(yield* Effect.result(capture()))).toBe(true)
+          yield* sql`UPDATE risk_decisions SET intent_id = ${risk.intentId}`
+          yield* sql`UPDATE risk_decisions SET outcome = 'REJECTED'`
+          expect(Result.isFailure(yield* Effect.result(capture()))).toBe(true)
+          yield* sql`UPDATE risk_decisions SET outcome = ${risk.outcome}`
+          yield* sql`UPDATE intents SET account_id = 'foreign-account'`
+          expect(Result.isFailure(yield* Effect.result(capture()))).toBe(true)
+          yield* sql`UPDATE intents SET account_id = ${plan.accountId}`
+          expect(Result.isFailure(yield* Effect.result(capture(plan.createdAt)))).toBe(true)
+          yield* sql`UPDATE reconciliations SET content_hash = ${'f'.repeat(64)}`
+          expect(Result.isFailure(yield* Effect.result(capture()))).toBe(true)
+          yield* sql`UPDATE reconciliations SET content_hash = ${reconciliation.contentHash}`
+
+          // Malformed payloads would fail decoding if retrieved; the admission failure must occur first.
+          yield* sql`INSERT INTO reconciliations
+      SELECT 'oversized-inventory', repeat(md5(index::text), 2), ${plan.accountId}, ${reconciliation.expectedHash},
+        ${reconciliation.observedHash}, ${reconciliation.contentHash}, 'EXACT', '[]'::jsonb,
+        ${reconciliation.reconciledAt}::timestamptz
+      FROM generate_series(1, 128) AS index`
+          expect(yield* Effect.result(capture())).toMatchObject({
+            _tag: 'Failure',
+            failure: { message: 'Protection reconciliations exceed their preflight row bound' },
+          })
+          yield* sql`DELETE FROM reconciliations WHERE reconciliation_id <> ${reconciliation.reconciliationId}`
+          yield* sql`UPDATE reconciliations SET discrepancies = jsonb_build_array(repeat('x', 16 * 1024 * 1024))`
+          expect(yield* Effect.result(capture())).toMatchObject({
+            _tag: 'Failure',
+            failure: { message: 'Cycle protection source exceeds its preflight byte bound' },
+          })
+          yield* sql`UPDATE reconciliations SET discrepancies = ${sql.json(reconciliation.discrepancies)}`
+          yield* sql`UPDATE risk_decisions SET reason_codes = jsonb_build_array(repeat('x', 16 * 1024 * 1024))`
+          expect(yield* Effect.result(capture())).toMatchObject({
+            _tag: 'Failure',
+            failure: { message: 'Cycle protection source exceeds its preflight byte bound' },
+          })
+          // Successful writes after every failure prove each read-only snapshot released its connection.
+          yield* sql`UPDATE risk_decisions SET reason_codes = ${sql.json(risk.reasonCodes)}`
+          expect(yield* capture()).toEqual([proof])
         }),
       ).pipe(
         Effect.provide(
