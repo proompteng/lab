@@ -14,7 +14,7 @@ export interface RestateInvocationCompletionOptions {
 export type RestateHttpRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
 export class RestateInvocationClientError extends Data.TaggedError('RestateInvocationClientError')<{
-  readonly operation: 'await' | 'call' | 'send'
+  readonly operation: 'await' | 'send'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -63,36 +63,26 @@ const readBoundedJson = async (response: Response, description: string): Promise
   if (Number.isFinite(declaredLength) && declaredLength > restateInvocationMaximumResponseBytes) {
     throw new Error(`${description} returned an oversized response`)
   }
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  if (bytes.byteLength > restateInvocationMaximumResponseBytes) {
-    throw new Error(`${description} returned an oversized response`)
-  }
-  return JSON.parse(new TextDecoder().decode(bytes)) as unknown
-}
-
-export const callRestateInvocation = (
-  url: string,
-  body: unknown,
-  options: RestateInvocationRequestOptions,
-  request: RestateHttpRequest = fetch,
-): Effect.Effect<unknown, RestateInvocationClientError> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const response = await request(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...options.headers },
-        body: JSON.stringify(body),
-        signal: requestSignal(signal, options.timeoutMs),
-      })
-      if (!response.ok) {
-        await response.body?.cancel()
-        throw new Error(`Restate invocation call returned HTTP ${response.status}`)
+  const reader = response.body?.getReader()
+  if (reader === undefined) throw new Error(`${description} returned an empty response`)
+  const decoder = new TextDecoder()
+  let byteLength = 0
+  let text = ''
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      byteLength += chunk.value.byteLength
+      if (byteLength > restateInvocationMaximumResponseBytes) {
+        throw new Error(`${description} returned an oversized response`)
       }
-      return readBoundedJson(response, 'Restate invocation call')
-    },
-    catch: (cause) =>
-      new RestateInvocationClientError({ operation: 'call', message: 'Restate invocation call failed', cause }),
-  })
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    return JSON.parse(text + decoder.decode()) as unknown
+  } finally {
+    reader.releaseLock()
+  }
+}
 
 export const sendRestateInvocation = (
   url: string,
@@ -108,11 +98,15 @@ export const sendRestateInvocation = (
         body: JSON.stringify(body),
         signal: requestSignal(signal, options.timeoutMs),
       })
-      if (!response.ok) throw new Error(`Restate invocation send returned HTTP ${response.status}`)
-      const candidate = await readBoundedJson(response, 'Restate invocation send')
-      const decoded = decodeRestateAcceptedInvocation(candidate)
-      if (Result.isFailure(decoded)) throw new Error('Restate invocation send returned an invalid receipt')
-      return decoded.success
+      try {
+        if (!response.ok) throw new Error(`Restate invocation send returned HTTP ${response.status}`)
+        const candidate = await readBoundedJson(response, 'Restate invocation send')
+        const decoded = decodeRestateAcceptedInvocation(candidate)
+        if (Result.isFailure(decoded)) throw new Error('Restate invocation send returned an invalid receipt')
+        return decoded.success
+      } finally {
+        await response.body?.cancel()
+      }
     },
     catch: (cause) =>
       new RestateInvocationClientError({
@@ -136,15 +130,16 @@ export const awaitRestateInvocation = (
             method: 'GET',
             signal: requestSignal(signal, options.requestTimeoutMs),
           })
-          if (response.status === 470) {
+          try {
+            if (response.status === 470) return undefined
+            if (!response.ok) throw new Error(`Restate invocation output returned HTTP ${response.status}`)
+            if (response.headers.get('x-restate-id') !== invocationId) {
+              throw new Error('Restate invocation output identity does not match the accepted invocation')
+            }
+            return await readBoundedJson(response, 'Restate invocation output')
+          } finally {
             await response.body?.cancel()
-            return undefined
           }
-          if (!response.ok) throw new Error(`Restate invocation output returned HTTP ${response.status}`)
-          if (response.headers.get('x-restate-id') !== invocationId) {
-            throw new Error('Restate invocation output identity does not match the accepted invocation')
-          }
-          return readBoundedJson(response, 'Restate invocation output')
         },
         catch: (cause) =>
           new RestateInvocationClientError({
