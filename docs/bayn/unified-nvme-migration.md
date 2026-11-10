@@ -62,7 +62,40 @@ Barman sidecar, and its EndpointSlice readiness. A running PostgreSQL container 
 availability or successful WAL archiving. Preserve the reviewed archiver concurrency and resource budget; do not
 bypass backup health, readiness, source fencing or immutable checks to keep a copy running.
 
-Deliver the reviewed application through normal Kargo and Argo gates only after the data merge succeeds. Resume
+### Let post-copy maintenance settle before activation
+
+A completed copy is not a settled write path. Insert-triggered autovacuum can still scan and freeze the arrival
+table's TOAST storage, generating substantial full-page WAL after the copy workers exit. A slow synchronous
+standby then holds commits in `SyncRep`; subsequent broker-publication and controller-status writes can queue on
+their transaction locks and exhaust their existing deadlines even when broker HTTP reads succeed. CNPG readiness
+and one low-lag sample do not establish application availability.
+
+Before releasing the owned rollout hold, inspect the primary's current vacuum progress, including TOAST relations:
+
+```sql
+SELECT p.pid, p.phase, p.relid::regclass AS vacuum_relation,
+       COALESCE(parent.oid, relation.oid)::regclass AS owning_relation,
+       p.heap_blks_total, p.heap_blks_scanned, p.heap_blks_vacuumed
+FROM pg_stat_progress_vacuum AS p
+JOIN pg_class AS relation ON relation.oid = p.relid
+LEFT JOIN pg_class AS parent ON parent.reltoastrelid = relation.oid
+WHERE p.datid = (SELECT oid FROM pg_database WHERE datname = current_database());
+```
+
+Let observed bulk-copy maintenance finish naturally and retain its completion evidence. An empty progress view
+alone does not prove that pending maintenance has run. Correlate its WAL/full-page-image totals with the existing
+`cnpg_bayn_replication_max_flush_lag_seconds`, `cnpg_bayn_replication_max_unflushed_bytes` and
+`cnpg_bayn_waits_backends` series. Require the required synchronous standby to remain connected and streaming,
+replay through a captured primary WAL LSN, and show sustained replication and commit timings within the retained
+pre-migration baseline before activation. Inspect several successive samples and the interval between them,
+not only the final sample. Missing measurements or unresolved sustained `SyncRep`/transaction-lock waits leave
+this gate unverified. This is an operator verification gate, not an automatic application check.
+
+Do not cancel or disable vacuum, relax synchronous durability or extend application deadlines to pass this gate.
+If the workload cannot settle, keep the source, backup and owned hold intact and diagnose the WAL/storage path
+with the migration owner. Do not interfere with an ongoing isolated recovery test.
+
+Deliver the reviewed application through normal Kargo and Argo gates only after the data merge and this gate pass. Resume
 retained invocations on a compatible deployment and complete the native activation handoff. Verify both PostgreSQL
 replicas, durable new arrivals, historical reads/exports, broker materializations, exact reconciliation and accounting.
 Compare operation timings with the retained baseline and describe workload differences rather than claiming a
