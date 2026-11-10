@@ -434,7 +434,10 @@ describeRestate('Real Restate execution deployment activation', () => {
                 operation: 'await',
                 cause: { message: 'Restate invocation output returned HTTP 400' },
               })
-              expect(allProjections.map((changes) => changes.length)).toEqual([2, 2])
+              expect(allProjections).toEqual([
+                [expect.objectContaining({ active: true, epoch: 2, sourceRevision: 'f'.repeat(40) })],
+                [expect.objectContaining({ active: true, epoch: 3, sourceRevision: 'e'.repeat(40) })],
+              ])
             }
           }
           const allSequences = [
