@@ -46,8 +46,12 @@ data:
               service: bayn-research
             annotations:
               summary: Bayn research costs lack complete verified coverage
-              description: Inspect retained run and receipt identities, the frozen allocation basis and expense projection. Unknown costs prevent a fully costed comparison.
-              runbook_url: docs/bayn/jev-optimization.md
+              description: >-
+                Unpriced retained attempts: {{ with query "max(bayn_research_unpriced_attempts)" }}{{ . | first | value }}{{ else }}unavailable{{ end }};
+                ambiguous claims: {{ with query "max(bayn_research_ambiguous_attempts)" }}{{ . | first | value }}{{ else }}unavailable{{ end }};
+                oldest pending priced expense: {{ with query "max(bayn_research_oldest_pending_expense_seconds)" }}{{ . | first | value }}{{ else }}unavailable{{ end }} seconds.
+                Unpriced evidence can be historical and is not an expense-projection backlog. Unknown costs prevent a fully costed comparison; inspect immutable run allocation and receipt evidence before any recovery.
+              runbook_url: docs/bayn/jev-optimization.md#research-cost-coverage-triage
       - name: flamingo.rules
         rules:
           - alert: FlamingoModelUnavailable
