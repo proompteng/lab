@@ -241,7 +241,7 @@ export const exportJevStudySession = (
       yield* inventoryFile.writeAll(inventoryBytes)
       yield* inventoryFile.sync
       const opportunityMaterial = {
-        schemaVersion: 'bayn.jev-study-opportunity-export.v1',
+        schemaVersion: 'bayn.jev-study-opportunity-export.v2',
         accountBindingHash: report.accountBindingHash,
         sessionDate: report.sessionDate,
         asOf: report.asOf,

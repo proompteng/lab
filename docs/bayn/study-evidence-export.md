@@ -64,17 +64,22 @@ review the producer and retain that export rather than constructing an inventory
 The original bounds remain 10,000 cycles, 16 MiB per encoded line and 512 MiB for `batches.ndjson`.
 `opportunities.ndjson` has a separate 1 GiB bound because complete verified execution documents retain their source
 evidence. Each cycle is limited to 64 decisions and 4,096 rows in each execution relation. Before loading decision
-payloads, a database preflight rejects more than 64 rows or 16 MiB of JSON text for the cycle. Frozen cost quotes
+payloads, a database preflight rejects more than 64 rows or 16 MiB of JSON text for the cycle. Intents also have a
+4,096-row and 16 MiB source preflight. Standalone protection approvals are fetched by exact persisted risk-decision
+ID, one intent at a time. Each intent admits at most 128 historical reconciliation candidates from its original
+entry policy's freshness window; approval and candidate JSON together have a cumulative 16 MiB source budget per
+cycle. Count and byte preflights run before either payload query in the same snapshot. Frozen cost quotes
 have a 100,000-row and 64 MiB JSON-text preflight; inference sources are read one request at a time, up to 20,000
 requests. Exceeding a bound fails the export and withholds the completion receipt. These are admission boundaries,
 not sampled datasets or evidence of memory capacity.
 
 ## Opportunity and cost evidence
 
-The companion `opportunities.ndjson` uses `bayn.jev-study-opportunities.v1` and retains the same snapshot cut.
+The companion `opportunities.ndjson` uses `bayn.jev-study-opportunities.v2` and retains the same snapshot cut.
 It contains a header, one `CYCLE` record for every inventory cycle, one `INFERENCE_REQUEST` record for every
 account/session request, explicit `UNALLOCATED_INFERENCE_QUOTE` and `UNALLOCATED_EXECUTION` records where needed,
-and a final `SUMMARY`. The companion receipt contains its SHA-256 and byte length, scope, summary and canonical hash.
+and a final `SUMMARY`. Its `bayn.jev-study-opportunity-export.v2` receipt contains the SHA-256 and byte length, scope,
+summary (including the reproduced `protectionIntentCount`) and canonical hash.
 Its `batchReceiptHash` must equal the original `receipt.json` hash. Require both valid receipts and verify both
 file hashes before consuming the joined export; a companion receipt alone does not establish completion.
 
@@ -83,8 +88,24 @@ execution documents, persisted intents, mutation events, all recorded order life
 accounting transactions. Original observation, plan and result payloads remain in `batches.ndjson`; their hashes
 link the companion to that evidence. The exporter reuses the current and retained execution verifiers, reconstructs
 planned intent identities, and checks broker order terms and exact fill/accounting joins. A missing join is explicit
-and makes that cycle's `joinCoverage` incomplete. An independent protection intent without a reproduced sealed plan
-remains `UNREPRODUCED_EXECUTION_PLAN`; retained rows do not supply missing execution authority.
+and makes that cycle's `joinCoverage` incomplete.
+
+Every v2 cycle requires `protectionIntents`, including an explicit empty array when no complete standalone proof is
+available. Each proof retains the original full intent plan, authority generation, immutable intent and client IDs,
+exact stored risk approval, exact historical reconciliation and canonical source hash. The native
+`executionOrderPlans` verifier reproduces ownership, approval identity, protective prices, quantity limits,
+freshness and replan identity from the original entry document. Native order-term verification then checks the
+OCO parent and stop child or standalone StopLimit. Immutable intent identity uses `plan.createdAt`; the independent
+execution plan's approval and submission window use `riskDecision.decidedAt` and `expiresAt`.
+
+Missing original approvals or exact reconciliations leave `UNREPRODUCED_EXECUTION_PLAN` explicit. A present foreign,
+rejected, contradictory or out-of-cut approval fails verification; it is not filtered away or replaced with another
+approval. No current broker state supplies missing historical proof. Content hashes identify retained records;
+they do not independently authenticate approval or grant execution authority.
+
+The batch header, batch receipt and inventory remain v1. Frozen companion v1 exports keep their original bytes,
+receipts and incomplete-protection semantics; absence of the new required field cannot claim v2 verification.
+Use a new output directory for a v2 export instead of rewriting historical evidence.
 
 The disposition keeps distinct reasons for an empty trading result:
 

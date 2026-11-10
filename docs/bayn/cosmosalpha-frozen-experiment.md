@@ -4,16 +4,21 @@ The runner binds verified calendar targets to native Graph, multi-tree MCTS and 
 
 ## Prepare and freeze
 
+If the previous task-local environment or TOMLs are unavailable, follow [input reconstruction](cosmosalpha-reconstruction.md) to create and declare a separate acceptance from the pinned author files and checksum-verified original data.
+
 Use the native Python 3.12 research environment with CosmosAlpha author commit `237f0a56895fd295542e202be8f62be48d6e9995` and its pinned dependencies. Apply these repairs to that source before installing it:
 
 1. [Numeric literals and Graph duplicate decisions](evidence/2026-11-07-cosmosalpha-source-repair/source.patch).
 2. [MCTS prompts, request construction and self-hosted output limits](evidence/2026-11-08-cosmosalpha-mcts-repair/source.patch).
 3. [MCTS completed-round accounting](evidence/2026-11-09-cosmosalpha-mcts-rounds/source.patch).
 4. [MCTS failed-root admission](evidence/2026-11-09-cosmosalpha-mcts-root-admission/source.patch).
+5. [MCTS candidate evidence binding](evidence/2026-11-09-cosmosalpha-candidate-binding/source.patch).
 
 The patches use paths relative to the author repository and apply in order with `patch -p1`. The second repair sends the prompt text that the original helpers discarded, normalizes boundary whitespace that the native message validator rejects, removes an unsupported request argument and aligns suggestions with the client's JSON-object response contract. It also declares output limits of 2,000 tokens for suggestions and 20,000 for portraits. The third repair charges completed MCTS rounds instead of the loop index at termination: a tree that exhausts its budget after one round previously reported two, consuming the global allowance early. The fourth requires a validated expression and measured RankIC before a root can enter search. Failed root generation consumes one global round and starts another root; an actually measured RankIC of zero remains valid. These repairs retain the search-score and evaluator formulas.
 
-The runner accepts one registered source inventory, `d881fb60c4cb560e5aafce650291ed50dd2ca3d8db99a7eac1eadac1dd99f778`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant. The [round-accounting regression](evidence/2026-11-09-cosmosalpha-mcts-rounds/validation.json) exercises the native tree loop, backpropagation, persistence and transitions between trees with synthetic expansion results and no inference. The [failed-root regression](evidence/2026-11-09-cosmosalpha-mcts-root-admission/validation.json) exercises the native default root generator, failed-round accounting, root regeneration and search with a measured zero RankIC.
+The fifth repair resolves a single candidate for both root and expansion nodes. Previously, a two-design result could select the second accepted expression while reading the first design's metrics and factor values. The selected factor, proposal, validation, evaluation, preprocessing, snapshot and artifact references must now agree and occur unambiguously in the candidate and experiment indexes. Raw turnover and evaluated diversity values come from that same candidate. Missing or ambiguous evidence is rejected; the selector preserves candidate order and does not maximize a different candidate's metric. The [native regression](evidence/2026-11-09-cosmosalpha-candidate-binding/validation.json) covers both node paths, measured-zero scores and missing or contradictory evidence.
+
+The runner accepts one registered source inventory, `651a11dfc78f75893051ae809e27979365e2bda11b1a294eb7027deb9d8524a9`. It hashes all 101 installed source assets itself. Four author files contain the declared repairs; 97 remain unchanged. A caller-supplied claim about an upstream commit cannot admit another source variant. The [round-accounting regression](evidence/2026-11-09-cosmosalpha-mcts-rounds/validation.json) exercises the native tree loop, backpropagation, persistence and transitions between trees with synthetic expansion results and no inference. The [failed-root regression](evidence/2026-11-09-cosmosalpha-mcts-root-admission/validation.json) exercises the native default root generator, failed-round accounting, root regeneration and search with a measured zero RankIC.
 
 LightGBM's native runtime must load before freeze or execution can begin. On macOS its installed wheel needs OpenMP, available as Homebrew `libomp`. Admission records the platform and native LightGBM binary hash alongside Python package versions. The native contract check also exercises a small synthetic fit and prediction. This catches dependency failures before data preparation or model inference; it does not replace the full-data model checks.
 
@@ -104,7 +109,11 @@ The [completed functional acceptance](evidence/2026-11-08-cosmosalpha-calendar-e
 
 That acceptance used a prior source inventory. A later acceptance of the completed-round repair was stopped when a failed root-generation experiment with no evaluations became the native `chain-root` placeholder. The subsequent portrait and design requests refined that placeholder using default scores. The [root-admission evidence](evidence/2026-11-09-cosmosalpha-mcts-root-admission/validation.json) retains the failed experiment and request hashes. Its final in-flight request has unsettled usage; no held-out models or scientific arms ran. The stopped trial cannot qualify this control.
 
-The source with the root-admission repair has offline regression evidence; fresh live acceptance is required before a new scientific study. Existing frozen plans and evidence retain their original identities and are not relabeled as results from the new source.
+The [reconstructed Linux diagnostic](evidence/2026-11-09-cosmosalpha-root-acceptance/acceptance.json) on the root-admission source completed three four-factor arms, 39 requests, 130,694 completion tokens and three downstream models, with zero unknown usage and a passing frozen audit. Independent checks verified all 18 model outputs and 1,076,118 prediction targets; the maximum aggregate-metric error was `5.56e-17`. Its four MCTS records each contain one candidate and pass the repaired selector's identity checks. During that diagnostic, the separate native two-design regression reproduced the candidate-binding defect. The diagnostic retains its original `d881` inventory and is not acceptance of the new repair.
+
+The candidate-binding source passed its [separate functional acceptance](evidence/2026-11-09-cosmosalpha-candidate-binding/acceptance.json). Its [pre-outcome freeze](evidence/2026-11-09-cosmosalpha-candidate-binding/acceptance-freeze.json) binds the imported controller, source inventory, targets, runtime, model identity and unchanged capped allowances. All three four-factor pools and downstream fits completed in 2,145 seconds, using 39 physical requests and 138,638 completion tokens with zero unknown usage. The frozen audit passed; independent verification checked all 18 output artifacts and 1,076,118 prediction targets with maximum aggregate-metric error `2.78e-17`. All nine downstream definition and corruption checks passed.
+
+The [retained MCTS audit](evidence/2026-11-09-cosmosalpha-candidate-binding/audit_native_binding.py) checked four single-candidate records, their cycle/pool expressions and scores, and 12 raw/evaluated/target artifact references. No live result contained two designs. The quota stop left zero native tree snapshots, and native node factor arrays are memory-only; the report marks saved-tree verification unavailable. The exact-source regression supplies the two-design binding proof. These limits do not disappear when the functional checks pass. No nine-arm scientific study has run, and the acceptance does not qualify profitability. Earlier frozen plans, runner snapshots and failed or diagnostic evidence retain their original identities.
 
 Portable boundary tests run without the native research dependencies:
 
@@ -119,7 +128,9 @@ With the native environment and a prepared plan, exercise the real factories, ev
 python packages/scripts/src/bayn/check_cosmosalpha_experiment_native.py \
   /research/calendar-study/plan.json
 python -m pytest -q \
-  docs/bayn/evidence/2026-11-08-cosmosalpha-mcts-repair/test_mcts_prompts.py
+  docs/bayn/evidence/2026-11-07-cosmosalpha-source-repair/test_source_repair.py \
+  docs/bayn/evidence/2026-11-08-cosmosalpha-mcts-repair/test_mcts_prompts.py \
+  docs/bayn/evidence/2026-11-09-cosmosalpha-candidate-binding/test_candidate_binding.py
 ```
 
 The three native prompt regression cases failed before their respective repairs, including the case that uses the real portrait prompt builder. Earlier acceptance trials retain their empty-conversation HTTP 400 and reasoning-truncation evidence. Neither reached held-out fitting. They are not replayed or relabeled as repaired trials.
