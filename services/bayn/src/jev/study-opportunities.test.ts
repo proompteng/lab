@@ -8,6 +8,7 @@ import { canonicalHashV1Result } from '../hash'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { matchedCommittedDecisionFixture } from '../intraday-replay/matched-entry.test-support'
+import { replacementProtectionFixture } from '../system-assessment/protection-evidence.test-support'
 import { makeInferenceExpenseQuotes, inferenceExpenseRateCard } from '../inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.test-support'
 import {
@@ -27,7 +28,15 @@ import {
 } from './study-opportunities'
 import { verifyJevStudyExportRow } from './study-export'
 
-const emptySources = () => ({ decisions: [], intents: [], orders: [], fills: [], mutations: [], transactions: [] })
+const emptySources = () => ({
+  decisions: [],
+  protectionIntents: [],
+  intents: [],
+  orders: [],
+  fills: [],
+  mutations: [],
+  transactions: [],
+})
 const native = nativeJevFixture()
 const accountId = native.portfolio.brokerState.account.accountId
 const sessionDate = native.snapshot.manifest.sessionDate
@@ -240,6 +249,7 @@ const executionFixture = () => {
     created_at: new Date(document.createdAt),
     updated_at: new Date(`${sessionDate}T15:01:00.000Z`),
     authority_generation_hash: document.bindings.authorityGenerationHash,
+    risk_decision_id: risk.evaluation.decision.decisionId,
     state: 'TERMINAL',
     protection: risk.protection ?? null,
   }
@@ -393,6 +403,139 @@ describe('execution source joins', () => {
         ),
       ),
     ).toBe(true)
+  })
+})
+
+const protectionFixture = (kind: 'Oco' | 'StopLimit' = 'Oco') => {
+  const source = executionFixture()
+  const fixture = replacementProtectionFixture(planned.document, kind)
+  const proof = fixture.evidence
+  const plan = proof.plan
+  const intent = {
+    ...source.intents[0],
+    intent_id: proof.intentId,
+    client_order_id: proof.clientOrderId,
+    cycle_id: plan.cycleId,
+    account_id: plan.accountId,
+    decision_hash: plan.decisionHash,
+    symbol: plan.symbol,
+    side: plan.side,
+    quantity_atoms: plan.quantityAtoms,
+    notional_limit_micros: plan.notionalLimitMicros,
+    replan_generation_hash: plan.replanGenerationHash ?? null,
+    authority_generation_hash: proof.authorityGenerationHash,
+    risk_decision_id: proof.riskDecision.decisionId,
+    state: 'TERMINAL',
+    terminal_outcome: 'CANCELED',
+    protection: plan.protection ?? null,
+    created_at: new Date(plan.createdAt),
+    updated_at: new Date(fixture.at(9000)),
+  }
+  const orders = fixture.cut.orders
+    .filter((row) => row.intentId === proof.intentId)
+    .map(({ order, eventId, occurredAt }, index) => ({
+      schema_version: order.schemaVersion,
+      event_id: eventId,
+      source_sequence: String(index + 3),
+      parent_broker_order_id: order.parentBrokerOrderId ?? null,
+      order_type: order.orderType,
+      time_in_force: order.timeInForce,
+      limit_price_micros: order.limitPriceMicros ?? null,
+      stop_price_micros: order.stopPriceMicros ?? null,
+      broker_order_id: order.brokerOrderId,
+      client_order_id: order.clientOrderId,
+      intent_id: order.intentId,
+      account_id: order.accountId,
+      symbol: order.symbol,
+      side: order.side,
+      quantity_atoms: order.quantityAtoms ?? null,
+      notional_micros: order.notionalMicros ?? null,
+      filled_quantity_atoms: '0',
+      status: 'CANCELED',
+      occurred_at: new Date(occurredAt),
+      observed_at: new Date(order.observedAt),
+    }))
+  return { ...source, protectionIntents: [proof], intents: [...source.intents, intent], orders }
+}
+
+describe('original standalone protection proof', () => {
+  test.each(['Oco', 'StopLimit'] as const)(
+    'reproduces %s with original intent time and a later risk approval',
+    (kind) => {
+      const sources = protectionFixture(kind)
+      const proof = sources.protectionIntents[0]
+      if (proof === undefined) throw new Error('Missing original protection proof')
+      expect(proof.plan.createdAt).not.toBe(proof.riskDecision.decidedAt)
+      const actual = Result.getOrThrow(report(planned, sources))
+      expect(actual.gaps).toEqual([])
+      expect(actual.joinCoverage).toBe('COMPLETE_FOR_RECORDED_CYCLE_ROWS')
+      expect(actual.protectionIntents).toEqual([proof])
+      expect(actual.intents.find((row) => row.intentId === proof.intentId)).toMatchObject({
+        createdAt: proof.plan.createdAt,
+        riskDecisionId: proof.riskDecision.decisionId,
+      })
+      expect(actual.financialVerification).toBe('TRANSACTION_CONTENT_AND_FILL_JOIN_ONLY')
+      expect(actual.independentlyVerifiedLedger).toBe(false)
+      expect(actual.allInProfitMicros).toBeNull()
+    },
+  )
+
+  test('missing original proof and OCO children remain incomplete; v1 sources cannot claim v2 verification', () => {
+    const sources = protectionFixture()
+    const proof = sources.protectionIntents[0]
+    if (proof === undefined) throw new Error('Missing proof')
+    const missing = Result.getOrThrow(report(planned, { ...sources, protectionIntents: [] }))
+    expect(missing.gaps).toContainEqual({ code: 'UNREPRODUCED_EXECUTION_PLAN', sourceId: proof.intentId })
+    const missingChild = Result.getOrThrow(
+      report(planned, {
+        ...sources,
+        orders: sources.orders.filter((order) => order.parent_broker_order_id === null),
+      }),
+    )
+    expect(missingChild.joinCoverage).toBe('INCOMPLETE')
+    const { protectionIntents: _proofs, ...v1 } = sources
+    expect(Result.isFailure(report(planned, v1))).toBe(true)
+  })
+
+  test('contradictory present authority fails even with a recomputed outer source hash', () => {
+    const sources = protectionFixture()
+    const proof = sources.protectionIntents[0]
+    if (proof === undefined) throw new Error('Missing proof')
+    for (const changed of [
+      { ...proof, authorityGenerationHash: 'f'.repeat(64) },
+      { ...proof, clientOrderId: 'foreign-client' },
+      { ...proof, plan: { ...proof.plan, accountId: 'foreign-account' } },
+      { ...proof, plan: { ...proof.plan, createdAt: proof.riskDecision.decidedAt } },
+      { ...proof, riskDecision: { ...proof.riskDecision, inputHash: 'f'.repeat(64) } },
+      { ...proof, riskDecision: { ...proof.riskDecision, decidedAt: '9999-12-31T23:59:59.999Z' } },
+      { ...proof, reconciliation: { ...proof.reconciliation, accountId: 'foreign-account' } },
+      { ...proof, reconciliation: { ...proof.reconciliation, contentHash: 'f'.repeat(64) } },
+    ]) {
+      const { sourceHash: _hash, ...material } = changed
+      expect(
+        Result.isFailure(
+          report(planned, {
+            ...sources,
+            protectionIntents: [{ ...material, sourceHash: Result.getOrThrow(canonicalHashV1Result(material)) }],
+          }),
+        ),
+      ).toBe(true)
+    }
+    for (const change of [
+      { risk_decision_id: 'f'.repeat(64) },
+      { created_at: new Date(proof.riskDecision.decidedAt) },
+      { notional_limit_micros: '1' },
+    ])
+      expect(
+        Result.isFailure(
+          report(planned, {
+            ...sources,
+            intents: sources.intents.map((intent) =>
+              intent.intent_id === proof.intentId ? { ...intent, ...change } : intent,
+            ),
+          }),
+        ),
+      ).toBe(true)
   })
 })
 

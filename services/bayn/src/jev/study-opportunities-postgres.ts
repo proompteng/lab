@@ -3,14 +3,19 @@ import { Effect, Result, Schema } from 'effect'
 
 import { accountingTransactionFromRow, AccountingTransactionRowSchema } from '../db/accounting-rows'
 import { executionDecisionRows } from '../db/execution-decision-query'
+import { intentPlanSchemaVersion, ReconciliationSchema, RiskDecisionSchema, RiskOutcome } from '../execution/contracts'
+import { makeExecutionIntentFromDecodedPlan, validateCommitIdentity } from '../execution/intents/domain'
 import { decodeStoredEvents } from '../execution/mutations/rows'
+import { CycleDecisionRow } from '../forward-performance/postgres/model'
 import { canonicalHashV1Result } from '../hash'
 import { inferenceCostRequestRows } from '../inference-costs-postgres'
 import { decodeInferenceExpenseSessionRows } from '../inference-expense-postgres'
 import { Sha256Schema, UnsignedMicrosSchema, strictParseOptions } from '../schemas'
+import { ProtectionIntentEvidenceSchema, type ProtectionIntentEvidence } from '../system-assessment/execution-plans'
 import type { JevStudyInventory } from './study-inventory'
 import {
   JevStudyOpportunityFailure,
+  JevStudyIntentSchema,
   makeJevStudyCycleOpportunity,
   makeJevStudyInferenceOpportunity,
   type JevStudyBatchDescription,
@@ -22,12 +27,171 @@ const maximumRequests = 20_000
 const maximumQuotes = 100_000
 const maximumDecisionSourceBytes = 16 * 1024 * 1024
 const maximumQuoteSourceBytes = 64 * 1024 * 1024
+const maximumProtectionReconciliations = 128
+const maximumProtectionSourceBytes = 16 * 1024 * 1024
 const SizeRows = Schema.Tuple([Schema.Struct({ bytes: UnsignedMicrosSchema, rows: UnsignedMicrosSchema })])
+const ProtectionSourceSchema = Schema.Struct({
+  plan: ProtectionIntentEvidenceSchema.fields.plan,
+  authorityGenerationHash: Sha256Schema,
+  intentId: Sha256Schema,
+  clientOrderId: ProtectionIntentEvidenceSchema.fields.clientOrderId,
+  riskDecisionId: Schema.NullOr(Sha256Schema),
+  riskDecision: Schema.NullOr(RiskDecisionSchema),
+})
 
 const bounded = <A>(rows: readonly A[], maximum: number, name: string) =>
   rows.length > maximum
     ? Effect.fail(new JevStudyOpportunityFailure({ message: `${name} exceeds the opportunity export row bound` }))
     : Effect.succeed(rows)
+
+/** Capture original standalone approvals, never a plan synthesized from current broker state. */
+export const readJevStudyProtectionIntents = (
+  sql: PgClient.PgClient,
+  scope: { readonly accountId: string; readonly asOf: string },
+  decisions: readonly (typeof CycleDecisionRow.Type)[],
+  intents: readonly (typeof JevStudyIntentSchema.Type)[],
+) =>
+  Effect.gen(function* () {
+    const evidence: ProtectionIntentEvidence[] = []
+    let sourceBytes = 0n
+    for (const intent of intents) {
+      const protection = intent.protection
+      if (protection === null || protection._tag === 'Bracket') continue
+      const source = sql`
+        SELECT intent.intent_id AS "intentId", intent.client_order_id AS "clientOrderId",
+          intent.authority_generation_hash AS "authorityGenerationHash", intent.risk_decision_id AS "riskDecisionId",
+          jsonb_strip_nulls(jsonb_build_object(
+            'schemaVersion', ${intentPlanSchemaVersion}::text, 'strategyName', intent.strategy_name, 'cycleId', intent.cycle_id,
+            'decisionHash', intent.decision_hash, 'policyHash', intent.policy_hash, 'accountId', intent.account_id,
+            'symbol', intent.symbol, 'side', intent.side, 'orderType', intent.order_type, 'timeInForce', intent.time_in_force,
+            'quantityAtoms', intent.quantity_atoms::text, 'notionalLimitMicros', intent.notional_limit_micros::text,
+            'limitPriceMicros', intent.limit_price_micros::text, 'protection', intent.protection,
+            'replanGenerationHash', intent.replan_generation_hash,
+            'createdAt', to_char(intent.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          )) AS plan,
+          CASE WHEN risk.decision_id IS NULL THEN NULL ELSE jsonb_build_object(
+            'schemaVersion', risk.schema_version, 'decisionId', risk.decision_id, 'inputHash', risk.input_hash,
+            'intentId', risk.intent_id, 'policyHash', risk.policy_hash, 'outcome', risk.outcome, 'reasonCodes', risk.reason_codes,
+            'decidedAt', to_char(risk.decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            'expiresAt', to_char(risk.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          ) END AS "riskDecision"
+        FROM intents AS intent LEFT JOIN risk_decisions AS risk ON risk.decision_id = intent.risk_decision_id
+        WHERE intent.intent_id = ${intent.intent_id} LIMIT 2
+      `
+      const [size] = yield* sql`
+        SELECT COALESCE(sum(octet_length(to_jsonb(source)::text)), 0)::text AS bytes, count(*)::text AS rows
+        FROM (${source}) AS source
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows, strictParseOptions)))
+      if (size.rows !== '1')
+        return yield* new JevStudyOpportunityFailure({ message: 'Protection source differs from its unique intent' })
+      sourceBytes += BigInt(size.bytes)
+      if (sourceBytes > BigInt(maximumProtectionSourceBytes))
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Cycle protection source exceeds its preflight byte bound',
+        })
+      const [row] = yield* sql`SELECT * FROM (${source}) AS source`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([ProtectionSourceSchema]), strictParseOptions)),
+      )
+      const reproduced = yield* Effect.fromResult(
+        makeExecutionIntentFromDecodedPlan(row.plan, row.authorityGenerationHash),
+      )
+      if (
+        row.intentId !== intent.intent_id ||
+        reproduced.intentId !== row.intentId ||
+        reproduced.clientOrderId !== row.clientOrderId ||
+        row.clientOrderId !== intent.client_order_id ||
+        row.plan.accountId !== scope.accountId ||
+        row.plan.cycleId !== intent.cycle_id ||
+        row.authorityGenerationHash !== intent.authority_generation_hash ||
+        row.riskDecisionId !== intent.risk_decision_id ||
+        row.plan.createdAt > scope.asOf
+      )
+        return yield* new JevStudyOpportunityFailure({ message: 'Protection source identity, scope or cut differs' })
+      // Join by the exact stored decision ID, then verify its intent binding. A foreign or rejected present
+      // approval must fail rather than disappearing through a restrictive SQL join.
+      const riskDecision = row.riskDecision
+      if (riskDecision === null) continue
+      yield* Effect.fromResult(validateCommitIdentity(reproduced, riskDecision))
+      if (
+        riskDecision.decisionId !== row.riskDecisionId ||
+        riskDecision.outcome !== RiskOutcome.Approved ||
+        riskDecision.decidedAt > scope.asOf ||
+        riskDecision.decidedAt < row.plan.createdAt ||
+        riskDecision.expiresAt <= riskDecision.decidedAt
+      )
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Protection approval outcome, identity or cut differs',
+        })
+      const entry = decisions.find((decision) => decision.decision_hash === protection.entryDecisionHash)
+      if (entry === undefined) continue
+      // The complete native decision verifier remains authoritative; this narrow projection only bounds acquisition.
+      const view = yield* Schema.decodeUnknownEffect(
+        Schema.Struct({
+          riskPolicy: Schema.optionalKey(Schema.Struct({ maxBrokerStateAgeMs: Schema.Int })),
+        }),
+      )(entry.document)
+      if (view.riskPolicy === undefined) continue
+      const maximumAgeMs = view.riskPolicy.maxBrokerStateAgeMs
+      if (maximumAgeMs <= 0)
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Protection entry has no valid reconciliation age bound',
+        })
+      const reconciliationSource = sql`
+        SELECT schema_version AS "schemaVersion", reconciliation_id AS "reconciliationId", account_id AS "accountId",
+          expected_hash AS "expectedHash", observed_hash AS "observedHash", content_hash AS "contentHash",
+          status, discrepancies,
+          to_char(reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "reconciledAt"
+        FROM reconciliations WHERE account_id = ${scope.accountId}
+          AND reconciled_at <= ${row.plan.createdAt}::timestamptz
+          AND reconciled_at > ${row.plan.createdAt}::timestamptz - ${maximumAgeMs} * interval '1 millisecond'
+        ORDER BY reconciled_at, reconciliation_id COLLATE "C" LIMIT ${maximumProtectionReconciliations + 1}
+      `
+      const [reconciliationSize] = yield* sql`
+        SELECT COALESCE(sum(octet_length(to_jsonb(source)::text)), 0)::text AS bytes, count(*)::text AS rows
+        FROM (${reconciliationSource}) AS source
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows, strictParseOptions)))
+      if (BigInt(reconciliationSize.rows) > BigInt(maximumProtectionReconciliations))
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Protection reconciliations exceed their preflight row bound',
+        })
+      sourceBytes += BigInt(reconciliationSize.bytes)
+      if (sourceBytes > BigInt(maximumProtectionSourceBytes))
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Cycle protection source exceeds its preflight byte bound',
+        })
+      const candidates = yield* sql`SELECT * FROM (${reconciliationSource}) AS source`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ReconciliationSchema), strictParseOptions)),
+      )
+      const matches = []
+      for (const reconciliation of candidates)
+        if (
+          (yield* Effect.fromResult(
+            canonicalHashV1Result({
+              entryDecisionHash: protection.entryDecisionHash,
+              reconciliationId: reconciliation.reconciliationId,
+              protection: row.plan.protection,
+            }),
+          )) === row.plan.replanGenerationHash
+        )
+          matches.push(reconciliation)
+      if (matches.length > 1)
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Protection source has ambiguous original reconciliation',
+        })
+      const reconciliation = matches[0]
+      if (reconciliation === undefined) continue
+      const material = {
+        plan: row.plan,
+        authorityGenerationHash: row.authorityGenerationHash,
+        intentId: row.intentId,
+        clientOrderId: row.clientOrderId,
+        riskDecision,
+        reconciliation,
+      }
+      evidence.push({ ...material, sourceHash: yield* Effect.fromResult(canonicalHashV1Result(material)) })
+    }
+    return evidence
+  })
 
 /** The caller owns the single repeatable-read, read-only transaction and bounded file sink. */
 export const writeJevStudyOpportunities = <E>(
@@ -41,7 +205,7 @@ export const writeJevStudyOpportunities = <E>(
     const { accountId, sessionDate, asOf } = scope
     yield* write({
       recordType: 'HEADER',
-      schemaVersion: 'bayn.jev-study-opportunities.v1',
+      schemaVersion: 'bayn.jev-study-opportunities.v2',
       accountBindingHash: yield* Effect.fromResult(
         canonicalHashV1Result({ schemaVersion: 'bayn.jev-study-account.v1', accountId }),
       ),
@@ -57,6 +221,7 @@ export const writeJevStudyOpportunities = <E>(
     let incompleteCycleCount = 0
     let fillCount = 0
     let intentCount = 0
+    let protectionIntentCount = 0
     let transactionCount = 0
     for (const cycle of cycles) {
       // Reject large JSON groups before their payloads cross the wire or accumulate in this process.
@@ -77,14 +242,34 @@ export const writeJevStudyOpportunities = <E>(
         FROM (${executionDecisionRows(sql)}) AS source
         WHERE source.cycle_id = ${cycle.cycleId}
         ORDER BY source.created_at, source.decision_hash COLLATE "C" LIMIT ${maximumDecisionRows + 1}
-      `.pipe(Effect.flatMap((rows) => bounded(rows, maximumDecisionRows, 'Cycle decisions')))
+      `.pipe(
+        Effect.flatMap((rows) => bounded(rows, maximumDecisionRows, 'Cycle decisions')),
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(CycleDecisionRow), strictParseOptions)),
+      )
+      const [intentSize] = yield* sql`
+        SELECT COALESCE(sum(octet_length(to_jsonb(source)::text)), 0)::text AS bytes, count(*)::text AS rows FROM (
+          SELECT * FROM intents WHERE cycle_id = ${cycle.cycleId} LIMIT ${maximumCycleRows + 1}
+        ) AS source
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows, strictParseOptions)))
+      if (
+        BigInt(intentSize.rows) > BigInt(maximumCycleRows) ||
+        BigInt(intentSize.bytes) > BigInt(maximumProtectionSourceBytes)
+      )
+        return yield* new JevStudyOpportunityFailure({
+          message: 'Cycle intents exceed their preflight row or byte bound',
+        })
       const intents = yield* sql`
         SELECT intent_id, account_id, client_order_id, cycle_id, decision_hash, symbol, side,
           quantity_atoms::text AS quantity_atoms, notional_limit_micros::text AS notional_limit_micros,
-          replan_generation_hash, terminal_outcome, created_at, updated_at, authority_generation_hash, state, protection
+          replan_generation_hash, terminal_outcome, created_at, updated_at, authority_generation_hash, state, protection,
+          risk_decision_id
         FROM intents WHERE cycle_id = ${cycle.cycleId}
         ORDER BY intent_id COLLATE "C" LIMIT ${maximumCycleRows + 1}
-      `.pipe(Effect.flatMap((rows) => bounded(rows, maximumCycleRows, 'Cycle intents')))
+      `.pipe(
+        Effect.flatMap((rows) => bounded(rows, maximumCycleRows, 'Cycle intents')),
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(JevStudyIntentSchema), strictParseOptions)),
+      )
+      const protectionIntents = yield* readJevStudyProtectionIntents(sql, scope, decisions, intents)
       const orders = yield* sql`
         SELECT observed_order.schema_version, observed_order.parent_broker_order_id,
           observed_order.order_type, observed_order.time_in_force,
@@ -145,6 +330,7 @@ export const writeJevStudyOpportunities = <E>(
           cycle,
           {
             decisions,
+            protectionIntents,
             intents,
             orders,
             fills,
@@ -161,6 +347,7 @@ export const writeJevStudyOpportunities = <E>(
       if (record.joinCoverage === 'INCOMPLETE') incompleteCycleCount++
       fillCount += record.fills.length
       intentCount += record.intents.length
+      protectionIntentCount += record.protectionIntents.length
       transactionCount += record.transactions.length
       yield* write(record)
     }
@@ -303,6 +490,7 @@ export const writeJevStudyOpportunities = <E>(
       dispositions,
       incompleteCycleCount,
       intentCount,
+      protectionIntentCount,
       fillCount,
       transactionCount,
       inferenceRequestCount: requests.size,

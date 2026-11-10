@@ -2274,6 +2274,12 @@ cost coverage and prospective completeness gates, use the
 [matched entry study](../../docs/bayn/matched-entry-study.md). It remains an offline opportunity test and grants no
 strategy promotion or trading authority.
 
+The [retained session export](../../docs/bayn/study-evidence-export.md) keeps the original v1 batch inventory and a v2
+opportunity/cost companion. Standalone protection proof is captured from the original intent, exact risk approval
+and historical reconciliation within per-cycle row and byte bounds, then reproduced by the native execution verifier.
+Missing proof remains an explicit gap; contradictory proof fails. Complete recorded joins do not independently
+verify the ledger, reconcile invoices or establish all-in profit.
+
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
 15-minute hypothetical outcomes. It is a signal screen, and its overlapping hypotheses do not form a portfolio
