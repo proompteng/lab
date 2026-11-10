@@ -102,3 +102,12 @@ The acceptance retains the existing per-arm allowances: four evaluable factors, 
 When the shell transport has a shorter command timeout than the experiment, use one process supervisor with a fixed outer deadline and immutable owner, process and terminal receipts. The reconstructed acceptance uses a 5,400-second wall ceiling, followed by a 30-second termination grace period. The supervisor survives a transport call ending, but does not resume after a host restart. Reconnect to the acknowledged process; never relaunch to obtain a status update. Preserve exact copies of the four runner files listed in the plan before changing source registration for a subsequent experiment.
 
 After all three pools and fits finish, run both `verify_cosmosalpha_downstream.py` and `check_cosmosalpha_downstream.py` against the retained outputs. Report source/target admission, actual requests, pool completion, model completion and independent numerical verification separately. A successful functional acceptance does not authorize or establish completion of a scientific matrix. It does not establish industry point-in-time validity or a costed trading edge.
+
+Audit retained MCTS candidate binding with the exact repaired source imported:
+
+```sh
+python docs/bayn/evidence/2026-11-09-cosmosalpha-candidate-binding/audit_native_binding.py \
+  /research/calendar-acceptance /research/candidate-binding-audit.json
+```
+
+This read-only audit supports the observed one-candidate native records. It checks the selector's identities, acceptance decisions, cycle and pool CSV expressions and scores, and raw/evaluated/target artifact bytes and alignment. It refuses ambiguous or multi-design records rather than inventing a mapping. It compares scalar node identities if native tree snapshots exist. A quota stop may leave no tree snapshot, and the native snapshot format never stores factor arrays; report those limits separately from the retained artifact checks. The exact-source regression supplies the two-design proof when the live outputs contain only one design per result.

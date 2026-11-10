@@ -1,5 +1,5 @@
 # Linux Python 3.12.9 acceptance dependency snapshot.
-# Install the pinned CosmosAlpha source with its four declared patches separately.
+# Install the selected pinned CosmosAlpha source with its declared patch chain separately.
 # These versions describe this acceptance; they do not relabel prior runtime evidence.
 Flask==3.1.3
 GitPython==3.2.1
