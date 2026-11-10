@@ -56,7 +56,7 @@ const runCopy = (options: { fail?: string; failOutput?: string; mismatch?: strin
       encoding: 'utf8',
       timeout: 5_000,
       env: {
-        PATH: `${directory}:${process.env.PATH ?? ''}`,
+        PATH: `${directory}:${process.env['PATH'] ?? ''}`,
         MOCK_STATE: directory,
         SOURCE_HOST: 'source',
         TARGET_HOST: 'target',
