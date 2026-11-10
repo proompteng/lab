@@ -40,6 +40,11 @@ describeRestate('Real Restate execution deployment activation', () => {
     let brokerPolls = 0
     let brokerReady = false
     let failedPollNotBeforeMs = 0
+    const brokerPollAttempts: Array<{
+      readonly startedAtMs: number
+      readonly nextPollNotBeforeMs: number
+      readonly outcome: 'Failed' | 'QuotaWait' | 'Published'
+    }> = []
     let controllerActivations = 0
     let warmupGate: Promise<void> | undefined
     let warmupEntered = () => {}
@@ -75,17 +80,33 @@ describeRestate('Real Restate execution deployment activation', () => {
         },
         poll: async () => {
           const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
-          if (failedPollNotBeforeMs > now)
+          if (failedPollNotBeforeMs > now) {
+            brokerPollAttempts.push({
+              startedAtMs: now,
+              nextPollNotBeforeMs: failedPollNotBeforeMs,
+              outcome: 'QuotaWait',
+            })
             return {
               poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
               startedAtMs: now,
               completedAtMs: now,
             }
+          }
           brokerPolls += 1
           if (!brokerReady) {
             failedPollNotBeforeMs = now + 5_000
+            brokerPollAttempts.push({
+              startedAtMs: now,
+              nextPollNotBeforeMs: failedPollNotBeforeMs,
+              outcome: 'Failed',
+            })
             throw new Error('Broker observation dependency is temporarily unavailable')
           }
+          brokerPollAttempts.push({
+            startedAtMs: now,
+            nextPollNotBeforeMs: failedPollNotBeforeMs,
+            outcome: 'Published',
+          })
           return {
             poll: { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
             startedAtMs: now,
@@ -185,6 +206,8 @@ describeRestate('Real Restate execution deployment activation', () => {
           )
           expect(waiting.message).toBe('Restate invocation remains incomplete after the bounded completion check')
           expect(controllerActivations).toBe(0)
+          expect(brokerPollAttempts.some((attempt) => attempt.outcome === 'Failed')).toBe(true)
+          expect(brokerPollAttempts.some((attempt) => attempt.outcome === 'QuotaWait')).toBe(true)
           brokerReady = true
           for (let restart = 0; restart < 2; restart += 1) {
             const restarted = restateExecutionActivationRequest(
@@ -198,8 +221,9 @@ describeRestate('Real Restate execution deployment activation', () => {
             expect(resumed.invocationId).toBe(accepted.invocationId)
             expect(resumed.status).toBe(RestateSendStatus.PreviouslyAccepted)
           }
+          // The waiter can reconnect after the retained deadline. Prove quota from actual
+          // poll boundaries below, not from time remaining when the test resumes.
           const quotaWaitMs = Math.max(0, failedPollNotBeforeMs - (yield* Clock.currentTimeMillis))
-          expect(quotaWaitMs).toBeGreaterThan(0)
           const output = yield* awaitRestateInvocation(ingress, accepted.invocationId, {
             maximumAttempts: Math.ceil((quotaWaitMs + 15_000) / 100) + 1,
             pollIntervalMs: 100,
@@ -221,6 +245,15 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(brokerPolls).toBeGreaterThanOrEqual(1)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
+          expect(brokerPollAttempts.some((attempt) => attempt.outcome === 'Published')).toBe(true)
+          for (const [index, attempt] of brokerPollAttempts.entries()) {
+            if (attempt.outcome === 'QuotaWait') {
+              expect(attempt.startedAtMs).toBeLessThan(attempt.nextPollNotBeforeMs)
+              expect(brokerPollAttempts[index + 1]?.startedAtMs).toBeGreaterThanOrEqual(attempt.nextPollNotBeforeMs)
+            } else if (attempt.outcome === 'Published') {
+              expect(attempt.startedAtMs).toBeGreaterThanOrEqual(attempt.nextPollNotBeforeMs)
+            }
+          }
           const journal = yield* Effect.tryPromise({
             try: async (signal) => {
               const response = await fetch(`${admin}/query`, {
