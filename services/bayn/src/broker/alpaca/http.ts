@@ -79,8 +79,11 @@ import {
 
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 import { positionDecodeDiagnostic } from './response-decode-diagnostics'
+import { readTransportInterceptor, withReadTransportDiagnostics } from './transport-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
+// Calendar discovery must leave time for the rest of the bounded recovery pass.
+const marketCalendarTimeoutMs = 5_000
 
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
@@ -135,7 +138,15 @@ const proxyLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
+  Layer.effect(
+    NodeHttpClient.Dispatcher,
+    makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies).pipe(
+      // Bun's compatibility dispatcher lacks interceptors; keep its original behavior and report unobserved.
+      Effect.map((dispatcher) =>
+        typeof dispatcher.compose === 'function' ? dispatcher.compose(readTransportInterceptor) : dispatcher,
+      ),
+    ),
+  )
 
 export const alpacaHttpLayer = (
   connection: BrokerConnection,
@@ -156,6 +167,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       operation: BrokerReadOperation,
       url: URL,
       decoder: Decoder<A>,
+      timeoutMs = connection.operationTimeoutMs,
     ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> =>
       Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
@@ -166,6 +178,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           },
         })
         const response = yield* client.execute(request).pipe(
+          withReadTransportDiagnostics(operation),
           withObservedStage('bayn.alpaca.read.headers', { dependency: 'alpaca', operation, diagnosticOnly: true }),
           Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)),
         )
@@ -278,12 +291,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             : undefined
         return { value, evidence, ...(diagnostic === undefined ? {} : { diagnostic }) }
       }).pipe(
-        Effect.timeout(`${connection.operationTimeoutMs} millis`),
+        Effect.timeout(timeoutMs),
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
             : Cause.isTimeoutError(cause)
-              ? timeoutError(operation, connection.operationTimeoutMs, cause, sensitiveValues)
+              ? timeoutError(operation, timeoutMs, cause, sensitiveValues)
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
@@ -363,9 +376,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson('market-calendar', marketCalendarUrl(connection, decoded), decodeMarketCalendar).pipe(
-            Effect.map((result) => ({ decoded, result })),
-          ),
+          readJson(
+            'market-calendar',
+            marketCalendarUrl(connection, decoded),
+            decodeMarketCalendar,
+            Math.min(connection.operationTimeoutMs, marketCalendarTimeoutMs),
+          ).pipe(Effect.map((result) => ({ decoded, result }))),
         ),
         Effect.flatMap(({ decoded, result }) =>
           normalizeRead('market-calendar', result.evidence, normalizeMarketCalendarResult(result.value, decoded)),

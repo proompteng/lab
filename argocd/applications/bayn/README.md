@@ -23,7 +23,7 @@ Use the current [mandate procedure](#research-mandate-rotation), immutable migra
 ## Current trading scope
 
 Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before
-transmission even when the retained v37 mandate, account and fee approvals would otherwise permit them. Existing
+transmission even when account and fee approvals would otherwise permit them. Existing
 crypto positions retain their normal risk-reducing sells, protection, reconciliation and recovery. Equity calendar
 failures never fall back to crypto. Outside the entitled equity data hours, the controller reports the closed window.
 
@@ -47,20 +47,14 @@ replace the IEX chart or execution prices. See the [current ingestion contract](
 
 ## Market-specific chart history
 
-Protocol v31 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's
-history independently and retains 121 distinct crypto bar minutes. Native rolling indicators still verify their
-original 30-minute raw-bar subset. Longer charts keep raw source and arrival evidence; missing minutes remain gaps.
-The holding limit remains fifteen minutes, with unchanged quote freshness, inference validity, fee funding and risk.
-Migration 162 requires flat, settled, exactly reconciled native OBSERVE recovery and preserves financial history.
-The source cutover removes the old sealed mandate. The subsequent same-account PAPER mandate must bind the verified
-immutable v31 image before natural funded entries and reconciled round trips can be accepted.
+Enabled equity entries retain thirty minutes of chart context. Native executable pricing uses only the latest
+completed minute with fresh quotes, so its bootstrap requests two minutes of Webull M1 history. Markets disabled
+for new entries also request two minutes of pricing history; this preserves retained crypto exits and recovery
+without rebuilding an unused entry chart. Source subscriptions, captured arrivals and replay verification remain
+bound to their original contracts. Explicit historical and research consumers keep their requested chart history.
+See the [market-data contract](../../../services/bayn/README.md#market-data) for source and availability checks.
 
-Crypto candidates require a fresh two-sided quote and the latest completed bar. A trade print is optional context;
-equity candidates retain trade confirmation. SPY is benchmark context: its real trade must be inside the observation
-lookback, while its executable quote must remain at most ten seconds old. An older contextual print cannot veto
-every equity before inference. Both markets cap buys at the original inference ask rounded to a broker tick.
-Equities retain DAY limits and crypto retains IOC limits. Model judgments, fee-inclusive funding, quote freshness,
-inference deadlines, stops and financial limits remain enforced. Broker credentials, capital and loss history persist.
+## Error reporting
 
 Bayn's main API, native Restate execution controller and activation job, and
 independent research worker send **errors only** to dedicated GlitchTip projects
@@ -94,8 +88,6 @@ Verify the deployed immutable image first, then execute the dedicated
 synthetic exception must appear in the corresponding GlitchTip project. This
 command is **not** run automatically from the trading service at startup.
 
-# Bayn GitOps rollout notes
-
 ## Financial database memory
 
 Each `bayn-db` instance reserves 2 GiB and permits 8 GiB so PostgreSQL and the operating system can retain financial
@@ -110,43 +102,21 @@ interruption; verify both pods' resource limits, current primary, synchronous st
 and natural entries and protected exits. If the larger allocation cannot schedule or worsens the measured workload, restore the
 prior resource values through a reviewed commit and the same Kargo path. Infrastructure health is not trading proof.
 
-## Native arrival archive
+## Unified PostgreSQL storage
 
-Both evidence databases disable PostgreSQL JIT. In an October 28, 2026 UTC comparison, the native expense-discovery query
-compiled 187 functions and spent 1.61 to 1.66 seconds compiling a query that executed in 0.54 to 0.60 seconds without
-JIT. The on/off/off/on comparison retained the same plan, row count and buffer reads. This removes compilation overhead
-from short evidence operations.
-It does not remove WAL or synchronous-replication waits. Verify the loaded setting on both instances and compare
-native query timing after rollout. Fsync, synchronous replication, checksums, storage and backups retain their
-existing contracts. See [PostgreSQL's JIT guidance](https://www.postgresql.org/docs/18/jit-decision.html).
+`postgres-cluster.yaml` owns the two-instance `bayn-db` cluster and the `bayn` application database. Financial
+records and immutable native-arrival captures share this database. Both PGDATA claims use the existing
+`local-path` NVMe filesystems on Turin and Altra with a 500Gi working allowance; WAL uses separate 32Gi
+NVMe claims. Required host anti-affinity, synchronous `ANY 1`, TLS, checksums and backups remain enabled.
 
-`native-arrival-postgres.yaml` owns `bayn-native-arrival-db`, a separate two-instance CNPG cluster on the existing
-Ceph storage class. Its synchronous standby, TLS, checksums and daily backups match the financial cluster. The existing
-ObjectStore uses the separate `bayn-native-arrival-db-live` server prefix. CNPG generates the archive application
-connection and CA Secrets. Only the execution controller receives them; its recorder installs only the three immutable
-capture tables and their migration tracker. Financial migrations and trading writes keep using `bayn-db`.
+The projection thread uses the existing application PostgreSQL connection and a single scoped client. Application
+startup alone owns schema migrations. Native capture and read-only exports retain the original checksum,
+ordered-prefix and immutable guards, and use the same PostgreSQL endpoint and CA as financial reads.
 
-The cluster precedes the controller rollout through the existing Argo sync waves. Verify both archive replicas and
-backup configuration, distinct database/PVC identities, current capture bytes and checksum/prefix guards in the
-archive, unchanged financial evidence and lower financial commit latency. Historical raw records remain in `bayn-db`;
-do not delete or recopy them. Source recovery through Kargo retains both archives and reads captures from the database
-owned by that release. Infrastructure readiness alone does not prove funded selections or natural round trips.
-
-The replacement source uses protocol v26 and sequential OpenAI Decisions API CHART and selected BASE_START judgments
-followed by Jev proposal judgments. Migration 153 requires terminal mutation cycles, flat settled inventory, complete accounting,
-fresh exact reconciliation and no unexpired inference claims. It restricts prior PAPER authority for native OBSERVE
-recovery and installs the new request, handoff, receipt and batch write guards. Historical financial rows remain intact.
-
-Both inference secrets sync before the controller rollout. Their controller environment references remain optional so
-independent recovery and code-owned exits can start during a model-secret outage. Missing credentials fail entry
-inference explicitly; they never select a fallback strategy. Research jobs require both credentials.
-
-The v26 source cutover removes the prior v25 mandate from the SealedSecret and all three runtime inputs. Its initial rollout
-uses read-only broker access and no capital authority. After migration 153 and native OBSERVE recovery, any later PAPER
-request requires separate authorization and must bind the verified published image and strategy identity through the
-existing sealed GitOps path. This rollout does not rearm trading. Loss, peak-equity, turnover and financial history remain intact.
-The prior v23 activation receipt below is historical evidence. Image health does not establish a natural trade or
-completed fee-reconciled round trip.
+The hard migration must merge all retained capture epochs, chunks and end markers before the replacement image
+is activated. Verify exact identities and content; do not infer duplicates from table names. Keep the old archive
+and original financial volumes until both unified NVMe replicas, backups, recovery and actual Bayn consumers pass.
+The [migration procedure](../../../docs/bayn/unified-nvme-migration.md) records the ordered data cutover and evidence.
 
 ## Isolated Jev instruction research
 
@@ -233,13 +203,10 @@ The in-process capture configuration and recorder are removed. The public status
 receive no research credential. Longer-lived market-data archives must run outside trading through the separate
 [market-data archive boundary](../../../docs/bayn/market-data-archive.md).
 
-Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
-`bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
-Its earlier positive checks did not complete
-storage acceptance because its ListBuckets negative check failed. A successful shared Rook sync therefore says
-nothing about Bayn capture readiness. Verify the native claim is Bound, its bucket ACL is private, its owner is unique,
-the reflected connection resources are current, and a synthetic upload has identical SHA-256 readback before use.
-Keep collection disabled until export integrity and sustained capacity qualification also pass.
+Bayn-specific acceptance does not run as a hook of the shared Rook application. Before using the research bucket,
+verify the native claim is Bound, its bucket ACL is private, its owner is unique, the reflected connection resources
+are current, and a synthetic upload has identical SHA-256 readback. Shared infrastructure health alone does not
+establish application storage acceptance.
 
 The previous `bayn-research` account, bucket, users, Secrets, Bayn connection configuration, and retained synthetic fixtures
 remain untouched and unused. Do not point the new claim at that existing bucket: provisioning can relink a bucket
@@ -252,80 +219,20 @@ The existing two-instance `bayn-db` cluster retains 100Gi per replica through `r
 primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
 in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
 
-The disposable WAL comparison completed on 2026-10-08 at source `9bb51b5c1fc38033cacd4c1d732d81a08fd7c460`
-([PR #14855](https://github.com/proompteng/lab/pull/14855)). PostgreSQL 18.6 measured four twenty-second phases on
-isolated `rook-ceph-block` volumes on the primary host, after Kafka bootstrap completed. One transaction client
-ran alongside a bounded data writer. Both layouts retained `fsync=on`, `full_page_writes=on`,
-`synchronous_commit=on` and `wal_sync_method=fdatasync`.
+### NVMe data and WAL
 
-| Phase | Layout | Transactions | p95 (ms) | p99 (ms) | Maximum (ms) | Above 1 second |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | Shared | 975 | 88.359 | 445.288 | 1425.809 | 1 |
-| 2 | Separate | 2522 | 23.163 | 97.308 | 329.558 | 0 |
-| 3 | Separate | 2221 | 26.805 | 105.383 | 962.324 | 0 |
-| 4 | Shared | 2323 | 27.000 | 112.975 | 342.442 | 0 |
+Both instances use the existing `local-path` NVMe paths, with 500Gi data and separate 32Gi WAL claims. Local-path
+sizes are working allowances, not filesystem quotas. Monitor actual free space and archived WAL; an archive outage
+can retain more WAL than the configured 4GB checkpoint target. Preserve required synchronous `ANY 1`, host
+anti-affinity, fsync, full-page writes, checksums and the existing Barman object store and backup retention.
 
-All 8,041 samples, nearest-rank percentiles, settings and WAL IO records were independently verified against
-streamed logs and retained PVC files with SHA-256 manifests before cleanup. Time-aligned Ceph, host, RBD,
-PostgreSQL and CPU-throttling queries were available. The repeated shared phase was comparable to the separate
-phases, so the first shared spike does not establish a reproducible layout benefit. These short local durability
-measurements do not qualify cross-host replication, S3-plus-SQL capture capacity or profitability.
-`bayn-db` retains its existing storage layout. The canary Job, policy, script ConfigMap and two isolated claims are
-removed from desired state after archival; production database volumes and backup/replication settings are preserved.
+Before reconstructing an instance, verify two healthy off-host durable copies and no active backup on the instance
+being retired. Keep the original backing volumes until the replacement, financial records and arrival prefixes
+have passed verification. Follow the [unification procedure](../../../docs/bayn/unified-nvme-migration.md), including
+the temporary third failure domain, exact data merge, native activation and verified source retirement.
 
-### November 2026 financial WAL migration
-
-On November 3 a financial COMMIT took 40.333 seconds. The retained PostgreSQL 18 metrics sampled an active query
-waiting on `SyncRep` at age 36.665 seconds, with substantial WAL fsync time on both peers and no CPU throttling.
-Batch receipt persistence crossed the unchanged ten-second inference validity and thirty-second native pass budget.
-The earlier disposable comparison only tested two layouts on the same Ceph HDD pool; it did not test local NVMe
-or synchronous cross-host acknowledgement. Its results remain retained and do not establish this migration's benefit.
-
-`bayn-db` now declares separate 32Gi WAL volumes on `local-path-bayn-wal`. The existing PGDATA volumes, their UIDs,
-database identity, financial history, Barman object store and backup retention remain in place. The WAL allocation
-provides headroom above the configured 4GB checkpoint WAL target; it is not a trading, qualification or retention
-quota. Local-path does not enforce a filesystem quota or support online claim expansion. Monitor actual filesystem
-capacity and archiving; an archive outage can retain more WAL than the checkpoint target.
-
-The new class uses the verified local NVMe mounts on Altra and Turin, with one explicit path on each host and retained
-volumes. PostgreSQL's required `ANY 1` synchronous durability replaces the deprecated min/max replica configuration:
-commits require the other host's durable acknowledgement even when a replica is unavailable. Keep two instances,
-hard host anti-affinity, the 100G placement, `synchronous_commit=on`, fsync and full-page writes. Do not reduce Ceph
-scrubbing, disable synchronous commit or extend application deadlines to hide slow storage.
-The independent native-arrival archive uses the same separate 32Gi local NVMe WAL layout and required synchronous
-durability. Its Ceph PGDATA volumes, cluster identity and backup configuration remain in place. During the November 6
-investigation, 58 archive client WAL flushes averaged 623 ms over 44 seconds; active sessions waited on `WalSync` and
-`SyncRep`. This is a measured storage bottleneck, independent of decision CPU. Both verified local filesystems had
-more than 200 GiB free before allocating the archive WAL claims. Apply the same rollout and recovery procedure below
-to the archive, after its current backup completes and both peers are caught up. Compare native append spans,
-PostgreSQL WAL timings, synchronous replication and retained archive prefixes after the managed migration.
-The existing archive PGDATA claims expand from 100Gi to 200Gi: they were 88% occupied, with about 12Gi available.
-The Ceph pool reported more than 12TiB available. Expansion preserves retained evidence and is capacity protection;
-it is not evidence of a latency improvement.
-
-Rollout order:
-
-1. Merge and sync the reviewed [local-path configuration](../local-path/README.md). Verify the class and the
-   provisioner's loaded configuration before enabling this Bayn revision.
-2. Retain the current financial/capital readback, both PGDATA PVC/PV identities, replication position and backup/WAL
-   archiving evidence. Require both existing instances healthy and caught up before starting the operator rollout.
-3. Deliver the Bayn revision through its normal reviewed image, Kargo and Argo path. CloudNativePG 1.30.1 migrates
-   WAL during its managed instance rollout and switchover; do not delete or recreate existing PGDATA volumes.
-   With two instances and required synchronous durability, writes can pause while the standby restarts. Retain those
-   operational failures; the maintenance interval cannot become successful service by changing its deadlines.
-4. Verify both WAL claims use the retained class, their node affinity matches the expected host and `pg_wal` resolves
-   to the dedicated volume. Verify both peers, exact synchronous settings, current archiving, unchanged PGDATA and
-   financial/capital readback. Then verify actual native equity inputs, durable timely decisions, exact reconciliation
-   and complete accounting at the deployed source. Report measured commit latency independently of reliability.
-
-Adding `walStorage` is one-way for an existing CloudNativePG cluster. Never revert it out of desired state, remove
-the retained WAL files, or rebind a failed host's local volume elsewhere. Application code recovery must preserve
-this storage configuration. A lost device requires the normal verified standby reconstruction/failover procedure;
-retain surviving financial data and stop administrative changes if replication or accounting cannot be established.
-Class readiness, an operator rollout and lower latency do not establish the prospective 99.9% result.
-See [CloudNativePG storage](https://cloudnative-pg.io/docs/1.30/storage/#volume-for-wal), its
-[existing-cluster WAL migration tests](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/tests/e2e/pg_wal_volume_test.go),
-and [required synchronous durability](https://cloudnative-pg.io/docs/1.30/replication/#data-durability-and-synchronous-replication).
+The earlier Ceph comparison and November 3 COMMIT stalls explain the investigation; they do not establish a speedup
+for this layout. Compare actual requests and PostgreSQL I/O after cutover without changing application deadlines.
 
 Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
 defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
@@ -339,12 +246,12 @@ See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime
 
 Bayn sets `monitoring.metricsQueriesTTL: 1s` so the existing five-second metrics scrape obtains fresh catalog
 observations. CNPG otherwise caches query results for thirty seconds, even when the exporter is scraped more often.
-The one-second cache still coalesces closely spaced scrapes; both Bayn clusters use it, and it changes no
+The one-second cache still coalesces closely spaced scrapes; the unified cluster uses it, and it changes no
 database durability or application deadline. Verify the live Cluster field, both exporters' collection errors and
 scrape durations, and changes in the retained replication reply-age or active walsender query-age samples after
 GitOps reconciliation. A five-second scrape timestamp alone does not prove a fresh database observation.
-Both clusters share the catalog I/O, wait, replication and timing queries. They run against each cluster's configured
-application database; the generation-index query remains attached only to the financial database.
+The unified cluster collects catalog I/O, wait, replication, timing and generation-index queries against the `bayn`
+application database.
 See [CNPG output caching](https://cloudnative-pg.io/docs/1.28/monitoring/#output-caching).
 
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
@@ -360,16 +267,17 @@ the three exact Alpaca API hosts, `api.typesafe.ai`; direct external worker acce
 credential or unavailable provider blocks new entries while deterministic position-reducing management remains active.
 The public status service and activation hook do not receive the model credential.
 
-The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its versioned bootstrap budget is five minutes: the initial 905,542-record
-catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
+The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its
+versioned bootstrap budget is five minutes. Freshness and entry checks apply after catch-up. Verify the sealed request's
 content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
 progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
 
 Each worker starts its existing read-only Kafka projection when the endpoint
 starts. The trading driver, broker session, model client and capital activation remain lazy. The same server-scoped
 projection is reused by the first execution runtime and its replacements, without another consumer. Bootstrap remains
-asynchronous: an accepting TCP endpoint does not imply complete signal history, and existing snapshot checks still
-reject rebuilding, missing or late input. Research does not claim storage, acquire clients, hash or copy records,
+asynchronous: `/startup-ready` remains unavailable until the initial rebuild completes, and activation waits for both
+current replicas and the selected worker's history. An accepting TCP endpoint alone does not establish history readiness.
+Snapshot checks still reject rebuilding, missing or late input after startup. Research does not claim storage, acquire clients, hash or copy records,
 or wait for persistence in this startup or consumption path.
 
 Prewarm moves the eventual per-replica consumption earlier. Both current replicas, and old/new replicas overlapping
@@ -379,9 +287,8 @@ replica does not make an upstream bar published outside its permitted finalizati
 
 ## Regular-session trading boundaries
 
-Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
-historical cycle contracts. It changes constraints without rewriting cycle or execution evidence. Apply it through
-normal worker startup before activating the new strategy identity. The submission window can start at market open;
+The native policy uses zero session-boundary offsets while retaining calendar ordering, exact offset bindings and
+historical cycle contracts. The submission window can start at market open;
 the active strategy admits the first completed observed minute after its decision delay, with up to thirty minutes
 of actual observed history as context.
 
@@ -389,7 +296,7 @@ The active day-trading policy admits entries until five minutes before the actua
 flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and
 early-close windows; unresolved exits must stay visible and cannot complete the cycle as flat.
 
-This strategy change requires a reviewed research mandate rotation delivered through Kargo. Verify the exact image,
+Changes to the bound strategy require a reviewed research mandate rotation delivered through Kargo. Verify the exact image,
 activation identity, stored cycle boundaries, natural controller progress, and unchanged broker/accounting state.
 After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
 constraints or delete cycles to make an incompatible binary start.
@@ -420,13 +327,17 @@ can retire its predecessor, a bounded read-only preflight rejects untransitioned
 Absent or existing OBSERVE authority and recognized restricted-generation recovery remain admissible; the existing
 native settlement, reconciliation, identity and capital checks still apply afterward. The preflight does not rotate
 authority, restore a mandate or prove broker exposure. A pinned stale coordinator
-cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
-activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
+cannot stop a newer owner. The authenticated handoff verifies fresh broker publication, then commits the active
+replacement through one private exclusive rotation of the exact predecessor epoch, plan and source. No inactive
+intermediate controller is persisted. Transient broker failures retain durable readiness waits in bounded batches;
+each new batch revalidates the immutable target and authority. An administrative deactivation or superseding source
+fences the pending rotation. Hook-client timeout does not cancel the durable wait or resume a paused invocation.
+GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
 source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
 
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
-`activate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+`activate`, `rotate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
 result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
 `BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
 and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
@@ -545,41 +456,6 @@ and narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS, and bro
 service-account token and accept Restate requests only from the `restate` namespace. The activation Job has no broker
 egress and its token-authenticated deployment activation call is made only by the labeled GitOps hook.
 
-### Continuous cash-spot cutover
-
-Equities and `BTC/USD`, `ETH/USD`, `SOL/USD` use one account controller, planner, intent store, mutation coordinator,
-broker adapter and accounting pipeline. Market profiles select the recorded producer contract and instrument rules.
-The crypto profile consumes `bayn.market-data.crypto.v1` and `bayn.market-data.crypto.features.v1` continuously,
-including weekends and UTC midnight. Crypto candidates require fresh executable quotes and actual trades within the verified lookback window; the retained trade age remains contextual evidence. Crypto benchmarks require matching verified completed bars and native features, using the last completed close without an executable benchmark quote or trade. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
-holding, and three minutes of close recovery. Finished cycles rearm against the next admitted market window;
-the account risk day remains America/New_York for both markets. An unused continuous lease that expires without snapshot or decision evidence can rearm after its deadline and cooldown under the same approved account, strategy and execution policy. Each successor repeats fresh data, reconciliation and risk admission.
-
-Migration 97 changes all current quantities to billionth-unit atoms and executed prices to billionth-dollar atoms.
-USD ledgers remain in millionths of a dollar. It archives the original immutable records and hashes, preserves
-broker event and TigerBeetle transfer identities, and rewrites the current projection atomically. It requires flat
-broker and accounted inventory, settled orders, complete fill accounting and no bound unfinished cycle. An unsafe
-cutover fails without changing the schema. There is no mixed-unit runtime or retired order encoder.
-
-Migration startup has a dedicated fifteen-minute database budget and a twenty-minute worker startup probe. The
-thirty-minute Kargo deployment budget covers that startup and native handoff. These limits accommodate the retained
-immutable history rewrite; readiness and native authority still require completed migrations and verified state.
-
-The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
-no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migrations
-97 and 147, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
-Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v25 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 147, the source-bound controller plan v3
-handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
-build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
-PAPER authority only after validating the complete binding.
-
-Acceptance requires actual BTC, ETH and SOL orders and fills through the account controller while equities are
-closed, exact quantity and order-duration readback, ledger receipts and reconciliation, and continued rearm.
-Automated Sunday and midnight tests establish boundary behavior; a short PAPER run does not establish a completed
-24-hour or weekend soak, profitability, or live liquidity capacity. Broker FEE/CFEE activities retain their native
-cash/coin distinction; pending fee publication remains a cost-evidence gap.
-
 ### Trace export buffering
 
 The two-replica `bayn-telemetry` Alloy relay accepts Bayn traces before forwarding them to the existing Tempo
@@ -625,7 +501,7 @@ Invalid static mandate configuration fails preparation with its specific reason 
 
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation
-to remain exact with zero unresolved mutations. While equities are closed, equity orders and fills must remain unchanged; eligible crypto cycles may continue. If validation fails before activation, revert the complete request/hash/generation change through reviewed GitOps.
+to remain exact with zero unresolved mutations. While equities are closed, equity orders and fills must remain unchanged. Retained positions keep their existing recovery and protection contracts. If validation fails before activation, revert the complete request/hash/generation change through reviewed GitOps.
 If activation has succeeded, first deactivate the native controller through reviewed GitOps and prove OBSERVE authority,
 exact reconciliation, and no broker-ledger advance before replacing the mandate. Never roll back only the Secret or
 invoke the activation handler manually.

@@ -14,7 +14,6 @@ resources:
 - postgres-cluster.yaml
 - postgres-monitoring.yaml
 - postgres-scheduled-backup.yaml
-- native-arrival-postgres.yaml
 - tigerbeetle-cluster.yaml
 - tigerbeetle-networkpolicy.yaml
 - egress-proxy.yaml
@@ -47,7 +46,7 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:ddcf817974a3e6361574f3cd676d63e873022b4389b85c0138c7f5f44fe73487
+  digest: sha256:3ee2bf24c1d221398a49001e288a68a7999d4d5685fc4a9bc6d28bd087458d04
 - name: bayn-research
   newName: registry.ide-newton.ts.net/lab/bayn-research
-  digest: sha256:cf68e9bd40a40fb2f0fff5130b3206bf181bfc2df29af1ae9d65bdf21672e31f
+  digest: sha256:f2c68696ceaa9cca27fcbf7736f24efc55c43ec647fcef4d2f3b5e0c2bd399d8

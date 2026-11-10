@@ -40,7 +40,9 @@ export type CycleRunResult =
   | {
       readonly outcome: 'ADMISSION_WAITING'
       readonly observedAt: string
-      readonly readiness: DecisionReadiness & { readonly reason: DecisionReadinessReason.AccountProtection }
+      readonly readiness: DecisionReadiness & {
+        readonly reason: DecisionReadinessReason.AccountProtection | DecisionReadinessReason.TurnoverBudgetExhausted
+      }
       readonly admissionProtection: AdmissionProtectionEvidence
     }
   | {
