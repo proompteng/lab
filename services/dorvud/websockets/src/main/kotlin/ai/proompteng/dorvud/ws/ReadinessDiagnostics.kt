@@ -29,7 +29,10 @@ enum class ReadinessErrorClass(
 
 internal fun ReadinessErrorClass.shouldEscalateToLivenessFailure(): Boolean =
   when (this) {
-    ReadinessErrorClass.OptionsEventStarvation -> false
+    // Missing upstream events keep readiness false; the WebSocket idle watchdog owns reconnection.
+    ReadinessErrorClass.OptionsEventStarvation,
+    ReadinessErrorClass.MarketDataChannelStarvation,
+    -> false
     else -> true
   }
 

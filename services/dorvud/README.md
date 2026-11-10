@@ -251,6 +251,10 @@ closes on shutdown, normal completion, and startup failure. Heap and thread gaug
 loop runs in Kafka publication. Torghut Alloy retains these meters with the existing `job="torghut"`,
 `namespace="torghut"`, `service="torghut-ws"`, and pod labels every thirty seconds.
 
+Missing upstream market events keep readiness false without escalating channel starvation into a process restart.
+The existing WebSocket idle watchdog owns reconnection. Authentication and Kafka failures retain their bounded
+liveness escalation, and market-data freshness checks remain required for readiness.
+
 During a stall, align `torghut_ws_kafka_send_latency_seconds_{count,sum,max}`, send errors, readiness, pod restarts,
 `jvm_memory_used_bytes{area="heap"}`, `jvm_memory_max_bytes{area="heap"}`, `jvm_gc_pause_seconds_{count,sum,max}`,
 and `jvm_threads_states_threads` for the same pod and time window. The central collector also retains the producer's
