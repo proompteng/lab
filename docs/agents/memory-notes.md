@@ -38,6 +38,8 @@ the repository scope, which defaults to `proompteng/lab`.
 `code.state` and `memory.state` distinguish usable results from stale, degraded or unavailable sources. An available
 source with no matches has `state=ready` and an empty result list. One source failure preserves the other source's
 evidence. Neither source establishes current runtime behavior; use the existing operational tools for live readback.
+Each source has a 15-second deadline, below the shared client's 35-second deadline. A stalled memory embedding is
+cancelled and reported as unavailable while usable code is retained.
 
 The same API powers the CLI and the `retrieve_context` tool on both Agent Shell connectors. It replaces `memory_search`.
 The MCP reply budget includes structured and text content plus transport metadata.

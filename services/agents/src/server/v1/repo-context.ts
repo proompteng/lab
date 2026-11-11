@@ -18,9 +18,9 @@ export const postRepoContextHandler = async (
   if (!parsed.ok) return errorResponse(parsed.message, 400)
   let store: MemoriesStore | undefined
   try {
-    const retrieve: MemoriesStore['retrieve'] = async (input) => {
+    const retrieve: MemoriesStore['retrieve'] = async (input, signal) => {
       store = (dependencies.storeFactory ?? createPostgresMemoriesStore)()
-      return store.retrieve(input)
+      return store.retrieve(input, signal)
     }
     return okResponse(
       await retrieveRepoContext(parsed.value, { retrieve }, { fetch: dependencies.fetch, signal: request.signal }),

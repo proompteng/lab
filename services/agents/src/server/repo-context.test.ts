@@ -60,7 +60,10 @@ describe('repository context', () => {
       state: 'ready',
       items: [{ id: 'test-note', commit: 'c'.repeat(40), createdAt: '2026-11-10T00:00:00Z' }],
     })
-    expect(retrieve).toHaveBeenCalledWith(expect.objectContaining({ repository: 'proompteng/lab', limit: 3 }))
+    expect(retrieve).toHaveBeenCalledWith(
+      expect.objectContaining({ repository: 'proompteng/lab', limit: 3 }),
+      expect.any(AbortSignal),
+    )
   })
 
   it('withholds stale code without hiding usable notes', async () => {
@@ -113,6 +116,35 @@ describe('repository context', () => {
     )
     expect(result.code.state).toBe('ready')
     expect(result.memory).toMatchObject({ state: 'unavailable', message: 'embedding timeout' })
+  })
+
+  it('returns usable code before the client deadline when memory stalls and aborts the memory request', async () => {
+    vi.useFakeTimers()
+    try {
+      let memorySignal: AbortSignal | undefined
+      const pending = retrieveRepoContext(
+        input(),
+        {
+          retrieve: async (_input, signal) => {
+            memorySignal = signal
+            return new Promise(() => undefined)
+          },
+        },
+        { fetch: async () => code() },
+      )
+      await vi.advanceTimersByTimeAsync(15_000)
+      const result = await pending
+      expect(result.code.state).toBe('ready')
+      expect(result.snapshotVerified).toBe(true)
+      expect(result.memory).toMatchObject({
+        state: 'unavailable',
+        message: 'Memory retrieval exceeded its 15000ms deadline.',
+      })
+      expect(memorySignal?.aborted).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([

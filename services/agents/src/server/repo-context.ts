@@ -19,6 +19,33 @@ const unavailable = <T>(error: unknown): ContextSource<T> => ({
   items: [],
 })
 
+const loadMemory = async (
+  input: ResolvedRepoContextInput,
+  store: Pick<MemoriesStore, 'retrieve'>,
+  signal?: AbortSignal,
+) => {
+  const deadline = new AbortController()
+  const timeout = setTimeout(() => deadline.abort(new Error('Memory retrieval exceeded its 15000ms deadline.')), 15_000)
+  const scopedSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal
+  let onAbort: (() => void) | undefined
+  try {
+    return await new Promise<Awaited<ReturnType<MemoriesStore['retrieve']>>>((resolve, reject) => {
+      onAbort = () => reject(scopedSignal.reason)
+      if (scopedSignal.aborted) return onAbort()
+      scopedSignal.addEventListener('abort', onAbort, { once: true })
+      store
+        .retrieve(
+          { query: input.query, repository: input.repository, tags: input.tags, limit: input.limit },
+          scopedSignal,
+        )
+        .then(resolve, reject)
+    })
+  } finally {
+    clearTimeout(timeout)
+    if (onAbort) scopedSignal.removeEventListener('abort', onAbort)
+  }
+}
+
 const loadCode = async (input: ResolvedRepoContextInput, fetcher: AgentsFetch, signal?: AbortSignal) => {
   const baseUrl = (process.env.ATLAS_BASE_URL ?? 'http://jangar.jangar.svc.cluster.local').replace(/\/+$/, '')
   const response = await fetcher(`${baseUrl}/api/code-search`, {
@@ -100,7 +127,7 @@ export const retrieveRepoContext = async (
 ): Promise<RepoContextResponse> => {
   const [codeResult, memoryResult] = await Promise.allSettled([
     loadCode(input, options.fetch ?? fetch, options.signal),
-    store.retrieve({ query: input.query, repository: input.repository, tags: input.tags, limit: input.limit }),
+    loadMemory(input, store, options.signal),
   ])
   const code =
     codeResult.status === 'fulfilled' ? codeResult.value.source : unavailable<ContextCodeHit>(codeResult.reason)
