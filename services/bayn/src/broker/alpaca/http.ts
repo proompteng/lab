@@ -79,7 +79,11 @@ import {
 
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 import { positionDecodeDiagnostic } from './response-decode-diagnostics'
-import { readTransportInterceptor, withReadTransportDiagnostics } from './transport-diagnostics'
+import {
+  readTransportInterceptor,
+  withReadTransportCoverage,
+  withReadTransportDiagnostics,
+} from './transport-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 // Calendar discovery must leave time for the rest of the bounded recovery pass.
@@ -134,25 +138,25 @@ const makeVerifiedProxyDispatcher = (
     (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
   )
 
-const proxyLayer = (
-  connection: BrokerConnection,
-  dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
-): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(
-    NodeHttpClient.Dispatcher,
-    makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies).pipe(
-      // Bun's compatibility dispatcher lacks interceptors; keep its original behavior and report unobserved.
-      Effect.map((dispatcher) =>
-        typeof dispatcher.compose === 'function' ? dispatcher.compose(readTransportInterceptor) : dispatcher,
-      ),
-    ),
-  )
-
 export const alpacaHttpLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
-  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection, dependencies)))
+  HttpClient.layerMergedContext(
+    Effect.gen(function* () {
+      const rawDispatcher = yield* NodeHttpClient.Dispatcher
+      // Bun's compatibility dispatcher lacks interceptors; preserve that fallback and report its coverage.
+      const interceptorAvailable = typeof rawDispatcher.compose === 'function'
+      const dispatcher = interceptorAvailable ? rawDispatcher.compose(readTransportInterceptor) : rawDispatcher
+      const client = yield* NodeHttpClient.makeUndici.pipe(Effect.provideService(NodeHttpClient.Dispatcher, dispatcher))
+      // A composed dispatcher reaching this point installed the interceptor successfully, not necessarily invoked it.
+      return HttpClient.transformResponse(client, withReadTransportCoverage(interceptorAvailable))
+    }),
+  ).pipe(
+    Layer.provide(
+      Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies)),
+    ),
+  )
 
 export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
