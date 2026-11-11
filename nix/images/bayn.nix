@@ -25,6 +25,7 @@ let
     "native-arrival-export-command"
     "webull-research-command"
   ] else [
+    "decision-construction-worker"
     "index"
     "forward-performance-command"
     "control-opening-command"
@@ -152,6 +153,7 @@ let
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
     "node --check services/bayn/dist/market-projection-worker.js"
+    "node --check services/bayn/dist/decision-construction-worker.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/system-assessment-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"

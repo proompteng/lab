@@ -922,6 +922,13 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
+Live decision construction runs in a single-use Node worker thread so synchronous validation and canonical hashing
+cannot block broker-cache replies or controller timers. OBSERVE and PAPER share one construction permit per process.
+The caller owns worker termination on success, failure, deadline or interruption; queued work cannot start until the
+previous thread has terminated. The worker uses the same constructors and hashes, and the controller owns the returned
+frozen document. Broker mutations and authority checks remain in the controller. Native replay provides the same
+constructor in its virtual-clock runtime, preserving its sealed executable and deterministic timing.
+
 Replacement execution workers start their read-only Kafka projection before exposing the Restate endpoint.
 Their `/startup-ready` probe latches only after the initial history rebuild; the activation hook requires both
 current replicas ready. Shared native activation preflight also waits for current history before reading the
