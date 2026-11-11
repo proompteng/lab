@@ -30,7 +30,7 @@ vi.mock('./kysely-migrations', () => ({ ensureMigrations: async () => undefined 
 const url = process.env.AGENTS_STORE_TEST_DATABASE_URL
 describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () => {
   const databaseName = `memory_test_${crypto.randomUUID().replaceAll('-', '')}`
-  const root = mkdtempSync(join(tmpdir(), 'memory-shell-test-'))
+  let root: string
   const previous = { dimension: process.env.OPENAI_EMBEDDING_DIMENSION, baseUrl: process.env.AGENTS_SERVICE_BASE_URL }
   let admin: Pool
   let db: Kysely<AgentsDatabase>
@@ -40,6 +40,7 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
 
   beforeAll(async () => {
     if (!url) throw new Error('AGENTS_STORE_TEST_DATABASE_URL is required')
+    root = mkdtempSync(join(tmpdir(), 'memory-shell-test-'))
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
     admin = new Pool({ connectionString: url })
     await admin.query(`CREATE DATABASE "${databaseName}"`)
