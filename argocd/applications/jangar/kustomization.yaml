@@ -20,7 +20,6 @@ resources:
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - redis-upgrade-backup.yaml
-  - openwebui-upgrade-snapshot.yaml
   - pvc-rwo.yaml
   - vscode-tailscale-service.yaml
   - alloy-rbac.yaml
