@@ -185,8 +185,9 @@ export const makeMutationStartPostgres = (
     Effect.gen(function* () {
       const admission = input.expiredEntryCancellation
       if (admission === undefined) return
-      // The authority and intent row locks are already held. Sample the live database clock only after
-      // those waits: caller time and PostgreSQL transaction-start time cannot admit a stale lookup.
+      // The authority and intent row locks are already held. Sample this intent account's commit clock
+      // only after those waits: live accounts use wall time and isolated replay accounts include measured
+      // work. Caller time and PostgreSQL transaction-start time cannot admit a stale lookup.
       const rows = yield* sql`
         SELECT intent.account_id,
           authority.generation_hash AS authority_generation_hash,
@@ -194,7 +195,8 @@ export const makeMutationStartPostgres = (
           authority.maximum, authority.effective, authority.kill_state, authority.reason,
           intent.intent_id, intent.authority_generation_hash AS intent_authority_generation_hash,
           intent.client_order_id, intent.side, ${input.brokerOrderId}::text AS broker_order_id,
-          to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS admitted_at
+          to_char(execution_account_commit_now(intent.account_id) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS admitted_at
         FROM authority_state AS authority
         JOIN intents AS intent ON intent.intent_id = ${input.intentId}
         WHERE authority.singleton

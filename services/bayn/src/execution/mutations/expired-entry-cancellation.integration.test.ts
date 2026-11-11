@@ -3,6 +3,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import simulatedExecutionClock from '../../../migrations/0069_simulated_execution_clock'
+import measuredSimulationClock from '../../../migrations/0081_measured_simulation_clock'
+import replaySourceClock from '../../../migrations/0085_replay_source_clock'
 import { prepareCancel } from '../../broker/alpaca-mutations/decisions'
 import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { PostgresClientLive } from '../../db/postgres-client'
@@ -43,58 +46,64 @@ const makeRuntime = (applicationName: string) =>
 
 // Use the actual mutation adapters and PostgreSQL writer fence with the columns they consume.
 // The main migrated-schema integration suite separately validates database constraints and migrations.
-const seed = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* sql`CREATE TABLE authority_generations (
+const seed = (boundAccountId = accountId) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`DROP SCHEMA public CASCADE`
+    yield* sql`CREATE SCHEMA public`
+    yield* sql`CREATE TABLE authority_generations (
     generation_hash text PRIMARY KEY, account_id text, maximum text, risk_policy_hash text, strategy_name text
   )`
-  yield* sql`CREATE TABLE authority_state (
+    yield* sql`CREATE TABLE authority_state (
     singleton boolean PRIMARY KEY, generation_hash text, maximum text, effective text, kill_state text,
     reason text, version integer, updated_at timestamptz
   )`
-  yield* sql`CREATE TABLE intents (
+    yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, account_id text, policy_hash text,
     strategy_name text, side text, state text, updated_at timestamptz, risk_decision_id text, client_order_id text
   )`
-  yield* sql`CREATE TABLE risk_decisions (
+    yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
   )`
-  yield* sql`CREATE FUNCTION execution_account_now(text) RETURNS timestamptz LANGUAGE sql VOLATILE
-    AS 'SELECT clock_timestamp()'`
-  yield* sql`CREATE TABLE mutation_events (
+    yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $function$
+    BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000'; END
+    $function$`
+    // Exercise the production account clocks and their replay identity/monotonicity constraints.
+    yield* simulatedExecutionClock
+    yield* measuredSimulationClock
+    yield* replaySourceClock
+    yield* sql`CREATE TABLE mutation_events (
     event_id text PRIMARY KEY, schema_version text, mutation_id text, intent_id text, sequence integer,
     operation text, event_type text, request_hash text, request_body jsonb, consistency_delay_ms integer,
     broker_order_id text, request_id text, response_status integer, response_content_hash text,
     occurred_at timestamptz, denial_reason text, routing jsonb, UNIQUE(mutation_id, sequence)
   )`
-  for (const hash of [generationHash, otherGenerationHash])
-    yield* sql`INSERT INTO authority_generations VALUES (${hash}, ${accountId}, 'PAPER', ${policyHash}, 'jev')`
-  yield* sql`INSERT INTO authority_state VALUES (
+    for (const hash of [generationHash, otherGenerationHash])
+      yield* sql`INSERT INTO authority_generations VALUES (${hash}, ${boundAccountId}, 'PAPER', ${policyHash}, 'jev')`
+    yield* sql`INSERT INTO authority_state VALUES (
     true, ${generationHash}, 'PAPER', 'OBSERVE', 'ACTIVE', ${reconciliationIncompleteRestrictionReason}, 2,
     '2026-01-01T00:00:00Z'
   )`
-  yield* sql`INSERT INTO intents VALUES (
-    ${intentId}, ${generationHash}, ${accountId}, ${policyHash}, 'jev', 'BUY', 'ACKNOWLEDGED',
+    yield* sql`INSERT INTO intents VALUES (
+    ${intentId}, ${generationHash}, ${boundAccountId}, ${policyHash}, 'jev', 'BUY', 'ACKNOWLEDGED',
     '2026-01-01T00:00:00Z', ${'e'.repeat(64)}, ${clientOrderId}
   )`
-  const material = {
-    schemaVersion: legacyMutationEventSchemaVersion,
-    mutationId: Result.getOrThrow(mutationIdResult(intentId, MutationOperation.Submit)),
-    intentId,
-    sequence: 2,
-    operation: MutationOperation.Submit,
-    eventType: MutationEventType.SubmitAccepted,
-    requestHash: 'f'.repeat(64),
-    consistencyDelayMs: 1_000,
-    brokerOrderId,
-    requestId: 'accepted-parent',
-    responseStatus: 200,
-    responseContentHash: '1'.repeat(64),
-    occurredAt: '2026-01-01T00:00:00.000Z',
-  }
-  yield* sql`INSERT INTO mutation_events (
+    const material = {
+      schemaVersion: legacyMutationEventSchemaVersion,
+      mutationId: Result.getOrThrow(mutationIdResult(intentId, MutationOperation.Submit)),
+      intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: 'f'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId,
+      requestId: 'accepted-parent',
+      responseStatus: 200,
+      responseContentHash: '1'.repeat(64),
+      occurredAt: '2026-01-01T00:00:00.000Z',
+    }
+    yield* sql`INSERT INTO mutation_events (
     event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type, request_hash,
     consistency_delay_ms, broker_order_id, request_id, response_status, response_content_hash, occurred_at
   ) VALUES (
@@ -102,7 +111,7 @@ const seed = Effect.gen(function* () {
     ${intentId}, 2, 'SUBMIT', 'SUBMIT_ACCEPTED', ${material.requestHash}, 1000, ${brokerOrderId},
     'accepted-parent', 200, ${material.responseContentHash}, ${material.occurredAt}
   )`
-})
+  })
 
 const ClockRows = Schema.Tuple([Schema.Struct({ observed_at: Schema.String, valid_until: Schema.String })])
 const BackendRows = Schema.Tuple([Schema.Struct({ pid: Schema.Int })])
@@ -193,7 +202,7 @@ describePostgres('PostgreSQL expired-entry cancellation admission', () => {
     contender = makeRuntime('bayn-expired-entry-admission-contender')
   })
   beforeEach(async () => {
-    await owner.runPromise(seed)
+    await owner.runPromise(seed())
   })
   afterAll(async () => {
     await owner?.dispose()
@@ -313,6 +322,45 @@ describePostgres('PostgreSQL expired-entry cancellation admission', () => {
       expect((await owner.runPromise(begin(fresh))).started).toBe(true)
     },
     15_000,
+  )
+
+  test.each(['frozen-fresh', 'frozen-expired', 'measured-fresh', 'measured-expired', 'live'] as const)(
+    'uses the exact account commit clock for %s cancellation',
+    async (mode) => {
+      const replayAccountId = `replay-${'7'.repeat(64)}`
+      const boundAccountId = mode === 'live' ? accountId : replayAccountId
+      await owner.runPromise(seed(boundAccountId))
+      const token = {
+        accountId: boundAccountId,
+        authorityGenerationHash: generationHash,
+        authorityVersion: 2,
+        intentId,
+        clientOrderId,
+        brokerOrderId,
+        observedAt: '2026-09-04T14:00:00.000Z',
+        validUntil: '2026-09-04T14:00:30.000Z',
+      } satisfies ExpiredEntryCancellationAdmission
+      await owner.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+            VALUES (${replayAccountId}, ${'8'.repeat(64)},
+              ${mode === 'frozen-expired' ? token.validUntil : token.observedAt}::timestamptz)`
+          if (mode === 'measured-fresh' || mode === 'measured-expired')
+            yield* sql`UPDATE simulated_execution_clocks
+              SET measured_at = clock_timestamp() - ${mode === 'measured-expired' ? 60 : 0} * interval '1 second',
+                measured_observed_at = observed_at
+              WHERE account_id = ${replayAccountId}`
+        }),
+      )
+      if (mode === 'frozen-fresh' || mode === 'measured-fresh') {
+        expect((await owner.runPromise(begin(token))).started).toBe(true)
+        expect(await contender.runPromise(cancelStarts)).toHaveLength(1)
+      } else {
+        expectAdmissionRejected(await owner.runPromise(begin(token).pipe(Effect.result)))
+        expect(await owner.runPromise(cancelStarts)).toEqual([])
+      }
+    },
   )
 
   test('retains an already committed replay after its observation expires and authority changes', async () => {
