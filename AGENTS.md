@@ -58,10 +58,12 @@ conflict remains, link and quote the exact instruction and explain its effect.
 Before substantial investigation or implementation, retrieve focused context:
 
 ```sh
-bun run --filter memories retrieve-memory --query "<task and identifiers>" --limit 10
+bun run context:retrieve --query "<task and identifiers>" --repository proompteng/lab --limit 3
 ```
 
-Verify important claims against current evidence. Unavailable memory is non-blocking. Save durable context only when
+This combines bounded code excerpts and durable notes. The CLI checks Atlas against the checkout commit; use Git and
+`rg` when the code snapshot is stale or unavailable. Verify note claims against current source or live behavior.
+Unavailable sources are non-blocking. Save durable context only when
 explicitly requested; never save secrets, personal data, raw logs, or transient status.
 
 For indexed production `main`, use:

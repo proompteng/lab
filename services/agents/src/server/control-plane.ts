@@ -161,9 +161,19 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/memory-operations'),
   },
   {
+    file: 'src/routes/v1/context.ts',
+    sourceUrl: new URL('../routes/v1/context.ts', import.meta.url),
+    load: () => import('../routes/v1/context'),
+  },
+  {
     file: 'src/routes/v1/memory-notes.ts',
     sourceUrl: new URL('../routes/v1/memory-notes.ts', import.meta.url),
     load: () => import('../routes/v1/memory-notes'),
+  },
+  {
+    file: 'src/routes/v1/memory-notes/retire.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes/retire.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes/retire'),
   },
   {
     file: 'src/routes/v1/memory-notes/count.ts',
