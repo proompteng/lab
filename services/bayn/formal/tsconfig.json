@@ -1,4 +1,4 @@
 {
   "extends": "../tsconfig.json",
-  "include": ["conformance", "verify-tla.ts"]
+  "include": ["conformance", "verify-tla.ts", "verify-system.ts", "production-faults.ts"]
 }

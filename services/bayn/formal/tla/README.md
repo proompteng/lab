@@ -8,7 +8,7 @@ bun run --filter @proompteng/bayn verify:tla
 
 The command requires Bun, Java 21 and curl. It downloads the official
 [TLC 1.7.4 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4), verifies the SHA-256 in
-`toolchain.json`, checks every reachable state of all five configurations, checks temporal properties, injects nine
+`toolchain.json`, checks every reachable state of all six configurations, checks temporal properties, injects twelve
 deliberate defects, and compares the checked state dumps with production TypeScript. Any download, checksum,
 checker, fault-detection, parsing or conformance failure fails the command. Java and TLC are offline verification
 dependencies and do not enter the trading image or decision path.
@@ -29,12 +29,15 @@ suite without checked dumps; it does not replace `verify:tla`.
 | `EntryRecovery.tla`         | Inputs arriving or losing readiness between polls, initial/later missing inputs, consumed windows, source unavailability, binding, expiry and terminal closure. Short retries stay within the original admission; a modeled decision requires a ready input and precedes expiry.                                                                                     | `decisionReadinessContinuationDelayMs` in `src/observe-composition/recovery-driver.ts`, with the production cycle, window and binding shapes.                                                                                                          |
 | `MutationLedger.tla`        | Authority/kill changes, submission or cancellation, uncertain outcomes and repeated recovery, worker restart, separate preflight reads and posting by two workers, partial posting in either order, metadata corruption and duplicate records. No second dispatch of the same mutation, unauthorized start, duplicate posting or incomplete accounting verification. | `decideMutationAuthority`, `decideMutationStartReplay` and `allowsOutcomeEvent` in `src/execution/mutations/decisions.ts`; `preflightTransfers` and `verifyExactTransfers` in `src/ledger-plan/verification.ts`.                                       |
 | `CancellationAdmission.tla` | Authority, immutable identity and clock changes between an isolated parent lookup and durable cancel admission. Only a current eligible snapshot admits one start; rejected and replayed requests do not add a start. Authority and time may change after admission.                                                                                                 | `expiredEntryCancellationAdmissionIsCurrent` in `src/execution/mutations/decisions.ts`, using the actual captured token and locked database facts.                                                                                                     |
+| `ExecutionBoundary.tla`     | Independent start commit/acknowledgement, two workers and two submit intents, final writer ownership, hidden broker acceptance/fill, one-use caches and before/equal/after-cut recovery observations. Unknown outcomes cannot create another admission or publish new permission.                                                                                    | Real mutation containment/replay/outcome predicates and cache recording; `verify:system` adds full-schema PostgreSQL, coordinator and cache-version cases.                                                                                             |
 
 `../conformance/tla.test.ts` decodes every checked state's scalar view and invokes those production functions. Each view
 retains every model variable, so it does not merge distinct states. Reachability assertions require admitted and
 rejected paths, stale in-flight work, successful and expired cycles, uncertain submissions, killed bounded closes,
 both partial-posting orders, verified complete posting, corrupt metadata and duplicates. Malformed, missing and empty
 state dumps fail. No runtime implementation is generated from these models.
+
+Three execution-boundary controls additionally bypass second-intent containment, permit duplicate invocation and publish a cache during uncertainty. Each must break its named invariant.
 
 The negative controls remove completion ownership, short continuation, clock fairness, single-start, authority,
 deterministic-ID deduplication, continued recovery scheduling, recovery-delivery fairness and current cancellation
@@ -78,6 +81,13 @@ measured elapsed work for isolated replay accounts, excluding paused source read
 locked durable intent, not caller-supplied time.
 Database integration tests exercise those implementation boundaries. The model does not prove PostgreSQL locking, broker atomicity or
 that a zero-fill observation prevents a fill racing a later cancellation. Subsequent reconciliation remains required.
+
+ExecutionBoundary explores one account, two submit intents, two worker selectors and a broker that can accept or fill
+before Bayn learns the outcome. Its clock relation is Before, At or After the broker cut. It deliberately retains a
+reachable older observation alongside an already admitted second invocation, matching SQL's timestamp predicate.
+The first admission commits independently; final authorization holds the writer through invocation. Requested
+revocation cannot commit through that ownership. These are safety checks only, with no partial quantities,
+cancellation or progress claim. `/statechart` explains the result; it does not replace the pinned runner's gate.
 
 There are no state constraints, symmetry reductions or disabled deadlock checks. TLC runs with one worker and a
 fixed fingerprint polynomial. The checker reports the residual fingerprint-collision estimate in its retained log.

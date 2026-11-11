@@ -64,7 +64,7 @@ import {
 import { replayRateCardFixture } from '../../src/testing/inference-rate-card.test-support'
 import { validateSystemRegistration } from '../../src/system-assessment/policy'
 import { frozenQuantityAtoms } from '../../src/system-assessment/frozen-control-report'
-import { makeExecutionRiskPolicy } from '../../src/execution/risk-policy'
+import { approvedExecutionRiskPolicyHashes, makeExecutionRiskPolicy } from '../../src/execution/risk-policy'
 import { SafetyViolationKind } from '../../src/system-assessment/assessment'
 import { indexCashHistory, projectSessionCash } from '../../src/system-assessment/cash-history'
 import { CashAdjustmentKind, cashFlowTotals } from '../../src/system-assessment/cash-flows'
@@ -124,7 +124,7 @@ import { operationalRegistrationFixture } from '../../src/system-assessment/oper
 import { jevSignalWindowEndMs } from '../../src/jev/observation-query'
 import { controllerClockDurations, nearestRank95 } from '../../src/system-assessment/controller-latency'
 import { fullBatchClockDuration } from '../../src/system-assessment/full-batch-latency'
-import { accountEntryProtectionReasons } from '../../src/risk'
+import { accountEntryProtectionReasons, PolicySchema } from '../../src/risk'
 import { replayDecisionReleaseAt } from '../../src/intraday-replay/decision-latency'
 import { assessBacktestSession } from '../../src/intraday-replay/backtest'
 import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } from '../../src/ledger-plan'
@@ -213,6 +213,47 @@ import { intradayExecutionModel, retainedIntradayExecutionModel } from '../../sr
 import { registrationBuildFixture } from '../../src/system-assessment/registration-build.test-support'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
+
+const registrationRiskMaterials = (accountId: string, allowedSymbols: readonly string[]) => {
+  const live = Result.getOrThrow(makeExecutionRiskPolicy(accountId, allowedSymbols, BrokerEnvironment.Live))
+  const paper = Result.getOrThrow(makeExecutionRiskPolicy(accountId, allowedSymbols, BrokerEnvironment.Sandbox))
+  const retainedPaper = Schema.decodeUnknownSync(PolicySchema)({
+    ...live,
+    schemaVersion: 'bayn.execution-risk-policy.v4',
+    maxDailyTradedNotionalMicros: '1000000000000',
+    maxDrawdownMicros: '10000000000',
+  })
+  return { live, paper, retainedPaper }
+}
+
+test('source-approved registration retains PAPER material and rejects unapproved limits', () => {
+  const registration = registrationFixture()
+  for (const definition of registration.policies) {
+    const materials = registrationRiskMaterials(definition.riskPolicy.accountId, definition.riskPolicy.allowedSymbols)
+    expect(
+      Result.getOrThrow(
+        approvedExecutionRiskPolicyHashes(definition.riskPolicy.accountId, definition.riskPolicy.allowedSymbols),
+      ),
+    ).toEqual(Object.values(materials).map(testHash))
+    for (const [riskPolicy, accepted] of [
+      [materials.retainedPaper, true],
+      [{ ...materials.retainedPaper, maxGrossExposureMicros: '100000000001' }, false],
+    ] as const) {
+      expect(
+        Result.isSuccess(
+          validateSystemRegistration({
+            ...registration,
+            policies: registration.policies.map((original) =>
+              original.policy === definition.policy
+                ? { ...original, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
+                : original,
+            ),
+          }),
+        ),
+      ).toBe(accepted)
+    }
+  }
+})
 
 formal('pinned Lean executable conformance', () => {
   test('source-wait reconciliation retains exactness, authority, flat state and original freshness', () => {
@@ -1068,10 +1109,9 @@ formal('pinned Lean executable conformance', () => {
     const inputs = []
     const actual = []
     for (const definition of registration.policies)
-      for (const environment of [BrokerEnvironment.Live, BrokerEnvironment.Sandbox]) {
-        const riskPolicy = Result.getOrThrow(
-          makeExecutionRiskPolicy(definition.riskPolicy.accountId, definition.riskPolicy.allowedSymbols, environment),
-        )
+      for (const riskPolicy of Object.values(
+        registrationRiskMaterials(definition.riskPolicy.accountId, definition.riskPolicy.allowedSymbols),
+      )) {
         const bound = { ...definition, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
         const expanded = { ...riskPolicy, maxGrossExposureMicros: '100000000001' }
         for (const policy of [
@@ -1090,12 +1130,8 @@ formal('pinned Lean executable conformance', () => {
               schemaVersion: 'bayn.inference-cost-account.v1',
               accountId: policy.riskPolicy.accountId,
             }),
-            approvedPolicyHashes: [BrokerEnvironment.Live, BrokerEnvironment.Sandbox].map((environment) =>
-              testHash(
-                Result.getOrThrow(
-                  makeExecutionRiskPolicy(policy.riskPolicy.accountId, policy.riskPolicy.allowedSymbols, environment),
-                ),
-              ),
+            approvedPolicyHashes: Result.getOrThrow(
+              approvedExecutionRiskPolicyHashes(policy.riskPolicy.accountId, policy.riskPolicy.allowedSymbols),
             ),
           })
           actual.push(
@@ -1110,7 +1146,7 @@ formal('pinned Lean executable conformance', () => {
           )
         }
       }
-    expect(actual.filter(Boolean)).toHaveLength(8)
+    expect(actual.filter(Boolean)).toHaveLength(12)
     expect(model(inputs)).toEqual(actual)
   })
   test('a deployed control cannot change any of its six frozen commitments', () => {

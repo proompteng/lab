@@ -70,6 +70,8 @@ jobs:
               - '!services/bayn/**/*.test.ts'
               - 'services/bayn/src/db/entry-inference-postgres.integration.test.ts'
               - 'services/bayn/src/system-assessment/postgres.integration.test.ts'
+              - 'services/bayn/src/execution/runtime-program.test.ts'
+              - 'services/bayn/src/execution/broker-state-cache.test.ts'
               - 'services/bayn/src/db/risk-clock-rejection.integration.test.ts'
               - 'services/bayn/src/db/candidate-observation-window.integration.test.ts'
               - 'services/bayn/migrations/**'
@@ -81,6 +83,7 @@ jobs:
               - 'patches/**'
               - '.github/workflows/bayn-formal.yml'
               - '.github/workflows/bayn-ci.yml'
+              - '.agents/skills/verify-bayn-system/**'
             gepa:
               - 'services/bayn/gepa/**'
               - '.github/workflows/bayn-ci.yml'

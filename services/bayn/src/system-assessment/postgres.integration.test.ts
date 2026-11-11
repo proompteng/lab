@@ -20,7 +20,7 @@ import { replayRateCardFixture } from '../testing/inference-rate-card.test-suppo
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -53,7 +53,13 @@ import {
   readSystemMutationEvidence,
 } from './capture-queries'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
-import { OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import {
+  OrderStatus,
+  Authority,
+  IntentState,
+  makeResearchCapitalGrantGenerationResult,
+  type Intent,
+} from '../execution/contracts'
 import {
   makeResearchCapitalActivationRequest,
   makeResearchCapitalPlanHash,
@@ -62,8 +68,17 @@ import {
 import { config } from '../testing/runtime-fixtures'
 import { bracketEvidenceFixture } from './bracket-evidence.test-support'
 import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
-import { makePostgresMutationStore } from '../execution/mutations/program'
-import { WriterFenceLive } from '../execution/writer-fence'
+import { makePostgresMutationStore, MutationStoreLive } from '../execution/mutations/program'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import { submit, recover } from '../execution/coordinator'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { IntentStore } from '../execution/intents/domain'
+import { MutationEventType, MutationStore } from '../execution/mutations/model'
+import { verifyBrokerStateVersion } from '../db/reconciliation'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { BrokerMutation, MutationOperation, unknownOutcome } from '../broker/alpaca-mutations/model'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { formalModelExecutable, runFormalModel } from './formal-model.test-support'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
@@ -2759,6 +2774,314 @@ postgres('PostgreSQL prospective system qualification', () => {
       ),
     )
   })
+
+  const prepareExecutionBoundary = async () => {
+    const binding = operationalRegistrationFixture().policies[0]?.capitalAuthorization
+    if (binding === undefined) throw new Error('Missing execution capital fixture')
+    const { generation, request } = binding
+    const account = request.broker.accountId
+    const native = nativeJevFixture(JevPurpose.Entry, undefined, account)
+    const cycleId = native.draft.identity.cycleId
+    const ids: readonly [string, string] = [sha256('boundary entry A'), sha256('boundary entry B')]
+    const at = await runtime.runPromise(databaseNow)
+    const expiresAt = new Date(Date.parse(at) + 60_000).toISOString()
+    const decisionHash = sha256('boundary strategy decision')
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+          VALUES (${generation.previousGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${at})`
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+          VALUES (${generation.reconciliationId},${legacyReconciliationSchemaVersion},${account},${testHash('expected')},${testHash('expected')},${generation.reconciliationContentHash},'EXACT','[]'::jsonb,${at})`
+        yield* sql`INSERT INTO authority_generations
+          (generation_hash,schema_version,maximum,authority_version,previous_generation_hash,activation_schema_version,
+          account_id,broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,risk_policy_hash,
+          activated_at,activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
+          strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,strategy_protocol_hash,
+          proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash)
+          VALUES (${generation.generationHash},'bayn.authority-generation-history.v1','PAPER',2,${generation.previousGenerationHash},
+          'bayn.paper-authority-generation.v3',${account},'bayn.broker-identity.v2',${request.broker.identityHash},'alpaca','sandbox',
+          ${request.riskPolicyHash},${at}::timestamptz + interval '1 microsecond',${request.activation.sourceRevision},${request.activation.imageRepository},${request.activation.imageDigest},
+          'jev',${request.strategy.behaviorHash},${request.strategy.parameterHash},${request.strategy.parameterSchemaVersion},${request.strategy.protocolHash},
+          ${request.grant.planHash},${generation.reconciliationId},${generation.reconciliationContentHash},${request.grant.planHash})`
+        yield* sql`INSERT INTO authority_state(schema_version,generation_hash,maximum,effective,kill_state,version,updated_at)
+          VALUES ('bayn.paper-authority.v1',${generation.previousGenerationHash},'OBSERVE','OBSERVE','CLEAR',1,${at})`
+        yield* sql`UPDATE authority_state SET generation_hash=${generation.generationHash},maximum='PAPER',effective='PAPER',
+          version=2,updated_at=${at}::timestamptz + interval '1 microsecond' WHERE singleton`
+        yield* (yield* makeCycleStore({ now: sql`${at}::timestamptz` })).acquire(native.draft, at)
+        const source = {
+          contentHash: sha256('boundary source'),
+          cycleId,
+          createdAt: at,
+          expiresAt,
+          schemaVersion: 'bayn.paper-cycle-closure.v1',
+          document: {
+            schemaVersion: 'bayn.paper-cycle-decision.v2',
+            contentHash: sha256('boundary document'),
+            mode: 'PAPER',
+            createdAt: at,
+            expiresAt,
+            submissionCutoffAt: expiresAt,
+            orderedIntentIds: ids,
+            bindings: {
+              cycleId,
+              accountId: account,
+              authorityGenerationHash: generation.generationHash,
+              strategyDecisionHash: decisionHash,
+              policyHash: request.riskPolicyHash,
+            },
+          },
+        }
+        yield* sql`INSERT INTO autonomous_cycle_paper_close_replans(content_hash,cycle_id,document,created_at,expires_at)
+          VALUES (${source.contentHash},${cycleId},${sql.json(source)},${at},${expiresAt})`
+        for (const [index, intentId] of ids.entries()) {
+          const riskId = sha256(`boundary risk ${index}`)
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,
+            quantity_atoms,notional_limit_micros,limit_price_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+            VALUES (${intentId},'bayn.execution-intent.v5',${account},${'b1_' + (index === 0 ? 'A' : 'B').repeat(43)},${index === 0 ? 'AAPL' : 'AMD'},'BUY','LIMIT','DAY',
+            1000000000,1000000,1000000,'PLANNED',${at},${at},${cycleId},'jev',${decisionHash},${request.riskPolicyHash},${generation.generationHash})`
+              yield* sql`INSERT INTO risk_decisions(decision_id,schema_version,intent_id,policy_hash,input_hash,outcome,reason_codes,decided_at,expires_at)
+            VALUES (${riskId},'bayn.paper-risk-decision.v1',${intentId},${request.riskPolicyHash},${sha256(`boundary input ${index}`)},'APPROVED','{}'::text[],${at},${expiresAt})`
+              yield* sql`UPDATE intents SET state='APPROVED',risk_decision_id=${riskId},state_version=state_version+1,
+            updated_at=${at}::timestamptz + interval '1 microsecond' WHERE intent_id=${intentId}`
+            }),
+          )
+        }
+      }),
+    )
+    return ids
+  }
+
+  const executionBoundaryStores = Layer.mergeAll(IntentStoreLive, MutationStoreLive).pipe(
+    Layer.provideMerge(WriterFenceLive),
+  )
+
+  test('execution boundary contains hidden acceptance across replay and not-found recovery', async () => {
+    const [first, second] = await prepareExecutionBoundary()
+    const observer = makeRuntime(baynTestPostgresUrl ?? '')
+    const transmitted: string[] = []
+    const unused = Effect.die(new Error('Unexpected broker read in execution boundary'))
+    const broker = {
+      submit: (intent: Intent) =>
+        Effect.gen(function* () {
+          transmitted.push(intent.intentId)
+          const visible = yield* Effect.promise(() =>
+            observer.runPromise(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                return yield* sql`SELECT event.request_hash,intent.account_id,intent.authority_generation_hash
+                  FROM mutation_events AS event JOIN intents AS intent USING (intent_id)
+                  WHERE event.intent_id=${intent.intentId} AND event.event_type='SUBMIT_STARTED'`
+              }),
+            ),
+          )
+          expect(visible).toEqual([
+            {
+              request_hash: testHash(Result.getOrThrow(orderRequestBody(intent))),
+              account_id: intent.accountId,
+              authority_generation_hash: intent.authorityGenerationHash,
+            },
+          ])
+          return yield* unknownOutcome({
+            operation: MutationOperation.Submit,
+            message: 'Broker accepted; response lost',
+          })
+        }),
+      cancel: () => unused,
+    }
+    const read: BrokerReadShape = {
+      account: unused,
+      accountConfiguration: unused,
+      assetBySymbol: () => unused,
+      positions: unused,
+      orders: () => unused,
+      orderById: () => unused,
+      orderByClientId: () =>
+        Effect.fail(
+          new BrokerReadError({
+            operation: 'order-by-client-id',
+            kind: BrokerReadErrorKind.NotFound,
+            message: 'Accepted order not visible yet',
+            retryable: false,
+            status: 404,
+            requestId: 'boundary lookup',
+            contentHash: sha256('not-found'),
+            observedAt: new Date().toISOString(),
+          }),
+        ),
+      feeActivities: () => unused,
+      fillActivities: () => unused,
+      marketCalendar: () => unused,
+    }
+    const run = <A, E>(work: Effect.Effect<A, E, IntentStore | MutationStore | BrokerMutation | BrokerRead>) =>
+      runtime.runPromise(
+        work.pipe(
+          Effect.provide(executionBoundaryStores),
+          Effect.provideService(BrokerMutation, broker),
+          Effect.provideService(BrokerRead, read),
+        ),
+      )
+    try {
+      expect((await run(submit(first, 1))).eventType).toBe(MutationEventType.SubmitUnknown)
+      expect((await run(submit(first, 1))).eventType).toBe(MutationEventType.SubmitUnknown)
+      await run(Effect.sleep('5 millis'))
+      expect((await run(recover(first, MutationOperation.Submit))).eventType).toBe(MutationEventType.RecoveryNotFound)
+      const denied = await run(submit(second, 1).pipe(Effect.result))
+      expect(Result.isFailure(denied)).toBe(true)
+      expect(transmitted).toEqual([first])
+      const state = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql`SELECT state FROM intents WHERE intent_id=${first}`
+        }),
+      )
+      expect(state).toEqual([{ state: 'UNKNOWN' }])
+    } finally {
+      await observer.dispose()
+    }
+  })
+
+  test('execution boundary forbids an ambient transaction from reaching the broker', async () => {
+    const [first] = await prepareExecutionBoundary()
+    let calls = 0
+    const result = await runtime.runPromiseExit(
+      Effect.gen(function* () {
+        const fence = yield* WriterFence
+        return yield* fence.transaction(submit(first, 1))
+      }).pipe(
+        Effect.provide(executionBoundaryStores),
+        Effect.provideService(BrokerMutation, {
+          submit: () => {
+            calls += 1
+            return Effect.fail(unknownOutcome({ operation: MutationOperation.Submit, message: 'Uncommitted send' }))
+          },
+          cancel: () => Effect.die('Unexpected cancellation'),
+        }),
+      ),
+    )
+    expect(Exit.isFailure(result)).toBe(true)
+    expect(calls).toBe(0)
+    expect(
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql`SELECT event_id FROM mutation_events`
+        }),
+      ),
+    ).toEqual([])
+  })
+
+  test('execution boundary sends once when competing workers read the same approved intent', async () => {
+    const [first] = await prepareExecutionBoundary()
+    let calls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const intents = yield* IntentStore
+        const bothRead = yield* Deferred.make<void>()
+        const firstMayContinue = yield* Deferred.make<void>()
+        const secondMayContinue = yield* Deferred.make<void>()
+        let reads = 0
+        const worker = (release: Deferred.Deferred<void>) =>
+          submit(first, 1).pipe(
+            Effect.provideService(IntentStore, {
+              ...intents,
+              read: (intentId) =>
+                Effect.gen(function* () {
+                  const snapshot = yield* intents.read(intentId)
+                  expect(Option.getOrThrow(snapshot).intent.state).toBe(IntentState.Approved)
+                  reads += 1
+                  if (reads === 2) yield* Deferred.succeed(bothRead, undefined)
+                  yield* Deferred.await(release)
+                  return snapshot
+                }),
+            }),
+            Effect.result,
+            Effect.forkScoped({ startImmediately: true }),
+          )
+        const original = yield* worker(firstMayContinue)
+        const competing = yield* worker(secondMayContinue)
+        yield* Deferred.await(bothRead).pipe(Effect.timeout('5 seconds'))
+        yield* Deferred.succeed(firstMayContinue, undefined)
+        const sent = yield* Fiber.join(original)
+        expect(Result.getOrThrow(sent).eventType).toBe(MutationEventType.SubmitUnknown)
+        yield* Deferred.succeed(secondMayContinue, undefined)
+        const replay = yield* Fiber.join(competing)
+        expect(calls).toBe(1)
+        expect(Result.getOrThrow(replay)).toEqual(Result.getOrThrow(sent))
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(executionBoundaryStores),
+        Effect.provideService(BrokerMutation, {
+          submit: () => {
+            calls += 1
+            return Effect.fail(unknownOutcome({ operation: MutationOperation.Submit, message: 'Response lost' }))
+          },
+          cancel: () => Effect.die('Unexpected cancellation'),
+        }),
+      ),
+    )
+  })
+
+  test.each([-1, 0, 1])(
+    'execution boundary invalidates a cached observation for another intent start at cut %i ms',
+    async (offset) => {
+      const [first, second] = await prepareExecutionBoundary()
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const fence = yield* WriterFence
+          const intents = yield* IntentStore
+          const stored = yield* intents.read(first)
+          if (Option.isNone(stored)) return yield* Effect.die('Missing boundary intent')
+          const requestHash = testHash(Result.getOrThrow(orderRequestBody(stored.value.intent)))
+          const reconciledAt = new Date(Date.parse(stored.value.updatedAt) + 1000).toISOString()
+          const reconciliationId = sha256('boundary cached observation')
+          yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+          VALUES (${reconciliationId},${legacyReconciliationSchemaVersion},${stored.value.intent.accountId},${testHash('expected')},${testHash('expected')},${sha256('boundary cached observation content')},'EXACT','[]'::jsonb,${reconciledAt})`
+          const [version] = yield* sql`
+        SELECT reconciliation.reconciliation_id AS "reconciliationId",
+          to_char(reconciliation.reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "reconciledAt",
+          authority.generation_hash AS "authorityGenerationHash",authority.version::integer AS "authorityVersion"
+        FROM reconciliations AS reconciliation CROSS JOIN authority_state AS authority
+        WHERE reconciliation.account_id=${stored.value.intent.accountId} AND authority.singleton
+        ORDER BY reconciliation.reconciled_at DESC,reconciliation.reconciliation_id COLLATE "C" DESC LIMIT 1
+      `.pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Tuple([
+                  Schema.Struct({
+                    reconciliationId: Schema.String,
+                    reconciledAt: Schema.String,
+                    authorityGenerationHash: Schema.String,
+                    authorityVersion: Schema.Int,
+                  }),
+                ]),
+              ),
+            ),
+          )
+          const startedAt = new Date(Date.parse(reconciledAt) + offset).toISOString()
+          yield* (yield* makePostgresMutationStore).beginSubmit(first, requestHash, 1, startedAt, undefined)
+          yield* fence.transaction(
+            Effect.gen(function* () {
+              expect(
+                yield* verifyBrokerStateVersion(sql, stored.value.intent.accountId, version, first, false),
+              ).toBeNull()
+              const other = yield* verifyBrokerStateVersion(
+                sql,
+                stored.value.intent.accountId,
+                version,
+                second,
+                false,
+              ).pipe(Effect.result)
+              expect(Result.isSuccess(other)).toBe(offset < 0)
+            }),
+          )
+        }).pipe(Effect.provide(executionBoundaryStores)),
+      )
+    },
+  )
 
   test('a later admitted mutation does not invalidate an exact preflight reconciliation', async () => {
     const { account, definition, registered } = await activeEvaluation()

@@ -10,6 +10,20 @@ jobs:
   tla:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bayn
+          POSTGRES_PASSWORD: bayn
+          POSTGRES_DB: bayn_system_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bayn -d bayn_system_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -31,15 +45,16 @@ jobs:
           architecture: x64
       - name: Install TypeScript dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
-      - name: Check TLA+ safety, liveness, fault detection and production conformance
+      - name: Check system boundaries, TLA+ conformance and production fault detection
         env:
-          BAYN_TLA_OUTPUT_DIR: ${{ runner.temp }}/bayn-tla
-        run: bun run --filter @proompteng/bayn verify:tla
+          BAYN_SYSTEM_OUTPUT_DIR: ${{ runner.temp }}/bayn-system
+          BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_system_test
+        run: bun run --filter @proompteng/bayn verify:system
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bayn-tla-${{ github.sha }}
-          path: ${{ runner.temp }}/bayn-tla
+          name: bayn-system-${{ github.sha }}
+          path: ${{ runner.temp }}/bayn-system
           if-no-files-found: error
   verify:
     runs-on: ubuntu-latest
@@ -87,8 +102,8 @@ jobs:
           formal_tsc="$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)"
           chmod +x "$formal_tsc"
           "$formal_tsc" --noEmit --project formal/tsconfig.json
-          bun ../../node_modules/oxfmt/bin/oxfmt --check formal/conformance formal/verify-tla.ts formal/tsconfig.json
-          bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json formal/conformance formal/verify-tla.ts
+          bun ../../node_modules/oxfmt/bin/oxfmt --check formal/conformance formal/verify-tla.ts formal/verify-system.ts formal/production-faults.ts formal/tsconfig.json
+          bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json formal/conformance formal/verify-tla.ts formal/verify-system.ts formal/production-faults.ts
       - name: Build, independently recheck proofs, and verify production conformance
         working-directory: services/bayn/formal
         run: |
