@@ -347,6 +347,10 @@ describe('agents-shell MCP tools', () => {
         'read_file',
         'apply_patch',
         'agent_guide',
+        'memory_search',
+        'memory_list',
+        'memory_save',
+        'memory_retire',
         'exec',
         'read',
         'cancel',
@@ -433,7 +437,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(25_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(30_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
