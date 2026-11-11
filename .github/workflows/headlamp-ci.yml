@@ -50,6 +50,7 @@ jobs:
       image: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.image == 'true' }}
       manifests: ${{ steps.filter.outputs.manifests }}
       upstream: ${{ steps.filter.outputs.upstream }}
+      release: ${{ steps.filter.outputs.release }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
@@ -73,6 +74,8 @@ jobs:
               - 'services/headlamp/scripts/**'
               - 'nix/images/headlamp.nix'
               - '.github/workflows/headlamp-ci.yml'
+            release:
+              - 'argocd/applications/headlamp/**'
   validate-manifests:
     needs: changes
     if: github.event_name == 'pull_request' && (needs.changes.outputs.manifests == 'true' || needs.changes.outputs.upstream == 'true')
@@ -116,7 +119,7 @@ jobs:
     needs: changes
     if: >-
       ${{
-        needs.changes.outputs.image == 'true' && (github.event_name == 'workflow_dispatch' ||
+        (needs.changes.outputs.image == 'true' || needs.changes.outputs.release == 'true') && (github.event_name == 'workflow_dispatch' ||
         (
           github.event_name == 'push' &&
           github.ref == 'refs/heads/main' &&

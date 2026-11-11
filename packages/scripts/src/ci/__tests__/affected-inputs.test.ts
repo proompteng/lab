@@ -133,6 +133,7 @@ test('Headlamp selects manifest, upstream and native-image work independently', 
   }
   expect(selected('argocd/applications/headlamp/values.yaml', 'manifests')).toBe(true)
   expect(selected('argocd/applications/headlamp/values.yaml', 'image')).toBe(false)
+  expect(selected('argocd/applications/headlamp/values.yaml', 'release')).toBe(true)
   expect(selected('argocd/applications/headlamp/values.yaml', 'upstream')).toBe(false)
   expect(selected('services/headlamp/scripts/test-upstream.sh', 'upstream')).toBe(true)
   expect(selected('services/headlamp/scripts/test-upstream.sh', 'image')).toBe(false)
@@ -143,7 +144,20 @@ test('Headlamp selects manifest, upstream and native-image work independently', 
   for (const file of ['flake.nix', 'flake.lock', 'nix/packages.nix']) {
     expect(selected(file, 'image')).toBe(file === 'flake.lock')
     expect(selected(file, 'manifests')).toBe(true)
+    expect(selected(file, 'release')).toBe(false)
   }
+  const releaseCondition = text(property(property(property(workflow, 'jobs'), 'nix-image'), 'if'))
+    .replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+    .trim()
+  for (const event of ['pull_request', 'push'])
+    for (const release of ['false', 'true'])
+      expect(
+        runInNewContext(releaseCondition, {
+          github: { event_name: event, ref: 'refs/heads/main', event: { head_commit: { message: 'fix config' } } },
+          needs: { changes: { outputs: { image: 'false', release } } },
+          contains: (value: string, search: string) => value.includes(search),
+        }),
+      ).toBe(event === 'push' && release === 'true')
 })
 
 test('cohort and compiler jobs honor a false main input plan', () => {
