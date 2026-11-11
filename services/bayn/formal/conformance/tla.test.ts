@@ -6,7 +6,8 @@ import { Result, Schema } from 'effect'
 import { MutationOperation } from '../../src/broker/alpaca-mutations/model'
 import { AutonomousCycleSchema, CycleState } from '../../src/cycle/model'
 import { DecisionReadinessReason } from '../../src/cycle/runner/readiness'
-import { Authority, KillState } from '../../src/execution/contracts'
+import { Authority, KillState, OrderSide } from '../../src/execution/contracts'
+import { reconciliationIncompleteRestrictionReason } from '../../src/execution/authority'
 import {
   completeExecutionControllerTick,
   decideExecutionControllerTick,
@@ -18,9 +19,15 @@ import {
   allowsOutcomeEvent,
   decideMutationAuthority,
   decideMutationStartReplay,
+  expiredEntryCancellationAdmissionIsCurrent,
   mutationIdResult,
 } from '../../src/execution/mutations/decisions'
-import { MutationEventType, type MutationEvent } from '../../src/execution/mutations/model'
+import {
+  MutationEventType,
+  type ExpiredEntryCancellationAdmission,
+  type ExpiredEntryCancellationFacts,
+  type MutationEvent,
+} from '../../src/execution/mutations/model'
 import { nativeJevFixture } from '../../src/jev/native.test-support'
 import { preflightTransfers, verifyExactTransfers } from '../../src/ledger-plan/verification'
 import type { LedgerTransferRecord } from '../../src/ledger-plan/model'
@@ -133,11 +140,65 @@ const MutationState = Schema.Struct({
   recoveryNotFound: bool,
   recoveryUnknown: bool,
 })
+const CancellationAdmissionState = Schema.Struct({
+  phase: Schema.Literals(['Read', 'Admitted', 'Rejected']),
+  authority: int,
+  identity: int,
+  clock: int,
+  starts: int,
+  admittedEligible: bool,
+  eligible: bool,
+  canAdmit: bool,
+})
 const hash = 'a'.repeat(64)
 const revision = (source: number) => String(source).repeat(40)
 const at = (seconds: number) => new Date(Date.parse('2026-09-04T14:31:02.000Z') + seconds * 1_000).toISOString()
 
 describe.skipIf(directory === undefined)('TLC reachable states conform to production', () => {
+  test('expired entry cancellation rechecks current authority, identity and freshness at admission', () => {
+    const cases = Schema.decodeUnknownSync(
+      Schema.Array(CancellationAdmissionState),
+      strictParseOptions,
+    )(states('CancellationAdmission'))
+    const admission: ExpiredEntryCancellationAdmission = {
+      accountId: 'account',
+      authorityGenerationHash: hash,
+      authorityVersion: 1,
+      intentId: hash,
+      clientOrderId: 'client',
+      brokerOrderId: 'parent',
+      observedAt: at(0),
+      validUntil: at(1),
+    }
+    expect(new Set(cases.map((s) => s.authority)).size).toBe(9)
+    expect(new Set(cases.map((s) => s.identity)).size).toBe(8)
+    expect(new Set(cases.map((s) => s.clock)).size).toBe(4)
+    expect(cases.some((s) => s.phase === 'Admitted' && !s.eligible && s.admittedEligible)).toBe(true)
+    expect(cases.some((s) => s.phase === 'Rejected' && s.starts === 0)).toBe(true)
+    for (const s of cases) {
+      const facts: ExpiredEntryCancellationFacts = {
+        accountId: s.identity === 1 ? 'other-account' : admission.accountId,
+        authorityGenerationHash: s.authority === 6 ? 'b'.repeat(64) : admission.authorityGenerationHash,
+        authorityVersion: s.authority === 7 ? 2 : admission.authorityVersion,
+        maximum: s.authority === 5 ? Authority.Observe : Authority.Execution,
+        effective: [1, 2, 3, 8].includes(s.authority) ? Authority.Observe : Authority.Execution,
+        killState: [1, 2, 4, 8].includes(s.authority) ? KillState.Active : KillState.Clear,
+        ...(s.authority === 1 ? { reason: reconciliationIncompleteRestrictionReason } : {}),
+        ...(s.authority === 2 ? { reason: 'operator requested PAPER stop' } : {}),
+        intentId: s.identity === 2 ? 'b'.repeat(64) : admission.intentId,
+        intentAuthorityGenerationHash: s.identity === 3 ? 'b'.repeat(64) : admission.authorityGenerationHash,
+        clientOrderId: s.identity === 4 ? 'other-client' : admission.clientOrderId,
+        side: s.identity === 6 ? OrderSide.Sell : OrderSide.Buy,
+        brokerOrderId: s.identity === 5 ? 'other-parent' : admission.brokerOrderId,
+        admittedAt: at(s.clock - 1),
+      }
+      expect(expiredEntryCancellationAdmissionIsCurrent(admission, s.identity === 7 ? undefined : facts)).toBe(
+        s.eligible,
+      )
+      expect(s.canAdmit).toBe(s.phase === 'Read' && s.eligible)
+    }
+  })
+
   test('recovery window transitions retain bounded production counters at saturation', () => {
     const cases = Schema.decodeUnknownSync(
       Schema.Array(RecoverySchedulerState),
