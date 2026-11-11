@@ -5,7 +5,10 @@ import { pathToFileURL } from 'node:url'
 
 import { Result } from 'effect'
 
-import { executionQualityFixture } from '../src/forward-performance/execution-quality.test-support'
+import {
+  executionQualityFixture,
+  partialExecutionQualityFixture,
+} from '../src/forward-performance/execution-quality.test-support'
 import type { ForwardPerformanceEvidenceInput } from '../src/forward-performance/model'
 import { makeForwardPerformanceReport } from '../src/forward-performance/report'
 
@@ -25,6 +28,7 @@ const cycle = fixture.cycles[0]
 assert(cycle !== undefined)
 const parityCases: readonly ForwardPerformanceEvidenceInput[] = [
   executionQualityFixture(0),
+  partialExecutionQualityFixture(2),
   fixture,
   {
     ...fixture,
@@ -66,6 +70,10 @@ const scenarios = [
   ...[10, 1000, 5000, 10000].map((count) => ({
     name: `${count} completed cycles`,
     input: executionQualityFixture(count),
+  })),
+  ...[10, 1000, 5000, 10000].map((count) => ({
+    name: `${count} partially filled executions with market-volume evidence`,
+    input: partialExecutionQualityFixture(count),
   })),
   {
     name: '1 completed cycle and 9999 no-trade cycles',

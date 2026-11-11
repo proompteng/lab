@@ -184,9 +184,9 @@ describe('Signal publisher GitOps authority contract', () => {
   test('orders schema creation before the publisher and wires every owned resource', () => {
     const schema = parse(read('signal-schema-job.yaml'))
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
-    const migration = schema.spec.template.spec.containers[0].args[0] as string
+    const migration = read('schema/adjusted-daily.sql')
     const kustomization = parse(read('kustomization.yaml'))
-    const shellSyntax = spawnSync('bash', ['-n'], { input: migration, encoding: 'utf8' })
+    const shellSyntax = spawnSync('bash', ['-n'], { input: read('schema/reconcile.sh'), encoding: 'utf8' })
 
     expect(shellSyntax.stderr).toBe('')
     expect(shellSyntax.status).toBe(0)
@@ -205,19 +205,20 @@ describe('Signal publisher GitOps authority contract', () => {
   })
 
   test('creates a replicated bounded intraday archive schema for Bayn reads', () => {
-    const schema = parse(read('intraday-bars-schema-job.yaml'))
-    const migration = schema.spec.template.spec.containers[0].args[0] as string
+    const schema = parse(read('signal-schema-job.yaml'))
+    const migration = read('schema/intraday-bars.sql') + read('schema/intraday-bars.verify.sql')
+    const backfill = read('backfill-intraday-bars-v2.sql')
     const kustomization = parse(read('kustomization.yaml'))
-    const shellSyntax = spawnSync('bash', ['-n'], { input: migration, encoding: 'utf8' })
+    const shellSyntax = spawnSync('bash', ['-n'], { input: read('schema/reconcile.sh'), encoding: 'utf8' })
 
     expect(shellSyntax).toMatchObject({ status: 0, stderr: '' })
     expect(schema.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('3')
-    expect(migration).toContain('signal.intraday_bars_1m_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.intraday_bars_1m_v2 ON CLUSTER default')
-    expect(migration).toContain('signal.intraday_quotes_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.intraday_trades_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.crypto_market_events_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.crypto_market_features_v1 ON CLUSTER default')
+    expect(migration).toContain('signal.intraday_bars_1m_v1')
+    expect(migration).toContain('signal.intraday_bars_1m_v2')
+    expect(migration).toContain('signal.intraday_quotes_v1')
+    expect(migration).toContain('signal.intraday_trades_v1')
+    expect(migration).toContain('signal.crypto_market_events_v1')
+    expect(migration).toContain('signal.crypto_market_features_v1')
     expect(migration).toContain('TTL toDateTime(window_end) + INTERVAL 30 DAY DELETE')
     expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 30 DAY DELETE')
     expect(migration.match(/event_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(3)
@@ -227,13 +228,14 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset')
     expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE')
     expect(migration.match(/TTL toDateTime\(event_ts\) \+ INTERVAL 120 DAY DELETE/g)).toHaveLength(2)
-    expect(migration).toContain('for host in "${hosts[@]}"; do')
+    expect(read('schema/reconcile.sh')).toContain('for host in "${hosts[@]}"; do')
     expect(migration).toContain('FROM system.tables')
     expect(migration).toContain('FROM system.columns')
-    expect(migration).toContain('FROM signal.intraday_bars_1m_v1 AS src FINAL')
-    expect(migration).toContain('LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst')
-    expect(migration).toContain('Signal immutable intraday-bars backfill is incomplete')
-    expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
+    expect(backfill).toContain('FROM signal.intraday_bars_1m_v1 AS src FINAL')
+    expect(backfill).toContain('LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst')
+    expect(backfill).toContain('Signal immutable intraday-bars backfill is incomplete')
+    expect(kustomization.resources).toContain('signal-schema-job.yaml')
+    expect(kustomization.configMapGenerator[0].files).toContain('schema/intraday-bars.sql')
   })
 
   test('runs the IEX archive from a fresh current-session consumer generation', () => {

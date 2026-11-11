@@ -13,6 +13,7 @@ const files = [
   'src/db/continuous-cash-spot.integration.test.ts',
   'src/db/available-history-migration.integration.test.ts',
   'src/execution/writer-fence.integration.test.ts',
+  'src/execution/mutations/expired-entry-cancellation.integration.test.ts',
   'src/db/postgres-backend-tracing.integration.test.ts',
   'src/db/snapshot-rows.integration.test.ts',
   'src/db/broker-observations.integration.test.ts',

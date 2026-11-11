@@ -3,7 +3,12 @@ import { Effect, Layer } from 'effect'
 
 import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { storeError } from './decisions'
-import { MutationStore, MutationStoreError, type MutationStoreShape } from './model'
+import {
+  MutationStore,
+  MutationStoreError,
+  type ExpiredEntryCancellationAdmission,
+  type MutationStoreShape,
+} from './model'
 import { makeMutationEventPostgres } from './postgres/events'
 import { makeMutationOutcomePostgres } from './postgres/outcome'
 import { makeMutationStartPostgres } from './postgres/start'
@@ -75,10 +80,26 @@ export const makePostgresMutationStore = Effect.gen(function* () {
         'record-submit',
         appendOutcome({ _tag: 'SubmitUnknown' }, intentId, requestHash, occurredAt, evidence, brokerOrderId),
       ),
-    beginCancel: (intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) =>
+    beginCancel: (
+      intentId,
+      requestHash,
+      brokerOrderId,
+      consistencyDelayMs,
+      occurredAt,
+      expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+    ) =>
       run(
         'begin-cancel',
-        start.begin(MutationOperation.Cancel, intentId, requestHash, consistencyDelayMs, occurredAt, brokerOrderId),
+        start.begin(
+          MutationOperation.Cancel,
+          intentId,
+          requestHash,
+          consistencyDelayMs,
+          occurredAt,
+          brokerOrderId,
+          undefined,
+          expiredEntryCancellation,
+        ),
       ),
     cancelAccepted: (intentId, requestHash, brokerOrderId, evidence) =>
       run(

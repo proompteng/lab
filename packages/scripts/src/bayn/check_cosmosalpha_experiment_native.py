@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from cosmosalpha.agents import FactorProposal
+from cosmosalpha.agents import FactorProposal, MetricValue
 from cosmosalpha.core import ObjectRef, create_config_snapshot
 from cosmosalpha.core.config import load_experiment_config
 from cosmosalpha.evaluation import (
@@ -47,6 +48,85 @@ PLAN = json.loads((ROOT / "plan.json").read_text())
 
 
 class NativeContracts(unittest.TestCase):
+    def test_failed_root_is_charged_and_regenerated_before_search(self):
+        for expression, rank_ic in ((None, None), ("close", None), (None, 0.0)):
+            with (
+                self.subTest(expression=expression, rank_ic=rank_ic),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                loop = unittest.mock.Mock()
+                loop.run.return_value = SimpleNamespace(experiment_ref=None)
+                controller = MCTSController(
+                    loop,
+                    LocalExperimentRepository(temp),
+                    LocalArtifactRepository(temp),
+                    field_catalog=build_base_field_catalog(),
+                    operator_catalog=build_base_operator_catalog(),
+                )
+
+                valid_evidence = SimpleNamespace(
+                    factor=SimpleNamespace(expression="close", frequency="1d"),
+                    evaluation=SimpleNamespace(
+                        metrics=(
+                            MetricValue(
+                                "rank_ic_mean", 0.0, "higher_is_better", 1, "fixture"
+                            ),
+                        )
+                    ),
+                )
+                invalid_evidence = (
+                    ValueError("MCTS candidate requires a validated factor")
+                    if expression is None
+                    else SimpleNamespace(
+                        factor=valid_evidence.factor,
+                        evaluation=SimpleNamespace(metrics=()),
+                    )
+                )
+
+                def node(**kwargs):
+                    evidence = kwargs["evidence"]
+                    return MCTSNode(
+                        factor_id="fixture",
+                        expression=evidence.factor.expression,
+                        rank_ic_mean=evidence.evaluation.metrics[0].value,
+                        overall_score=0.0,
+                        best_reward=0.0,
+                    )
+
+                with (
+                    patch(
+                        "cosmosalpha.pipeline.mcts.controller._select_candidate_evidence",
+                        side_effect=[invalid_evidence, valid_evidence],
+                    ),
+                    patch.object(controller, "_build_node", side_effect=node) as built,
+                    patch.object(controller, "_expand", return_value=None) as expanded,
+                    patch.object(controller, "run", wraps=controller.run) as searched,
+                ):
+                    result = controller.run_multi_tree(
+                        data_snapshot=None,
+                        base_context=SimpleNamespace(constraints=(), frequency="1d"),
+                        config_snapshot_ref=None,
+                        code_version="native-contract",
+                        max_total_rounds=2,
+                    )
+                self.assertEqual(loop.run.call_count, 2)
+                self.assertEqual(result.iterations, 2)
+                self.assertEqual(searched.call_count, 1)
+                self.assertEqual(
+                    searched.call_args.kwargs["run_id"], "mcts-multi-tree002"
+                )
+                self.assertEqual(built.call_count, 1)
+                built_evidence = built.call_args.kwargs["evidence"]
+                self.assertEqual(built_evidence.evaluation.metrics[0].value, 0.0)
+                self.assertEqual(built_evidence.factor.expression, "close")
+                self.assertTrue(expanded.called)
+                self.assertTrue(
+                    all(
+                        call.kwargs["parent"].expression == "close"
+                        for call in expanded.call_args_list
+                    )
+                )
+
     def test_native_node_counter_includes_missing_rank_ic(self):
         controller = MCTSController(
             None,
@@ -57,24 +137,23 @@ class NativeContracts(unittest.TestCase):
         )
         with (
             patch.object(
-                controller, "_compute_turnover_from_result", return_value=None
+                controller, "_compute_turnover_from_evidence", return_value=None
             ),
             patch.object(
                 controller,
-                "_extract_factor_values_from_result",
+                "_extract_factor_values_from_evidence",
                 return_value=(None, None),
             ),
             patch.object(controller, "_compute_zoo_diversity", return_value=0.0),
             patch.object(controller, "_current_fzoo_entries", return_value=()),
         ):
             node = controller._build_node(
-                factor_id="missing-metric",
-                expression="close",
+                evidence=SimpleNamespace(
+                    factor=SimpleNamespace(expression="close", frequency="1d"),
+                    evaluation=SimpleNamespace(metrics=()),
+                ),
                 experiment_ref=None,
-                rank_ic_mean=None,
                 action_label="fixture",
-                loop_result=object(),
-                eval_scores={"rank_ic": None, "stability": 0.0, "diversity": 0.0},
             )
         self.assertIsNone(node.rank_ic_mean)
         self.assertEqual(controller._evaluated_factor_count, 1)
@@ -196,6 +275,62 @@ class NativeContracts(unittest.TestCase):
                     "multi-tree-contract-tree003",
                 ],
             )
+
+    def test_native_multi_tree_charges_only_completed_rounds(self):
+        for total_rounds in (1, 3, 5):
+            with (
+                self.subTest(rounds=total_rounds),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                objects = LocalExperimentRepository(temp)
+                controller = MCTSController(
+                    None,
+                    objects,
+                    LocalArtifactRepository(temp),
+                    field_catalog=build_base_field_catalog(),
+                    operator_catalog=build_base_operator_catalog(),
+                )
+                roots = []
+
+                class Generator:
+                    def generate(self, **kwargs):
+                        roots.append(kwargs["run_id"])
+                        return MCTSNode(
+                            factor_id=kwargs["run_id"],
+                            expression="close",
+                            rank_ic_mean=0.01,
+                            overall_score=1.0,
+                            best_reward=1.0,
+                        )
+
+                def expand(**kwargs):
+                    return MCTSNode(
+                        factor_id=kwargs["run_id"] + "-child",
+                        expression="open",
+                        rank_ic_mean=0.01,
+                        overall_score=0.1,
+                        best_reward=0.1,
+                    )
+
+                with patch.object(
+                    controller, "_expand", side_effect=expand
+                ) as expanded:
+                    result = controller.run_multi_tree(
+                        data_snapshot=None,
+                        base_context=None,
+                        config_snapshot_ref=None,
+                        code_version="native-contract",
+                        max_total_rounds=total_rounds,
+                        initial_budget=1,
+                        budget_increment=0,
+                        root_generator=Generator(),
+                    )
+                self.assertEqual(result.iterations, total_rounds)
+                self.assertEqual(len(roots), total_rounds)
+                self.assertEqual(expanded.call_count, total_rounds)
+                self.assertEqual(
+                    len(objects.list_object_ids("mcts_tree")), total_rounds + 1
+                )
 
     def test_all_three_native_loop_contracts_accept_the_frozen_calculator(self):
         frozen = FrozenInputs(ROOT, PLAN["inputs"]["mining"])

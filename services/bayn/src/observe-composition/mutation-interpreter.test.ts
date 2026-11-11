@@ -8,7 +8,12 @@ import {
   type MutationEvent,
   type MutationStoreShape,
 } from '../execution/mutations/model'
-import { confirmAcceptedCancellation, type ExecutionMutationExecutor } from './mutation-interpreter'
+import {
+  confirmAcceptedCancellation,
+  executeMutationIntentWithExecutor,
+  isUnresolvedMutationRecovery,
+  type ExecutionMutationExecutor,
+} from './mutation-interpreter'
 
 const at = '2026-11-06T15:14:30.000Z'
 const accepted: MutationEvent = {
@@ -90,4 +95,52 @@ test('failed or unresolved confirmation is not converted into successful reconci
     Effect.succeed({ ...accepted, eventType: MutationEventType.RecoveryUnknown }),
   )
   expect(Result.isFailure(unresolved) && unresolved.failure.failure).toBe('operational')
+})
+
+test.each([MutationOperation.Submit, MutationOperation.Cancel])(
+  'optional recovery fallback requires the exact returned unresolved %s outcome',
+  async (operation) => {
+    const action = operation === MutationOperation.Submit ? 'RECOVER_SUBMIT' : 'RECOVER_CANCEL'
+    const otherAction = operation === MutationOperation.Submit ? 'RECOVER_CANCEL' : 'RECOVER_SUBMIT'
+    const unresolved: MutationEvent = { ...accepted, operation, eventType: MutationEventType.RecoveryUnknown }
+    const attempt = (recover: ExecutionMutationExecutor<Error, never>['recover']) =>
+      Effect.runPromise(
+        executeMutationIntentWithExecutor({ executor: { recover }, intentId: accepted.intentId, action }).pipe(
+          Effect.provideService(MutationStore, store(unresolved)),
+          Effect.flip,
+        ),
+      )
+    const failure = await attempt(() => Effect.succeed(unresolved))
+    expect(isUnresolvedMutationRecovery(failure, accepted.intentId, action)).toBe(true)
+    expect(JSON.parse(JSON.stringify(failure))).toMatchObject({
+      cause: { _tag: 'UnresolvedMutationIntentError', intentId: accepted.intentId, action, event: unresolved },
+    })
+    expect(isUnresolvedMutationRecovery(failure, 'f'.repeat(64), action)).toBe(false)
+    expect(isUnresolvedMutationRecovery(failure, accepted.intentId, otherAction)).toBe(false)
+    const wrongIntent = await attempt(() => Effect.succeed({ ...unresolved, intentId: 'f'.repeat(64) }))
+    expect(isUnresolvedMutationRecovery(wrongIntent, accepted.intentId, action)).toBe(false)
+    const wrongOperation = await attempt(() =>
+      Effect.succeed({
+        ...unresolved,
+        operation: operation === MutationOperation.Submit ? MutationOperation.Cancel : MutationOperation.Submit,
+      }),
+    )
+    expect(isUnresolvedMutationRecovery(wrongOperation, accepted.intentId, action)).toBe(false)
+    const unpersisted = await attempt(() => Effect.fail(new Error('recovery persistence failed')))
+    expect(isUnresolvedMutationRecovery(unpersisted, accepted.intentId, action)).toBe(false)
+  },
+)
+
+test('fresh cancellation uncertainty cannot use the lookup-only recovery fallback', async () => {
+  const failure = await Effect.runPromise(
+    executeMutationIntentWithExecutor({
+      executor: {
+        recover: forbidden,
+        cancel: () => Effect.succeed({ ...accepted, eventType: MutationEventType.CancelUnknown }),
+      },
+      intentId: accepted.intentId,
+      action: 'CANCEL',
+    }).pipe(Effect.provideService(MutationStore, store(undefined)), Effect.flip),
+  )
+  expect(isUnresolvedMutationRecovery(failure, accepted.intentId, 'RECOVER_CANCEL')).toBe(false)
 })

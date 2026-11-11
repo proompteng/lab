@@ -103,9 +103,6 @@ spec:
         - podSelector:
             matchLabels:
               cnpg.io/cluster: bayn-db
-        - podSelector:
-            matchLabels:
-              cnpg.io/cluster: bayn-native-arrival-db
       ports:
         - port: 5432
           protocol: TCP

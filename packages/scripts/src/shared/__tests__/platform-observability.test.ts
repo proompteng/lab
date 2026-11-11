@@ -9,6 +9,7 @@ const root = resolve(import.meta.dir, '../../../../..')
 test.each([
   ['platform-alerts.yaml', ['ofz-relay-platform.rules', 'tengri-production.rules']],
   ['restate-alerts.yaml', ['restate-control-plane.rules']],
+  ['torghut-registry-alerts.yaml', ['torghut-ws.rules', 'registry.rules']],
 ] as const)('%s fires, clears, and detects missing observations', (fixture, groupNames) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'platform-promql-'))
   try {
