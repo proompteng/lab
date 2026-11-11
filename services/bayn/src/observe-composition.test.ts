@@ -1,3 +1,8 @@
+import { DecisionConstruction } from './decision-construction'
+import {
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
+} from './shadow-decision'
 import { type StrategyRuntime } from './strategy'
 import {
   AssetClass,
@@ -235,6 +240,10 @@ type JevTestServices = JevBatchStore | JevEvaluationStore | JevClient | JevPosit
 const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
   const unexpected = Effect.die('Composition fixture uses already committed Jev entry evidence')
   return program.pipe(
+    Effect.provideService(DecisionConstruction, {
+      observe: buildObserveShadowDecision,
+      execution: buildExecutionDecision,
+    }),
     Effect.provideService(JevBatchStore, {
       read: () => unexpected,
       pending: () => Effect.succeed([]),

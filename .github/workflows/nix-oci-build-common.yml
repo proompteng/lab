@@ -278,6 +278,7 @@ jobs:
 
       - name: Upload Nix OCI log artifact
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: nix-oci-logs-${{ inputs.image_name }}-${{ matrix.arch }}
