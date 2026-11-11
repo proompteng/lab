@@ -11,12 +11,9 @@ import {
   type RecordedRuntimeStrategyDecision,
 } from './strategy/runtime-decision'
 import { MarketKind, instrumentMarket } from './instruments'
-import { reproduceJevCandidateObservation, reproduceRetainedJevV38CandidateObservation } from './jev/observation'
-import { RetainedJevV38EntryTargetSchema, RetainedJevV38ExitTargetSchema } from './jev/retained-v38-targets'
-import {
-  RetainedJevV38AblationTargetSchema,
-  RetainedJevV38MomentumTargetSchema,
-} from './jev/retained-v38-control-targets'
+import { reproduceJevCandidateObservation, reproduceRetainedJevCandidateObservation } from './jev/observation'
+import { RetainedJevEntryTargetSchema, RetainedJevExitTargetSchema } from './jev/retained-jev-targets'
+import { RetainedJevAblationTargetSchema, RetainedJevMomentumTargetSchema } from './jev/retained-jev-control-targets'
 import { JevContractError } from './jev/contract'
 import {
   makeRepeatedMomentumPolicy,
@@ -43,9 +40,11 @@ import { maximumFundedBuyQuantities } from './jev/entry-sizing'
 import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './jev/entry-economics'
 import {
   defaultJevProtocolDocument,
+  retainedJevProtocolV38Document,
+  retainedJevProtocolV39Document,
   jevBehaviorHash,
   type JevProtocol,
-  type RetainedJevProtocolV38Schema,
+  type RetainedVisualJevProtocolSchema,
 } from './jev/protocol'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -546,13 +545,18 @@ const PersistedIntradaySnapshotRowsSchema = Schema.Struct({
   trades: Schema.Array(Schema.Unknown),
 })
 
+const RecordedPlannerInputSchema = Schema.Struct({
+  ...TargetPlannerInputSchema.fields,
+  brokerState: Schema.optionalKey(TargetPlannerInputSchema.fields.brokerState),
+})
+
 const ExecutionDecisionMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
   mode: Schema.Literal(legacyExecutionAuthorityToken),
   dispatchable: Schema.Boolean,
   bindings: ExecutionDecisionBindingsSchema,
   /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
-  plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
+  plannerInput: Schema.optionalKey(RecordedPlannerInputSchema),
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   /** Persist the pure strategy output that authorized the targets. */
@@ -577,6 +581,18 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
 
 type ExecutionDecisionValidationMaterial = Omit<typeof ExecutionDecisionMaterialSchema.Type, 'strategyDecision'> & {
   readonly strategyDecision?: RecordedRuntimeStrategyDecision
+}
+
+export const executionDecisionPlannerInput = (
+  document: Pick<ExecutionDecisionValidationMaterial, 'plannerInput' | 'strategyDecision'>,
+): TargetPlannerInput | undefined => {
+  const input = document.plannerInput
+  if (input === undefined) return undefined
+  const source = document.strategyDecision
+  const brokerState =
+    input.brokerState ??
+    (isProtectedEntryTarget(source) ? source.evidence.observation.portfolio.brokerState : undefined)
+  return brokerState === undefined ? undefined : { ...input, brokerState }
 }
 
 const executionBindingMatchesIntradayMomentumProtocol = (binding: SnapshotExecutionMarketDataBinding): boolean =>
@@ -1074,13 +1090,20 @@ const streamingPricingEvidenceIssues = (
 }
 
 const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
-  const input = document.plannerInput
+  const input = executionDecisionPlannerInput(document)
   const executionMarketData = document.bindings.executionMarketData
   const requiresQuoteBoundLiquidationEvidence =
     isSnapshotExecutionMarketDataBinding(executionMarketData) &&
     executionMarketData.purpose === 'LIQUIDATION' &&
     document.targetPlan.executionTerms?.priceReference === 'verified-adverse-quote-boundary'
   if (input === undefined) {
+    if (document.plannerInput !== undefined)
+      return [
+        {
+          path: ['plannerInput', 'brokerState'],
+          issue: 'planner evidence requires its exact broker state or a verified entry observation',
+        },
+      ]
     return requiresQuoteBoundLiquidationEvidence
       ? [
           {
@@ -1230,36 +1253,44 @@ export const jevProtocolIdentityMatches = (protocol: JevProtocol, strategyProtoc
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
-// Only the retained document schema can supply v38 here; current admission schemas remain strict v39.
+// Only retained financial schemas supply v38/v39 here; current execution admission is strictly v40.
 const recordedJevProtocolIdentityMatches = (
-  protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type,
+  protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type,
   strategyProtocolHash: string,
 ): boolean => {
-  if (protocol.schemaVersion !== 'bayn.jev.protocol.v38')
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v40')
     return jevProtocolIdentityMatches(protocol, strategyProtocolHash)
   const parameters = canonicalHashV1Result(protocol)
-  const expected = canonicalHashV1Result({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v38' })
+  const expected = canonicalHashV1Result(
+    protocol.schemaVersion === 'bayn.jev.protocol.v39'
+      ? retainedJevProtocolV39Document
+      : retainedJevProtocolV38Document,
+  )
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
   const identity = makeStrategyProtocolHashResult({
     name: 'jev',
     behaviorHash: jevBehaviorHash,
     parameterHash: parameters.success,
-    parameterSchemaVersion: 'bayn.jev.protocol.v38',
+    parameterSchemaVersion: protocol.schemaVersion,
   })
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
 const ablationProtocolIdentityMatches = (
-  policy: Omit<EntryAblationPolicy, 'sharedProtocol'> & {
-    readonly sharedProtocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+  policy: Omit<EntryAblationPolicy, 'sharedProtocol' | 'questionPolicyHash'> & {
+    readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+    readonly questionPolicyHash: string
   },
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
   const expected = canonicalHashV1Result({
-    ...defaultJevProtocolDocument,
-    schemaVersion: policy.sharedProtocol.schemaVersion,
+    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? defaultJevProtocolDocument
+      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
+        ? retainedJevProtocolV39Document
+        : retainedJevProtocolV38Document),
   })
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
@@ -1269,14 +1300,17 @@ const ablationProtocolIdentityMatches = (
 
 const momentumProtocolIdentityMatches = (
   policy: Omit<RepeatedMomentumPolicy, 'sharedProtocol'> & {
-    readonly sharedProtocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+    readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
   },
   strategyProtocolHash: string,
 ): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
   const expected = canonicalHashV1Result({
-    ...defaultJevProtocolDocument,
-    schemaVersion: policy.sharedProtocol.schemaVersion,
+    ...(policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? defaultJevProtocolDocument
+      : policy.sharedProtocol.schemaVersion === 'bayn.jev.protocol.v39'
+        ? retainedJevProtocolV39Document
+        : retainedJevProtocolV38Document),
   })
   const identity = repeatedMomentumStrategyIdentity(policy)
   return (
@@ -1290,24 +1324,25 @@ const momentumProtocolIdentityMatches = (
 
 const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (!isProtectedEntryTarget(target) || document.plannerInput === undefined)
+  const plannerInput = executionDecisionPlannerInput(document)
+  if (!isProtectedEntryTarget(target) || plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
   const issues: Schema.FilterIssue[] = []
   const { observation } = target.evidence
   if (
-    document.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
-    document.plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
+    plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
   ) {
     const expected = maximumFundedBuyQuantities({
       plans: target.exitPolicy.plans,
-      askPriceMicros: document.plannerInput.referencePrices.askPriceMicros,
+      askPriceMicros: plannerInput.referencePrices.askPriceMicros,
       targetWeights: jevPlanningTargetWeights(target),
       capitalMicros: observation.portfolio.brokerState.account.equityMicros,
       precision: observation.protocol.executionModel.precision,
     })
-    const actualHash = canonicalHashV1Result(document.plannerInput.executionTerms.maximumBuyQuantityAtoms)
+    const actualHash = canonicalHashV1Result(plannerInput.executionTerms.maximumBuyQuantityAtoms)
     const expectedHash = Result.flatMap(expected, canonicalHashV1Result)
     if (Result.isFailure(actualHash) || Result.isFailure(expectedHash) || actualHash.success !== expectedHash.success)
       issues.push({
@@ -1317,8 +1352,8 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
       })
     for (const symbol of target.selectedSymbols) {
       const originalAsk = Result.gen(function* () {
-        const source = yield* observation.protocol.schemaVersion === 'bayn.jev.protocol.v38'
-          ? reproduceRetainedJevV38CandidateObservation(observation)
+        const source = yield* observation.protocol.schemaVersion !== 'bayn.jev.protocol.v40'
+          ? reproduceRetainedJevCandidateObservation(observation)
           : reproduceJevCandidateObservation(observation)
         const quote = source.snapshot.latestQuotes[symbol]
         if (quote === undefined)
@@ -1327,7 +1362,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
           )
         return yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
       })
-      const pricedAsk = document.plannerInput.referencePrices.askPriceMicros[symbol]
+      const pricedAsk = plannerInput.referencePrices.askPriceMicros[symbol]
       if (
         Result.isFailure(originalAsk) ||
         pricedAsk === undefined ||
@@ -1352,8 +1387,8 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
     })
   const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
   const pricing = document.bindings.executionMarketData
-  // JevEntryTargetSchema has already reproduced the observation. Exact manifest and row equality binds that
-  // verified snapshot here without reconstructing the same complete source a second time.
+  // The target schema has reproduced the observation. Bind its manifest here and verify any retained duplicate
+  // rows without reconstructing or copying the same complete source again.
   const sourceManifest = isSnapshotExecutionMarketDataBinding(source)
     ? (({ schemaVersion: _, snapshotSchemaVersion, ...material }) => ({
         ...material,
@@ -1387,7 +1422,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
   if (
     sourceManifest === undefined ||
     !equal(sourceManifest, observation.manifest) ||
-    !equal(document.decisionMarketDataRows, observation.rows) ||
+    (document.decisionMarketDataRows !== undefined && !equal(document.decisionMarketDataRows, observation.rows)) ||
     source?.snapshotId !== document.bindings.snapshotId ||
     source.contentHash !== document.bindings.snapshotContentHash ||
     source.observedAt !== document.bindings.snapshotFinalizedAt
@@ -1397,10 +1432,10 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
       issue: 'Jev source rows and snapshot must exactly match the recorded observation',
     })
   if (
-    document.plannerInput.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n) ||
-    document.plannerInput.brokerState.reconciliation.reconciledAt <
+    plannerInput.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n) ||
+    plannerInput.brokerState.reconciliation.reconciledAt <
       observation.portfolio.brokerState.reconciliation.reconciledAt ||
-    !equal(document.plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
+    !equal(plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
     document.targetPlan.intentTargets.some((intent) => intent.side !== OrderSide.Buy)
   )
     issues.push({
@@ -1439,7 +1474,7 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
   const target = document.strategyDecision
   if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') return []
   const evidence = target.evidence
-  const input = document.plannerInput
+  const input = executionDecisionPlannerInput(document)
   const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
   if (
     input === undefined ||
@@ -1847,10 +1882,9 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
   const targets = document.targetPlan.intentTargets
   const riskBlocked = document.riskBlock !== undefined
   const riskCount = document.deltaRisk.length
+  const plannerInput = executionDecisionPlannerInput(document)
   const proposedPositionSequence =
-    document.plannerInput === undefined
-      ? undefined
-      : reconstructProposedPositionSequence(document.plannerInput, document.targetPlan)
+    plannerInput === undefined ? undefined : reconstructProposedPositionSequence(plannerInput, document.targetPlan)
   if (requiresDurableRiskFacts && proposedPositionSequence === undefined) {
     issues.push({
       path: ['deltaRisk', 'facts', 'proposedPositions'],
@@ -2136,14 +2170,14 @@ export const ExecutionDecisionDocumentSchema = ExecutionDecisionDocumentSemantic
 export type ExecutionDecisionDocument = typeof ExecutionDecisionDocumentSchema.Type
 
 /** Retained operational evidence uses all original execution checks without entering current admission. */
-export const RetainedJevV38ExecutionDecisionDocumentSchema = Schema.Struct({
+export const RetainedJevExecutionDecisionDocumentSchema = Schema.Struct({
   ...ExecutionDecisionMaterialSchema.fields,
   strategyDecision: Schema.optionalKey(
     Schema.Union([
-      RetainedJevV38EntryTargetSchema,
-      RetainedJevV38AblationTargetSchema,
-      RetainedJevV38MomentumTargetSchema,
-      RetainedJevV38ExitTargetSchema,
+      RetainedJevEntryTargetSchema,
+      RetainedJevAblationTargetSchema,
+      RetainedJevMomentumTargetSchema,
+      RetainedJevExitTargetSchema,
       FlatExecutionTargetSchema,
     ]),
   ),
@@ -2153,30 +2187,29 @@ export const RetainedJevV38ExecutionDecisionDocumentSchema = Schema.Struct({
   Schema.makeFilter((document) => {
     const { contentHash, ...material } = document
     const expected = canonicalHashV1Result(material)
-    const protocol = { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v38' as const }
     return document.bindings.strategyName === 'jev' &&
-      (recordedJevProtocolIdentityMatches(protocol, document.bindings.strategyProtocolHash) ||
-        ablationProtocolIdentityMatches(makeEntryAblationPolicy(protocol), document.bindings.strategyProtocolHash) ||
-        momentumProtocolIdentityMatches(
-          makeRepeatedMomentumPolicy(protocol),
-          document.bindings.strategyProtocolHash,
-        )) &&
+      [retainedJevProtocolV38Document, retainedJevProtocolV39Document].some(
+        (protocol) =>
+          recordedJevProtocolIdentityMatches(protocol, document.bindings.strategyProtocolHash) ||
+          ablationProtocolIdentityMatches(makeEntryAblationPolicy(protocol), document.bindings.strategyProtocolHash) ||
+          momentumProtocolIdentityMatches(makeRepeatedMomentumPolicy(protocol), document.bindings.strategyProtocolHash),
+      ) &&
       Result.isSuccess(expected) &&
       expected.success === contentHash
       ? []
       : [
           {
             path: ['contentHash'],
-            issue: 'retained v38 execution must preserve its exact protocol and canonical document identity',
+            issue: 'retained Jev execution must preserve its exact protocol and canonical document identity',
           },
         ]
   }),
 )
-export type RetainedJevV38ExecutionDecisionDocument = typeof RetainedJevV38ExecutionDecisionDocumentSchema.Type
-export type RecordedExecutionDecisionDocument = ExecutionDecisionDocument | RetainedJevV38ExecutionDecisionDocument
+export type RetainedJevExecutionDecisionDocument = typeof RetainedJevExecutionDecisionDocumentSchema.Type
+export type RecordedExecutionDecisionDocument = ExecutionDecisionDocument | RetainedJevExecutionDecisionDocument
 
-export const decodeRetainedJevV38ExecutionDecisionDocument = (input: unknown) =>
-  Schema.decodeUnknownResult(RetainedJevV38ExecutionDecisionDocumentSchema, strictParseOptions)(input)
+export const decodeRetainedJevExecutionDecisionDocument = (input: unknown) =>
+  Schema.decodeUnknownResult(RetainedJevExecutionDecisionDocumentSchema, strictParseOptions)(input)
 
 export const CycleDecisionDocumentSchema = Schema.Union([
   ObserveShadowDecisionDocumentSchema,
@@ -2184,10 +2217,17 @@ export const CycleDecisionDocumentSchema = Schema.Union([
 ])
 export type CycleDecisionDocument = typeof CycleDecisionDocumentSchema.Type
 
-// Only owned, deeply frozen graphs receive this receipt. Copies and stored JSON
-// still cross the full schema boundary; a claimed contentHash never earns reuse.
+export const decisionSourceRows = (document: CycleDecisionDocument | RecordedExecutionDecisionDocument) =>
+  'strategyDecision' in document && isProtectedEntryTarget(document.strategyDecision)
+    ? document.strategyDecision.evidence.observation.rows
+    : 'decisionMarketDataRows' in document
+      ? document.decisionMarketDataRows
+      : undefined
+
+// The bundled constructor worker transfers a validated graph into this owner's heap.
+// Other copies and stored JSON still require full validation; a claimed hash earns no reuse.
 const verifiedCycleDocuments = new WeakMap<object, CycleDecisionDocument>()
-const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
+export const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
   const freeze = (value: unknown): void => {
     if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
     for (const child of Object.values(value)) freeze(child)

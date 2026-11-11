@@ -32,12 +32,8 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import {
-  loadActiveStrategyProtocol,
-  makeActiveStrategyRuntime,
-  makeEntryAblationRuntime,
-  makeRepeatedMomentumRuntime,
-} from '../strategy'
+import { loadActiveStrategyProtocol, makeActiveStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { reproduceJevCandidateObservation } from '../jev/observation'
@@ -287,6 +283,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           ...(source.topics.technicalFeatures === undefined
             ? {}
             : { technicalFeatures: source.topics.technicalFeatures }),
+          ...(source.topics.webullBars === undefined ? {} : { webullBars: source.topics.webullBars }),
         },
       }
       if ((yield* canonicalHashV1Result(universe)) !== (yield* canonicalHashV1Result(source)))

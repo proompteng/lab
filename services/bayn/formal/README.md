@@ -22,8 +22,8 @@ test discovery. The database tests share a small `src/system-assessment/formal-m
 it runs only when formal CI supplies the built executable. The image source still excludes `formal/`. Run `bun run --filter @proompteng/bayn test` for service tests. Formal-only PRs run the formal jobs;
 service, migration and relevant dependency changes also run them. Deployment/config-only PRs retain their service
 checks without rebuilding the proof environment. Exact-revision runtime publication still requires both Lean and TLC.
-Changes confined to `formal/` do not publish an image or reactivate the controller. PostgreSQL's normal matrix owns
-its full suites; the formal job selects the tests that actually exercise the Lean/database boundary.
+Changes confined to `formal/` do not publish an image or reactivate the controller. The PostgreSQL matrix and inference
+ledger group each own distinct full suites; the formal job selects the tests that exercise the Lean/database boundary.
 
 The TLA+ command also runs on macOS with Java 21 and curl. It checks safety and conditional liveness with pinned,
 checksum-verified TLC, verifies deliberate faults are detected, and compares every checked state with production
@@ -58,6 +58,40 @@ or validate a market model. Arena test results compare particular checker versio
 soundness or replace checks of Bayn's own proof export with the pinned toolchain.
 
 ## Registered evaluation windows
+
+### Reconciliation identity and guarded recovery
+
+`ReconciliationRecovery.lean` distinguishes an identical representation of one verified protection child from two
+broker orders sharing a client identity. `sameProtectionObservation` compares every retained order field, including
+economic amounts, lifecycle fields and client identity. Only the read observation timestamp and an omitted parent
+identity are representation metadata. An explicit different parent or any other conflicting field rejects the overlap.
+The nested observation remains authoritative; canonicalization does not discard a distinct order or fill.
+
+Executable correspondence in `conformance/reconciliation.test.ts` supplies losslessly encoded decoded order fields,
+not a TypeScript match flag, to Lean. It invokes production `normalizeSnapshot` on matching and conflicting standalone
+child observations and on an actual client-ID collision. Successful cases must retain the entire original normalized
+snapshot. Protection-group verification, complete broker pagination, unique parent membership, ingestion idempotency
+and authentic provider evidence remain separate production obligations and regression-test boundaries.
+
+The same module specifies a **narrow recovery contract**, not an executable refinement of PostgreSQL recovery. It
+requires a confirmed durable incomplete-pass restriction, the same account/identity and expected authority version,
+an exact reconciliation with equal hashes and no discrepancies, evidence after restriction and settlement, and zero
+unresolved positions, orders, mutations or intents. Its successful transition clears only to OBSERVE and advances one
+version. Theorems reject stale pre-restriction evidence, stale owners, unconfirmed containment and unresolved mutations;
+a reachable valid example prevents the contract from being unsatisfiable. The corresponding implementation boundaries
+are `broker-containment.ts`, `blocked-generation-recovery.ts`, `observe-authority.ts`, and the settled-account database
+guards. Their I/O, all legacy recovery paths, reason allowlists and atomic transactions are **not** proved by this model.
+
+Here "after" establishes causal timestamp ordering, not a maximum evidence age or a lease-duration guarantee. PAPER
+activation, risk, lease and final mutation-admission checks remain separate and unchanged. A failed containment write
+does not prove a durable kill; killed authority does not prevent a previously routed broker order from filling.
+
+`repaired_settled_evidence_permits_observe_step` proves that a guarded step is possible when its inputs satisfy the
+contract. It does not prove eventual recovery. Such a temporal property additionally needs eventually stable complete
+and unambiguous broker evidence, successful persistence, settled account state, stable authority ownership and fair
+scheduling of enabled reconciliation/recovery work. Persistent genuine identity collisions or unknown mutations may
+remain safely blocked forever. No deadline, 99.9% availability, broker authenticity or profitable trading result follows
+from these theorems.
 
 `ControllerTiming.lean` models `kafkaHandoffReadiness` and the activation wait in
 `composition/native-execution-runtime.ts`. Its theorems require ready, nonfailed history before handoff, reject an
@@ -611,7 +645,8 @@ Statistical bounds remain conditional on the registered sampling and market assu
 identity; source capture and provenance checks must establish which actual evidence the model receives. Neither a
 successful build nor independent kernel acceptance grants capital authority or establishes profitability.
 
-`TradingScope.lean` maps to `src/execution/trading-scope.ts`, enforced by the physical broker mutation guard.
+`TradingScope.lean` maps to the entry policy in `src/execution/trading-scope.ts` and the submission gate in
+`src/execution/mutation-authority.ts`, enforced by the physical broker mutation guard.
 It proves crypto entries and crypto buys fail the current market scope while equity orders retain scope eligibility.
 Crypto sells still require every existing capital, ownership and risk check; scope eligibility is not execution authority.
 Executable conformance covers both markets and sides, and broker regressions verify zero crypto-buy transmissions.

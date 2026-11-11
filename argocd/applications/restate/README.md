@@ -1,195 +1,87 @@
-# Restate GitOps rollout notes
+# Restate
 
-This application deploys the self-hosted Restate server and its private admin UI exposure.
+Restate 1.8.1 uses three retained members on three physical hosts. Each member keeps its native node identity,
+metadata, logs and worker state on the existing generic `local-path` class backed by local NVMe. The three claims
+request 16Gi each. Local-path requests do not reserve space or impose quotas; monitor actual host free space.
 
-## Operator and request-identity foundation rollout
-
-This rollout installs the Restate Operator foundation but does not register, activate, or move any Bayn execution.
-The root ApplicationSet creates two independently reconciled automated applications: `restate-operator-crds` and
-`restate-operator`, whose chart is configured with `installCrds: false`. The operational order is CRDs first, operator
-second: the CRD application must report `Synced` and `Healthy` before any `RestateDeployment` is committed. If the
-operator application reconciles while its CRDs are still settling, hold the Bayn worker layer and verify that both
-applications converge; do not create resources by hand.
-
-The same GitOps revision mounts the sealed request-identity private key into the existing single-replica Restate
-StatefulSet. That change replaces the Restate pod and can briefly make the control plane unavailable. Existing Bayn
-execution remains on its legacy fail-closed owner during this foundation rollout, so this restart must not create a
-second lifecycle writer or broker mutation path. The PVC, Restate metadata, and existing deployment registrations are
-preserved.
-
-After Argo reconciles `main`, verify the ordered foundation without printing the private key:
-
-```sh
-kubectl get application -n argocd restate-operator-crds restate-operator restate -o wide
-kubectl get crd -n restate-operator restatedeployments.restate.dev -o name
-kubectl rollout status deployment/restate-operator -n restate-operator --timeout=180s
-kubectl rollout status statefulset/restate -n restate --timeout=300s
-kubectl exec -n restate statefulset/restate -- test -s /var/run/secrets/restate/request-identity/private.pem
-kubectl get restatedeployment -n bayn
-```
-
-Expected:
-
-- both operator applications and `restate` are `Synced` and `Healthy`;
-- the operator deployment and Restate StatefulSet complete rollout;
-- the request-identity file exists and is non-empty without its contents entering logs;
-- no Bayn `RestateDeployment` exists at this foundation layer;
-- the existing Restate admin and ingress Services retain ready endpoints.
-
-The same revision extends the auto-synced observability application with Restate server and operator scrapes. Its
-configuration hash change replaces the single `observability-cluster-metrics-alloy` pod. A short scrape gap and a new
-pod identity are expected; loss of the pre-existing Bayn, CNPG, Ceph, kubelet, or kube-state-metrics targets is not.
-The two new unavailable alerts may remain pending for at most their two-minute evaluation window while Restate and the
-operator converge.
-
-Verify the collector rollout and both new targets without changing cluster state:
-
-```sh
-kubectl rollout status deployment/observability-cluster-metrics-alloy -n observability --timeout=180s
-kubectl get pods -n observability -l app.kubernetes.io/name=observability-cluster-metrics-alloy -o wide
-kubectl logs -n observability deployment/observability-cluster-metrics-alloy --since=10m | grep -E 'restate|error'
-```
-
-In Mimir or Grafana, require `up{job="restate-server"} == 1` and `up{job="restate-operator"} == 1`, then confirm the
-pre-existing `bayn`, `cnpg-postgres`, `ceph-storage`, `kubelet`, `kubelet-cadvisor`, and `kube-state-metrics` jobs still
-report `up == 1`. If the Alloy rollout fails or an existing target disappears, revert this foundation commit through a
-normal PR. Argo will restore the prior Alloy configuration hash and alert rules; wait for the replacement collector to
-become available and recheck every pre-existing target before resuming the worker layer.
-
-If the operator or signing-key rollout does not converge, revert this foundation commit through a normal PR and let
-Argo reconcile the prior StatefulSet. Before removing operator CRDs, prove that no `RestateDeployment` objects exist;
-remove the operator application before its CRD application, and never manually delete a CRD that still has instances.
-The rollback must leave the Restate PVC and prior service registrations intact. Recheck the StatefulSet, Services, and
-admin API after the revert before resuming the Bayn worker layer.
-
-## Resilience migration
-
-Restate stays pinned at 1.7.9. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
-`RESTATE_AUTO_PROVISION=false` and stable StatefulSet addresses so scaling cannot create a second cluster.
-Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-minute snapshots with retention two,
-and require all 24 partitions archived before replication changes. In Restate 1.7.9, `ARCHIVED=0` is the invalid-LSN
-sentinel and must be treated as no snapshot; the bootstrap retries only missing/invalid partitions until every partition
-has a positive archived LSN. RGW stores snapshots only; metadata/Raft and logs stay on
-RBD. Preferred host anti-affinity and `ScheduleAnyway` spreading keep three replicas schedulable on Altra and Turin
-when Ryzen is reserved for compute and local storage. This leaves two physical failure domains; losing the host with
-two replicas can remove Raft quorum. The `minAvailable: 3` PDB and 60s/90s shutdown windows bound disruption, so the PDB
-permits zero voluntary evictions until a separately reviewed post-rollout relaxation. Follow the
-[placement migration](../../../devices/galactic/scheduling/README.md) before moving retained Ceph clients.
-`restate-replication-migration` requires three ready nodes, one identical three-member Raft set, and archived snapshots
-before `restatectl config set --replication 2 --yes`; it rejects mixed state and waits for all 24 logs plus two active
-processors per partition. `default-replication` is initial-provisioning only.
-
-Official contracts: [HA](https://docs.restate.dev/server/deploy/ha), [metadata](https://docs.restate.dev/server/deploy/metadata), and [snapshots](https://docs.restate.dev/server/deploy/snapshots).
-
-### Software responsiveness and failure detection
-
-The runtime retains upstream Restate 1.7.9 and its storage format. The [runtime build](../../../services/restate/README.md)
-changes one metadata write-dispatch argument to `IoMode::AlwaysBackground`. Log-server and partition writes use their
-existing `always-commit-in-background` options. Each write still awaits completion with the original WAL and fsync
-requirements. Slow successful writes therefore use the existing background I/O executor instead of occupying an async
-worker. This corrects a scheduling hazard; it does not establish how much of the historical 38-second pause it caused.
-
-The liveness settings are coordinated:
-
-| Setting | Value | Purpose |
+| Member | Host | Roles |
 | --- | --- | --- |
-| Metadata election | 450 ticks at 100ms | Base election deadline 45s; Raft randomizes each election attempt over 45–90s |
-| Gossip failure | 450 ticks at 100ms | Avoid declaring a peer dead during the tested 38s interruption |
-| Gossip loneliness | 600 ticks at 100ms | Allow 60s before a node considers itself isolated |
-| Gossip message age | 5s | Accept the tested 3s one-way message delay |
-| Peer connect, handshake and HTTP/2 keep-alive timeout | 10s each | Keep transport deadlines above the tested 6s round trip |
-| Metadata-client connect and keep-alive timeout | 10s each | Apply the same envelope to the separate metadata-client transport |
+| restate-0 | turin | metadata, log, worker, admin, ingress |
+| restate-1 | talos-192-168-1-194 | metadata, log, admin, ingress |
+| restate-2 | talos-192-168-1-85 | metadata, log, worker, admin, ingress |
 
-Metadata heartbeats remain two ticks apart. A lost leader takes longer to replace; Bayn may restrict itself at its
-existing 30s pass deadline and must use its normal settlement/recovery process. Disk latency, volumes, replication,
-durability, placement, PDB, broker authority and alert thresholds retain their settings. Delays beyond this tested
-envelope can still cause failover. See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.7.9/crates/metadata-server/src/raft/server/member.rs),
-[gossip options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/gossip.rs) and
-[networking options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/networking.rs).
+Required host anti-affinity and each bound local PV's node affinity keep the members on separate hosts. Workers use
+Turin and Altra's 100G network; Ryzen participates in metadata and log durability over its slower link. Metadata has
+three voters. Native cluster configuration replicates logs and partitions twice across 24 partitions, with 48 active
+partition processors when both workers are healthy. `default-replication=2` agrees with the existing provisioned
+configuration; defaults do not migrate an existing cluster. Automatic provisioning remains disabled.
 
-The container runtime fault-injection fixture has been removed. CI no longer establishes the delayed-message,
-process-pause or node-loss acceptance behavior described by the runtime settings above.
+All WAL synchronization and write-completion requirements remain enabled. RGW stores periodic partition snapshots,
+not the running metadata or WAL. The protected `restate-snapshots` ObjectBucketClaim retains its bucket independently
+of the application. Keep the existing request-signing key and registered service/deployment identities.
 
-The `Restate images` workflow builds both native architectures and runs the metadata regression during the image build. PR runs publish
-no images. After a reviewed `main` merge, the workflow uploads proof, publishes both built platform images, validates
-and signs the final index, uploads its receipt, then exposes its immutable run-qualified Kargo alias. Warehouse and
-Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` Kustomize input on `kargo/restate`.
-The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).
+## Delivery and recovery checks
 
-Before rollout, verify three caught-up members in the same Raft set, replication two and positive archived LSNs for all
-24 partitions. Argo replaces one retained StatefulSet member at a time. Verify the promoted digest, each replacement's
-membership, distributed dashboard queries, consecutive Bayn ticks with fresh exact reconciliation, both Bayn status
-replicas, and resolution of the existing alerts. An empty query, a healthy Application or a build alone is insufficient.
-Use the prior verified Kargo Freight for a targeted image rollback. Configuration recovery is a reviewed Git revert
-and a normal new image promotion; preserve node identities and all retained data.
+The `Restate images` workflow validates the application and release contracts. Unchanged Docker context and build
+parameters reuse the signed Kargo-selected runtime with identical filesystem layers. A Dockerfile, patch, runtime test,
+or build-parameter change runs both native builds and their fault proofs. Main source builds persist all four Cargo
+cache mounts as signed architecture-specific images in the existing registry; pull requests only read those caches.
 
-The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
-was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
-StatefulSet downscale after replication is one, removable workers/log servers are drained, metadata is singleton, a
-snapshot has trimmed historic nodesets, and all 24 partitions/logs reference only `restate-0`.
-This HA layer omits that guard during normal operation; reverting this layer reintroduces the parent PreSync guard
-before Argo can apply the singleton StatefulSet.
+Each release validates platform source labels, signs the multi-platform index, uploads its receipt, and only then
+exposes the immutable run-qualified Kargo alias. The Warehouse and Stage `lab-delivery/restate` own promotion to
+`kargo/restate`. Argo follows that exact generated revision under the
+[release contract](../../../docs/release-automation.md). Configuration releases also use this path.
 
-## Recovery proof and control-plane telemetry
+`RollingUpdate` replaces one member at a time. Its read-only startup probe requires the current native generation,
+alive membership, current partition assignments and active replay, then advancing status timestamps across two
+observations. A metadata/log-only member must have no worker assignments. Empty, draining, disabled, provisioning,
+stale or partially recovered workers remain unready. The probe does not write configuration or reactivate workers.
+The existing HTTP readiness check follows startup recovery. Retained workers recover through Restate's native logs
+and snapshot integration; there are no singleton bootstrap, replication-migration or contraction hooks.
 
-The StatefulSet keeps an in-revision first-start follower gate: `restate-0` starts normally, while a new `restate-1`
-or `restate-2` whose retained RBD PVC is still empty cannot start the Restate process until the singleton seed reports
-positive archived snapshot LSNs for every partition. `restate-1` requests snapshots for any missing partition while
-new followers wait. Once a follower has initialized its retained PVC, later Pod recreation bypasses this first-start
-gate so a missing `restate-0` cannot prevent the retained follower from rejoining another surviving peer and restoring
-quorum. This keeps a direct sync to the three-replica revision safe without relying on a previously merged Git revision
-or a PostSync hook that cannot run until the StatefulSet is healthy. New followers join the existing cluster with empty
-retained RBD PVCs and bootstrap worker state from the snapshot repository as needed. A PDB
-with `minAvailable: 3` blocks voluntary disruption during the replication migration; it must not be relaxed until
-replication two and healthy three-node quorum are proven live.
+Before a replacement, require three healthy members, identical three-voter metadata membership, replication two,
+positive archived snapshot LSNs for all 24 partitions and a successful same-version offline snapshot restore. The
+`minAvailable: 3` PDB blocks voluntary evictions. Preserve it during this rollout; changing it is a separate decision.
+After replacement, verify the original node ID in its new generation, full partition recovery, real durable application
+work, Bayn progress and the corresponding traces. Ready Pods and a healthy Application alone do not prove this.
 
-`restate-replication-migration` is a PostSync hook and is the only component allowed to change the already-provisioned
-cluster replication setting. It first requires all three stable node names to be alive and ready, all three metadata
-servers to report the same three-member Raft configuration, and partition snapshots to remain archived. It then uses
-the Restate 1.7.9-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
-replication state and succeeds only after all 24 logs are replication two and all 24 partitions have exactly two active
-processors. A sealed idle log tail is accepted only when `logs describe --all --extra` proves its latest replicated
-segment is replication two. On roll-forward after singleton rollback it reactivates only the exact retained
-`restate-1`/`restate-2` node IDs (log storage read-write, worker active, metadata member) before readiness and rejects
-unexpected identities. This is intentionally different from setting `default-replication`: Restate documents that the
-default is only used when a cluster is initially provisioned and does not migrate existing logs or partitions.
+Fence an old writer before recovering a lost disk or host. Preserve surviving native logs, metadata and snapshots.
+Follow the upstream [HA](https://docs.restate.dev/server/deploy/ha) and
+[rolling-update](https://docs.restate.dev/server/upgrading#rolling-updates) procedures. Fix forward on the current
+three-member NVMe implementation. Do not reprovision empty state, lower replication, disable fsync, restore the removed
+singleton path or overwrite newer acknowledged work with an older offline copy.
 
-## Recovery proof and control-plane telemetry
+## Runtime and failure detection
 
-All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, partition progress, snapshots, and
-restore-drill freshness. Snapshot failures are aggregated once per Restate cluster rather than once per node. Recurring
-operational monitoring uses these exported NodeCtl metrics; distributed SQL introspection is reserved for bounded,
-operator-initiated troubleshooting because a recurring full-cluster scan competes with the control plane it observes.
-The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs read-only SQL
-without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
+The [runtime build](../../../services/restate/README.md) pins upstream Restate 1.8.1 and retains two regression-tested
+patches. Metadata writes use the existing background I/O executor while still awaiting durable completion. Bounded
+cold-peer election requests can reach a newly connected peer. Log-server and partition writes use their native
+`always-commit-in-background` options.
 
-Do not use `restate_partition_applied_lsn_lag` as the workload-backlog alert. In Restate 1.7.9 it is a per-processor
-replay-target gauge and replicated followers can retain non-zero values while the live partition table is fully caught
-up. Inspect invocation and queue state with a bounded, operator-initiated SQL query only when exported metrics or a
-runtime symptom requires troubleshooting.
+| Setting | Value |
+| --- | --- |
+| Metadata election | 450 ticks at 100ms; randomized election attempts take 45–90s |
+| Gossip failure | 450 ticks at 100ms |
+| Gossip loneliness | 600 ticks at 100ms |
+| Gossip message age | 5s |
+| Peer connect, handshake and HTTP/2 keep-alive timeout | 10s each |
+| Metadata-client connect and keep-alive timeout | 10s each |
 
-Rollout is fail-closed. `restate-snapshot-restore-proof` is PostSync with a 30-minute deadline, so a failed offline
-snapshot open keeps the Restate Application from completing rather than bypassing recovery proof; while snapshot upload
-is still converging, the proof retries the isolated repository open until all 24 partitions are present. The proof and daily
-drill each request 100m CPU/768Mi memory and are capped at 2 CPU/4096Mi while downloading the latest 24 snapshots into
-ephemeral storage; expect bounded RGW/network reads but no object-store writes. The Alloy configuration hash change
-restarts the single cluster-metrics collector, so require its rollout plus all pre-existing scrape jobs and all three
-Restate NodeCtl targets to return before considering telemetry healthy.
+Metadata heartbeats remain two ticks apart. Leader replacement can exceed Bayn's 30s pass deadline; Bayn retains its
+normal restriction, settlement and recovery behavior. These settings are not an availability or latency guarantee.
 
-If the PostSync proof fails, inspect the Job and its logs without printing OBC Secret values, verify fresh partition
-snapshots exist, and fix forward; do not delete production Restate data or skip the hook. A failed daily drill is
-visible through its CronJob status and Mimir alerts and should be rerun only through normal Kubernetes scheduling/GitOps
-changes. Rollback of this layer is a normal reviewed Git revert: it removes the proof/drill resources and restores the
-previous Alloy config/rules while the protected OBC and snapshots remain retained. The HA PDB intentionally stays
-at `minAvailable: 3`; relaxing it is a separate post-rollout change only after live replication-two/quorum proof.
+## Snapshots and telemetry
 
-### Safe replacement and rollback
+Native workers create snapshots every 30 minutes and retain two. The PostSync restore proof and daily drill use the
+promoted runtime's same-version `restate-doctor` to open all 24 latest snapshots in an isolated read-only store and query
+invocations. They have no object-store write command. An unsuccessful doctor command cannot supply a success marker.
+The proof must succeed before the release completes. A failure requires inspecting its Job/logs and fixing the cause;
+keep the protected bucket and production data intact.
 
-Before one-pod replacement require exact reviewed Argo source, three distinct healthy hosts, quorum/replication two,
-fresh restore proof, Bayn `RestateDeployment` Ready, EXACT/zero unresolved/read-only/one owner; require full recovery.
-The normal HA layer omits the parent singleton rollback guard. Reverting the HA layer reintroduces that PreSync guard,
-which contracts replication, workers/log servers, metadata membership, and historic nodesets before Argo may downscale
-the StatefulSet to one. Never bypass the guard with direct cluster edits or a direct manual scale-down.
+All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, partition progress, snapshots and
+restore-drill freshness. Investigate alerts from time-aligned native logs, metrics and database state. Measure storage
+or placement changes under the same offered workload, recording background load, fsync sum/count deltas and request
+latency. Software, storage and role changes are separate variables.
 
 ## Admin UI exposure
 

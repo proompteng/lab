@@ -142,7 +142,7 @@ jobs:
     timeout-minutes: 12
     services:
       postgres:
-        image: postgres:18-alpine
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -167,6 +167,7 @@ jobs:
           --filter @proompteng/codex
           --filter @proompteng/cx-tools
           --filter @proompteng/agents
+          --filter memories
           --filter @proompteng/otel
           --filter @proompteng/scripts
           --filter @proompteng/temporal-bun-sdk
@@ -202,6 +203,7 @@ jobs:
           bun services/relay/generate.ts --check
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
+          bun run --cwd services/memories test
 
   static:
     name: Validate Agents chart and CRDs
@@ -412,6 +414,18 @@ jobs:
 
       - name: Ensure Kind Docker network
         run: scripts/agents/ensure-kind-network.sh
+
+      - name: Install pinned Kind binary
+        run: |
+          set -euo pipefail
+          kind_bin="${RUNNER_TOOL_CACHE}/kind/v0.31.0/amd64/kind/bin"
+          mkdir -p "${kind_bin}"
+          curl --fail --location --retry 3 --header 'Accept: application/octet-stream' \
+            --output "${RUNNER_TEMP}/kind-linux-amd64" \
+            https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/330009836
+          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum --check
+          # kind-action reuses this checked executable rather than downloading it through the release frontend.
+          install -m 755 "${RUNNER_TEMP}/kind-linux-amd64" "${kind_bin}/kind"
 
       - name: Create Kind cluster
         uses: helm/kind-action@v1

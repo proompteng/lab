@@ -31,18 +31,19 @@ import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
 import { canonicalHashV1Result } from '../hash'
 import { Journal, type JournalService } from '../ledger'
+import { makeExecutionPersistence } from './execution-store/postgres'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import {
   AuthorityGenerationStore,
   AuthorityRestrictionStore,
   BrokerEventStore,
-  ExecutionStoreLive,
   FillAccountingStore,
   ReconciliationStore,
   type ReconciliationStoreShape,
   ValuationStore,
-} from './execution-store'
+} from './execution-store/contract'
+import { ExecutionStoreLive } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
@@ -547,13 +548,17 @@ describePostgres('PostgreSQL execution persistence', () => {
     })
     await runtime.runPromise(
       Effect.gen(function* () {
-        const store = {
-          events: yield* BrokerEventStore,
-          accounting: yield* FillAccountingStore,
-          valuation: yield* ValuationStore,
-          reconciliation: yield* ReconciliationStore,
-          authorityRestriction: yield* AuthorityRestrictionStore,
-        }
+        const sql = yield* PgClient.PgClient
+        let accrualReads = 0
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('FROM broker_fee_accruals a JOIN broker_fee_accrual_cohorts'))
+              accrualReads += 1
+            return statement
+          },
+        })
+        const store = yield* makeExecutionPersistence(config).pipe(Effect.provideService(PgClient.PgClient, monitored))
         const evidence = (kind: string) => ({
           requestId: `co-commit-${kind}`,
           status: 200,
@@ -586,14 +591,15 @@ describePostgres('PostgreSQL execution persistence', () => {
         }
         for (const replay of [false, true]) {
           commits.length = 0
+          accrualReads = 0
           const result = yield* persistStableSnapshot(store, snapshot, Effect.succeed(observedAt)).pipe(
             Effect.provideService(Tracer.Tracer, tracer),
           )
           expect(result.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
           expect(result.brokerState.positions).toEqual([])
           expect(commits, `replay=${replay}`).toHaveLength(1)
+          expect(accrualReads, `replay=${replay}`).toBe(2)
         }
-        const sql = yield* PgClient.PgClient
         const [counts] = yield* sql<{ accounts: number; snapshots: number; reconciliations: number }>`
           SELECT (SELECT count(*)::integer FROM account_snapshots) AS accounts,
             (SELECT count(*)::integer FROM position_snapshots) AS snapshots,
@@ -1898,7 +1904,11 @@ describePostgres('PostgreSQL execution persistence', () => {
             ['82625', '200392', false],
           ])
           journalControl.failPosts = false
-          yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+          const posted = yield* fence.transaction(
+            postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle),
+          )
+          expect(posted.accruals).toEqual(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))
+          expect(posted.accruals.every((record) => record.posted)).toBe(true)
         }
         yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
         yield* retainAccountCashReporting(sql, snapshot)

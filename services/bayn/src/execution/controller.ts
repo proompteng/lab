@@ -19,6 +19,10 @@ const DeliveryAttemptSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: executionControllerMaximumDeliveryAttempt }),
 )
 export const executionControllerMaximumRecoveryWindow = 7
+/** The counter saturates; a failed owner must keep its bounded recovery cadence alive. */
+export const nextExecutionControllerRecoveryWindow = (current: number): number =>
+  Math.min(current + 1, executionControllerMaximumRecoveryWindow)
+
 const RecoveryWindowSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: executionControllerMaximumRecoveryWindow }),
 )
@@ -62,6 +66,13 @@ export const ExecutionControllerDeactivationSchema = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
 })
 export type ExecutionControllerDeactivation = typeof ExecutionControllerDeactivationSchema.Type
+
+export const ExecutionControllerRotationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-controller-rotation.v1'),
+  deployment: ExecutionDeploymentActivationSchema,
+  predecessor: ExecutionControllerDeactivationSchema,
+})
+export type ExecutionControllerRotation = typeof ExecutionControllerRotationSchema.Type
 
 const CompletionSchema = Schema.Struct({
   sequence: CounterSchema,
@@ -256,7 +267,15 @@ export const completeExecutionControllerTick = (
     )
   }
   const nextDueAt = Result.try({
-    try: () => new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
+    try: () => {
+      const completedAt = Date.parse(result.completedAt)
+      const pollingDueAt = completedAt + result.outcome.nextDelayMs
+      return new Date(
+        result.outcome.nextWakeAt === undefined
+          ? pollingDueAt
+          : Math.min(pollingDueAt, Math.max(completedAt + 1, Date.parse(result.outcome.nextWakeAt))),
+      ).toISOString()
+    },
     catch: () =>
       new ExecutionControllerDecisionError({
         operation: 'complete',
@@ -333,8 +352,40 @@ export const decideExecutionControllerDeactivation = (
   })
 }
 
+export const decideExecutionControllerRotation = (
+  state: ExecutionControllerState | null,
+  request: ExecutionControllerRotation,
+): Result.Result<ExecutionControllerActivationDecision, ExecutionControllerDecisionError> => {
+  if (request.deployment.controllerKey !== request.predecessor.controllerKey)
+    return conflict('activate', 'execution controller rotation account bindings differ')
+  if (
+    state !== null &&
+    state.active &&
+    state.epoch === request.predecessor.epoch + 1 &&
+    sameBinding(state, request.deployment)
+  )
+    return Result.succeed({ _tag: 'Replayed', state })
+  if (state === null || !state.active)
+    return conflict('activate', 'execution controller rotation cannot resume a deactivated predecessor')
+  // Derive the existing fenced transition without ever persisting its inactive intermediate state.
+  return Result.flatMap(decideExecutionControllerDeactivation(state, request.predecessor), ({ state: inactive }) =>
+    decideExecutionControllerActivation(inactive, {
+      schemaVersion: 'bayn.execution-controller-activation.v1',
+      controllerKey: request.deployment.controllerKey,
+      epoch: inactive.epoch,
+      firstSequence: inactive.nextSequence,
+      planHash: request.deployment.planHash,
+      sourceRevision: request.deployment.sourceRevision,
+    }),
+  )
+}
+
 export const decodeExecutionControllerActivation = Schema.decodeUnknownResult(
   ExecutionControllerActivationSchema,
+  strictParseOptions,
+)
+export const decodeExecutionControllerRotation = Schema.decodeUnknownResult(
+  ExecutionControllerRotationSchema,
   strictParseOptions,
 )
 export const decodeExecutionDeploymentActivation = Schema.decodeUnknownResult(

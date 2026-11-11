@@ -1,6 +1,6 @@
 import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
-import { currentSubmissionMarketAllowed } from './trading-scope'
+import { currentEntryMarketEnabled } from './trading-scope'
 import { quantityFromDecimal, quantityScale } from '../quantity'
 import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { Cause, Effect, Result } from 'effect'
@@ -38,6 +38,10 @@ import {
 
 import { SubmissionDenialReason } from './submission-denial'
 import { cryptoTakerFeeBps, effectiveCryptoFeeTier, type CryptoTakerFeeBps } from '../broker/crypto-fees'
+
+/** Existing long positions may exit through the normal ownership, risk and capital checks. */
+export const currentSubmissionMarketAllowed = (intent: Pick<Intent, 'symbol' | 'side'>): boolean =>
+  currentEntryMarketEnabled(instrumentMarket(intent.symbol)) || intent.side === IntentOrderSide.Sell
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
@@ -249,7 +253,7 @@ export interface ExecutionCapitalLimitContext {
   readonly maxBrokerStateAgeMs: number
   readonly maxNetExposureMicros: string
   readonly currentDailyTradedNotionalMicros: string
-  readonly maxDailyTradedNotionalMicros: string
+  readonly maxDailyTradedNotionalMicros: string | null
   readonly peakEquityMicros: string
   readonly maxDrawdownMicros: string
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
@@ -894,7 +898,11 @@ export const validateExecutionCapitalLimits = (
   }
 
   const projectedDailyTradedNotional = BigInt(context.currentDailyTradedNotionalMicros) + proposedOrderNotional
-  if (!exposureReducingClose && projectedDailyTradedNotional > BigInt(context.maxDailyTradedNotionalMicros)) {
+  if (
+    !exposureReducingClose &&
+    context.maxDailyTradedNotionalMicros !== null &&
+    projectedDailyTradedNotional > BigInt(context.maxDailyTradedNotionalMicros)
+  ) {
     return Result.fail({
       _tag: 'DailyTradedNotionalLimitExceeded',
       limitMicros: context.maxDailyTradedNotionalMicros,

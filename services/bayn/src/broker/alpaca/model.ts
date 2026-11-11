@@ -1,4 +1,4 @@
-import type * as Undici from '@effect/platform-node/Undici'
+import type Undici from '@effect/platform-node/Undici'
 import { Context, DateTime, Effect, Option, Schema, SchemaTransformation, type Result } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
@@ -221,8 +221,8 @@ export enum TradeActivityType {
 }
 
 export interface ProxyDispatcherDependencies {
-  readonly create: (url: URL) => Undici.Dispatcher
-  readonly destroy: (dispatcher: Undici.Dispatcher) => Promise<void>
+  readonly create: (url: URL) => InstanceType<typeof Undici.Dispatcher>
+  readonly destroy: (dispatcher: InstanceType<typeof Undici.Dispatcher>) => Promise<void>
 }
 
 export interface RateLimitEvidence {

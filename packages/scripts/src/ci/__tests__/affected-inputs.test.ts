@@ -68,7 +68,9 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       'packages/scripts/src/tengri/__tests__/schema.test.ts',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
     ])
-      expect(matchesPaths(file, patterns)).toBe(false)
+      expect(matchesPaths(file, patterns)).toBe(
+        filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml',
+      )
     for (const file of [
       'nix/cache-push.sh',
       'nix/oci-push.sh',
@@ -82,7 +84,19 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
   }
 })
 
-test('Bayn CI does not run trading qualification or native images for orchestration changes', () => {
+test('OpenCode CLI changes publish only the owning image', () => {
+  for (const [filename, expected] of [
+    ['bayn-build-push.yml', false],
+    ['opencode-build-push.yml', true],
+  ] as const) {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing publication inputs: ${filename}`)
+    expect(matchesPaths('nix/images/opencode-cli.nix', paths.map(text))).toBe(expected)
+  }
+})
+
+test('Bayn CI does not run trading qualification for orchestration and documentation changes', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing Bayn planner')
@@ -97,23 +111,58 @@ test('Bayn CI does not run trading qualification or native images for orchestrat
       ),
     ),
   )
-  for (const target of ['bayn', 'image']) {
-    const paths = property(filters, target)
-    if (!Array.isArray(paths)) throw new Error('Missing Bayn validation inputs')
-    for (const file of [
-      '.github/workflows/bayn-ci.yml',
-      '.github/workflows/bayn-build-push.yml',
-      '.github/workflows/common-monorepo.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      '.github/actions/setup-nix-toolchain/action.yml',
-      'nix/cache-push.sh',
-      'nix/ci-run-timed.sh',
-      'nix/oci-push.sh',
-    ])
-      expect(matchesPaths(file, paths.map(text))).toBe(false)
-    expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
-    expect(matchesPaths('nix/images/bayn.nix', paths.map(text))).toBe(true)
+  const paths = property(filters, 'bayn')
+  if (!Array.isArray(paths)) throw new Error('Missing Bayn validation inputs')
+  for (const file of [
+    'services/bayn/README.md',
+    'argocd/applications/bayn/README.md',
+    '.github/workflows/bayn-ci.yml',
+    '.github/workflows/bayn-build-push.yml',
+    '.github/workflows/common-monorepo.yml',
+    '.github/workflows/nix-oci-build-common.yml',
+    '.github/actions/setup-nix-toolchain/action.yml',
+    'nix/cache-push.sh',
+    'nix/ci-run-timed.sh',
+    'nix/oci-push.sh',
+    'nix/images/opencode-cli.nix',
+  ])
+    expect(matchesPaths(file, paths.map(text))).toBe(false)
+  expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
+  expect(matchesPaths('nix/images/bayn.nix', paths.map(text))).toBe(true)
+})
+
+test('Bayn publication ignores Froussard-only dependencies and still selects Bayn runtime changes', () => {
+  const configured = parseTargets("image: ['', 'services/bayn']", '', '.github/workflows/bayn-build-push.yml', 'push')
+  const prior = {
+    ...before,
+    workspaces: { ...before.workspaces, 'apps/froussard': { name: 'froussard', dependencies: {} } },
   }
+  const next = {
+    ...prior,
+    workspaces: {
+      ...prior.workspaces,
+      'apps/froussard': { name: 'froussard', dependencies: { '@restatedev/restate-sdk': '1.16.5' } },
+    },
+    packages: {
+      ...prior.packages,
+      '@restatedev/restate-sdk': ['@restatedev/restate-sdk@1.16.5', '', {}, 'sdk-integrity'],
+    },
+  }
+  expect(selectAffectedInputs(['bun.lock', 'apps/froussard/package.json'], configured, prior, next).image).toBe(false)
+  expect(selectAffectedInputs(['services/bayn/src/runtime.ts'], configured, prior, next).image).toBe(true)
+  expect(selectAffectedInputs(['services/bayn/package.json'], configured, prior, next).image).toBe(true)
+  expect(
+    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], configured, prior, next)
+      .image,
+  ).toBe(false)
+  expect(selectAffectedInputs(['argocd/applications/bayn/postgres-cluster.yaml'], configured, prior, next).image).toBe(
+    true,
+  )
+  const changedDependency = {
+    ...next,
+    packages: { ...next.packages, client: ['client@1.1.0', '', {}, 'new-integrity'] },
+  }
+  expect(selectAffectedInputs(['bun.lock'], configured, prior, changedDependency).image).toBe(true)
 })
 
 test('App source changes do not force dependency downloads; dependency input changes still do', () => {
@@ -593,7 +642,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     const head = commit(after)
     git('checkout', '-b', 'base', initial)
     const base = commit({ ...before, configVersion: 0 })
-    const run = (event: string, baseSha: string) => {
+    const run = (event: string, baseSha: string, dependencyAwarePush = 'false') => {
       const output = join(dir, 'output')
       writeFileSync(output, '')
       execFileSync(process.execPath, [script], {
@@ -606,6 +655,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
           INPUT_WORKSPACES: 'bayn: ["", "services/bayn"]\nlanding: ["", "apps/landing"]',
           INPUT_FILTERS: 'bayn: ["bun.lock"]\nlanding: ["bun.lock"]',
           INPUT_WORKFLOW: '',
+          INPUT_DEPENDENCY_AWARE_PUSH: dependencyAwarePush,
           GITHUB_OUTPUT: output,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -614,6 +664,9 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     }
     expect(run('pull_request', base)).toEqual({ bayn: false, landing: true })
     expect(run('push', base)).toEqual({ bayn: true, landing: true })
+    expect(run('push', initial, 'true')).toEqual({ bayn: false, landing: true })
+    expect(run('push', base, 'true')).toEqual({ bayn: true, landing: true })
+    expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({ bayn: true, landing: true })
     expect(() => changedRange('pull_request', '', head)).toThrow('valid nonzero')
   } finally {
@@ -642,22 +695,36 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/conformance/economics.test.ts',
     '.github/workflows/bayn-formal.yml',
   ])
-    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, image: false, formal: true })
+    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, gepa: false, formal: true })
   expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
     bayn: true,
-    image: true,
+    gepa: false,
     formal: true,
   })
   expect(selectAffectedInputs(['argocd/applications/bayn/configmap.yaml'], targets, lock, lock)).toEqual({
     bayn: true,
-    image: false,
+    gepa: false,
     formal: false,
   })
   expect(selectAffectedInputs(['apps/landing/src/index.ts'], targets, lock, lock)).toEqual({
     bayn: false,
-    image: false,
+    gepa: false,
     formal: false,
   })
+  for (const path of ['services/bayn/src/risk.test.ts', 'services/bayn/tools/history.test.ts'])
+    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal: false, gepa: false })
+  expect(selectAffectedInputs(['services/bayn/gepa/runner.py'], targets, lock, lock)).toEqual({
+    bayn: true,
+    formal: false,
+    gepa: true,
+  })
+  for (const path of [
+    'services/bayn/src/db/entry-inference-postgres.integration.test.ts',
+    'services/bayn/src/system-assessment/postgres.integration.test.ts',
+    'services/bayn/src/db/risk-clock-rejection.integration.test.ts',
+    'services/bayn/src/db/candidate-observation-window.integration.test.ts',
+  ])
+    expect(selectAffectedInputs([path], targets, lock, lock).formal).toBe(true)
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-build-push.yml', 'utf8'))
   const paths = property(property(property(publication, 'on'), 'push'), 'paths')
   if (!Array.isArray(paths) || !paths.every((path): path is string => typeof path === 'string'))
@@ -668,21 +735,31 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/conformance/economics.test.ts',
     'services/bayn/README.md',
     'services/bayn/src/jev/entry-economics.test.ts',
+    'services/bayn/tools/test-postgres.ts',
+    'services/bayn/tools/test-ledger.ts',
+    'services/bayn/tools/ci-unit-timings.json',
+    'services/bayn/tools/verify-image-metadata.ts',
+    'packages/scripts/src/bayn/market-data-replay-ci.test.ts',
+    'packages/scripts/src/bayn/verify-research-commands.sh',
   ])
     expect(matchesPaths(path, paths)).toBe(false)
   expect(matchesPaths('services/bayn/src/execution/controller.ts', paths)).toBe(true)
   for (const path of [
     'services/bayn/src/jev/entry-economics.ts',
     'services/bayn/migrations/20261106-cost-evidence.sql',
+    'services/bayn/tools/compile-frozen-control.ts',
+    'services/bayn/tools/record-jev-compiler-dependencies.ts',
     'services/bayn/package.json',
     'nix/images/bayn.nix',
     'argocd/applications/bayn/configmap.yaml',
     'bun.lock',
   ])
     expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
-  expect(selectAffectedInputs(['services/bayn/README.md'], targets, lock, lock)).toEqual({
-    bayn: true,
-    image: true,
+  expect(
+    selectAffectedInputs(['services/bayn/README.md', 'argocd/applications/bayn/README.md'], targets, lock, lock),
+  ).toEqual({
+    bayn: false,
+    gepa: false,
     formal: false,
   })
 })

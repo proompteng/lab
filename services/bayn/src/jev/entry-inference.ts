@@ -10,7 +10,7 @@ import {
   type StagedTerminalReceipt,
   type BaseStartEvidence,
 } from './staged-checkpoint'
-import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-questions'
+import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-assessments'
 import { makeInitialChartStageRequest, stagedChartAssessments } from './staged-chart-questions'
 import type { JevInference } from './client'
 import { JevFailure, JevResponseSchema, type JevRequest } from './contract'
@@ -30,12 +30,14 @@ import {
   type EntryProposal,
 } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
+import type { JevProviderDiagnostics } from './provider-diagnostics'
 
 export type VisualFailureEvidence = {
   readonly category: DecisionsError['category']
   readonly httpStatus: number | null
   readonly responseHash: string | null
   readonly usage: typeof ChartStageUsageSchema.Type | null
+  readonly providerDiagnostics?: JevProviderDiagnostics
 }
 type ProposalEvaluation = {
   readonly proposals: readonly EntryProposal[]
@@ -66,32 +68,36 @@ type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
 
 type HandoffDisposition = HandoffDispositionFor<ChartAssessments>
 
-export interface EntryHandoff {
-  readonly schemaVersion: 'bayn.entry-handoff.v4'
+export interface CurrentEntryHandoff {
+  readonly schemaVersion: 'bayn.entry-handoff.v5'
   readonly requestId: string
   readonly inputHash: string
   readonly visualRequestHash: string
   readonly recordedAt: string
   readonly disposition: HandoffDisposition
-  readonly baseStart: BaseStartEvidence
   readonly handoffHash: string
 }
+export type EntryHandoff =
+  | CurrentEntryHandoff
+  | (Omit<CurrentEntryHandoff, 'schemaVersion'> & {
+      readonly schemaVersion: 'bayn.entry-handoff.v4'
+      readonly baseStart: BaseStartEvidence
+    })
+
 export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVersion' | 'baseStart'> & {
   readonly schemaVersion:
     | 'bayn.entry-handoff.v1'
     | 'bayn.entry-handoff.v2'
     | 'bayn.entry-handoff.v3'
     | 'bayn.entry-handoff.v4'
+    | 'bayn.entry-handoff.v5'
   readonly disposition: HandoffDispositionFor<ChartAssessmentsMaterial>
   readonly baseStart?: BaseStartEvidence
 }
 
 export type VisualTransition = {
   readonly terminal: StagedTerminalReceipt
-  readonly successor:
-    | { readonly kind: 'NONE' }
-    | { readonly kind: 'VISUAL'; readonly claim: StagedDispatchClaim }
-    | { readonly kind: 'HANDOFF'; readonly handoff: EntryHandoff }
+  readonly successor: { readonly kind: 'NONE' } | { readonly kind: 'HANDOFF'; readonly handoff: EntryHandoff }
 }
 
 export type EntryStageTransition =
@@ -176,6 +182,7 @@ export type EntryInferenceCompletion = {
         readonly httpStatus: number | null
         readonly responseHash: string | null
         readonly usage: typeof JevResponseSchema.fields.usage.Type | null
+        readonly providerDiagnostics?: JevProviderDiagnostics
       }
     | { readonly status: 'NOT_REQUESTED' }
     | { readonly status: 'NOT_DISPATCHED' }
@@ -241,11 +248,7 @@ export const hasFeasibleEntrySource = (
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
 ) => evaluateEntrySourceFeasibility(input, chart).pipe(Result.map((result) => result.feasible))
 
-export const deriveEntryHandoffDisposition = (
-  input: EntryInferenceInput,
-  visual: ChartStageInference,
-  baseStart: ChartStageInference | null = null,
-) =>
+export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: ChartStageInference) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
     return yield* deriveEntryDispositionForChart(
@@ -255,7 +258,6 @@ export const deriveEntryHandoffDisposition = (
       yield* stagedChartAssessments(
         { chart, protocol: input.protocol, funding: input.funding },
         stageResponseIdentity(visual),
-        baseStart === null ? null : stageResponseIdentity(baseStart),
       ),
       makeEntryJudgmentRequest,
     )
@@ -295,6 +297,7 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
             bidMicros: BigInt(input.funding.bidMicros),
           })
     const jev = yield* prepareJudgments({
+      model: input.protocol.model,
       numericalState: input.numericalState,
       chart,
       assessments,

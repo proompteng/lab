@@ -56,8 +56,10 @@ An individual valid chunk above the SQL byte target is written whole under the e
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-Connection failures, including a failed COMMIT acknowledgement reported as a SQL defect, retry the identical append
-at most twice with 100 milliseconds between attempts. Each retry reads the existing ordinals and verifies their
+Connection failures, statement timeouts and PostgreSQL `57P03` startup refusals retry the identical append on the
+existing one-minute schedule with one second between retries. The pinned driver classifies `57P03` as an unknown
+SQL error, so the append policy recognizes that exact code without retrying other unknown errors. A failed COMMIT
+acknowledgement reported as a SQL defect follows the same policy. Each retry reads the existing ordinals and verifies their
 exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.
 If every chunk already exists, a [transactional WAL acknowledgement](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-REPLICATION) makes the retry's COMMIT wait for the configured
 synchronous durability; a locally visible row alone does not prove that its lost COMMIT acknowledgement was durable.
@@ -429,3 +431,49 @@ decision evidence, archive-watermark waits and unexplained decision-pending stat
 and `INCOMPLETE`, even with zero failed passes and exact flat accounting. Lookback warmup, valid no-candidate signals
 and expected order/reconciliation lifecycle waits do not count as missing decision evidence. These counters measure
 scheduled observations; they do not establish profitability or replace a complete retained source capture.
+
+The research `native:export` command now exports a pinned original consumer prefix from the separate PostgreSQL
+archive. It preserves compressed journal members and validates the resulting source with the same whole-file
+reader used by independent controls. See [the control portfolio export procedure](../../../../../docs/bayn/control-portfolios.md#export-original-deliveries-for-the-controls).
+
+## Native capture health transport
+
+The isolated projection worker samples its scoped journals every 15 seconds without waiting on Kafka offsets,
+arrivals or PostgreSQL. One health frame may await acknowledgement on the existing worker MessagePort; stalled
+parents cannot accumulate an unbounded health queue. A final frame follows journal finalization before the normal
+stop acknowledgement. Health delivery has no persistence, retry, readiness or trading authority effect.
+
+The controller aggregates all locally owned projection workers into its existing OTLP exporter and existing
+service, source revision and instance resource identity. No exporter is added to the isolated worker. The metrics
+contain operational counts and times only, never capture IDs, epochs, hashes, markets, payloads or failure strings:
+
+- `bayn_capture_workers_expected`: currently owned worker scopes, including startup and shutdown.
+- `bayn_capture_workers_unobserved`: owned workers with no frame, a frame older than 45 seconds or more than five
+  seconds ahead of the parent's clock. A healthy sibling cannot satisfy another worker's observation.
+- `bayn_capture_active` and `bayn_capture_incomplete`: sums from fresh worker frames only. Missing workers are
+  excluded from these sums and remain explicitly unknown in `workers_unobserved`.
+- `bayn_capture_pending_stagnant_seconds`: maximum sampled duration with observed deliveries still awaiting durable
+  acknowledgement and no durable sequence advance. The monotonic timer begins at the first pending observation,
+  resets on acknowledged progress or no pending work, and excludes incomplete journals. Quiet markets alone cannot
+  increase it. Pending work during normal bounded retry is not itself a terminal failure.
+- `bayn_capture_terminal_failures_total`: each observed incomplete journal once, including failed final sealing.
+- `bayn_capture_last_failure_observed_timestamp_seconds`: parent wall-clock time of the latest newly observed
+  terminal failure. This is detection time, not the original failure time. It can retain a brief failure between
+  periodic samples; a later healthy capture does not repair that historical failure.
+- `bayn_capture_observation_timestamp_seconds`: parent aggregation time. This is not the worker's freshness proof;
+  always inspect `workers_unobserved` too. Retiring the final owner publishes zero expected workers, then stops its
+  sampler. A finite capture or orderly rollout is not an error.
+
+This change supplies instrumentation, not an activated capture alert or verified notification delivery. Existing
+GlitchTip retention-failure reporting remains in place. Before activating rules, prove per-live-instance ownership,
+source revision adoption, OTLP-to-Prometheus instance labels and telemetry freshness. Do not aggregate a healthy
+pod or newer revision over a failed sibling. Missing families or stale parent observations mean unknown, never
+healthy. Zero incomplete or pending values are meaningful only with fresh parent observation and no unobserved
+expected worker. Old-version pods during staged deployment and retired instances must not acquire an invented
+capture expectation. Conservative pending-work alerts must allow ordinary bounded retry and preserve the distinction
+between stagnation, terminal failure and unavailable telemetry. Rules, native PromQL regression cases and verified
+notification delivery are a separate activation boundary.
+
+These observations do not establish source authenticity, complete market coverage, durable suffix recovery,
+profitability or historical archive repair. An interrupted process can leave an unsealed capture; telemetry cannot
+fabricate its end receipt.

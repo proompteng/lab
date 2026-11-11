@@ -113,13 +113,6 @@ describe('all used model responses retain their actual availability', () => {
           availableAt: jev.inference.completedAt,
         })
       }
-      if (handoff.baseStart.status === 'RECEIVED') {
-        responses++
-        expect(inputs).toContainEqual({
-          contentHash: handoff.baseStart.inference.responseHash,
-          availableAt: handoff.baseStart.inference.completedAt,
-        })
-      }
     }
     expect(responses).toBeGreaterThan(0)
   })

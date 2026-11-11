@@ -27,7 +27,7 @@ import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../../hash
 import { strictParseOptions } from '../../schemas'
 import {
   CycleDecisionDocumentSchema,
-  decodeRetainedJevV38ExecutionDecisionDocument,
+  decodeRetainedJevExecutionDecisionDocument,
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
 } from '../../shadow-decision-contract'
@@ -52,7 +52,7 @@ const projectionRow = (
 // Preserve the previous two-verifier acceptance boundary independently of the routing prefix.
 const expectEquivalentProjection = (row: typeof CycleDecisionRow.Type) => {
   const current = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
-  const expected = Result.isSuccess(current) ? current : decodeRetainedJevV38ExecutionDecisionDocument(row.document)
+  const expected = Result.isSuccess(current) ? current : decodeRetainedJevExecutionDecisionDocument(row.document)
   const actual = verifyPerformanceDecisions([row])
   expect(actual).toEqual(
     expected._tag === 'Success'
@@ -335,7 +335,7 @@ test('preserves flat, OBSERVE and non-Jev documents without a nested protocol di
         strategyDecision: flat,
       }),
     )
-    expect(Result.isSuccess(decodeRetainedJevV38ExecutionDecisionDocument(flatDocument))).toBe(
+    expect(Result.isSuccess(decodeRetainedJevExecutionDecisionDocument(flatDocument))).toBe(
       strategyProtocolHash === retained.bindings.strategyProtocolHash,
     )
     expect(expectEquivalentProjection(projectionRow(flatDocument)).verifiedRows).toHaveLength(1)

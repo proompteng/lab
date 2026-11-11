@@ -1,3 +1,9 @@
+import { DecisionConstruction } from '../decision-construction'
+import {
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
+} from '../shadow-decision'
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -27,7 +33,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
@@ -60,7 +66,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
-import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
@@ -182,7 +188,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
     const jevPositions = yield* makeJevPositionStore
-    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
+    const riskPolicy = yield* Effect.fromResult(strategyExecutionRiskPolicy(identity.accountId, input.strategy))
     const plan = {
       schemaVersion: 'bayn.research-execution-plan.v1' as const,
       activation: {
@@ -246,6 +252,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             initialAuthority.generationHash,
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(DecisionConstruction, { observe: buildObserveShadowDecision, execution: buildExecutionDecision }),
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
@@ -298,6 +305,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
+          buildDecision: buildResearchMutationCycleDecision,
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {

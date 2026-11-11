@@ -11,7 +11,7 @@ import { ResearchError } from './research-inference/contract'
 
 export const openCodeServerProgram = Effect.gen(function* () {
   const sourceRevision = yield* Config.schema(GitSourceRevisionSchema, 'OPENCODE_CODE_REVISION')
-  const proxy = yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')
+  const proxy = yield* Config.NonEmptyString('BAYN_EGRESS_PROXY')
   const binary = yield* Config.NonEmptyString('BAYN_OPENCODE_BINARY').pipe(Config.withDefault('/bin/opencode'))
   const upstream = Context.get(yield* Layer.build(JevHttpClientLive(proxy)), HttpClient.HttpClient)
   return yield* serveOpenCode({ sourceRevision, proxy, binary }, upstream)

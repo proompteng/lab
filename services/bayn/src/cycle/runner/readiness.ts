@@ -11,6 +11,7 @@ import { ExpiredRiskClockEvidenceSchema } from '../../execution/risk-clock'
 
 export enum DecisionReadinessReason {
   AccountProtection = 'ACCOUNT_PROTECTION',
+  TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
   InferenceExpired = 'INFERENCE_EXPIRED',
@@ -110,6 +111,7 @@ export const CycleWaitReasonSchema = Schema.Union([
     'PROTECTION_RECOVERY_ONLY',
     'PROTECTION_AWAITING_RECONCILIATION',
     'PROTECTION_CANCEL_PENDING',
+    'PROTECTION_PUBLICATION_PENDING',
     'PROTECTION_AUTHORITY_UNAVAILABLE',
     'PROTECTION_EXIT_COMMITTED',
     'POST_MUTATION_RECONCILIATION',

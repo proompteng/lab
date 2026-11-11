@@ -1379,6 +1379,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const intentStore: IntentStoreService = {
     protectionForCycle: () => Effect.succeed([]),
     beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+    recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
     commit: () => Effect.die(new Error('unexpected commit')),
     read: (id) =>
       Effect.gen(function* () {
@@ -2630,6 +2631,46 @@ describe('execution coordinator', () => {
     expect(result.found.eventType).toBe(MutationEventType.RecoveryFound)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 1 })
     expect(harness.state()).toBe(IntentState.Terminal)
+  })
+
+  test('forwards expired-entry admission and never transmits after its fenced rejection', async () => {
+    const harness = makeHarness()
+    const admission = {
+      accountId,
+      authorityGenerationHash: intent.authorityGenerationHash,
+      authorityVersion: 2,
+      intentId,
+      clientOrderId: intent.clientOrderId,
+      brokerOrderId: orderId,
+      observedAt: '1970-01-01T00:00:00.000Z',
+      validUntil: '1970-01-01T00:00:01.000Z',
+    }
+    const rejected = new MutationStoreError({
+      operation: 'begin-cancel',
+      failure: 'authority',
+      message: 'expired-entry observation expired while waiting',
+    })
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          const store = yield* MutationStore
+          return yield* cancel(intentId, 1_000, admission).pipe(
+            Effect.provideService(MutationStore, {
+              ...store,
+              beginCancel: (id, _requestHash, parentId, _delay, _occurredAt, supplied) => {
+                expect([id, parentId, supplied]).toEqual([intentId, orderId, admission])
+                return Effect.fail(rejected)
+              },
+            }),
+            Effect.result,
+          )
+        }),
+      ),
+    )
+    expect(result).toEqual(Result.fail(rejected))
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Acknowledged)
   })
 
   test('rejects a cancel replay whose committed consistency delay changes', async () => {

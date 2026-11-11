@@ -57,6 +57,8 @@ spire-agent:
     limits:
       memory: 512Mi
 spiffe-csi-driver:
+  image:
+    tag: "0.2.13"
   tolerations:
     - key: workload.proompteng.ai/compute-local
       operator: Equal

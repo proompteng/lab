@@ -50,7 +50,6 @@ export interface RuntimeConfig {
     readonly tls: boolean
     readonly caPath: string
   }
-  readonly nativeArrivalPostgres?: RuntimeConfig['postgres'] | undefined
   readonly tigerBeetle: {
     readonly clusterId: bigint
     readonly replicaAddresses: readonly string[]
@@ -110,7 +109,6 @@ export interface ParsedRuntimeConfig {
   readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: RuntimeConfig['clickhouse']
   readonly postgres: RuntimeConfig['postgres']
-  readonly nativeArrivalPostgres?: RuntimeConfig['postgres'] | undefined
   readonly tigerBeetle: RuntimeConfig['tigerBeetle']
 }
 

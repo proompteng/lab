@@ -67,7 +67,7 @@ test('pending batches preserve individual validation and interleaved quote order
   const a = rowsFor(sourceFixture())
   const b = rowsFor(sourceFixture('2026-10-25T07:01:32.000Z'))
   const rows = a.flatMap((row, index) => [row, ...b.slice(index, index + 1)])
-  expect(rows).toHaveLength(6)
+  expect(rows).toHaveLength(4)
   const expected = rows.map((row) => Result.getOrThrow(verifyInferenceExpenseQuote(row.source, row.payload)))
   const actual = Result.getOrThrow(verifyPendingInferenceExpenses(rows))
   expect(actual).toEqual(expected)

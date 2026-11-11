@@ -11,7 +11,7 @@ import { type nativeJevDecisionEvidence, type nativeJevFixture } from '../jev/na
 import { compileJevEntry } from '../jev/runtime'
 import { BrokerMode, PolicySchema, StateSchema } from '../risk'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
-import { buildExecutionDecision } from '../shadow-decision'
+import { constructExecutionDecision as buildExecutionDecision } from '../shadow-decision'
 import {
   intradaySnapshotReferencePricesSchemaVersion,
   planTargets,
@@ -189,7 +189,6 @@ export const matchedCommittedTargetFixture = (
         finalizedAt: native.snapshot.manifest.observedAt,
       },
       compiledDecision: decision,
-      decisionMarketDataRows: compiled.decisionMarketDataRows,
       ...(compiled.decisionMarketData === undefined ? {} : { decisionMarketData: compiled.decisionMarketData }),
       ...(compiled.executionMarketDataRows === undefined
         ? {}

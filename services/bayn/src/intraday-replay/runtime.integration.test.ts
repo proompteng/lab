@@ -1,3 +1,4 @@
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
@@ -11,9 +12,7 @@ import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
-import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
-import { decodeStagedCheckpoint, stageResponseIdentity } from '../jev/staged-checkpoint'
+import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
 
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
@@ -63,7 +62,8 @@ import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeActiveStrategyRuntime, makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from '../strategy'
+import { makeActiveStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevClient, JevError } from '../jev/client'
 import { nativeJevInference } from '../jev/native.test-support'
@@ -99,7 +99,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { CycleStore } from '../cycle/store/model'
 import { CycleTerminalReason } from '../cycle/model'
 import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'
@@ -482,9 +482,7 @@ durableTest.each(
             coalesce((SELECT jsonb_agg(payload) FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb) AS skips
             FROM jev_evaluation_requests request`,
           )
-          const expectedBaseHashes: string[] = []
           const symbols: string[] = []
-          let skipped = 0
           for (const row of rows) {
             const request = Result.getOrThrow(decodeJevEvaluationRequest(row.request))
             symbols.push(request.symbol)
@@ -497,44 +495,15 @@ durableTest.each(
             expect(
               measuredCalls.filter((call) => call.stage === 'CHART' && call.requestHash === chartInference.requestHash),
             ).toHaveLength(1)
-            const next = Result.getOrThrow(
-              makeSelectedBaseStartStageRequest(
-                {
-                  chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
-                  protocol: request.request.protocol,
-                  funding: request.request.funding,
-                },
-                stageResponseIdentity(chart.outcome.inference),
-              ),
-            )
-            if (next.status === 'PREPARED') {
-              expectedBaseHashes.push(next.requestHash)
-              expect(checkpoint.claims.find((claim) => claim.stage === 'BASE_START')?.providerRequestHash).toBe(
-                next.requestHash,
-              )
-              expect(checkpoint.terminals.find((terminal) => terminal.stage === 'BASE_START')?.outcome.status).toBe(
-                'RECEIVED',
-              )
-              expect(checkpoint.skips).toEqual([])
-            } else {
-              skipped++
-              expect(checkpoint.skips).toHaveLength(1)
-              expect(checkpoint.skips[0]?.reason).toBe(next.reason)
-              expect(checkpoint.claims.some((claim) => claim.stage === 'BASE_START')).toBe(false)
-            }
+            expect(checkpoint.claims.map((claim) => claim.stage)).toEqual(['CHART'])
+            expect(checkpoint.terminals.map((terminal) => terminal.stage)).toEqual(['CHART'])
+            expect(checkpoint.skips).toEqual([])
           }
           expect(symbols.toSorted()).toEqual(eligibleEntrySymbols.toSorted())
-          expect(expectedBaseHashes.length).toBeGreaterThan(0)
-          expect(skipped).toBeGreaterThan(0)
-          expect(
-            measuredCalls
-              .filter((call) => call.stage === 'BASE_START')
-              .map((call) => call.requestHash)
-              .toSorted(),
-          ).toEqual(expectedBaseHashes.toSorted())
+          expect(measuredCalls.filter((call) => call.stage === 'BASE_START')).toEqual([])
           expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
           expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(eligibleEntrySymbols.length)
-          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length + expectedBaseHashes.length)
+          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
         })
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
@@ -1463,6 +1432,7 @@ durableTest.each(
                 }),
               )
               const engine = yield* makeTradingEngine({
+                buildDecision: buildResearchMutationCycleDecision,
                 authority,
                 riskPolicyHash: generation.riskPolicyHash,
                 executionMode: mode,
@@ -1587,9 +1557,27 @@ durableTest.each(
             expect(yield* readAuthority).toEqual(restricted)
             expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
             if (scenario !== 'accepted-cancel-terminal') {
+              const reconciliationCount = sql<{ count: number }>`SELECT count(*)::int AS count
+                FROM reconciliations WHERE account_id=${accountId}`.pipe(
+                Effect.map(([row]) => {
+                  if (row === undefined) throw new Error('Missing persisted reconciliation count')
+                  return row.count
+                }),
+              )
               for (let pass = 0; pass < 3; pass++) {
-                yield* advanceBy(1000)
+                const lookupUnavailable = scenario === 'accepted-cancel-lookup-failed'
+                // Make the driver's normal reconciliation cadence due while only the isolated lookup is unavailable.
+                yield* advanceBy(lookupUnavailable ? config.operationTimeoutMs : 1000)
+                const beforeReconciliations = lookupUnavailable ? yield* reconciliationCount : undefined
                 yield* recovery.advance
+                if (beforeReconciliations !== undefined) {
+                  // This must come before runtime.reconcile below; that manual call used to mask driver starvation.
+                  expect(yield* reconciliationCount).toBeGreaterThan(beforeReconciliations)
+                  expect((yield* mutations.latest(entry.intent_id, MutationOperation.Cancel))?.eventType).toBe(
+                    MutationEventType.RecoveryUnknown,
+                  )
+                  expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+                }
                 expect(yield* readAuthority).toMatchObject({
                   generationHash: runtime.authorityGenerationHash,
                   effective: Authority.Observe,
@@ -2331,7 +2319,7 @@ durableTest.each(
           const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
             count(*)::int AS count,
             bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
-            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v39') AS current_protocol
+            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v40') AS current_protocol
             FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
           expect(source?.count).toBeGreaterThan(0)
           expect(source?.candidate_only).toBe(true)

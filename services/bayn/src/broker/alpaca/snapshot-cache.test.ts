@@ -7,6 +7,7 @@ import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBroke
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../../hash'
+import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
 import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
@@ -196,6 +197,11 @@ describe('durable broker observations', () => {
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure.cause).toMatchObject({ failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } })
+          expect(result.failure).toMatchObject({ pollFailureReason: 'SNAPSHOT_REJECTED' })
+          expect(brokerPollFailureAnnotations(result.failure)).toEqual({
+            'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+            'broker.snapshot_failure_reason': 'HistoryChanged',
+          })
         }
         expect(scans).toBe(2)
         const fresh = yield* captureBrokerObservation(
@@ -243,6 +249,7 @@ describe('durable broker observations', () => {
         const result = yield* Fiber.join(pending)
         expect(Result.isFailure(result)).toBe(true)
         expect(cancelled).toBe(1)
+        if (Result.isFailure(result)) expect(result.failure).toMatchObject({ pollFailureReason: 'POLL_DEADLINE' })
       }),
     )
   })

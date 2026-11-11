@@ -5,7 +5,7 @@ mkdir -p "$fixture_runtime"
 fixture_archive="$fixture_runtime/keycloak-26.7.4.tar.gz"
 if [[ ! -f "$fixture_archive" ]]; then
   curl --silent --show-error --fail --location --proto '=https' --tlsv1.2 \
-    https://github.com/keycloak/keycloak/releases/download/26.7.4/keycloak-26.7.4.tar.gz \
+    https://repo.maven.apache.org/maven2/org/keycloak/keycloak-quarkus-dist/26.7.4/keycloak-quarkus-dist-26.7.4.tar.gz \
     --output "$fixture_archive"
 fi
 python3 - "$fixture_archive" "$fixture_runtime" <<'PY'

@@ -22,12 +22,12 @@ class CryptoMarketFeatureClickhouseIntegrationTest {
     require(guard.matches(Regex("[0-9a-f]{32}")))
     val path =
       generateSequence(Path.of("").toAbsolutePath()) { it.parent }
-        .map { it.resolve("argocd/applications/torghut/clickhouse/intraday-bars-schema-job.yaml") }
+        .map { it.resolve("argocd/applications/torghut/clickhouse/schema/intraday-bars.sql") }
         .first { Files.exists(it) }
     val ddl =
       requireNotNull(
-        Regex("CREATE TABLE IF NOT EXISTS signal\\.crypto_market_features_v1 ON CLUSTER default[\\s\\S]+?;").find(Files.readString(path)),
-      ).value.replace(" ON CLUSTER default", "").replace(Regex("ReplicatedReplacingMergeTree\\([\\s\\S]+?\\)"), "ReplacingMergeTree()")
+        Regex("CREATE TABLE IF NOT EXISTS signal\\.crypto_market_features_v1[\\s\\S]+?;").find(Files.readString(path)),
+      ).value.replace(Regex("ReplicatedReplacingMergeTree\\([\\s\\S]+?\\)"), "ReplacingMergeTree()")
     val fixture = CryptoFeatureTestData
     val start = Instant.now().minusSeconds(180 * 60).truncatedTo(ChronoUnit.MINUTES)
     val computed = System.currentTimeMillis()

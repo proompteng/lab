@@ -31,8 +31,7 @@ data:
             {
               "node": "turin",
               "paths": [
-                "/var/mnt/turin-nvme-intel",
-                "/var/mnt/turin-nvme-transcend"
+                "/var/local-path-provisioner"
               ]
             },
             {
@@ -40,26 +39,6 @@ data:
               "paths": [
                 "/var/local-path-provisioner"
               ]
-            }
-          ]
-        },
-        "local-path-keeper": {
-          "nodePathMap": [
-            {
-              "node": "talos-192-168-1-85",
-              "paths": ["/var/mnt/local-path-provisioner/keeper-raft"]
-            },
-            {
-              "node": "turin",
-              "paths": ["/var/mnt/turin-nvme-intel/keeper-raft"]
-            },
-            {
-              "node": "talos-192-168-1-194",
-              "paths": ["/var/mnt/local-path-provisioner/keeper-raft"]
-            },
-            {
-              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-              "paths": []
             }
           ]
         },
@@ -83,56 +62,8 @@ data:
             }
           ]
         },
-        "local-path-ryzen": {
-          "nodePathMap": [
-            {
-              "node": "talos-192-168-1-194",
-              "paths": [
-                "/var/mnt/local-path-provisioner"
-              ]
-            },
-            {
-              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-              "paths": []
-            }
-          ]
-        },
-        "local-path-turin-nvme-intel": {
-          "nodePathMap": [
-            {
-              "node": "turin",
-              "paths": [
-                "/var/mnt/turin-nvme-intel"
-              ]
-            },
-            {
-              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-              "paths": []
-            }
-          ]
-        },
-        "local-path-turin-nvme-transcend": {
-          "nodePathMap": [
-            {
-              "node": "turin",
-              "paths": [
-                "/var/mnt/turin-nvme-transcend"
-              ]
-            },
-            {
-              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-              "paths": []
-            }
-          ]
-        },
         "local-path-ci-amd64": {
           "nodePathMap": [
-            {
-              "node": "turin",
-              "paths": [
-                "/var/mnt/turin-nvme-transcend"
-              ]
-            },
             {
               "node": "talos-192-168-1-194",
               "paths": [

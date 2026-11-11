@@ -73,6 +73,7 @@ import { qualificationDeadlines } from './configuration'
 import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
+import { currentEntryMarkets } from '../execution/trading-scope'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
@@ -685,6 +686,21 @@ postgres('PostgreSQL prospective system qualification', () => {
       ).toBe(true)
   })
 
+  test('persists and reproduces an equity-only financial registration with its explicit native entry scope', async () => {
+    const base = registration(1)
+    const value = withRegistrationCommitments({
+      ...base,
+      calendar: { ...base.calendar, tradingMarkets: [...currentEntryMarkets] },
+      obligations: {
+        ...base.obligations,
+        configuration: { ...base.obligations.configuration, entryMarkets: [...currentEntryMarkets] },
+      },
+    })
+    const saved = await runtime.runPromise(asApplication(registerFixture(value)))
+    expect(await runtime.runPromise(readSystemRegistration(saved.registrationHash))).toEqual(value)
+    expect(saved.registration.calendar.tradingMarkets).toEqual(currentEntryMarkets)
+  })
+
   test.each([1, 3, 21])('persists a %i-session registration with its actual closing boundary', async (sessionCount) => {
     const first = registration(sessionCount)
     const saved = await runtime.runPromise(asApplication(registerFixture(first)))
@@ -1227,6 +1243,30 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(asApplication(registerFixture(input)))).registration.attemptIndex).toBe(1)
   })
 
+  test('prospective registration accepts explicit uncapped sandbox turnover and retains its policy bytes', async () => {
+    const input = registration()
+    const policies = input.policies.map((definition) => {
+      const riskPolicy = Result.getOrThrow(
+        makeExecutionRiskPolicy(
+          definition.riskPolicy.accountId,
+          definition.riskPolicy.allowedSymbols,
+          BrokerEnvironment.Sandbox,
+        ),
+      )
+      return { ...definition, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
+    })
+    const accepted = await runtime.runPromise(
+      asApplication(registerFixture(withRegistrationCommitments({ ...input, policies }))),
+    )
+    const retained = await runtime.runPromise(readSystemRegistration(accepted.registrationHash))
+    expect(retained.policies.map((definition) => definition.riskPolicy)).toEqual(
+      policies.map((definition) => definition.riskPolicy),
+    )
+    expect(retained.policies.every((definition) => definition.riskPolicy.maxDailyTradedNotionalMicros === null)).toBe(
+      true,
+    )
+  })
+
   test('risk expansion and missing material are rejected before a prospective attempt is admitted', async () => {
     const input = registration()
     const candidate = input.policies.find((policy) => policy.policy === 'JEV')
@@ -1241,8 +1281,15 @@ postgres('PostgreSQL prospective system qualification', () => {
           'maxNetExposureMicros',
           'maxDailyTradedNotionalMicros',
         ] as const
-      ).map((key) => ({ ...risk, [key]: (BigInt(risk[key]) + 1n).toString() })),
+      ).map((key) => {
+        const limit = risk[key]
+        if (limit === null) throw new Error('Expected bounded fixture policy')
+        return { ...risk, [key]: (BigInt(limit) + 1n).toString() }
+      }),
       { ...risk, maxGrossExposureMicros: null },
+      { ...risk, maxDailyTradedNotionalMicros: null },
+      { ...risk, schemaVersion: 'bayn.execution-risk-policy.v5', maxDailyTradedNotionalMicros: null },
+      { ...risk, schemaVersion: 'bayn.execution-risk-policy.v5', maxDrawdownMicros: '10000000000' },
       null,
     ]
     for (const riskPolicy of invalid) {
@@ -1992,6 +2039,69 @@ postgres('PostgreSQL prospective system qualification', () => {
       )
     },
   )
+
+  test('controller evidence keeps exact distinct observations and original window and identity filters', async () => {
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const controllerKey = sha256('controller evidence identity')
+          const planHash = sha256('controller evidence plan')
+          const open = '2026-11-04T14:30:00.000Z'
+          const close = '2026-11-04T14:31:00.000Z'
+          const asOf = '2026-11-04T14:32:00.000Z'
+          const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: open } as const
+          const base = {
+            controller_key: controllerKey,
+            plan_hash: planHash,
+            active: true,
+            epoch: 3,
+            last_sequence: 7,
+            last_receipt_hash: sha256('original controller receipt'),
+            completed_at: open,
+            last_pass: observation,
+          }
+          const conflict = { ...base, last_pass: { ...observation, outcome: 'ALREADY_ACQUIRED' } }
+          const tail = {
+            ...base,
+            last_receipt_hash: sha256('controller original deadline tail'),
+            completed_at: asOf,
+            last_pass: { ...observation, observedAt: asOf, executionIssuedAt: close },
+          }
+          for (const status of [
+            base,
+            base,
+            conflict,
+            tail,
+            { ...base, active: false },
+            { ...base, plan_hash: sha256('foreign plan'), epoch: 'malformed excluded counter' },
+            { ...base, controller_key: sha256('foreign controller') },
+            { ...base, last_receipt_hash: null },
+            { ...base, last_pass: null },
+            { ...base, completed_at: '2026-11-04T14:29:59.999Z' },
+            { ...tail, completed_at: '2026-11-04T14:32:00.001Z' },
+          ])
+            yield* sql`INSERT INTO execution_controller_observations(controller_key, status)
+              VALUES (${status.controller_key}, ${JSON.stringify(status)}::jsonb)`
+          const passes = yield* readSystemControllerPasses(controllerKey, planHash, open, close, asOf)
+          expect(passes).toHaveLength(3)
+          expect(
+            passes.filter((pass) => pass.receiptHash === base.last_receipt_hash).map((pass) => pass.observation),
+          ).toEqual(expect.arrayContaining([observation, conflict.last_pass]))
+          expect(passes.find((pass) => pass.receiptHash === tail.last_receipt_hash)).toEqual({
+            controllerKey,
+            planHash,
+            epoch: base.epoch,
+            sequence: base.last_sequence,
+            receiptHash: tail.last_receipt_hash,
+            completedAt: asOf,
+            observation: tail.last_pass,
+          })
+          expect(passes.map((pass) => pass.receiptHash)).toEqual(passes.map((pass) => pass.receiptHash).toSorted())
+        }),
+      ),
+    )
+  })
 
   test('controller observations survive projection updates and are immutable', async () => {
     await runtime.runPromise(

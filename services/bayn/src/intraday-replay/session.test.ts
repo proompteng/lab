@@ -158,6 +158,7 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
     ...(
       [
         DecisionReadinessReason.AccountProtection,
+        DecisionReadinessReason.TurnoverBudgetExhausted,
         DecisionReadinessReason.LookbackWarmup,
         DecisionReadinessReason.NoEligibleCandidate,
         DecisionReadinessReason.SignalWindowObserved,
@@ -202,6 +203,7 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
   expect(outcome.unavailableDecisionPassCount).toBe(0)
   expect(outcome.readinessCounts).toEqual({
     ACCOUNT_PROTECTION: 1,
+    TURNOVER_BUDGET_EXHAUSTED: 1,
     LOOKBACK_WARMUP: 1,
     NO_ELIGIBLE_CANDIDATE: 1,
     SIGNAL_WINDOW_OBSERVED: 1,

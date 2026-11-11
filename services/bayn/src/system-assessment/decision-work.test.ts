@@ -24,6 +24,7 @@ import type { SystemRegistration } from './policy'
 import { accountProtectionFixture } from '../jev/account-protection.test-support'
 import { AccountProtectionInputsSchema, decideAccountProtection } from '../jev/account-protection'
 import { retainAutonomousCyclePassObservation, cyclePassLogFacts } from '../cycle/runner/pass-decisions'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 
 let document: ExecutionDecisionDocument
 let scopedRegistration: SystemRegistration
@@ -154,7 +155,63 @@ describe('strategy decision work evidence', () => {
         ),
       )?.correct,
     ).toBe(false)
+    if (inputs.schemaVersion !== 'bayn.account-protection-inputs.v2') throw new Error('Expected current inputs')
+    if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
+    const turnoverInputs = {
+      ...inputs,
+      peakEquityMicros: inputs.portfolio.brokerState.account.equityMicros,
+      dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros,
+    }
+    const turnoverPass = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+      ...pass,
+      observation: {
+        ...retained,
+        readiness: { reason: DecisionReadinessReason.TurnoverBudgetExhausted, message: 'Daily turnover exhausted' },
+        admissionProtection: { ...decision.admissionProtection, inputs: turnoverInputs },
+      },
+    })
+    expect(Result.getOrThrow(accountProtectionWork(turnoverPass, registration, completedAt))?.correct).toBe(true)
+    expect(
+      Result.getOrThrow(
+        accountProtectionWork(
+          {
+            ...turnoverPass,
+            observation: {
+              ...retained,
+              admissionProtection: { ...decision.admissionProtection, inputs: turnoverInputs },
+            },
+          },
+          registration,
+          completedAt,
+        ),
+      )?.correct,
+    ).toBe(false)
+    expect(
+      decideAccountProtection(
+        { ...turnoverInputs, dailyTradedNotionalMicros: (BigInt(policy.maxDailyTradedNotionalMicros) - 1n).toString() },
+        native.input.authorityGenerationHash,
+      ),
+    ).toBeUndefined()
+    const { dailyTradedNotionalMicros: _turnover, ...legacyFields } = inputs
+    const legacyInputs = { ...legacyFields, schemaVersion: 'bayn.account-protection-inputs.v1' as const }
+    expect(Schema.is(AccountProtectionInputsSchema)(legacyInputs)).toBe(true)
+    expect(
+      Result.getOrThrow(
+        accountProtectionWork(
+          {
+            ...pass,
+            observation: {
+              ...retained,
+              admissionProtection: { ...decision.admissionProtection, inputs: legacyInputs },
+            },
+          },
+          registration,
+          completedAt,
+        ),
+      )?.correct,
+    ).toBe(true)
     expect(JSON.stringify(cyclePassLogFacts(passObservation))).not.toContain('peakEquityMicros')
+    expect(JSON.stringify(cyclePassLogFacts(passObservation))).not.toContain('dailyTradedNotionalMicros')
     expect(JSON.stringify(cyclePassLogFacts(passObservation))).not.toContain(policy.accountId)
   })
   test('only a reproduced zero-entry decision with complete inputs can establish an abstention', () => {

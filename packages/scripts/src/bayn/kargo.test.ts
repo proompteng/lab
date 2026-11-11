@@ -174,7 +174,8 @@ test('discovers only immutable main-published Bayn images with matching source a
   expect(build.on.push.branches).toEqual(['main'])
   expect(build.concurrency['cancel-in-progress']).toBe(false)
   expect(build.jobs.image.with).toMatchObject({
-    publish_kargo_tag: true,
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
     source_revision: '${{ github.sha }}',
     tag: 'sha-${{ github.sha }}',
   })
@@ -182,19 +183,39 @@ test('discovers only immutable main-published Bayn images with matching source a
   expect(build.on.push.paths).toEqual(
     expect.arrayContaining(['services/bayn/**', 'nix/images/bayn.nix', 'argocd/applications/bayn/**']),
   )
-  expect(warehouse.spec.subscriptions).toHaveLength(1)
+  expect(warehouse.spec.subscriptions).toHaveLength(2)
   expect(warehouse.spec.subscriptions[0].image).toMatchObject({
     repoURL: 'registry.ide-newton.ts.net/lab/bayn',
     imageSelectionStrategy: 'NewestBuild',
-    allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}$'],
+    allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'],
     cacheByTag: true,
   })
-  const image = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
-  expect(warehouse.spec.freightCreationCriteria.expression).toContain(
-    `${image}.Tag == 'kargo-sha-' + ${image}.Annotations['org.opencontainers.image.revision']`,
+  expect(build.jobs['research-image'].with).toMatchObject({
+    image_name: 'bayn-research',
+    package_attr: 'bayn-research-image',
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
+  })
+  expect(build.jobs['publish-cohort'].needs).toEqual(['image', 'research-image'])
+  expect(warehouse.spec.subscriptions[1].image.repoURL).toBe('registry.ide-newton.ts.net/lab/bayn-research')
+  const native = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
+  const research = "imageFrom('registry.ide-newton.ts.net/lab/bayn-research')"
+  const expression = warehouse.spec.freightCreationCriteria.expression
+  expect(expression).toContain(`${native}.Tag == ${research}.Tag`)
+  expect(expression).toContain(
+    `${native}.Annotations['org.opencontainers.image.revision'] == ${research}.Annotations['org.opencontainers.image.revision']`,
   )
-  expect(warehouse.spec.freightCreationCriteria.expression).toContain(
-    `${image}.Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'`,
+  expect(expression).toContain(`${research}.Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success'`)
+  const setImages = stage.spec.promotionTemplate.spec.steps.find(
+    (step: { uses: string }) => step.uses === 'kustomize-set-image',
+  )
+  expect(setImages.config.images).toContainEqual({
+    image: 'bayn-research',
+    newName: '${{ vars.researchImageRepo }}',
+    digest: '${{ imageFrom(vars.researchImageRepo).Digest }}',
+  })
+  expect(read('argocd/applications/bayn/research-worker.yaml').spec.template.spec.containers[0].image).toBe(
+    'bayn-research',
   )
 })
 

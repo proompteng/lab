@@ -18,7 +18,11 @@ const service = fileURLToPath(new URL('..', import.meta.url))
 if (process.argv.length !== 2) throw Error('Usage: bun run --filter @proompteng/bayn verify:tla')
 const models = join(service, 'formal/tla')
 const pin = Schema.decodeUnknownSync(
-  Schema.Struct({ version: Schema.String, sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)) }),
+  Schema.Struct({
+    version: Schema.String,
+    sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+    releaseAssetId: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
 )(JSON.parse(readFileSync(join(models, 'toolchain.json'), 'utf8')))
 const cache = join(service, 'node_modules/.cache/bayn-tla')
 mkdirSync(cache, { recursive: true })
@@ -35,9 +39,11 @@ if (!existsSync(jar)) {
         '--location',
         '--retry',
         '3',
+        '--header',
+        'Accept: application/octet-stream',
         '--output',
         temporaryJar,
-        `https://github.com/tlaplus/tlaplus/releases/download/v${pin.version}/tla2tools.jar`,
+        `https://api.github.com/repos/tlaplus/tlaplus/releases/assets/${pin.releaseAssetId}`,
       ],
       { stdout: 'inherit', stderr: 'inherit' },
     )
@@ -99,7 +105,7 @@ const check = (name: string, directory: string, expectedViolation?: string) => {
   }
 }
 
-for (const name of ['Controller', 'EntryRecovery', 'MutationLedger']) {
+for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoveryScheduler', 'CancellationAdmission']) {
   const directory = join(output, name)
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, `${name}.tla`), readFileSync(join(models, `${name}.tla`)))
@@ -108,6 +114,27 @@ for (const name of ['Controller', 'EntryRecovery', 'MutationLedger']) {
 }
 
 const faults = [
+  {
+    model: 'CancellationAdmission',
+    name: 'stale-cancellation-admission',
+    before: 'Admit == /\\ CanAdmit',
+    after: 'Admit == /\\ phase = "Read"',
+    violation: 'Invariant NoUnauthorizedStart is violated.',
+  },
+  {
+    model: 'RecoveryScheduler',
+    name: 'stopped-recovery',
+    before: "scheduled' = IF dependencyReady THEN FALSE ELSE TRUE",
+    after: "scheduled' = IF dependencyReady THEN FALSE ELSE recoveryWindow < MaximumRecoveryWindow",
+    violation: 'Invariant RecoveryScheduled is violated.',
+  },
+  {
+    model: 'RecoveryScheduler',
+    name: 'unfair-recovery-delivery',
+    before: ' /\\ WF_vars(Deliver)',
+    after: '',
+    violation: 'Temporal properties were violated.',
+  },
   {
     model: 'Controller',
     name: 'stale-completion',
@@ -169,4 +196,132 @@ const conformance = Bun.spawnSync([process.execPath, 'test', 'formal/conformance
   stderr: 'inherit',
 })
 if (conformance.exitCode !== 0) throw Error(`TLC production conformance failed; retained ${output}`)
+
+const productionFaults = [
+  {
+    name: 'expired-cancellation-admission',
+    file: 'src/execution/mutations/decisions.ts',
+    before: '    admittedAt < validUntil &&\n',
+    after: '',
+    test: 'expired entry cancellation rechecks current authority, identity and freshness at admission',
+  },
+  {
+    name: 'changed-cancellation-authority',
+    file: 'src/execution/mutations/decisions.ts',
+    before: '    admission.authorityVersion === facts.authorityVersion &&\n',
+    after: '',
+    test: 'expired entry cancellation rechecks current authority, identity and freshness at admission',
+  },
+  {
+    name: 'truncated-recovery-counter',
+    file: 'src/execution/controller.ts',
+    before: 'Math.min(current + 1, executionControllerMaximumRecoveryWindow)',
+    after: 'Math.min(current + 1, executionControllerMaximumRecoveryWindow - 1)',
+    test: 'recovery window transitions retain bounded production counters at saturation',
+  },
+  {
+    name: 'stale-completion',
+    file: 'src/execution/controller.ts',
+    before: `  if (
+    !state.active ||
+    tick.epoch !== state.epoch ||
+    tick.sequence !== state.nextSequence ||
+    state.sourceRevision !== workerSourceRevision
+  ) {`,
+    after: '  if (false) {',
+    test: 'controller delivery and completion guards reject stale epochs, sequences and worker sources',
+  },
+  {
+    name: 'missed-short-retry',
+    file: 'src/observe-composition/recovery-driver.ts',
+    before: '        ? Math.min(1_000, normalDelayMs, expiresAt - now)',
+    after: '        ? normalDelayMs',
+    test: 'initial and later input retries retain the original admission, binding and consumed-window guards',
+  },
+  {
+    name: 'duplicate-dispatch',
+    file: 'src/execution/mutations/decisions.ts',
+    before: "  if (existing === undefined) return Result.succeed({ _tag: 'BeginMutation' })",
+    after: "  return Result.succeed({ _tag: 'BeginMutation' })",
+    test: 'mutation authority, immutable start replay and every reachable outcome agree with production',
+  },
+  {
+    name: 'unauthorized-dispatch',
+    file: 'src/execution/mutations/decisions.ts',
+    before: '  if (authority.maximum !== Authority.Execution) {',
+    after: '  if (false) {',
+    test: 'mutation authority, immutable start replay and every reachable outcome agree with production',
+  },
+  {
+    name: 'corrupt-ledger-amount',
+    file: 'src/ledger-plan/verification.ts',
+    before: '  actual.amount === expected.amount &&\n',
+    after: '',
+    test: 'every reachable partial ledger posting uses production preflight and exact metadata verification',
+  },
+]
+for (const fault of productionFaults) {
+  const directory = join(output, `production-${fault.name}`)
+  mkdirSync(directory)
+  const source = join(service, fault.file)
+  const originalHash = digest(source)
+  const preload = join(directory, 'preload.ts')
+  const marker = `BAYN_PRODUCTION_MUTATION_APPLIED:${fault.name}`
+  const modulePattern = `${fault.file.replaceAll('.', '\\.')}$`
+  // A child-only loader changes the real module without exposing other processes to a mutated source file.
+  writeFileSync(
+    preload,
+    `import { plugin } from 'bun'
+import { readFileSync } from 'node:fs'
+plugin({
+  name: ${JSON.stringify(fault.name)},
+  setup(build) {
+    build.onLoad({ filter: new RegExp(${JSON.stringify(modulePattern)}) }, ({ path }) => {
+      if (path !== ${JSON.stringify(source)}) throw Error('Mutation resolved a different production module')
+      const before = ${JSON.stringify(fault.before)}
+      const original = readFileSync(path, 'utf8')
+      if (original.split(before).length !== 2) throw Error('Mutation no longer identifies one production guard')
+      console.error(${JSON.stringify(marker)})
+      return { contents: original.replace(before, ${JSON.stringify(fault.after)}), loader: 'ts' }
+    })
+  },
+})
+`,
+  )
+  const result = Bun.spawnSync(
+    [
+      process.execPath,
+      'test',
+      '--preload',
+      preload,
+      'formal/conformance/tla.test.ts',
+      '--test-name-pattern',
+      fault.test,
+    ],
+    {
+      cwd: service,
+      env: { ...process.env, NO_COLOR: '1', BAYN_TLA_STATE_DIRECTORY: output },
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 60_000,
+    },
+  )
+  const log = result.stdout.toString() + result.stderr.toString()
+  writeFileSync(join(directory, 'test.log'), log)
+  if (digest(source) !== originalHash) throw Error(`Production source changed during ${fault.name}`)
+  if (
+    result.exitCode !== 1 ||
+    log.split(marker).length !== 2 ||
+    !log.includes(`(fail) TLC reachable states conform to production > ${fault.test}`) ||
+    !log.includes('error: expect(received).toBe(expected)')
+  ) {
+    console.error(log)
+    throw Error(`Production conformance did not detect ${fault.name}; retained ${directory}`)
+  }
+  writeFileSync(
+    join(directory, 'source.json'),
+    `${JSON.stringify({ file: fault.file, sha256: originalHash, test: fault.test }, null, 2)}\n`,
+  )
+  console.log(`${fault.name}: production conformance rejected the injected defect`)
+}
 if (suppliedOutput === undefined) rmSync(output, { recursive: true, force: true })
