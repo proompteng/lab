@@ -1967,7 +1967,7 @@ describe('native Restate execution controller', () => {
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
       date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
       request: () => ({
-        id: `recovery-budget-${invocation++}`,
+        id: `recovery-budget-${invocation}`,
         attemptCompletedSignal: new AbortController().signal,
       }),
     } as unknown as TestContext
@@ -2004,6 +2004,10 @@ describe('native Restate execution controller', () => {
       const recovery = deliveries.shift()
       if (recovery === undefined) throw new Error(`recovery window ${recoveryWindow} was not scheduled`)
       expect(recovery.delay).toBe(executionControllerRecoveryTickDelayMs)
+      await object.tick(context, tick)
+      const replayed = deliveries.shift()
+      expect(replayed?.idempotencyKey).toBe(recovery.idempotencyKey)
+      expect(replayed?.parameter).toEqual(recovery.parameter)
       expect(recovery.parameter).toMatchObject({
         recoveryWindow: Math.min(recoveryWindow, executionControllerMaximumRecoveryWindow),
         epoch: 7,
@@ -2018,6 +2022,7 @@ describe('native Restate execution controller', () => {
         ...(recovery.parameter as object),
         attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
       }
+      invocation += 1
     }
 
     healthy = true
