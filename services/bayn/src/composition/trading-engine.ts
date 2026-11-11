@@ -10,8 +10,10 @@ import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '../observe-composition/model'
 import { makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
 import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
+import type { buildMutationShadowCycleDecision } from '../observe-composition/decision-builder'
 
 export interface TradingEngineInput {
+  readonly buildDecision: typeof buildMutationShadowCycleDecision
   readonly authority: ExecutionAuthority
   readonly riskPolicyHash: string
   readonly cycle: ObserveAutonomousCycleInput & {
@@ -68,6 +70,7 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
       startCycle: makeMutationAutonomousCycleStartup(
         { ...input.cycle, brokerEnvironment, riskPolicyHash: input.riskPolicyHash, executionProgram },
         input.executionMode,
+        input.buildDecision,
       ),
     }
   })

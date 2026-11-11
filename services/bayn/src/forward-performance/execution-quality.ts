@@ -6,6 +6,7 @@ import type {
   ForwardPerformanceEvidenceInput,
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceExecutionQualityReasonCode,
+  ForwardPerformanceMarketVolumeEvidence,
   ForwardPerformanceObservedCapacityReasonCode,
   ForwardPerformanceReceiptMaterial,
   ForwardPerformanceTransactionEvidence,
@@ -95,6 +96,17 @@ const fillSortKey = (fill: ForwardPerformanceExecutionEvidence['fills'][number])
 const volumeSortKey = (volume: NonNullable<ForwardPerformanceEvidenceInput['marketVolumeEvidence']>[number]): string =>
   JSON.stringify([volume.cycleId, volume.symbol, volume.windowOpenedAt, volume.windowClosedAt, volume.contentHash])
 
+const groupMarketVolumes = (volumes: readonly ForwardPerformanceMarketVolumeEvidence[]) => {
+  const groups = new Map<string, ForwardPerformanceMarketVolumeEvidence[]>()
+  for (const volume of volumes) {
+    const key = JSON.stringify([volume.cycleId, volume.symbol])
+    const group = groups.get(key)
+    if (group === undefined) groups.set(key, [volume])
+    else group.push(volume)
+  }
+  return groups
+}
+
 const sourceEvidenceHash = (
   input: ForwardPerformanceEvidenceInput,
   executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
@@ -118,10 +130,7 @@ const sourceEvidenceHash = (
             compareStrings(a.accrualId, b.accrualId),
           ),
         }),
-    executions: executionEvidence.map((evidence) => ({
-      ...evidence,
-      fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
-    })),
+    executions: executionEvidence,
     transactions,
   })
 
@@ -265,7 +274,7 @@ const validMarketVolumeEvidence = (
 }
 
 const validTerminalReferencePrice = (
-  input: ForwardPerformanceEvidenceInput,
+  matchingVolumes: readonly ForwardPerformanceMarketVolumeEvidence[] | undefined,
   evidence: ForwardPerformanceExecutionEvidence,
   terminalOccurredAt: string,
   terminalObservedAt: string,
@@ -273,10 +282,7 @@ const validTerminalReferencePrice = (
 ): Result.Result<bigint | undefined, CanonicalHashFailure> => {
   const terminal = evidence.terminalReferencePrice
   if (terminal === undefined) return Result.succeed(undefined)
-  const matchingVolumes = (input.marketVolumeEvidence ?? []).filter(
-    (volume) => volume.cycleId === evidence.cycleId && volume.symbol === evidence.symbol,
-  )
-  const volume = matchingVolumes.length === 1 ? matchingVolumes[0] : undefined
+  const volume = matchingVolumes?.length === 1 ? matchingVolumes[0] : undefined
   if (volume === undefined) return Result.succeed(undefined)
   return Result.flatMap(validMarketVolumeEvidence(volume), (validVolume) => {
     const terminalPrice = parseUnsigned(terminal.priceMicros, true)
@@ -338,9 +344,14 @@ const measureExecutionQuality = (
   const transactions = [...input.transactions].sort((left, right) =>
     compareStrings(transactionSortKey(left), transactionSortKey(right)),
   )
-  const evidenceHash = sourceEvidenceHash(input, executions, transactions)
+  const orderedExecutions = executions.map((evidence) => ({
+    ...evidence,
+    fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
+  }))
+  const evidenceHash = sourceEvidenceHash(input, orderedExecutions, transactions)
   if (Result.isFailure(evidenceHash)) return Result.fail(evidenceHash.failure)
 
+  const volumeGroups = groupMarketVolumes(input.marketVolumeEvidence ?? [])
   const completedCycleIds = new Set<string>()
   for (const cycle of input.cycles) {
     if (cycle.state === 'COMPLETED') completedCycleIds.add(cycle.cycleId)
@@ -385,7 +396,7 @@ const measureExecutionQuality = (
   let fillCount = 0
   const contributions: ExecutionContribution[] = []
 
-  for (const evidence of executions) {
+  for (const evidence of orderedExecutions) {
     if (seenIntents.has(evidence.intentId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
@@ -412,7 +423,7 @@ const measureExecutionQuality = (
       reasons.add('FILL_TIMESTAMP_GAP')
     }
 
-    const fills = [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right)))
+    const fills = evidence.fills
     const reportedFilledQuantity = parseUnsigned(order?.filledQuantityAtoms, false)
     if (reportedFilledQuantity !== undefined && reportedFilledQuantity > 0n && fills.length === 0) {
       reasons.add('FILL_EVIDENCE_GAP')
@@ -549,7 +560,13 @@ const measureExecutionQuality = (
         const terminalPriceResult =
           terminalOccurredAt === undefined || terminalObservedAt === undefined
             ? Result.succeed<bigint | undefined>(undefined)
-            : validTerminalReferencePrice(input, evidence, terminalOccurredAt, terminalObservedAt, blocked)
+            : validTerminalReferencePrice(
+                volumeGroups.get(JSON.stringify([evidence.cycleId, evidence.symbol])),
+                evidence,
+                terminalOccurredAt,
+                terminalObservedAt,
+                blocked,
+              )
         if (Result.isFailure(terminalPriceResult)) return Result.fail(terminalPriceResult.failure)
         const terminalPrice = terminalPriceResult.success
         if (terminalPrice === undefined) {
@@ -755,13 +772,7 @@ const measureObservedCapacity = (
     if (group === undefined) contributionGroups.set(key, [contribution])
     else group.push(contribution)
   }
-  const volumeGroups = new Map<string, typeof volumes>()
-  for (const volume of volumes) {
-    const key = JSON.stringify([volume.cycleId, volume.symbol])
-    const group = volumeGroups.get(key)
-    if (group === undefined) volumeGroups.set(key, [volume])
-    else volumeGroups.set(key, [...group, volume])
-  }
+  const volumeGroups = groupMarketVolumes(volumes)
 
   let boundedReferenceNotional = 0n
   let boundedExecutedNotional = 0n

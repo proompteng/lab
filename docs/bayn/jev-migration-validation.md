@@ -61,7 +61,7 @@ execution, a stationary return distribution or future profitability.
 
 ## Reporting commands
 
-Use the supported private reporting command documented in the
+Use `bayn-system-assessment` from the research image with the existing explicit trading-target configuration; see the
 [system assessment guide](../../services/bayn/src/system-assessment/README.md#private-reporting-command):
 
 1. `--system-history <packet.json>` retains the audited attempt origin.

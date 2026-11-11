@@ -169,7 +169,7 @@ test('an invalid archive URL remains diagnosable without exposing its credential
     {
       env: {
         ...process.env,
-        BAYN_NATIVE_ARRIVAL_POSTGRES_URL: `postgresql://fixture:${secret}@[invalid`,
+        BAYN_POSTGRES_URL: `postgresql://fixture:${secret}@[invalid`,
         BAYN_POSTGRES_TLS: 'false',
       },
       stdout: 'pipe',

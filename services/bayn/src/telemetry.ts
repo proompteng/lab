@@ -5,6 +5,7 @@ import { HttpClient, type HttpClientError } from 'effect/http'
 import { operationCurrentTimeMillis } from './operation-timeout'
 import { embeddedBuildMetadata } from './build'
 import { currentUtcInstant, nativeWallClock } from './time'
+import { observeSchedulerDelay } from './telemetry-scheduler'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -189,6 +190,14 @@ const metricsLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
     }).pipe(Layer.provide(Layer.mergeAll(exporterHttpClient(options, 'metrics'), OtlpSerialization.layerProtobuf))),
     Layer.effectDiscard(
       Effect.gen(function* () {
+        yield* observeSchedulerDelay.pipe(
+          Effect.provideService(Metric.CurrentMetricAttributes, {
+            namespace: options.namespace ?? 'bayn',
+            service: options.serviceName,
+            source_revision: options.serviceVersion ?? 'development',
+          }),
+          Effect.forkScoped,
+        )
         const record = Clock.currentTimeMillis.pipe(
           Effect.flatMap((now) =>
             Metric.update(

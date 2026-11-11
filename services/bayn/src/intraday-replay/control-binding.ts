@@ -152,6 +152,8 @@ export const bindControlStudyInput = (
       return yield* fail('Opening cash must be fully available in native buying power')
     if (
       BigInt(opening.dailyTradedNotionalMicros) !== 0n ||
+      (inputs.schemaVersion === 'bayn.account-protection-inputs.v2' &&
+        BigInt(inputs.dailyTradedNotionalMicros) !== BigInt(opening.dailyTradedNotionalMicros)) ||
       inputs.dayStartEquityMicros !== brokerState.account.equityMicros ||
       brokerState.account.cashMicros !== brokerState.account.equityMicros
     )

@@ -9,14 +9,21 @@ import {
   decideMutationContainment,
   decideFinalSubmitAuthorization,
   decideMutationStart,
+  expiredEntryCancellationAdmissionIsCurrent,
   decideMutationStartReplay,
   decideSubmitStartWrite,
   decodeStartInput,
   storeError,
   startStoreOperationFor,
 } from '../decisions'
-import type { MutationStartInput, MutationStoreError, StartReceipt } from '../model'
-import { decodeAuthoritySnapshot, decodeIntentIds, decodeIntentSnapshot, decodeUnresolved } from '../rows'
+import type { ExpiredEntryCancellationAdmission, MutationStartInput, MutationStoreError, StartReceipt } from '../model'
+import {
+  decodeAuthoritySnapshot,
+  decodeExpiredEntryCancellationFacts,
+  decodeIntentIds,
+  decodeIntentSnapshot,
+  decodeUnresolved,
+} from '../rows'
 import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
@@ -34,6 +41,7 @@ export interface MutationStartPostgres {
     occurredAt: string,
     brokerOrderId?: string,
     closeOnly?: boolean,
+    expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
   ) => Effect.Effect<StartReceipt, MutationStoreError | SqlError | WriterFenceError>
 }
 
@@ -173,6 +181,35 @@ export const makeMutationStartPostgres = (
       ),
     )
 
+  const validateExpiredEntryCancellation = (input: MutationStartInput) =>
+    Effect.gen(function* () {
+      const admission = input.expiredEntryCancellation
+      if (admission === undefined) return
+      // The authority and intent row locks are already held. Sample this intent account's commit clock
+      // only after those waits: live accounts use wall time and isolated replay accounts include measured
+      // work. Caller time and PostgreSQL transaction-start time cannot admit a stale lookup.
+      const rows = yield* sql`
+        SELECT intent.account_id,
+          authority.generation_hash AS authority_generation_hash,
+          authority.version::text AS authority_version,
+          authority.maximum, authority.effective, authority.kill_state, authority.reason,
+          intent.intent_id, intent.authority_generation_hash AS intent_authority_generation_hash,
+          intent.client_order_id, intent.side, ${input.brokerOrderId}::text AS broker_order_id,
+          to_char(execution_account_commit_now(intent.account_id) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS admitted_at
+        FROM authority_state AS authority
+        JOIN intents AS intent ON intent.intent_id = ${input.intentId}
+        WHERE authority.singleton
+      `
+      const facts = yield* fromDecision(() => decodeExpiredEntryCancellationFacts(rows))
+      if (!expiredEntryCancellationAdmissionIsCurrent(admission, facts))
+        return yield* storeError({
+          operation: 'begin-cancel',
+          failure: 'authority',
+          message: 'expired entry cancellation no longer matches its observed authority, parent or freshness boundary',
+        })
+    })
+
   const beginTransaction = (operation: MutationOperation, input: MutationStartInput) =>
     Effect.gen(function* () {
       const existing = yield* events.readLatest(input.intentId, operation)
@@ -192,6 +229,15 @@ export const makeMutationStartPostgres = (
           ? yield* events.readLatest(input.intentId, MutationOperation.Submit)
           : undefined
       const decision = yield* fromDecision(() => decideMutationStart(operation, input, authority, intent, submitted))
+      if (input.expiredEntryCancellation !== undefined) {
+        if (operation !== MutationOperation.Cancel)
+          return yield* storeError({
+            operation: startStoreOperationFor(operation),
+            failure: 'invariant',
+            message: 'expired entry cancellation admission cannot authorize submission',
+          })
+        yield* validateExpiredEntryCancellation(input)
+      }
       yield* events.appendEvent(
         startStoreOperationFor(operation),
         decision.event,
@@ -209,6 +255,7 @@ export const makeMutationStartPostgres = (
     occurredAt: string,
     brokerOrderId?: string,
     closeOnly?: boolean,
+    expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
   ) =>
     fromDecision(() =>
       decodeStartInput(operation, {
@@ -218,6 +265,7 @@ export const makeMutationStartPostgres = (
         occurredAt,
         ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
         ...(closeOnly === true ? { closeOnly: true as const } : {}),
+        ...(expiredEntryCancellation === undefined ? {} : { expiredEntryCancellation }),
       }),
     ).pipe(
       Effect.flatMap((input) =>

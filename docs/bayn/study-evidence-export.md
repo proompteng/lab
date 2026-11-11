@@ -1,6 +1,6 @@
 # Retained Jev session evidence
 
-Run `bun run --filter @proompteng/bayn jev:study-export` to export the complete committed batch inventory for one configured account and session.
+Run `bun run --filter @proompteng/bayn jev:study-export` to export the complete committed batch inventory and its recorded opportunity, execution and inference-cost joins for one configured account and session.
 Build the offline commands with `bun run --filter @proompteng/bayn build:research`. `--help` needs no configuration.
 It reads PostgreSQL and writes a new private local directory. It requires the configured account ID, PostgreSQL URL,
 and the existing verified PostgreSQL CA. It has no broker or model client and requires neither credential.
@@ -20,12 +20,12 @@ Do not commit, publish, or paste the data file into logs. The command prints onl
 ## Execution and storage
 
 Run the export in a separate research process with the existing database read access and a private output filesystem.
-Do not run full session exports inside Bayn API or execution-controller pods. Their `/tmp` volume is shared with
-the running service and limited to 256 MiB, while one admitted export can reach 512 MiB. A read-only database
+Do not run full session exports inside Bayn API or execution-controller pods. Their temporary storage is shared with
+the running service; inspect the actual pod, container and volume quotas rather than assuming a universal limit. A read-only database
 transaction still writes local files; exceeding the pod's temporary-storage limit can evict the trading worker.
 
-Before starting, verify both filesystem headroom and any container or volume quota. Reserve the full 512 MiB data file
-bound and 16 MiB inventory bound, plus receipt and operational headroom for each concurrent export, counting all retained complete and partial
+Before starting, verify both filesystem headroom and any container or volume quota. Reserve the full 512 MiB batch file
+bound, 1 GiB opportunity file bound and 16 MiB inventory bound, plus receipts and operational headroom for each concurrent export, counting all retained complete and partial
 attempts on the same volume. A filesystem free-space check alone does not establish the pod's volume allowance.
 After a failed export, account for its partial directory before another attempt. Keep incomplete evidence on the
 research filesystem and use a new destination; do not accumulate retries on a service pod.
@@ -46,7 +46,8 @@ Each observation and plan must reproduce through the native source and request b
 against its plan. The export rejects missing observations, changed content identities, foreign accounts or sessions,
 duplicate rows and a paging cursor that fails to advance. It does not silently skip old or invalid records.
 
-After the transaction finishes, the command flushes the data, writes `inventory.json`, then writes `receipt.json`. The
+After the transaction finishes, the command flushes both data files, writes `inventory.json` and
+`opportunities.receipt.json`, then writes `receipt.json` last as the completion marker. The
 `bayn.jev-study-export.v1` receipt contains the complete file's SHA-256 and byte length, cycle and batch counts,
 entry and management counts, pending-result count, and its own canonical hash. Verify these before consuming the
 data. A missing or invalid receipt means the export is incomplete; retain it as diagnostic evidence and use a new
@@ -60,8 +61,80 @@ as one data line. Independently pin its raw byte SHA-256 when using it as a matc
 It is private evidence, not a second source recorder. The receipt's data hash binds it to the complete native export;
 review the producer and retain that export rather than constructing an inventory from selected study inputs.
 
-The bounds are 10,000 cycles, 16 MiB per encoded line and 512 MiB per session file. Exceeding a bound fails the export
-and withholds the receipt. These limits are admission boundaries, not sampled datasets or evidence of memory capacity.
+The original bounds remain 10,000 cycles, 16 MiB per encoded line and 512 MiB for `batches.ndjson`.
+`opportunities.ndjson` has a separate 1 GiB bound because complete verified execution documents retain their source
+evidence. Each cycle is limited to 64 decisions and 4,096 rows in each execution relation. Before loading decision
+payloads, a database preflight rejects more than 64 rows or 16 MiB of JSON text for the cycle. Intents also have a
+4,096-row and 16 MiB source preflight. Standalone protection approvals are fetched by exact persisted risk-decision
+ID, one intent at a time. Each intent admits at most 128 historical reconciliation candidates from its original
+entry policy's freshness window; approval and candidate JSON together have a cumulative 16 MiB source budget per
+cycle. Count and byte preflights run before either payload query in the same snapshot. Frozen cost quotes
+have a 100,000-row and 64 MiB JSON-text preflight; inference sources are read one request at a time, up to 20,000
+requests. Exceeding a bound fails the export and withholds the completion receipt. These are admission boundaries,
+not sampled datasets or evidence of memory capacity.
+
+## Opportunity and cost evidence
+
+The companion `opportunities.ndjson` uses `bayn.jev-study-opportunities.v2` and retains the same snapshot cut.
+It contains a header, one `CYCLE` record for every inventory cycle, one `INFERENCE_REQUEST` record for every
+account/session request, explicit `UNALLOCATED_INFERENCE_QUOTE` and `UNALLOCATED_EXECUTION` records where needed,
+and a final `SUMMARY`. Its `bayn.jev-study-opportunity-export.v2` receipt contains the SHA-256 and byte length, scope,
+summary (including the reproduced `protectionIntentCount`) and canonical hash.
+Its `batchReceiptHash` must equal the original `receipt.json` hash. Require both valid receipts and verify both
+file hashes before consuming the joined export; a companion receipt alone does not establish completion.
+
+Every cycle keeps its original state and decision hash, compact batch/candidate/request identities, complete native
+execution documents, persisted intents, mutation events, all recorded order lifecycle observations, fills and
+accounting transactions. Original observation, plan and result payloads remain in `batches.ndjson`; their hashes
+link the companion to that evidence. The exporter reuses the current and retained execution verifiers, reconstructs
+planned intent identities, and checks broker order terms and exact fill/accounting joins. A missing join is explicit
+and makes that cycle's `joinCoverage` incomplete.
+
+Every v2 cycle requires `protectionIntents`, including an explicit empty array when no complete standalone proof is
+available. Each proof retains the original full intent plan, authority generation, immutable intent and client IDs,
+exact stored risk approval, exact historical reconciliation and canonical source hash. The native
+`executionOrderPlans` verifier reproduces ownership, approval identity, protective prices, quantity limits,
+freshness and replan identity from the original entry document. Native order-term verification then checks the
+OCO parent and stop child or standalone StopLimit. Immutable intent identity uses `plan.createdAt`; the independent
+execution plan's approval and submission window use `riskDecision.decidedAt` and `expiresAt`.
+
+Missing original approvals or exact reconciliations leave `UNREPRODUCED_EXECUTION_PLAN` explicit. A present foreign,
+rejected, contradictory or out-of-cut approval fails verification; it is not filtered away or replaced with another
+approval. No current broker state supplies missing historical proof. Content hashes identify retained records;
+they do not independently authenticate approval or grant execution authority.
+
+The batch header, batch receipt and inventory remain v1. Frozen companion v1 exports keep their original bytes,
+receipts and incomplete-protection semantics; absence of the new required field cannot claim v2 verification.
+Use a new output directory for a v2 export instead of rewriting historical evidence.
+
+The disposition keeps distinct reasons for an empty trading result:
+
+- `ABSTAINED` requires completed native judgments rejecting every requested candidate as unsupported or uncertain.
+- `NO_SELECTION` retains other empty selections, including no funded proposals; raw candidate statuses and native
+  rejection reasons remain available.
+- `SELECTED_ZERO_ALLOCATION` retains a positive selection whose executable targets and existing quantities are all
+  zero. It is not counted as a model abstention.
+- `SELECTED_PLANNED`, `SELECTED_BLOCKED` and `SELECTED_TARGETS_SATISFIED` preserve the native target-plan outcome.
+- No recorded decision, a missing decision row, and a non-entry decision have separate dispositions. Blocked and
+  no-batch cycles remain in the denominator.
+
+Inference coverage includes management, rejected or failed work, unselected candidates, and requests outside the
+Jev cycle inventory. Each record retains the original source graph and frozen expense quotes. Existing cost
+verification reproduces those quotes using their retained rate identity; the export does not substitute current
+prices. Missing candidate requests, missing quotes, conflicting quotes and orphan quotes remain visible.
+Session totals sum exact pico-USD first and round upward to micros once. An incomplete source or cost join leaves
+the complete estimated session total `null`; the separately labeled known estimate remains available.
+
+`stageObligationCount`, `meteredStageCount`, `notDispatchedStageCount` and `unknownUsageStageCount` describe native
+stage evidence. They do not establish paid provider-call counts: `providerCallCount` is always `null` and
+`invoiceReconciled` is `false`. A skipped stage is retained with its verified zero charge, and an unknown stage is
+not silently priced at zero. A cost source outside the cycle inventory is explicitly unallocated to that inventory.
+
+Recorded fill fees and realized transaction amounts are retained without inventing missing fees or allocations.
+The transaction check verifies content identity and fill joins; it does not independently reconcile the ledger.
+The export therefore marks `independentlyVerifiedLedger: false`, broker-fee and operating-cost coverage `UNKNOWN`,
+and `allInProfitMicros: null`. Use the existing financial report and operating-cost tools for their stronger,
+separately verified financial conclusions.
 
 ## Using the evidence
 
