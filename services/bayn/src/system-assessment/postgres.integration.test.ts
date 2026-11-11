@@ -1243,6 +1243,28 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(asApplication(registerFixture(input)))).registration.attemptIndex).toBe(1)
   })
 
+  test('prospective registration accepts explicit uncapped sandbox turnover and retains its policy bytes', async () => {
+    const input = registration()
+    const policies = input.policies.map((definition) => {
+      const riskPolicy = Result.getOrThrow(
+        makeExecutionRiskPolicy(
+          definition.riskPolicy.accountId,
+          definition.riskPolicy.allowedSymbols,
+          BrokerEnvironment.Sandbox,
+        ),
+      )
+      return { ...definition, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
+    })
+    const accepted = await runtime.runPromise(asApplication(registerFixture({ ...input, policies })))
+    const retained = await runtime.runPromise(readSystemRegistration(accepted.registrationHash))
+    expect(retained.policies.map((definition) => definition.riskPolicy)).toEqual(
+      policies.map((definition) => definition.riskPolicy),
+    )
+    expect(retained.policies.every((definition) => definition.riskPolicy.maxDailyTradedNotionalMicros === null)).toBe(
+      true,
+    )
+  })
+
   test('risk expansion and missing material are rejected before a prospective attempt is admitted', async () => {
     const input = registration()
     const candidate = input.policies.find((policy) => policy.policy === 'JEV')
@@ -1257,8 +1279,15 @@ postgres('PostgreSQL prospective system qualification', () => {
           'maxNetExposureMicros',
           'maxDailyTradedNotionalMicros',
         ] as const
-      ).map((key) => ({ ...risk, [key]: (BigInt(risk[key]) + 1n).toString() })),
+      ).map((key) => {
+        const limit = risk[key]
+        if (limit === null) throw new Error('Expected bounded fixture policy')
+        return { ...risk, [key]: (BigInt(limit) + 1n).toString() }
+      }),
       { ...risk, maxGrossExposureMicros: null },
+      { ...risk, maxDailyTradedNotionalMicros: null },
+      { ...risk, schemaVersion: 'bayn.execution-risk-policy.v5', maxDailyTradedNotionalMicros: null },
+      { ...risk, schemaVersion: 'bayn.execution-risk-policy.v5', maxDrawdownMicros: '10000000000' },
       null,
     ]
     for (const riskPolicy of invalid) {

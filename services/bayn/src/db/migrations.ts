@@ -1,3 +1,4 @@
+import uncappedPaperTurnover from '../../migrations/0192_uncapped_paper_turnover'
 import executionControllerAtomicRotation from '../../migrations/0191_execution_controller_atomic_rotation'
 import settleRetiredJevBatches from '../../migrations/0190_settle_retired_jev_batches'
 import nativeProtectionCancelReceipts from '../../migrations/0189_native_protection_cancel_receipts'
@@ -193,6 +194,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '192_uncapped_paper_turnover': uncappedPaperTurnover,
   '191_execution_controller_atomic_rotation': executionControllerAtomicRotation,
   '190_settle_retired_jev_batches': settleRetiredJevBatches,
   '189_native_protection_cancel_receipts': nativeProtectionCancelReceipts,

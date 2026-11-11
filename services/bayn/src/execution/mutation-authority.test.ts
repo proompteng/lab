@@ -257,7 +257,7 @@ interface ScenarioInput {
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
   readonly maxNetExposureMicros?: string
   readonly currentDailyTradedNotionalMicros?: string
-  readonly maxDailyTradedNotionalMicros?: string
+  readonly maxDailyTradedNotionalMicros?: string | null
   readonly peakEquityMicros?: string
   readonly maxDrawdownMicros?: string
   readonly closeOnly?: boolean
@@ -375,7 +375,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
             maxBrokerStateAgeMs: 300_000,
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
             currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
-            maxDailyTradedNotionalMicros: input.maxDailyTradedNotionalMicros ?? '1000000000',
+            maxDailyTradedNotionalMicros:
+              input.maxDailyTradedNotionalMicros === undefined ? '1000000000' : input.maxDailyTradedNotionalMicros,
             peakEquityMicros: input.peakEquityMicros ?? '1000000000',
             maxDrawdownMicros: input.maxDrawdownMicros ?? '1000000000',
           },
@@ -765,6 +766,22 @@ describe('final broker mutation authority', () => {
 
     expect(failureTag(observed.exit)).toBe('DailyTradedNotionalLimitExceeded')
     expect(observed.submits).toBe(0)
+  })
+
+  test('an explicitly uncapped turnover policy does not reject final submission above the former paper cap', async () => {
+    const observed = await runLiveSubmit({
+      currentDailyTradedNotionalMicros: '1018000000000',
+      maxDailyTradedNotionalMicros: null,
+    })
+    expect(Exit.isSuccess(observed.exit)).toBe(true)
+    expect(observed.submits).toBe(1)
+    const blocked = await runLiveSubmit({
+      currentDailyTradedNotionalMicros: '1018000000000',
+      maxDailyTradedNotionalMicros: null,
+      brokerAccount: account({ buyingPowerMicros: '99999999' }),
+    })
+    expect(failureTag(blocked.exit)).toBe('BuyingPowerExceeded')
+    expect(blocked.submits).toBe(0)
   })
 
   test('rejects a buy when refreshed broker equity exceeds the durable drawdown limit', async () => {

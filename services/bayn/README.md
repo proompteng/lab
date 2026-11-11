@@ -634,18 +634,18 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-The reviewed sandbox mandate selects a $1,000,000 daily gross-turnover budget through its exact immutable policy hash.
-The sandbox cumulative drawdown cap is $10,000; its daily loss cap stays $5,000. This permits the next PAPER experiment
-without resetting historical losses or peak equity. Retained original mandates stay at $200,000 turnover and $5,000
-drawdown until explicitly rebound. Live and unspecified environments remain at $200,000 turnover and $5,000 drawdown.
-At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
-window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
-are unchanged. The paired research request binds the new strategy and policy hashes; historical requests and
-decisions remain immutable. Unknown hashes and the increased hash on live fail closed.
+The current sandbox policy has no daily gross-turnover cap. Its v5 contract records
+`maxDailyTradedNotionalMicros: null`, not a larger numeric budget. The sandbox cumulative drawdown cap remains
+$10,000 and its daily loss cap remains $5,000. All sizing, buying-power, loss, drawdown, cost, authority and
+reconciliation checks remain in force. Live and unspecified environments retain the exact v4 policy with $200,000
+turnover and $5,000 drawdown limits. Retained v4 sandbox mandates keep their original $200,000 or $1,000,000 turnover
+limits until explicitly rebound through the existing reviewed activation flow. The paired research request binds
+the new policy hash; historical requests and decisions remain immutable. Unknown hashes and sandbox hashes on live
+fail closed. Removing the paper turnover cap grants no live capital authority or profitability qualification.
 Durable account/session turnover is retained across policy and worker changes, and completed
-decisions are not reopened. The image's policy-hash annotation verifies the available increased sandbox policy for its
+decisions are not reopened. The image's policy-hash annotation verifies the available uncapped sandbox policy for its
 build-account sentinel; the durable mandate remains the authority for the active account policy.
-A fresh, exactly reconciled flat PAPER account checks daily loss, cumulative drawdown and gross-turnover capacity
+A fresh, exactly reconciled flat PAPER account checks daily loss, cumulative drawdown and any configured gross-turnover capacity
 before candidate discovery or paid inference. Acquired entry cycles repeat the check before inference and after
 pricing reconciliation. `ACCOUNT_PROTECTION` and `TURNOVER_BUDGET_EXHAUSTED` report a blocked entry with reproducible
 [account-protection evidence](src/jev/account-protection.ts). Bound positions and unsettled orders keep their recovery
