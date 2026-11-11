@@ -965,6 +965,9 @@
     },
     "services/memories": {
       "name": "memories",
+      "dependencies": {
+        "@proompteng/agent-contracts": "workspace:*",
+      },
       "devDependencies": {
         "@types/bun": "1.4.2",
       },

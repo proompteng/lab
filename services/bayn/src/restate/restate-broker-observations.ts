@@ -137,7 +137,9 @@ export const makeBaynBrokerObservations = (
         const state: State = {
           sourceRevision: config.sourceRevision,
           epoch: sameRevision ? current.epoch : (current?.epoch ?? 0) + 1,
-          sequence: sameRevision ? current.sequence : 1,
+          // A new explicit activation must not reuse a retained delayed poll's idempotency key.
+          // Advancing its sequence fences the retained delivery while scheduling one fresh successor.
+          sequence: sameRevision ? current.sequence + 1 : 1,
           ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, state)
