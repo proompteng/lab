@@ -231,7 +231,7 @@ describePostgres('PostgreSQL execution controller diagnostics', () => {
     },
   )
 
-  test('rotates plans only after the old controller is inactive and clears inherited completion evidence', async () => {
+  test('supports explicit inactive plan activation and clears inherited completion evidence', async () => {
     const old = {
       schemaVersion: 1 as const,
       controllerKey: 'primary',
@@ -271,6 +271,128 @@ describePostgres('PostgreSQL execution controller diagnostics', () => {
     expect(result.inherited).toMatchObject({ operation: 'project', failure: 'conflict' })
     expect(result.activated).toEqual({ _tag: 'Applied', status: next })
     expect(result.stored).toEqual(next)
+  })
+
+  test('atomically projects a changed controller plan once without an inactive or inherited completion state', async () => {
+    const controllerKey = 'a'.repeat(64)
+    const old = {
+      schemaVersion: 1 as const,
+      controllerKey,
+      planHash: 'f'.repeat(64),
+      active: true,
+      epoch: 3,
+      nextSequence: 9,
+      lastSequence: 8,
+      lastOutcome: ExecutionControllerOutcome.Waiting,
+      lastReceiptHash: 'b'.repeat(64),
+      completedAt: '2026-11-09T18:00:00.000Z',
+      nextDueAt: '2026-11-09T18:00:30.000Z',
+    }
+    const successor: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 4,
+      planHash: 'd'.repeat(64),
+      sourceRevision: 'c'.repeat(40),
+      initialSequence: 9,
+      nextSequence: 9,
+    }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* ExecutionControllerStatusStore
+        yield* store.project(old)
+        yield* sql`
+          CREATE TABLE controller_test_updates (
+            active boolean NOT NULL,
+            epoch bigint NOT NULL,
+            plan_hash text NOT NULL,
+            has_completion boolean NOT NULL
+          )
+        `
+        yield* sql`
+          CREATE FUNCTION record_controller_test_update() RETURNS trigger LANGUAGE plpgsql AS $function$
+          BEGIN
+            INSERT INTO controller_test_updates(active, epoch, plan_hash, has_completion)
+            VALUES (
+              NEW.active, NEW.epoch, NEW.plan_hash,
+              NEW.last_sequence IS NOT NULL OR NEW.last_outcome IS NOT NULL OR NEW.last_receipt_hash IS NOT NULL
+                OR NEW.completed_at IS NOT NULL OR NEW.next_due_at IS NOT NULL OR NEW.last_pass IS NOT NULL
+            );
+            RETURN NEW;
+          END
+          $function$
+        `
+        yield* sql`
+          CREATE TRIGGER controller_test_update
+          AFTER UPDATE ON execution_controller_status
+          FOR EACH ROW EXECUTE FUNCTION record_controller_test_update()
+        `
+        yield* projectExecutionControllerState(controllerKey, successor, store)
+        const expected = {
+          schemaVersion: 1 as const,
+          controllerKey,
+          planHash: successor.planHash,
+          active: true,
+          epoch: 4,
+          nextSequence: 9,
+        }
+        expect(yield* store.read(controllerKey)).toEqual(expected)
+        yield* projectExecutionControllerState(controllerKey, successor, store)
+        expect(yield* store.project(old)).toEqual({ _tag: 'Stale', status: expected })
+        expect(
+          yield* sql`SELECT active, epoch::integer AS epoch, plan_hash, has_completion FROM controller_test_updates`,
+        ).toEqual([{ active: true, epoch: 4, plan_hash: successor.planHash, has_completion: false }])
+      }),
+    )
+  })
+
+  test('the database rejects plan rotations that skip epochs, move sequence, or retain completion evidence', async () => {
+    const old = {
+      schemaVersion: 1 as const,
+      controllerKey: 'primary',
+      planHash: 'f'.repeat(64),
+      active: true,
+      epoch: 3,
+      nextSequence: 9,
+      lastSequence: 8,
+      lastOutcome: ExecutionControllerOutcome.Waiting,
+      lastReceiptHash: 'a'.repeat(64),
+      completedAt: '2026-11-09T18:00:00.000Z',
+      nextDueAt: '2026-11-09T18:00:30.000Z',
+    }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* ExecutionControllerStatusStore
+        yield* store.project(old)
+        for (const candidate of [
+          { epoch: 3, nextSequence: 9, active: true, retainCompletion: false },
+          { epoch: 5, nextSequence: 9, active: true, retainCompletion: false },
+          { epoch: 4, nextSequence: 8, active: true, retainCompletion: false },
+          { epoch: 4, nextSequence: 10, active: true, retainCompletion: false },
+          { epoch: 4, nextSequence: 9, active: false, retainCompletion: false },
+          { epoch: 4, nextSequence: 9, active: true, retainCompletion: true },
+        ]) {
+          const rejected = yield* Effect.exit(sql`
+            UPDATE execution_controller_status SET
+              plan_hash = ${'d'.repeat(64)},
+              active = ${candidate.active},
+              epoch = ${candidate.epoch},
+              next_sequence = ${candidate.nextSequence},
+              last_sequence = ${candidate.retainCompletion ? old.lastSequence : null},
+              last_outcome = ${candidate.retainCompletion ? old.lastOutcome : null},
+              last_receipt_hash = ${candidate.retainCompletion ? old.lastReceiptHash : null},
+              completed_at = ${candidate.retainCompletion ? old.completedAt : null}::timestamptz,
+              next_due_at = ${candidate.retainCompletion ? old.nextDueAt : null}::timestamptz,
+              last_pass = NULL
+            WHERE controller_key = ${old.controllerKey}
+          `)
+          expect(rejected._tag).toBe('Failure')
+          expect(yield* store.read(old.controllerKey)).toEqual(old)
+        }
+      }),
+    )
   })
 
   test('does not silently rebind a retired unbound plan at the same epoch and sequence', async () => {

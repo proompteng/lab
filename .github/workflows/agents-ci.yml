@@ -142,7 +142,7 @@ jobs:
     timeout-minutes: 12
     services:
       postgres:
-        image: postgres:18-alpine
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -167,6 +167,7 @@ jobs:
           --filter @proompteng/codex
           --filter @proompteng/cx-tools
           --filter @proompteng/agents
+          --filter memories
           --filter @proompteng/otel
           --filter @proompteng/scripts
           --filter @proompteng/temporal-bun-sdk
@@ -202,6 +203,7 @@ jobs:
           bun services/relay/generate.ts --check
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
+          bun run --cwd services/memories test
 
   static:
     name: Validate Agents chart and CRDs

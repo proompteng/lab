@@ -5,6 +5,7 @@ import {
   getMemoryNotesHandler,
   getMemoryNotesStatsHandler,
   postMemoryNotesHandler,
+  postRetireMemoryNoteHandler,
 } from './memory-notes'
 
 const makeStore = () => {
@@ -16,6 +17,9 @@ const makeStore = () => {
     tags: string[]
     metadata: Record<string, unknown>
     createdAt: string
+    retiredAt: string | null
+    retirementReason: string | null
+    replacementId: string | null
     distance?: number
   }[] = []
   const close = vi.fn(async () => undefined)
@@ -29,6 +33,9 @@ const makeStore = () => {
         tags,
         metadata,
         createdAt: '2026-05-20T00:00:00.000Z',
+        retiredAt: null,
+        retirementReason: null,
+        replacementId: null,
       }
       saved.push(record)
       return record
@@ -43,6 +50,12 @@ const makeStore = () => {
       async ({ namespace } = {}) =>
         saved.filter((record) => (namespace ? record.namespace === namespace : true)).length,
     ),
+    list: vi.fn(async () => saved),
+    retire: vi.fn(async () => {
+      const note = saved[0]
+      if (!note) throw new Error('Memory note not found.')
+      return note
+    }),
     stats: vi.fn(async ({ days = 30 } = {}) => ({
       range: { days, from: '2026-05-20', to: '2026-05-20' },
       byDay: [{ day: '2026-05-20', count: saved.length }],
@@ -104,6 +117,44 @@ describe('memory notes v1 handlers', () => {
     await expect(getResponse.json()).resolves.toMatchObject({ error: 'Query is required.' })
     expect(store.persist).not.toHaveBeenCalled()
     expect(store.retrieve).not.toHaveBeenCalled()
+  })
+
+  it('lists latest notes with filters without requiring semantic retrieval', async () => {
+    const { store } = makeStore()
+    const response = await getMemoryNotesHandler(
+      new Request(
+        'http://agents.local/v1/memory-notes?mode=latest&repository=proompteng/lab&tag=bayn&model=qwen38-flamingo&createdAfter=2026-11-01&limit=3',
+      ),
+      { storeFactory: () => store },
+    )
+    expect(response.status).toBe(200)
+    expect(store.retrieve).not.toHaveBeenCalled()
+    expect(store.list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'proompteng/lab',
+        tags: ['bayn'],
+        model: 'qwen38-flamingo',
+        createdAfter: '2026-11-01T00:00:00.000Z',
+        limit: 3,
+      }),
+    )
+  })
+
+  it('validates retirement and reports missing notes', async () => {
+    const { store } = makeStore()
+    const request = (body: unknown) =>
+      new Request('http://agents.local/v1/memory-notes/retire', { method: 'POST', body: JSON.stringify(body) })
+    const invalid = await postRetireMemoryNoteHandler(request({ id: 'invalid', reason: 'obsolete' }), {
+      storeFactory: () => store,
+    })
+    expect(invalid.status).toBe(400)
+    expect(store.retire).not.toHaveBeenCalled()
+    const missing = await postRetireMemoryNoteHandler(
+      request({ id: '00000000-0000-0000-0000-000000000001', reason: 'replaced by current source' }),
+      { storeFactory: () => store },
+    )
+    expect(missing.status).toBe(404)
+    expect(store.close).toHaveBeenCalledOnce()
   })
 
   it('serves memory note count and stats', async () => {

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-candidate-binding-repair.v1",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "previousSourceInventoryId": "d881fb60c4cb560e5aafce650291ed50dd2ca3d8db99a7eac1eadac1dd99f778",
+  "registeredSourceInventoryId": "651a11dfc78f75893051ae809e27979365e2bda11b1a294eb7027deb9d8524a9",
+  "sourceFiles": 101,
+  "changedInstalledFiles": ["src/cosmosalpha/pipeline/mcts/controller.py"],
+  "repairSha256": "2128de40c653f26e962709aa342067539ec0f0ce6dd2039ab98f563f8478ccf5",
+  "controllerSha256": "0f8f9a3f8d370fc867c585ee740f703b93596de89044026318f14a76c27498c6",
+  "regressionFile": "docs/bayn/evidence/2026-11-09-cosmosalpha-candidate-binding/test_candidate_binding.py",
+  "regressionSha256": "33ed749415a31e6d536cc04d60cb2e334fb6d0e2e817ca74fc9a099b527ce75c",
+  "reproducedFailure": {
+    "nativePaths": ["MCTSController._build_root", "MCTSController._expand"],
+    "firstDesign": { "expression": "close", "status": "rejected", "rankIC": 0.01 },
+    "secondDesign": { "expression": "volume", "status": "accepted", "rankIC": 0.03 },
+    "oldSelectedExpression": "volume",
+    "oldSelectedRankIC": 0.01,
+    "requiredSelectedRankIC": 0.03,
+    "cause": "Expression selection prioritized accepted candidates, while score and preprocessing helpers independently read the first candidate's references."
+  },
+  "before": { "failedCases": 15, "passedCases": 2 },
+  "after": {
+    "candidateBindingCasesPassed": 17,
+    "allSourceAndPromptCasesPassed": 36,
+    "nativeContractsPassed": 10,
+    "portableCasesPassed": 30,
+    "bunWrapperPassed": 1,
+    "preservesFirstAcceptedCandidate": true,
+    "preservesMeasuredZeroRankIC": true,
+    "preservesMissingMetricChildNodeAccounting": true,
+    "rejectsMissingDuplicateCrossCandidateAndCrossSnapshotReferences": true
+  },
+  "nativeProducerAudit": {
+    "experimentId": "100e2e9359d14d8eb4c077f10f1d14f83d0a0c48e3d6b997c0a93635a2bb224c",
+    "recordsChecked": 4,
+    "candidateCountPerRecord": 1,
+    "selectorPasses": 4,
+    "selectedArtifactReferencesVerified": 12,
+    "reportSha256": "989008cfd5f09833d78dd1b75e6866f980563344a83547fe239edf36ddb6ce4c",
+    "method": "Resolve immutable native objects, reconstruct the unambiguous one-candidate references from each record and its acceptance decision, enforce the new selector, and verify raw/evaluated/forward-return artifact bytes.",
+    "scope": "Producer-shape and identity compatibility; these four records do not exercise a live two-design result."
+  },
+  "sourcePatchReproducesAllInstalledAssets": true,
+  "regressionInferenceCalls": 0,
+  "scope": "Bind all MCTS node dimensions to one candidate. Existing score formulas, thresholds, candidate priority, seed and resource allowances remain unchanged. Offline proof does not qualify a fresh live acceptance or scientific study."
+}

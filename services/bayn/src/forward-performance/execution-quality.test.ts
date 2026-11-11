@@ -5,7 +5,7 @@ import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 
 import { makeForwardPerformanceExecutionMeasurements } from './execution-quality'
-import { executionQualityFixture } from './execution-quality.test-support'
+import { executionQualityFixture, partialExecutionQualityFixture } from './execution-quality.test-support'
 import { makeForwardPerformanceReport } from './report'
 
 const measure = (input: ReturnType<typeof executionQualityFixture>) =>
@@ -110,4 +110,51 @@ test('execution evidence hash failures retain their exact error before reading c
       actualType: 'string',
     },
   })
+})
+
+test('partial executions retain exact opportunity costs and report hashes across volume order', () => {
+  const input = partialExecutionQualityFixture(10)
+  const original = structuredClone(input)
+  const expected = measure(input)
+  assert.equal(expected.executionQuality.status, 'MEASURED')
+  assert.equal(expected.observedCapacity.status, 'MEASURED')
+  assert.equal(expected.executionQuality.implementationShortfall?.opportunityShortfallMicros, '-30000000')
+  assert.deepEqual(
+    measure({
+      ...input,
+      executionEvidence: input.executionEvidence.toReversed(),
+      marketVolumeEvidence: input.marketVolumeEvidence.toReversed(),
+    }),
+    expected,
+  )
+  assert.deepEqual(input, original)
+})
+
+test('partial executions reject missing, duplicate and mismatched market-volume identities', () => {
+  const input = partialExecutionQualityFixture(2)
+  const volume = input.marketVolumeEvidence[0]
+  assert(volume !== undefined)
+  for (const marketVolumeEvidence of [
+    input.marketVolumeEvidence.slice(1),
+    [...input.marketVolumeEvidence, volume],
+    [volume, ...input.marketVolumeEvidence, volume],
+    [{ ...volume, symbol: 'AAPL' }, ...input.marketVolumeEvidence.slice(1)],
+  ]) {
+    const measured = measure({ ...input, marketVolumeEvidence })
+    assert.equal(measured.executionQuality.status, 'UNDETERMINED')
+    assert.deepEqual(measured.executionQuality.reasonCodes, ['TERMINAL_PRICE_EVIDENCE_GAP'])
+  }
+})
+
+test('partial execution volume matching is rebuilt for each measurement', () => {
+  const input = partialExecutionQualityFixture(1)
+  const volume = input.marketVolumeEvidence[0]
+  assert(volume !== undefined)
+  const volumes = [...input.marketVolumeEvidence]
+  const current = { ...input, marketVolumeEvidence: volumes }
+  assert.equal(measure(current).executionQuality.status, 'MEASURED')
+  volumes.push(volume)
+  assert.deepEqual(measure(current).executionQuality.reasonCodes, ['TERMINAL_PRICE_EVIDENCE_GAP'])
+  volumes.pop()
+  assert.equal(measure(current).executionQuality.status, 'MEASURED')
 })

@@ -23,8 +23,9 @@ deployed configuration requires the layer to be uploaded again and permits a com
 
 Quarantine moves do not free allocated blocks. The worker reopens uploads before physically deleting quarantined
 files. Version 3 receipts bind each batch and directory inode to the original PVC UID/PV. Blob hashes, inode, size and
-mtime must still match. Tag inventories preserve every metadata file and directory identity. Changed files, unexpected
-entries, symlinks and missing or invalid receipts fail closed. Interrupted purges resume from the receipt. A partial
+mtime must still match. Tag inventories preserve every metadata file and directory identity. Empty batch directories
+left before receipt creation are removed under the worker lock. Changed files, unexpected entries, symlinks and
+missing or invalid receipts in nonempty batches fail closed. Interrupted purges resume from the receipt. A partial
 collection can finish online only if its durable receipt validates.
 
 Pre-version-3 receipts have no deletion authority and remain preserved. Historical recovery evidence is retained;

@@ -7,6 +7,8 @@ import { Effect, FileSystem, Result, Schema } from 'effect'
 import type { MarketCalendarSession } from '../broker/alpaca/model'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import { jevBehaviorHash } from '../jev/protocol'
 import { EntryTimingReceiptSchema } from './entry-timing'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { JevPurpose } from '../jev/portfolio'
@@ -48,11 +50,11 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v8',
+  schemaVersion: 'bayn.matched-entry-definition.v9',
   timing: 'bayn.jev-entry-timing.v2: explicit native millisecond clock; conservative post-COMMIT bucket upper bound.',
   cryptoFees: cryptoTakerFeeSchedule,
   inventory:
-    'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results.',
+    'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results. Cycle protocol hashes bind the native strategy identity derived from the frozen behavior, registered parameter hash and protocol schema version.',
   sourceComparison: 'bayn.matched-model-input-material.v2',
   sessions: 5,
   minimumDifferentSelections: 20,
@@ -462,6 +464,7 @@ export const runMatchedEntryStudy = (
     )
     const problems = matchedSourceCompletenessProblems(input.study.source)
     const ids = new Set<string>()
+    const strategyProtocolHashes = new Set<string>()
     for (const batch of batches) {
       const manifest = batch.snapshot.manifest
       if (ids.has(batch.plan.batchId)) return yield* new SignalStudyFailure({ message: 'Duplicate retained batch' })
@@ -469,6 +472,16 @@ export const runMatchedEntryStudy = (
       if (registration.protocolHash !== (yield* Effect.fromResult(canonicalHashV1Result(batch.observation.protocol))))
         return yield* new SignalStudyFailure({ message: 'Retained protocol differs from registration' })
       const protocol = batch.observation.protocol
+      strategyProtocolHashes.add(
+        yield* Effect.fromResult(
+          makeStrategyProtocolHashResult({
+            name: 'jev',
+            behaviorHash: jevBehaviorHash,
+            parameterHash: registration.protocolHash,
+            parameterSchemaVersion: protocol.schemaVersion,
+          }),
+        ),
+      )
       if (
         protocol.maximumHoldingMinutes !== 15 ||
         momentumExitDefinition.protectiveStopBps !== 50 ||
@@ -542,7 +555,7 @@ export const runMatchedEntryStudy = (
             message: 'Inventory witness differs from its account, session or claimed entries',
           })
         verifiedInventories.push(retained)
-        if (retained.cycles.some((cycle) => cycle.protocolHash !== registration.protocolHash))
+        if (retained.cycles.some((cycle) => !strategyProtocolHashes.has(cycle.protocolHash)))
           problems.push(`native-inventory-protocol-mismatch:${inventory.sessionDate}`)
         if (retained.cycles.some((cycle) => cycle.state === CycleState.Pending || cycle.state === CycleState.Active))
           problems.push(`nonterminal-inventory-cycle:${inventory.sessionDate}`)
@@ -803,7 +816,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v8',
+      schemaVersion: 'bayn.matched-entry-study.v9',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,
@@ -812,6 +825,7 @@ export const runMatchedEntryStudy = (
       sourceReceiptHash: receipt.contentHash,
       sourceManifestHash: sourceHash,
       sourceRecordCount: input.study.source.recordCount,
+      strategyProtocolHashes: [...strategyProtocolHashes].sort(),
       inventories: verifiedInventories,
       observations: entries.map((b) => ({
         batchId: b.plan.batchId,

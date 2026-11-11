@@ -27,7 +27,7 @@ It distinguishes observed excess from changes that still require performance or 
 - TigerBeetle is the authoritative accounting ledger for cash, fees, cost basis, and realized P&L.
 - Dorvud/Flink consumes original Kafka bars and publishes versioned rolling features. Each execution worker owns a
   separate projection thread with scoped `@platformatic/kafka` consumers. Original arrivals are appended to the
-  dedicated native-arrival PostgreSQL database, separately from financial persistence.
+  same PostgreSQL database as financial persistence, with immutable capture and ordered-prefix guards.
 - ClickHouse is the read-only archive for raw events and complete feature revisions, including Kafka provenance.
 - The broker adapter performs account-environment-neutral reads and mutations through the restricted egress proxy.
 - The public Bayn deployment serves read-only liveness, readiness, status, metrics, and traces. It does not schedule

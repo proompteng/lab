@@ -76,6 +76,11 @@ omitted batches, changed results and cuts taken before the registered session cl
 unavailable. Reports retain the complete witnessed cycles and batches, including no-batch and pending cycles.
 Every retained cycle must bind the registered protocol, including blocked and no-batch cycles. A foreign protocol
 keeps that cycle visible and makes the study incomplete even when all supplied batch protocols match.
+The registration's `protocolHash` pins the canonical protocol parameters. A native cycle's `protocolHash` instead
+pins `bayn.strategy-protocol.v1`, which combines the strategy name, frozen behavior hash, parameter hash and protocol
+schema version. The study derives that native identity from the verified batches and checks every retained cycle
+against it; substituting the parameter hash for a cycle identity remains incomplete. The report records the derived
+`strategyProtocolHashes` alongside the original registration and inventories.
 Pending or active cycles also make the study incomplete, even after session close: later recovery can still append
 their batches or results. Preserve that cut and take a new export after the cycles become terminal.
 Independent review must still establish that the witness is the complete native export; a self-consistent JSON hash
@@ -107,9 +112,11 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v8` and `bayn.matched-entry-study.v8`. Input is v2;
+Definition and report are `bayn.matched-entry-definition.v9` and `bayn.matched-entry-study.v9`. Input is v2;
 registration is v2 with the new definition hash, native millisecond timing contract and frozen profit-target lifecycle. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
+Version 9 corrects the native cycle identity comparison; it does not change entry selection, execution, costs or
+acceptance thresholds. Freeze the new definition hash and reviewed source revision before a new evaluation.
 
 The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that
 path is unavailable. The [market-data archive boundary](market-data-archive.md) keeps its replacement outside trading;

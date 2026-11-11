@@ -278,6 +278,7 @@ jobs:
 
       - name: Upload Nix OCI log artifact
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: nix-oci-logs-${{ inputs.image_name }}-${{ matrix.arch }}
@@ -417,12 +418,17 @@ jobs:
           if [ "${LATEST}" = "true" ]; then
             args+=(--latest)
           fi
-          if [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          # Receipt validation needs the exact future alias even when a cohort publishes it later.
+          if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ] ||
+            { [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; then
             kargo_tag="kargo-sha-${SOURCE_SHA}"
             if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ]; then
               kargo_tag="${kargo_tag}-run-${GITHUB_RUN_ID}"
             fi
             args+=(--kargo-tag "${kargo_tag}")
+            if [ "${PUBLISH_KARGO_TAG}" != "true" ] || [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+              args+=(--defer-kargo-tag)
+            fi
           fi
           bash nix/ci-run-timed.sh "create-oci-index" "${NIX_OCI_LOG_DIR}/create-oci-index.log" "${args[@]}"
 

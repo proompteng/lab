@@ -253,7 +253,7 @@ export interface ExecutionCapitalLimitContext {
   readonly maxBrokerStateAgeMs: number
   readonly maxNetExposureMicros: string
   readonly currentDailyTradedNotionalMicros: string
-  readonly maxDailyTradedNotionalMicros: string
+  readonly maxDailyTradedNotionalMicros: string | null
   readonly peakEquityMicros: string
   readonly maxDrawdownMicros: string
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
@@ -898,7 +898,11 @@ export const validateExecutionCapitalLimits = (
   }
 
   const projectedDailyTradedNotional = BigInt(context.currentDailyTradedNotionalMicros) + proposedOrderNotional
-  if (!exposureReducingClose && projectedDailyTradedNotional > BigInt(context.maxDailyTradedNotionalMicros)) {
+  if (
+    !exposureReducingClose &&
+    context.maxDailyTradedNotionalMicros !== null &&
+    projectedDailyTradedNotional > BigInt(context.maxDailyTradedNotionalMicros)
+  ) {
     return Result.fail({
       _tag: 'DailyTradedNotionalLimitExceeded',
       limitMicros: context.maxDailyTradedNotionalMicros,
