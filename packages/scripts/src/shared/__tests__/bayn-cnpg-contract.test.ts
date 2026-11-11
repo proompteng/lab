@@ -390,6 +390,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-broker-feed' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
@@ -494,6 +495,10 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
       newName: 'registry.ide-newton.ts.net/lab/bayn',
       newTag: imageTag,
       digest: imageDigest,
+    },
+    {
+      name: 'bayn-broker-feed',
+      newName: 'registry.ide-newton.ts.net/lab/bayn-broker-feed',
     },
   ])
 
