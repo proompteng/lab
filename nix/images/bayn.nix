@@ -145,7 +145,6 @@ let
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
-    "bun --cwd=services/bayn run tsc"
     # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
     "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
     "bun --cwd=services/bayn run build ${buildDefines}"
@@ -192,6 +191,7 @@ let
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
   runtimeRoot = import ./bayn-runtime-root.nix {
+    testFiles = [ "services/bayn/scripts/retained-jev-node.test.ts" ];
     inherit
       pkgs
       lib

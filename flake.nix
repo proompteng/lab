@@ -130,8 +130,17 @@
             exec bash scripts/kubeconform.sh argocd
           '';
 
-          renderHeadlamp = mkScript "render-headlamp" ''
+          renderHeadlamp = mkShellScript "render-headlamp" [ exact.kustomize exact.helm ] ''
             exec kustomize build --enable-helm argocd/applications/headlamp >/dev/null
+          '';
+
+          validateDevbox = mkShellScript "validate-devbox" [ pkgs.bash pkgs.coreutils pkgs.python311 pkgs.rsync exact.kubectl ] ''
+            validation_dir="$(mktemp -d)"
+            trap 'rm -rf "$validation_dir"' EXIT
+            bash -n services/devbox/*.sh
+            python3 -m unittest discover -s services/devbox/tests -v
+            kubectl kustomize argocd/applications/devbox > "$validation_dir/devbox.yaml"
+            kubectl kustomize argocd/applications/kargo > "$validation_dir/kargo.yaml"
           '';
 
           lintArgoWorkflows = mkScript "lint-argo-workflows" ''
@@ -380,6 +389,7 @@
             oci-doctor = mkApp ociDoctor;
             lint-argocd = mkApp lintArgocd;
             render-headlamp = mkApp renderHeadlamp;
+            validate-devbox = mkApp validateDevbox;
             lint-argo-workflows = mkApp lintArgoWorkflows;
             cache-doctor = mkApp cacheDoctor;
             cache-push = mkApp cachePush;

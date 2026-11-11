@@ -35,16 +35,15 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: arc-amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ github.token }}
       - name: Validate bootstrap and GitOps configuration
-        run: |
-          set -euo pipefail
-          bash -n services/devbox/*.sh
-          nix shell --inputs-from . nixpkgs#rsync --command python3 -m unittest discover -s services/devbox/tests -v
-          kubectl kustomize argocd/applications/devbox > /tmp/devbox.yaml
-          kubectl kustomize argocd/applications/kargo > /tmp/kargo.yaml
+        run: nix run .#validate-devbox
 
   build:
     needs: validate

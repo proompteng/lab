@@ -43,7 +43,7 @@ describe('Tengri image workflow', () => {
       >
     }
     const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
-    expect(workflow.jobs.build?.if).toBe(releaseOnly)
+    expect(workflow.jobs.build?.if).toBe(`${releaseOnly} && needs.changes.outputs.images == 'true'`)
     expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
       { architecture: 'amd64', runner: 'arc-amd64' },
       { architecture: 'arm64', runner: 'arc-arm64' },
@@ -78,7 +78,7 @@ describe('Tengri image workflow', () => {
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
     expect(ofz.jobs['build-ofz'].if).toBe(releaseOnly)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
-    expect(ofz.jobs.validate.if).toBeUndefined()
+    expect(ofz.jobs.validate.if).toBe("needs.changes.outputs.ofz == 'true'")
     const products = YAML.parse(
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )

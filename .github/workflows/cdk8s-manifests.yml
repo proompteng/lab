@@ -27,7 +27,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      manifests: ${{ fromJSON(steps.filter.outputs.affected).manifests }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/cdk8s-manifests.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            manifests: ['', 'packages/k8s']
+
   validate:
+    needs: changes
+    if: needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

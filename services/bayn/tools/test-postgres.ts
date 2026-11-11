@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 
-const files = [
+export const postgresFiles = [
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
@@ -47,25 +47,39 @@ const files = [
   'src/system-assessment/operational-source-cut.integration.test.ts',
   'src/db/risk-clock-rejection.integration.test.ts',
 ]
-const [shard = '1/1', ...extra] = process.argv.slice(2)
-if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
-  throw new Error(
-    'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count]',
-  )
+if (import.meta.main) {
+  if (process.argv[2] === '--list') {
+    console.log(JSON.stringify(postgresFiles))
+    process.exit(0)
+  }
+  const [shard = '1/1', ...extra] = process.argv.slice(2)
+  if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
+    throw new Error(
+      'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count]',
+    )
 
-const run = (args: readonly string[]) => {
-  const result = Bun.spawnSync([process.execPath, 'test', '--no-orphans', ...args], {
-    cwd: fileURLToPath(new URL('..', import.meta.url)),
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
-  if (result.exitCode !== 0) process.exit(result.exitCode)
-}
+  const run = (args: readonly string[]) => {
+    const result = Bun.spawnSync([process.execPath, 'test', '--no-orphans', ...args], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    if (result.exitCode !== 0) process.exit(result.exitCode)
+  }
 
-run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
-if (shard.startsWith('1/'))
   run([
-    'src/shadow-decision.test.ts',
-    '--test-name-pattern',
-    'migrated cycle guard|PostgreSQL entry binding and nested',
+    '--isolate',
+    `--shard=${shard}`,
+    '--timings=tools/ci-postgres-timings.json',
+    '--update-timings',
+    '--reporter=junit',
+    '--reporter-outfile=postgres-results.xml',
+    ...postgresFiles,
   ])
+  if (shard.startsWith('1/'))
+    run([
+      'src/shadow-decision.test.ts',
+      '--test-name-pattern',
+      'migrated cycle guard|PostgreSQL entry binding and nested',
+    ])
+}

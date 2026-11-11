@@ -18,7 +18,11 @@ export const observedWorkflows = (root: string): string[] => {
       .filter((name) => /\.ya?ml$/.test(name))
       .map((name) => [name, jobs(YAML.parse(readFileSync(resolve(directory, name), 'utf8')))]),
   )
-  const selected = new Set(workflows.has('bayn-ci.yml') ? ['bayn-ci.yml'] : [])
+  const selected = new Set(
+    ['bayn-ci.yml', 'pull-request.yml', 'scripts-ci.yml', 'temporal-bun-sdk-protos.yml'].filter((name) =>
+      workflows.has(name),
+    ),
+  )
   const callers = new Map<string, string[]>()
   for (const [name, entries] of workflows) {
     for (const job of entries) {

@@ -24,3 +24,8 @@ backend multiplexer to consume Kubernetes watch streams over authenticated HTTP
 instead of trying to websocket-upgrade kube watch URLs directly. The matching
 regression test is exercised by `scripts/test-upstream.sh` and in
 `.github/workflows/headlamp-ci.yml`.
+
+CI renders manifest changes on a hosted runner with only pinned Kustomize and Helm 3. Upstream Go regressions run
+for patch, upstream-script and image-definition changes. Native images run only for their Nix, patch, asset-check
+and toolchain inputs; operating guides and Argo manifest edits do not rebuild them. Run the manifest check locally
+with `nix run .#render-headlamp`.

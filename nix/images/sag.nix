@@ -28,7 +28,7 @@ import ./bun-workspace-service.nix {
   ];
   buildCommands = [
     "bun --cwd=packages/codex run build"
-    "bun run build:sag"
+    "bun run --filter @proompteng/sag build"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/sag"

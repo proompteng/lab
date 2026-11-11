@@ -10,11 +10,14 @@ on:
       - main
     paths:
       - 'services/bayn/**'
+      - '!services/bayn/**/*.md'
+      - '!services/bayn/**/*.mdx'
+      - 'docs/bayn/jev-migration-acceptance-v2.json'
       # Tests and operating guides do not reactivate the production controller.
       - '!services/bayn/**/*.test.ts'
       - '!services/bayn/formal/**'
       - '!services/bayn/README.md'
-      - '!services/bayn/tools/test-*.ts'
+      - '!services/bayn/tools/test-*'
       - '!services/bayn/tools/ci-*-timings.json'
       - '!services/bayn/tools/verify-image-metadata.ts'
       - 'nix/images/bayn.nix'
@@ -40,6 +43,8 @@ on:
       - 'argocd/applications/bayn/**'
       - '!argocd/applications/bayn/README.md'
       - 'argocd/applicationsets/product.yaml'
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
 
 concurrency:
   group: ${{ github.workflow }}-main

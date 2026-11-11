@@ -13,6 +13,13 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 - Authenticated GitHub CLI (`gh auth status`) for GitHub integrations
 - Kubernetes/Argo credentials when triggering infrastructure workflows
 
+## CI input selection
+
+The affected-inputs action compares installed dependency closures and owned source paths. Root `package.json`
+script aliases do not rebuild unrelated consumers. Other manifest fields, install lifecycle hooks, their referenced
+scripts and pre/post hooks remain inputs. Dynamic hook commands conservatively retain all root scripts. Image
+workflows also exclude operating guides where they are outside the runtime source closure.
+
 ## Available scripts
 
 | Script                                                | Description                                                                                                                                                                                                                                                                                                        | Required CLIs                      | Example                                                                                                                           |

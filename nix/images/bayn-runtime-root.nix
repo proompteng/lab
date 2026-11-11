@@ -8,6 +8,7 @@
   nodejs,
   buildCommands,
   runtimeInstallPhase,
+  testFiles,
 }:
 
 let
@@ -36,6 +37,11 @@ let
         rel = relativePath path;
       in
       !(isUnder "services/bayn/formal" rel)
+      && !(lib.hasSuffix ".md" rel || lib.hasSuffix ".mdx" rel)
+      && (!(lib.hasSuffix ".test.ts" rel) || builtins.elem rel testFiles)
+      && !(lib.hasPrefix "services/bayn/tools/test-" rel)
+      && !(lib.hasPrefix "services/bayn/tools/ci-" rel && lib.hasSuffix "-timings.json" rel)
+      && rel != "services/bayn/tools/verify-image-metadata.ts"
       && (
         type == "directory"
         || rel == "package.json"

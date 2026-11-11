@@ -45,6 +45,8 @@ on:
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
       - '**/package.json'
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   push:
     branches:
       - main
@@ -107,6 +109,8 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   workflow_dispatch:
     inputs:
       build_proompteng:

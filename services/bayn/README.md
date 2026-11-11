@@ -2144,7 +2144,17 @@ Effect compatibility and broker sandbox tests run in this suite with broker cred
 four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
 runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
 the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
-The release gate requires every shard and integration job to pass.
+A PR that changes only ordinary unit test files runs those files in one shard, plus the existing static,
+and build checks. Integration test files, shared fixtures, deleted or unknown inputs,
+and every exact-revision main validation retain the complete matrix. The release gate permits integration
+skips only for the unit-only plan and still rejects failed or cancelled required checks.
+The replay observer also runs the retained financial-reader proof with the production Nix Node runtime;
+changes to that proof select the complete matrix. Native images retain their architecture-specific proof.
+
+PostgreSQL jobs retain JUnit results and fresh per-file timing weights. After downloading all four successful
+`bayn-postgres-*` artifacts into one directory, regenerate the committed balancing input with
+`python3 services/bayn/tools/test-postgres-timings.py <artifact-directory>`. The generator rejects missing,
+duplicate, invalid and failed shard measurements and removes weights for suites no longer owned by this runner.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run

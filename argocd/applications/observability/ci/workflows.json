@@ -209,6 +209,10 @@
   ],
   "headlamp-ci.yml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validate-manifests",
       "pattern": "^validate-manifests(?: \\(.*\\))?$"
     },
@@ -287,6 +291,10 @@
   ],
   "ofz.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validate",
       "pattern": "^validate(?: \\(.*\\))?$"
     },
@@ -314,6 +322,10 @@
     }
   ],
   "opencode-build-push.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
@@ -355,6 +367,24 @@
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
+    }
+  ],
   "relay.yml": [
     {
       "id": "validate",
@@ -389,6 +419,12 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "scripts-ci.yml": [
+    {
+      "id": "lint-and-test",
+      "pattern": "^lint-and-test(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
   "signal-publisher-build-push.yml": [
     {
       "id": "changes",
@@ -409,6 +445,12 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "temporal-bun-sdk-protos.yml": [
+    {
+      "id": "regenerate",
+      "pattern": "^regenerate(?: \\(.*\\))?$"
+    }
+  ],
   "temporal-worker-images.yml": [
     {
       "id": "build",
@@ -420,6 +462,10 @@
     }
   ],
   "tengri-images.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "validate-tengri",
       "pattern": "^Validate Tengri(?: \\(.*\\))?$"
