@@ -17,7 +17,7 @@ export const protectedAccountAdmission = (
   const authority = riskContext.authority
   if (authority === null || riskContext.authorityObservedAt === null) return undefined
   const inputs: AccountProtectionFacts = {
-    schemaVersion: 'bayn.account-protection-inputs.v1',
+    schemaVersion: 'bayn.account-protection-inputs.v2',
     observedAt,
     portfolio: { purpose: JevPurpose.Entry, brokerState },
     policy,
@@ -29,6 +29,7 @@ export const protectedAccountAdmission = (
     unknownMutationCount: riskContext.unknownMutationCount,
     dayStartEquityMicros: riskContext.dayStartEquityMicros,
     peakEquityMicros: riskContext.peakEquityMicros,
+    dailyTradedNotionalMicros: riskContext.dailyTradedNotionalMicros,
   }
   const decision = decideAccountProtection(inputs, authorityGenerationHash)
   if (decision === undefined) return undefined
@@ -36,8 +37,14 @@ export const protectedAccountAdmission = (
     outcome: 'ADMISSION_WAITING',
     observedAt,
     readiness: {
-      reason: DecisionReadinessReason.AccountProtection,
-      message: `Existing account limits block new entries: ${decision.reasons.join(', ')}`,
+      reason:
+        decision.reasons.length > 0
+          ? DecisionReadinessReason.AccountProtection
+          : DecisionReadinessReason.TurnoverBudgetExhausted,
+      message:
+        decision.reasons.length > 0
+          ? `Existing account limits block new entries: ${decision.reasons.join(', ')}`
+          : 'The daily turnover budget is exhausted; new entries await fresh session capacity',
     },
     admissionProtection: {
       ...decision.protection,

@@ -36,7 +36,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:6d9f30e06366141e3f2a5e085f79ab0494e7ad3dda061740933515cfdee26ca3
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:6afef39f0fcf44a561e2d4385b2c5418abc8592c04296a33af888b67a89d7434
           command: [bun, dist/approval-server.mjs]
           ports:
             - name: restate
@@ -55,9 +55,9 @@ spec:
             - name: RESTATE_REQUEST_IDENTITY_KEYS
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: FROUSSARD_COMMIT
-              value: cdb8fadf7c694a43296928253d8b9b61a46e8cec
+              value: a996dd388a37f60534c784ef0c495df430cb7854
             - name: FROUSSARD_VERSION
-              value: kargo-sha-cdb8fadf7c694a43296928253d8b9b61a46e8cec
+              value: kargo-sha-a996dd388a37f60534c784ef0c495df430cb7854
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
           readinessProbe:

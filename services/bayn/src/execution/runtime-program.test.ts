@@ -61,6 +61,8 @@ import {
 } from './broker-state-cache.fixture'
 import { makeBrokerStateCache } from './broker-state-cache'
 import { WriterFenceError } from './writer-fence'
+import { MutationEventType, MutationStoreError, type MutationEvent } from './mutations/model'
+import { mutationIdResult } from './mutations/decisions'
 
 const authorizeFinalBrokerSubmit = <A, E, R>(
   authority: Parameters<typeof makeExecutionProgram>[0] & { brokerAccess: BrokerAccess.Mutation },
@@ -340,6 +342,69 @@ describe('same-code execution program composition', () => {
     expect(liveProgram.authority.brokerIdentity.environment).toBe(BrokerEnvironment.Live)
     expect(sandboxProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.Granted)
     expect(liveProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.Granted)
+  })
+
+  test('preserves the expired-entry admission token through the program and prevents rejected cancellation I/O', async () => {
+    const fixture = finalLiveFixture()
+    const stored: StoredIntent = { ...fixture.stored, intent: { ...fixture.intent, state: IntentState.Acknowledged } }
+    const parentId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'a'.repeat(64),
+      mutationId: Result.getOrThrow(mutationIdResult(stored.intent.intentId, MutationOperation.Submit)),
+      intentId: stored.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: 'b'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: parentId,
+      occurredAt: observedAt,
+    }
+    const admission = {
+      accountId,
+      authorityGenerationHash,
+      authorityVersion: 2,
+      intentId: stored.intent.intentId,
+      clientOrderId: stored.intent.clientOrderId,
+      brokerOrderId: parentId,
+      observedAt,
+      validUntil: '2026-07-28T08:00:30.000Z',
+    }
+    const rejected = new MutationStoreError({
+      operation: 'begin-cancel',
+      failure: 'authority',
+      message: 'expired-entry authority changed',
+    })
+    let deletions = 0
+    let admissions = 0
+    const defaults = dependencies('expired-entry-cancel')
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...defaults,
+        intentStore: { ...defaults.intentStore, read: () => Effect.succeed(Option.some(stored)) },
+        mutationStore: {
+          ...defaults.mutationStore,
+          latest: (_id, operation) => Effect.succeed(operation === MutationOperation.Submit ? accepted : undefined),
+          beginCancel: (id, _hash, brokerId, _delay, _at, token) => {
+            admissions += 1
+            expect([id, brokerId, token]).toEqual([stored.intent.intentId, parentId, admission])
+            return Effect.fail(rejected)
+          },
+        },
+        brokerMutation: {
+          ...defaults.brokerMutation,
+          cancel: () => {
+            deletions += 1
+            return Effect.die('rejected admission cannot reach broker I/O')
+          },
+        },
+      }),
+    )
+    expect(
+      await Effect.runPromise(program.cancel(stored.intent.intentId, 1_000, admission).pipe(Effect.result)),
+    ).toEqual(Result.fail(rejected))
+    expect([admissions, deletions]).toEqual([1, 0])
   })
 
   test('cannot construct a mutation program from read-only authority', () => {

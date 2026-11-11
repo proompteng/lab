@@ -367,9 +367,10 @@ describe('Bayn telemetry', () => {
     }
     try {
       await Effect.runPromise(
-        Effect.void.pipe(
+        TestClock.adjust('1 second').pipe(
           withObservedStage('bayn.postgres.commit'),
           Effect.provide(Layer.mergeAll(makeTelemetryRuntimeLayer(options), makeMetricsRuntimeLayer(options))),
+          Effect.provide(TestClock.layer()),
           Effect.provideService(Metric.MetricRegistry, new Map()),
         ),
       )
@@ -377,6 +378,7 @@ describe('Bayn telemetry', () => {
       for (const field of [
         'bayn_operation_duration_seconds',
         'bayn_telemetry_heartbeat_timestamp_seconds',
+        'bayn_scheduler_delay_seconds',
         'source-test',
         'source_revision',
         'pod-test',

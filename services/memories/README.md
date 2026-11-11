@@ -1,6 +1,6 @@
 # memories
 
-This directory hosts Bun CLI helpers for saving and retrieving memories through the Agents memory note API.
+This directory hosts the repository-context CLI and memory-note administration helpers. They use the Agents API.
 
 Note: this service is intended for local/dev agents. Production deployments should use the Agents service directly (`services/agents`).
 
@@ -28,6 +28,17 @@ For debugging Kubernetes auto-detection, you can set `MEMORIES_K8S_NAMESPACE`.
 
 ## Scripts
 
+### Retrieve repository context
+
+```sh
+bun run context:retrieve --query 'Agent Shell memory tools' --path services/agents/
+```
+
+Run this root script before substantial work. It retrieves bounded code excerpts and durable notes in one request.
+The CLI verifies the indexed code against the checkout commit automatically and reports each source's availability.
+Use `--expected-commit` for a different snapshot, `--tags` to scope notes, and `--json` for compact JSON output.
+Run `bun run context:evaluate` after fetching `origin/main` to verify real implementation, incident and stale-snapshot cases.
+
 ### Save a memory
 
 ```bash
@@ -50,7 +61,14 @@ bun run retrieve-memory --query "what did we build" --limit 5
 - `--query` or `--query-file` – the prompt used to search the memory store.
 - `--task-name` – optional namespace filter. If omitted, searches across all namespaces.
 - `--limit` – up to how many matches to return (defaults to `5`).
-- `--repository-ref`, `--source`, `--tags` are ignored by the Agents memory note endpoint and will emit a warning when supplied.
+- `--repository`, `--tags`, `--model`, `--after`, and `--before` filter candidates before retrieval.
+- `--latest` lists by creation time without a query or embedding request.
+- `--json` returns complete content, creation time and provenance.
+- `--include-retired` includes obsolete notes for historical inspection. Ordinary retrieval excludes them.
+- Unsupported retrieval flags fail instead of being ignored.
+
+See [engineering memory notes](../../docs/agents/memory-notes.md) for retirement, evaluation and the shared Agent Shell
+and Agent Shell Tunnel tools.
 
 ## Testing
 

@@ -709,6 +709,10 @@ describe('agents typed service clients', () => {
         namespace: 'demo',
         query: 'find me',
         limit: 50,
+        repository: undefined,
+        model: undefined,
+        tags: [],
+        includeRetired: false,
       },
     })
     expect(parseRetrieveMemoryNotesInput({ namespace: 'demo' })).toEqual({ ok: false, message: 'Query is required.' })
@@ -776,7 +780,7 @@ describe('agents typed service clients', () => {
     const calls = fetchMock.mock.calls as unknown as [URL, RequestInit][]
     expect(calls.map(([url]) => url.toString())).toEqual([
       'http://agents.test/v1/memory-notes',
-      'http://agents.test/v1/memory-notes?query=hello&limit=12&namespace=demo',
+      'http://agents.test/v1/memory-notes?query=hello&namespace=demo&limit=12',
       'http://agents.test/v1/memory-notes/count?namespace=demo',
       'http://agents.test/v1/memory-notes/stats?namespace=demo&days=7&topNamespaces=3',
     ])

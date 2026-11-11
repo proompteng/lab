@@ -621,6 +621,27 @@ const validateEntryDecisionContext = <R>(
   return Result.succeed(undefined)
 }
 
+const requireEntryTurnoverCapacity = <R>(
+  input: ObserveDecisionInput<R>,
+  facts: Pick<ObserveDecisionFacts, 'reconciliation' | 'evaluatedAt'>,
+  requiredAuthority: DecisionAuthorityRequirement,
+): Result.Result<void, ObserveDecisionAwaitingSignal> =>
+  requiredAuthority === Authority.Execution &&
+  BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros) >=
+    BigInt(input.policy.maxDailyTradedNotionalMicros)
+    ? Result.fail(
+        new ObserveDecisionAwaitingSignal({
+          message: 'The daily turnover budget is exhausted; new entries await fresh session capacity',
+          readiness: {
+            reason: DecisionReadinessReason.TurnoverBudgetExhausted,
+            message: 'The daily turnover budget is exhausted; new entries await fresh session capacity',
+          },
+          observedAt: facts.evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        }),
+      )
+    : Result.succeed(undefined)
+
 export const readObserveDecisionFacts = <R>(
   input: ObserveDecisionInput<R>,
   preparation: ObserveDecisionReadPreparation,
@@ -674,6 +695,7 @@ export const readObserveDecisionFacts = <R>(
         })
       }
     }
+    yield* Effect.fromResult(requireEntryTurnoverCapacity(input, { reconciliation, evaluatedAt }, requiredAuthority))
     const brokerRead = yield* BrokerRead
     const readCalendar: Effect.Effect<{ readonly value: MarketHours }, OperationalError> =
       input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -941,6 +963,9 @@ const compileObserveStrategyDecision = <R>(
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingAt = yield* currentUtcInstant
+    yield* Effect.fromResult(
+      requireEntryTurnoverCapacity(input, { reconciliation, evaluatedAt: pricingAt }, requiredAuthority),
+    )
     const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
     const brokerHeadroomExhaustedAt = (at: number) =>
       pricingReconciliation?.freshUntil !== undefined &&

@@ -28,7 +28,12 @@ import {
   type SubmitPersistenceDecision,
 } from './coordinator-decisions'
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
-import { MutationStore, MutationStoreError, type MutationEvent } from './mutations/model'
+import {
+  MutationStore,
+  MutationStoreError,
+  type ExpiredEntryCancellationAdmission,
+  type MutationEvent,
+} from './mutations/model'
 import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 
@@ -373,6 +378,7 @@ const startCancel = (
   requestHash: string,
   brokerOrderId: string,
   consistencyDelayMs: number,
+  expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
 ) =>
   currentInstant.pipe(
     Effect.flatMap((occurredAt) =>
@@ -384,6 +390,7 @@ const startCancel = (
             brokerOrderId,
             consistencyDelayMs,
             nextOccurredAt,
+            expiredEntryCancellation,
           ),
         ),
       ),
@@ -395,7 +402,12 @@ const startCancel = (
     ),
   )
 
-const runCancel = (services: MutationServices, intentId: string, consistencyDelayMs: number) =>
+const runCancel = (
+  services: MutationServices,
+  intentId: string,
+  consistencyDelayMs: number,
+  expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+) =>
   services.mutations
     .latest(intentId, MutationOperation.Cancel)
     .pipe(
@@ -409,11 +421,25 @@ const runCancel = (services: MutationServices, intentId: string, consistencyDela
                   existing === undefined
                     ? readIntent(MutationOperation.Cancel, intentId).pipe(
                         Effect.flatMap((stored) =>
-                          startCancel(services, stored, requestHash, brokerOrderId, consistencyDelayMs),
+                          startCancel(
+                            services,
+                            stored,
+                            requestHash,
+                            brokerOrderId,
+                            consistencyDelayMs,
+                            expiredEntryCancellation,
+                          ),
                         ),
                       )
                     : services.mutations
-                        .beginCancel(intentId, requestHash, brokerOrderId, consistencyDelayMs, existing.occurredAt)
+                        .beginCancel(
+                          intentId,
+                          requestHash,
+                          brokerOrderId,
+                          consistencyDelayMs,
+                          existing.occurredAt,
+                          expiredEntryCancellation,
+                        )
                         .pipe(Effect.map(({ event }) => event)),
                 ),
               ),
@@ -422,11 +448,15 @@ const runCancel = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-export const cancel = (intentId: string, consistencyDelayMs: number) =>
+export const cancel = (
+  intentId: string,
+  consistencyDelayMs: number,
+  expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
-  }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs)))
+  }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs, expiredEntryCancellation)))
 
 const markInterruptedStart = (mutations: MutationStore['Service'], event: MutationEvent, occurredAt: string) =>
   Match.value(decideInterruptedStart(event, occurredAt)).pipe(
