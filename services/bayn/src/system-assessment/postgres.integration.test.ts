@@ -1255,7 +1255,9 @@ postgres('PostgreSQL prospective system qualification', () => {
       )
       return { ...definition, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
     })
-    const accepted = await runtime.runPromise(asApplication(registerFixture({ ...input, policies })))
+    const accepted = await runtime.runPromise(
+      asApplication(registerFixture(withRegistrationCommitments({ ...input, policies }))),
+    )
     const retained = await runtime.runPromise(readSystemRegistration(accepted.registrationHash))
     expect(retained.policies.map((definition) => definition.riskPolicy)).toEqual(
       policies.map((definition) => definition.riskPolicy),
