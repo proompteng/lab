@@ -15,6 +15,47 @@ Dorvud ingests market data, calculates technical signals, and archives source re
 Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
 and reconciliation. Dorvud does not grant trading authority or establish strategy profitability.
 
+## Bayn broker notifications
+
+The separate `bayn-broker-feed` image runs `ai.proompteng.dorvud.ws.BrokerFeedMain` from the websockets module.
+It uses Bayn's existing paper account secret and egress proxy. Before opening each socket, it calls Alpaca's account
+endpoint with the loaded credentials and requires the returned account ID to match Bayn's configured account.
+It then authenticates the socket and verifies the `trade_updates` subscription acknowledgement. The shared session
+parser accepts Alpaca's text and binary JSON frames; the original update JSON retains decimal and timestamp precision.
+
+```mermaid
+flowchart LR
+  A[Verify Bayn account] --> B[Authenticate and acknowledge subscription]
+  B --> C[Signed SessionReady and TradeUpdate]
+  C --> K[Kafka: bayn.broker-notifications.v1]
+  K --> R[Standalone Restate Kafka ingress]
+  R --> O[Bayn canonical broker observation]
+  O --> D[Serialized account decision and execution]
+```
+
+Notifications carry a session ID, account identity hash, credential fingerprint, source revision and original receipt
+time. HMAC-SHA256 over the exact message bytes uses the existing broker secret; the Kafka adapter receives only Kafka
+credentials. The Kotlin/TypeScript contract is checked against `fixtures/bayn-broker-notification-v1.json`, which
+contains synthetic credentials. These notifications request canonical account reconciliation; they never post fills,
+fees or ledger transfers directly.
+
+The producer awaits Kafka acknowledgement before reading the next update. A failed acknowledgement closes the session
+and reconnects with a new verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than
+once. Stable update IDs deduplicate transport retries; the financial stores retain their independent idempotency rules.
+`/readyz` becomes ready only after the verified session notification has been acknowledged by Kafka, and resets on
+disconnect. `/metrics` exposes `dorvud_broker_feed_ready`, publications and session failures without account labels.
+
+Configuration requires `BAYN_ALPACA_ACCOUNT_ID`, `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`,
+`BAYN_ALPACA_BASE_URL=https://paper-api.alpaca.markets`,
+`BAYN_ALPACA_PROXY_URL=http://bayn-egress-proxy:3128`, the 40-character `DORVUD_SOURCE_REVISION`,
+`BAYN_BROKER_NOTIFICATIONS_TOPIC=bayn.broker-notifications.v1`, and authenticated `KAFKA_BOOTSTRAP`,
+`KAFKA_SECURITY_PROTOCOL`, `KAFKA_SASL_USER` and `KAFKA_SASL_PASSWORD`. Live broker destinations are rejected.
+The existing Torghut collector retains its own account, topics and release path.
+
+Run `./gradlew :websockets:ktlintCheck :websockets:test` for real local HTTP/WebSocket contract tests, including
+wrong-account rejection, binary frames, failed publication, reconnect and the shared signature vector. Deployment and
+runtime acceptance follow the [Bayn deployment guide](../../argocd/applications/bayn/README.md).
+
 ## Exception tracking
 
 The forwarder, Flink TA and market-data archive report ERROR/FATAL logs and uncaught JVM exceptions to the

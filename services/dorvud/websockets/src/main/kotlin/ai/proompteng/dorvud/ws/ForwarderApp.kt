@@ -581,16 +581,27 @@ class ForwarderApp(
     while (scope.isActive) {
       try {
         ensureKafkaReady(producer, coreMarketDataFeed)
-        streamTradeUpdatesSession(producer, seq, tradeUpdatesDedup, streamUrl, topicV1, topicV2) {
-          attempt = 0
-        }
+        httpClient.streamAlpacaTradeUpdates(
+          streamUrl = streamUrl,
+          keyId = config.alpacaKeyId,
+          secretKey = config.alpacaSecretKey,
+          onReady = {
+            setTradeUpdatesReady(true)
+            attempt = 0
+          },
+          onUpdate = { update -> handleTradeUpdate(update.data, producer, seq, tradeUpdatesDedup, topicV1, topicV2) },
+        )
       } catch (e: Exception) {
         currentCoroutineContext().ensureActive()
         ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
           metrics.recordWsConnectError(errorClass)
           recordTradeUpdatesError(errorClass)
         }
-        logger.warn(e) { "alpaca trade_updates session ended" }
+        if (e is BrokerStreamAuthenticationException) {
+          metrics.recordWsConnectError(ReadinessErrorClass.AlpacaAuth)
+          recordTradeUpdatesError(ReadinessErrorClass.AlpacaAuth)
+        }
+        logger.warn { "alpaca trade_updates session ended failure_class=${e.javaClass.simpleName}" }
       } finally {
         setTradeUpdatesReady(false)
       }
@@ -1062,99 +1073,6 @@ class ForwarderApp(
             eventStarved = false,
             lastEventTs = lastOptionsMarketDataEventAt.get(),
           )
-        }
-      }
-    }
-  }
-
-  private suspend fun streamTradeUpdatesSession(
-    producer: KafkaProducer<String, String>,
-    seq: SeqTracker,
-    tradeUpdatesDedup: DedupCache<String>,
-    streamUrl: String,
-    topicV1: String,
-    topicV2: String?,
-    onReady: () -> Unit,
-  ) {
-    httpClient.webSocket(urlString = streamUrl) {
-      val auth =
-        buildJsonObject {
-          put("action", "auth")
-          put("key", config.alpacaKeyId)
-          put("secret", config.alpacaSecretKey)
-        }
-      sendSerialized(auth)
-
-      val listen =
-        buildJsonObject {
-          put("action", "listen")
-          put(
-            "data",
-            buildJsonObject {
-              put("streams", buildJsonArray { add(JsonPrimitive("trade_updates")) })
-            },
-          )
-        }
-      sendSerialized(listen)
-
-      var authOk = false
-      var subscribedOk = false
-      var readyNotified = false
-
-      fun updateReady() {
-        val nowReady = authOk && subscribedOk
-        setTradeUpdatesReady(nowReady)
-        if (nowReady && !readyNotified) {
-          onReady()
-          readyNotified = true
-        }
-      }
-
-      while (isActive) {
-        val frame = incoming.receive()
-        val text =
-          when (frame) {
-            is Frame.Text -> frame.readText()
-            is Frame.Binary -> frame.readBytes().decodeToString()
-            else -> continue
-          }
-        val element =
-          try {
-            json.parseToJsonElement(text)
-          } catch (e: SerializationException) {
-            logger.warn(e) { "failed to parse trade_updates frame as JSON; dropping" }
-            continue
-          }
-        val obj = element as? JsonObject ?: continue
-        val stream = obj["stream"]?.jsonPrimitive?.contentOrNull ?: continue
-        when (stream) {
-          "authorization" -> {
-            val status =
-              obj["data"]
-                ?.jsonObject
-                ?.get("status")
-                ?.jsonPrimitive
-                ?.contentOrNull
-            if (status.equals("authorized", ignoreCase = true)) {
-              authOk = true
-              updateReady()
-            } else {
-              authOk = false
-              val errorClass = ReadinessErrorClass.AlpacaAuth
-              metrics.recordWsConnectError(errorClass)
-              recordTradeUpdatesError(errorClass)
-              logger.error { "alpaca trade_updates auth failed status=$status error_class=${errorClass.id}" }
-              updateReady()
-            }
-          }
-          "listening" -> {
-            subscribedOk = true
-            updateReady()
-          }
-          "trade_updates" -> {
-            val data = obj["data"] as? JsonObject ?: continue
-            handleTradeUpdate(data, producer, seq, tradeUpdatesDedup, topicV1, topicV2)
-          }
         }
       }
     }
