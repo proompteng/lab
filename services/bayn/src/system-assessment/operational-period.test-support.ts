@@ -16,6 +16,7 @@ import { ObligationClass } from './reliability'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { qualificationDeadlines } from './configuration'
 import { executionControllerPlanHash } from '../execution/controller'
+import { sha256 } from '../hash'
 
 export const operationalRegistrationFixture = (base = registrationFixture()): OperationalRegistration => {
   const registered = base.policies.find((policy) => policy.policy === 'JEV')
@@ -85,11 +86,24 @@ export const operationalRegistrationFixture = (base = registrationFixture()): Op
     authoredActivation: request.activation,
     activation: request.activation,
   }
-  const configuration = {
-    ...base.obligations.configuration,
-    controllerPlanHash: executionControllerPlanHash,
-    entryMarkets: currentEntryMarkets,
-  }
+  const sourceConfiguration = base.obligations.configuration
+  if (sourceConfiguration.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Operational fixture must start from its retained financial registration')
+  const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = sourceConfiguration
+  const configuration =
+    sourceConfiguration.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      ? {
+          ...common,
+          schemaVersion: 'bayn.qualification-runtime.v2' as const,
+          decisionTrigger: 'streaming' as const,
+          controllerPlanHash: executionControllerPlanHash,
+          entryMarkets: currentEntryMarkets,
+        }
+      : {
+          ...sourceConfiguration,
+          controllerPlanHash: sha256('bayn.execution-controller-plan.v3'),
+          entryMarkets: currentEntryMarkets,
+        }
   const calendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',

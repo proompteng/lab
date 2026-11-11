@@ -17,6 +17,7 @@ import { qualificationDeadlines } from './configuration'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema, scheduledEvaluationFields, validateRegisteredPolicyIdentity } from './policy'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { executionControllerPlanHash } from '../execution/controller'
 
 export const operationalReliabilityPolicy = {
   schemaVersion: 'bayn.operational-reliability-policy.v1',
@@ -145,6 +146,13 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
 /** New periods may only bind the currently executable native protocol. */
 export const validateOperationalRegistration = (input: unknown) =>
   verifyStoredOperationalRegistration(input).pipe(
+    Result.flatMap((verified) => {
+      const runtime = verified.registration.obligations.configuration
+      return runtime.controllerPlanHash === executionControllerPlanHash &&
+        runtime.schemaVersion !== 'bayn.qualification-runtime.v2'
+        ? Result.fail(new SystemAssessmentError({ message: 'Streaming controller requires the streaming runtime' }))
+        : Result.succeed(verified)
+    }),
     Result.flatMap((verified) =>
       Schema.is(JevProtocolSchema)(verified.registration.obligations.configuration.protocol)
         ? Result.succeed(verified)

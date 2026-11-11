@@ -425,6 +425,7 @@ observation ceiling, independently of its ten-second quote limit. A configured s
 at the projection read, and final risk authorization retains its existing freshness checks.
 Maximum-hold, profit-target and protective exits use the same broker ceiling. An expired or future broker observation still
 rejects the exit; accepting a cached position does not extend an executable quote's deadline.
+
 ### Streaming execution owner
 
 `BaynExecutionController` is the sole account-keyed financial owner. Committed market readiness, canonical broker
