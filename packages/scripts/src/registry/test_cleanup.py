@@ -202,6 +202,46 @@ finally:signal.setitimer(signal.ITIMER_REAL,0)
         tag = self.store.quarantined_tag(quarantine, receipt["tags"][0])
         return cleanup.Store(root, workers=1), batch, blob, tag
 
+    def test_empty_unreceipted_quarantine_is_removed(self):
+        root = self.root / "_gc_quarantine"
+        batch = "registry-collect-empty"
+        (root / batch).mkdir(parents=True)
+        result = cleanup.Store(root).purge(batch, "claim", "volume")
+        self.assertEqual(
+            result, {"deletedTags": 0, "deletedBlobs": 0, "deletedBytes": 0}
+        )
+        self.assertFalse((root / batch).exists())
+
+    def test_tag_inventory_propagates_filesystem_failures_and_deadlines(self):
+        tag = self.store.repository("lab/test") / "_manifests/tags/latest"
+        scandir = os.scandir
+        for error in (PermissionError, TimeoutError, InterruptedError):
+            with self.subTest(error=error.__name__):
+
+                def unreadable(path):
+                    if Path(path) == tag / "current":
+                        raise error("Cannot enumerate tag metadata")
+                    return scandir(path)
+
+                with (
+                    patch.object(cleanup.os, "scandir", side_effect=unreadable),
+                    self.assertRaises(error),
+                ):
+                    cleanup.tag_inventory(tag)
+
+    def test_failed_tag_inventory_does_not_create_quarantine_batch(self):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        with (
+            patch.object(
+                cleanup, "tag_inventory", side_effect=TimeoutError("Inventory deadline")
+            ),
+            self.assertRaises(TimeoutError),
+        ):
+            self.collect(plan)
+        self.assertFalse(any((self.root / "_gc_quarantine").glob("registry-collect-*")))
+
     def test_partial_tag_and_blob_purge_resumes_after_process_interruption_and_remount(
         self,
     ):

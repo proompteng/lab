@@ -43,13 +43,54 @@ at 00:18:58 UTC on November 10, 2026. The sidecar had seven restarts; PostgreSQL
 configured backup bandwidth, single backup job and two WAL workers when evaluating this resource change. Database
 growth alone does not prove the cause of a longer backup.
 
-ObjectStore sidecar resources are evaluated on the next Cluster reconciliation. CNPG detects the changed init-container
-resources and rolls the database pods through its configured standby-first switchover procedure. After GitOps applies
-a resource change, verify the resources of the injected `plugin-barman-cloud` init container
-on both database pods, their restart counts and WAL archiving. An updated ObjectStore alone does not prove that
-existing sidecars received the new limit. Preserve two synchronous instances and the CNPG switchover procedure
-during any operator-managed rollout. Confirm the next completed backup and retain the isolated restore drill below
-as the recovery check; a healthy sidecar alone does not prove that a backup can be restored.
+After GitOps applies an ObjectStore resource change, verify the resources of the injected `plugin-barman-cloud`
+init container on both database pods, their restart counts and WAL archiving. An updated ObjectStore alone does not
+prove that existing sidecars received the new limit: Bayn observed `1Gi` on the ObjectStore while both running
+sidecars retained `512Mi` after normal Cluster reconciliation.
+
+## Sidecar resource adoption
+
+Compare the desired limit with both actual Pod specs:
+
+```sh
+kubectl -n bayn get objectstore.barmancloud.cnpg.io bayn-db \
+  -o jsonpath='{.spec.instanceSidecarConfiguration.resources.limits.memory}{"\n"}'
+kubectl -n bayn get pods -l cnpg.io/cluster=bayn-db \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.initContainers[?(@.name=="plugin-barman-cloud")]}{.resources.limits.memory}{end}{"\n"}{end}'
+```
+
+If both sidecars remain at the old limit after normal reconciliation, first verify that the Cluster is 2/2 Ready,
+the required synchronous `ANY 1` standby is streaming, WAL archiving has a fresh success, and Bayn has no unresolved
+live broker mutations. Then request the standard whole-cluster rolling restart:
+
+```sh
+kubectl cnpg restart -n bayn bayn-db
+```
+
+Pass only the Cluster name, with no pod or instance argument. The
+[CNPG 1.30.1 command](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/cmd/plugin/restart/cmd.go)
+selects a different restart path when an instance is supplied. If the plugin CLI is unavailable, its
+[pinned implementation](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/cmd/plugin/restart/restart.go)
+only patches the Cluster metadata with a fresh RFC3339 timestamp under
+[`kubectl.kubernetes.io/restartedAt`](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/pkg/utils/labels_annotations.go).
+The equivalent request is:
+
+```sh
+kubectl -n bayn annotate cluster.postgresql.cnpg.io bayn-db --overwrite \
+  "kubectl.kubernetes.io/restartedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+Use the operator's configured standby-first replacement and switchover; do not delete pods directly or change the
+Cluster spec or image to force adoption. Allow the configured `smartShutdownTimeout` and the applicable shutdown or
+switchover timeout described in the
+[pinned shutdown contract](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/docs/src/instance_manager.md#shutdown-control).
+Record when termination is observed separately from the Pod's deletion/grace deadline. A short observation timeout
+does not establish that shutdown is stuck or justify bypassing the operator.
+
+After the rollout, confirm 2/2 Ready, required synchronous replication, `1Gi` on both injected sidecars and fresh
+successful WAL archiving. Confirm the next completed backup and retain the isolated restore drill below as the
+recovery check; a healthy sidecar alone does not prove that a backup can be restored. Handle any interrupted backup
+using [Backup interruption during rollout](#backup-interruption-during-rollout).
 
 ## Isolated restore drill
 
