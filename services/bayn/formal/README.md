@@ -57,6 +57,38 @@ The checkers verify proof terms against their definitions and permitted axioms. 
 or validate a market model. Arena test results compare particular checker versions and workloads; they do not prove
 soundness or replace checks of Bayn's own proof export with the pinned toolchain.
 
+## Execution-boundary verification
+
+The project skill `.agents/skills/verify-bayn-system/SKILL.md` records the production mapping and upkeep process.
+For the fast combined check, provide an owned disposable PostgreSQL 18 database through `BAYN_TEST_POSTGRES_URL`
+and run from the repository root:
+
+```sh
+bun run --filter @proompteng/bayn verify:system
+```
+
+This runs the pinned TLA+ suite, the retained PAPER registration check, real-schema PostgreSQL/coordinator cases,
+cache and final-authorization regressions, nine additional production-code mutations, and the unchanged cases again.
+Set `BAYN_SYSTEM_OUTPUT_DIR` to an empty directory to retain successful logs, state dumps and mutation receipts.
+Failures retain their directory. The formal workflow runs this command with its isolated PostgreSQL service and
+retains the `bayn-system-<commit>` artifact. The separate Linux Lean and native integration gates remain mandatory.
+
+The Lean registration comparison now covers live, current PAPER and retained v4 PAPER material, including all twelve
+admitted policy cases and altered/foreign/unapproved cases. A source-level check runs without Lean so a missing retained
+approval or bypassed approval check is detected by the fast command too; that check does not replace Lean conformance.
+
+`ExecutionBoundary.tla` separates committed admission, acknowledgement, final writer ownership, one-use cache
+reservation, broker-service invocation, independent broker acceptance/fill and recovery visibility. It checks an
+original submit and a second intent with two workers. Native cases observe the exact committed start from another
+PostgreSQL connection, preserve uncertainty after a not-found lookup, race two approved readers against one immutable
+start, and exercise the cache's before/equal/after timestamp boundary. Provider calls are recorded test services;
+no live broker account is used.
+
+The model does not prove cancellation, partial quantities, arbitrary populations, liveness or exactly-once network
+transport. Cache invalidation follows `occurred_at >= reconciledAt`, not all later database commits: an older late
+observation can coexist with a previously admitted invocation under a newer exact broker cut. A recording-service
+execution and finite conformance are implementation evidence, not a universal refinement proof.
+
 ## Registered evaluation windows
 
 ### Reconciliation identity and guarded recovery

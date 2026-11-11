@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Schema } from 'effect'
+import { checkProductionFaults } from './production-faults'
 
 const service = fileURLToPath(new URL('..', import.meta.url))
 if (process.argv.length !== 2) throw Error('Usage: bun run --filter @proompteng/bayn verify:tla')
@@ -105,7 +106,14 @@ const check = (name: string, directory: string, expectedViolation?: string) => {
   }
 }
 
-for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoveryScheduler', 'CancellationAdmission']) {
+for (const name of [
+  'Controller',
+  'EntryRecovery',
+  'MutationLedger',
+  'RecoveryScheduler',
+  'CancellationAdmission',
+  'ExecutionBoundary',
+]) {
   const directory = join(output, name)
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, `${name}.tla`), readFileSync(join(models, `${name}.tla`)))
@@ -114,6 +122,27 @@ for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoverySc
 }
 
 const faults = [
+  {
+    model: 'ExecutionBoundary',
+    name: 'unknown-second-admission',
+    before: '/\\ ~revoked /\\ AllowsSecond',
+    after: '/\\ ~revoked',
+    violation: 'Invariant NoUnknownAdmission is violated.',
+  },
+  {
+    model: 'ExecutionBoundary',
+    name: 'duplicate-physical-invocation',
+    before: 'Send == /\\ transaction = "Final" /\\ owner = worker /\\ receipt = "Granted" /\\ sent = 0',
+    after: 'Send == /\\ transaction = "Final" /\\ owner = worker /\\ sent < 2',
+    violation: 'Invariant NoDuplicateInvocation is violated.',
+  },
+  {
+    model: 'ExecutionBoundary',
+    name: 'unknown-cache-publication',
+    before: '/\\ transaction = "None" /\\ ~Unresolved /\\ ~secondStarted',
+    after: '/\\ transaction = "None"',
+    violation: 'Invariant NoUnknownCachePublication is violated.',
+  },
   {
     model: 'CancellationAdmission',
     name: 'stale-cancellation-admission',
@@ -189,12 +218,15 @@ for (const fault of faults) {
   check(fault.model, directory, fault.violation)
 }
 
-const conformance = Bun.spawnSync([process.execPath, 'test', 'formal/conformance/tla.test.ts'], {
-  cwd: service,
-  env: { ...process.env, BAYN_TLA_STATE_DIRECTORY: output },
-  stdout: 'inherit',
-  stderr: 'inherit',
-})
+const conformance = Bun.spawnSync(
+  [process.execPath, 'test', 'formal/conformance/tla.test.ts', 'formal/conformance/execution-boundary.test.ts'],
+  {
+    cwd: service,
+    env: { ...process.env, BAYN_TLA_STATE_DIRECTORY: output },
+    stdout: 'inherit',
+    stderr: 'inherit',
+  },
+)
 if (conformance.exitCode !== 0) throw Error(`TLC production conformance failed; retained ${output}`)
 
 const productionFaults = [
@@ -260,68 +292,10 @@ const productionFaults = [
     test: 'every reachable partial ledger posting uses production preflight and exact metadata verification',
   },
 ]
-for (const fault of productionFaults) {
-  const directory = join(output, `production-${fault.name}`)
-  mkdirSync(directory)
-  const source = join(service, fault.file)
-  const originalHash = digest(source)
-  const preload = join(directory, 'preload.ts')
-  const marker = `BAYN_PRODUCTION_MUTATION_APPLIED:${fault.name}`
-  const modulePattern = `${fault.file.replaceAll('.', '\\.')}$`
-  // A child-only loader changes the real module without exposing other processes to a mutated source file.
-  writeFileSync(
-    preload,
-    `import { plugin } from 'bun'
-import { readFileSync } from 'node:fs'
-plugin({
-  name: ${JSON.stringify(fault.name)},
-  setup(build) {
-    build.onLoad({ filter: new RegExp(${JSON.stringify(modulePattern)}) }, ({ path }) => {
-      if (path !== ${JSON.stringify(source)}) throw Error('Mutation resolved a different production module')
-      const before = ${JSON.stringify(fault.before)}
-      const original = readFileSync(path, 'utf8')
-      if (original.split(before).length !== 2) throw Error('Mutation no longer identifies one production guard')
-      console.error(${JSON.stringify(marker)})
-      return { contents: original.replace(before, ${JSON.stringify(fault.after)}), loader: 'ts' }
-    })
-  },
-})
-`,
-  )
-  const result = Bun.spawnSync(
-    [
-      process.execPath,
-      'test',
-      '--preload',
-      preload,
-      'formal/conformance/tla.test.ts',
-      '--test-name-pattern',
-      fault.test,
-    ],
-    {
-      cwd: service,
-      env: { ...process.env, NO_COLOR: '1', BAYN_TLA_STATE_DIRECTORY: output },
-      stdout: 'pipe',
-      stderr: 'pipe',
-      timeout: 60_000,
-    },
-  )
-  const log = result.stdout.toString() + result.stderr.toString()
-  writeFileSync(join(directory, 'test.log'), log)
-  if (digest(source) !== originalHash) throw Error(`Production source changed during ${fault.name}`)
-  if (
-    result.exitCode !== 1 ||
-    log.split(marker).length !== 2 ||
-    !log.includes(`(fail) TLC reachable states conform to production > ${fault.test}`) ||
-    !log.includes('error: expect(received).toBe(expected)')
-  ) {
-    console.error(log)
-    throw Error(`Production conformance did not detect ${fault.name}; retained ${directory}`)
-  }
-  writeFileSync(
-    join(directory, 'source.json'),
-    `${JSON.stringify({ file: fault.file, sha256: originalHash, test: fault.test }, null, 2)}\n`,
-  )
-  console.log(`${fault.name}: production conformance rejected the injected defect`)
-}
+checkProductionFaults(
+  productionFaults.map((fault) => ({ ...fault, testFile: 'formal/conformance/tla.test.ts' })),
+  service,
+  output,
+  { ...process.env, BAYN_TLA_STATE_DIRECTORY: output },
+)
 if (suppliedOutput === undefined) rmSync(output, { recursive: true, force: true })

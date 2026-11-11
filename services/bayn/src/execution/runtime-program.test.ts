@@ -1438,6 +1438,39 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(1)
   })
 
+  test('rejects revoked final submit authorization before broker transmission', async () => {
+    const fixture = finalLiveFixture()
+    const base = dependencies('revoked-final-submit')
+    const denied = new MutationStoreError({
+      operation: 'begin-submit',
+      failure: 'authority',
+      message: 'submission authority was revoked after admission',
+    })
+    let posts = 0
+    const result = await Effect.runPromise(
+      authorizeCachedFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...base,
+          intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(fixture.stored)) },
+          mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.fail(denied) },
+          writerFence: { check: Effect.void, transaction: (effect) => effect },
+          persistedCapitalGrants: {
+            ...base.persistedCapitalGrants,
+            lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+          },
+        },
+      ).pipe(Effect.result, Effect.provide(TestClock.layer())),
+    )
+
+    expect(posts).toBe(0)
+    expect(result).toEqual(Result.fail(denied))
+  })
+
   test('keeps a post-transmit transaction failure unknown for broker recovery', async () => {
     const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
     const authority = Result.getOrThrow(

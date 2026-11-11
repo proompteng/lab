@@ -694,6 +694,7 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
     '.github/workflows/bayn-formal.yml',
+    '.agents/skills/verify-bayn-system/SKILL.md',
   ])
     expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, gepa: false, formal: true })
   expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
@@ -723,6 +724,8 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/src/system-assessment/postgres.integration.test.ts',
     'services/bayn/src/db/risk-clock-rejection.integration.test.ts',
     'services/bayn/src/db/candidate-observation-window.integration.test.ts',
+    'services/bayn/src/execution/runtime-program.test.ts',
+    'services/bayn/src/execution/broker-state-cache.test.ts',
   ])
     expect(selectAffectedInputs([path], targets, lock, lock).formal).toBe(true)
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-build-push.yml', 'utf8'))
