@@ -79,7 +79,7 @@ const formatParseError = (error: ParseResult.ParseError) => ParseResult.TreeForm
 
 const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =>
   Effect.runPromise(
-    Schema.decodeUnknown(tool.inputSchema)(value).pipe(
+    Schema.decodeUnknown(tool.inputSchema, { onExcessProperty: 'error' })(value).pipe(
       Effect.mapError(
         (error) =>
           new Error(`Input validation error: Invalid arguments for tool ${tool.name}: ${formatParseError(error)}`),

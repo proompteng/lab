@@ -12,7 +12,8 @@ owns its 50 GiB `rook-ceph-block` volume. Agents reads the connection from the e
 Schema changes are registered in [the Kysely migration provider](../../services/agents/src/server/kysely-migrations.ts).
 With `AGENTS_MIGRATIONS=auto`, initializing a database store runs pending migrations under Kysely's migration lock;
 `agents_kysely_migration` records applied versions. Migration errors fail the operation. The retirement migration adds
-columns and active-note indexes in place; existing notes and embeddings remain in this database.
+columns and active-note indexes in place. The save-key migration gives identical notes one replay key, including historical notes.
+Existing duplicate rows, content and embeddings are preserved. The earliest duplicate owns the replay key.
 
 After a reviewed merge, the [Agents image workflow](../../.github/workflows/agents-build-push.yml) publishes the immutable
 image cohort. Kargo promotes it through `kargo/agents`, then Argo reconciles the rollout. See the
@@ -65,20 +66,54 @@ bun run --cwd services/memories retrieve-memory --latest \
 
 `--after` is inclusive and `--before` is exclusive. Both accept ISO dates or timestamps with a time zone.
 Multiple comma-separated `--tags` must all match. Notes without the requested repository or model metadata are excluded.
-`--json` returns full content and provenance; text output caps each note's content at 4,000 characters and marks truncation.
-Unsupported flags fail instead of being silently ignored.
+Latest listing returns compact summaries and `nextCursor`. Repeat the same filters with `--cursor '<nextCursor>'` to continue.
+The cursor uses the last visible note ID and the database timestamp at full precision. Newer inserts do not repeat earlier pages;
+retiring the cursor note does not invalidate it. No embedding is requested for listing or reading.
+
+Open an exact note, including retired history:
+
+```sh
+bun run --cwd services/memories retrieve-memory --id '<note UUID>' --json
+```
+
+`--id` returns bounded content chunks and provenance. Repeat with `--offset <nextOffset>` until `nextOffset` is null
+to read all content. Query search returns full records with `--json`; its text output caps content at 4,000 characters
+and points to the exact-ID read command. Unsupported flags fail instead of being silently ignored.
 
 Agent Shell and Agent Shell Tunnel expose the same tools without a repo session:
 
-| Tool               | Purpose                                                                                                        |
-| ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `retrieve_context` | Retrieve bounded code and engineering notes with explicit snapshot freshness and source availability.          |
-| `memory_list`      | List newest notes with the same filters, without requesting an embedding.                                      |
-| `memory_save`      | Save durable knowledge when the user explicitly requests it. Put repository and commit provenance in metadata. |
-| `memory_retire`    | Retire a verified obsolete or incorrect note, with a reason and optional active replacement.                   |
+| Tool               | Purpose                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `retrieve_context` | Retrieve bounded code and engineering notes with explicit snapshot freshness and source availability.              |
+| `memory_list`      | Browse compact summaries with the same filters. Continue with `nextCursor`.                                        |
+| `memory_get`       | Read an exact note ID, including retirement status. Follow `nextOffset` until null for the complete content.       |
+| `memory_save`      | Save explicitly requested knowledge with `repository` and full `commit` fields. Identical saves reuse the note ID. |
+| `memory_retire`    | Retire a verified obsolete or incorrect note, with a reason and optional active replacement.                       |
 
 Memory tool audit events retain call identity and outcome without copying queries, note bodies or results into shell logs.
-Save and retire return compact receipts with note IDs and timestamps. Read full notes through search or listing.
+Save and retire return compact receipts with note IDs and timestamps. `memory_get` returns bounded UTF-8 content chunks;
+`offset` counts Unicode characters and comes from the previous `nextOffset`. The complete reply fits the configured budget.
+A retired note remains readable with its reason and replacement ID. Any reason shortened to fit is marked explicitly.
+Listing never copies full note bodies into the response. If its reply budget reduces the page, the cursor resumes after the last visible note.
+
+## Save requested knowledge
+
+`memory_save` takes `repository` and `commit` directly, with optional namespace, summary and tags. Repository defaults to
+`proompteng/lab`. It rejects the removed freeform `metadata` argument. The API retains application metadata for generators
+such as Bumba; all writes share the same store and replay-key calculation.
+
+```sh
+bun run --cwd services/memories save-memory --task-name 'engineering' \
+  --repository proompteng/lab --content-file './requested-note.md' --summary 'Verified constraint' --json
+```
+
+The CLI defaults the commit to its checkout's `HEAD`; `--commit` supplies another full source SHA. Use `--repository`
+for another repository. Both values are validated before writing. Saves return HTTP 200 with the persisted record.
+The MCP and CLI return compact receipts.
+
+Identical namespace, content, summary, tags and metadata reuse the original ID and creation time. Tag order and metadata
+key order do not create duplicates. A unique database key handles simultaneous retries and uncertain responses.
+A replay of a retired note stays retired. Save corrected content or provenance to create a new note.
 
 ## Retire obsolete notes
 
