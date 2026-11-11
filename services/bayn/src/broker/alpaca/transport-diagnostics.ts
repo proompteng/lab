@@ -1,6 +1,6 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import type * as Undici from '@effect/platform-node/Undici'
-import { Clock, Effect, Exit } from 'effect'
+import { Cause, Clock, Effect, Exit } from 'effect'
 
 import type { BrokerReadOperation } from './failures'
 
@@ -13,6 +13,7 @@ enum TransportPhase {
 
 interface Observation {
   readonly now: () => bigint
+  interceptorInstalled?: boolean
   active: boolean
   attempts: number
   started: number
@@ -74,6 +75,23 @@ export const readTransportInterceptor: Undici.Dispatcher.DispatchInterceptor = (
   return dispatch(options, observed)
 }
 
+/** Acquisition coverage is separate from whether this request reached the interceptor. */
+export const withReadTransportCoverage =
+  (interceptorInstalled: boolean) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.gen(function* () {
+      const options = yield* NodeHttpClient.UndiciOptions
+      const opaque: unknown = Object.getOwnPropertyDescriptor(options, 'opaque')?.value
+      const observation = typeof opaque === 'object' && opaque !== null ? observations.get(opaque) : undefined
+      if (observation !== undefined)
+        note(observation, () => {
+          observation.interceptorInstalled = interceptorInstalled
+        })
+    }).pipe(
+      Effect.catchCause((cause) => (Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.void)),
+      Effect.andThen(effect),
+    )
+
 const elapsed = (start: bigint | undefined, end: bigint) =>
   start === undefined ? 0 : Math.max(0, Number(end - start) / 1_000_000)
 
@@ -103,6 +121,12 @@ export const withReadTransportDiagnostics =
             observations.delete(token)
             const end = observation.now()
             const attributes = {
+              ...(observation.interceptorInstalled === undefined
+                ? {}
+                : {
+                    'broker.transport.interceptor_available': observation.interceptorInstalled,
+                    'broker.transport.interceptor_installed': observation.interceptorInstalled,
+                  }),
               'broker.transport.phase': observation.phase,
               'broker.transport.attempts': observation.attempts,
               'broker.transport.started': observation.started,

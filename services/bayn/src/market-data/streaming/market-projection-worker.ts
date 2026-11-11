@@ -5,6 +5,7 @@ import { Cause, Context, Effect, Exit, FiberMap, FiberSet, Layer, Logger, Redact
 
 import { PostgresClientLive } from '../../db/postgres-client'
 import { makeNativeArrivalStore } from '../../db/native-arrival-postgres'
+import { initializeErrorTracking } from '../../error-tracking'
 import { makeConfiguredTelemetryRuntimeLayer } from '../../telemetry'
 import { KafkaMarketFailure, makeKafkaMarketProjection } from './kafka'
 import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
@@ -113,6 +114,7 @@ export const serveProjectionWorker = (
 
 export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: NonNullable<typeof parentPort>) =>
   Effect.gen(function* () {
+    initializeErrorTracking('bayn-market-projection')
     const scope = yield* Scope.make()
     yield* Effect.addFinalizer((exit) => Scope.close(scope, exit))
     const database = PostgresClientLive(

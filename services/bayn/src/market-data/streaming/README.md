@@ -56,8 +56,10 @@ An individual valid chunk above the SQL byte target is written whole under the e
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-Connection failures, including a failed COMMIT acknowledgement reported as a SQL defect, retry the identical append
-at most twice with 100 milliseconds between attempts. Each retry reads the existing ordinals and verifies their
+Connection failures, statement timeouts and PostgreSQL `57P03` startup refusals retry the identical append on the
+existing one-minute schedule with one second between retries. The pinned driver classifies `57P03` as an unknown
+SQL error, so the append policy recognizes that exact code without retrying other unknown errors. A failed COMMIT
+acknowledgement reported as a SQL defect follows the same policy. Each retry reads the existing ordinals and verifies their
 exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.
 If every chunk already exists, a [transactional WAL acknowledgement](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-REPLICATION) makes the retry's COMMIT wait for the configured
 synchronous durability; a locally visible row alone does not prove that its lost COMMIT acknowledgement was durable.
