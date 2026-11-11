@@ -1116,7 +1116,8 @@ export const recoverExpiredEntryBeforeReconciliation = (
     )
       return undefined
     const document = yield* readBoundMutationDocument(cycle)
-    if (document.mode === 'OBSERVE') return undefined
+    if (document.mode === 'OBSERVE' || document.bindings.authorityGenerationHash !== input.authorityGenerationHash)
+      return undefined
     yield* recoverBoundExecutionContext(policy, cycle, document, input.simulation)
     const step = yield* prepareExpiredEntryCancellation(
       { ...input, mutationPhase: 'ENTRY' },

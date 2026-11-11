@@ -445,11 +445,8 @@ export const prepareExpiredEntryCancellation = (
       document.targetPlan.status !== TargetPlanStatus.Planned
     )
       return undefined
-    if (input.authorityGenerationHash !== document.bindings.authorityGenerationHash)
-      return yield* mutationRunnerError({
-        message: 'expired entry cancellation requires its current bound authority generation',
-        failure: 'contract',
-      })
+    // A superseded generation still needs ordinary lookup recovery and provenance terminalization.
+    if (input.authorityGenerationHash !== document.bindings.authorityGenerationHash) return undefined
     const cutoff = yield* Effect.fromResult(boundExecutionSubmissionCutoff(input, cycle, document))
     const preparedIntents = yield* readPreparedExecutionIntents(document)
     for (const prepared of preparedIntents) {

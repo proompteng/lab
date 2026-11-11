@@ -1730,14 +1730,9 @@ test('expired entry containment verifies the isolated parent and preserves uncer
       ),
     )
     if (
-      [
-        'foreign-account',
-        'foreign-generation',
-        'foreign-client',
-        'changed-protection',
-        'stale-observation',
-        'future-observation',
-      ].includes(scenario)
+      ['foreign-account', 'foreign-client', 'changed-protection', 'stale-observation', 'future-observation'].includes(
+        scenario,
+      )
     ) {
       expect(Result.isFailure(outcome)).toBe(true)
     } else {
@@ -1745,6 +1740,7 @@ test('expired entry containment verifies the isolated parent and preserves uncer
       const expected =
         scenario === 'before-expiry' ||
         scenario === 'terminal-intent' ||
+        scenario === 'foreign-generation' ||
         scenario === 'partial' ||
         scenario === 'active-protection' ||
         scenario === 'filled-protection' ||
@@ -1762,6 +1758,7 @@ test('expired entry containment verifies the isolated parent and preserves uncer
     if (
       scenario === 'before-expiry' ||
       scenario === 'terminal-intent' ||
+      scenario === 'foreign-generation' ||
       scenario === 'unknown-submit' ||
       scenario === 'unknown-cancel'
     )
@@ -1771,7 +1768,15 @@ test('expired entry containment verifies the isolated parent and preserves uncer
   }
 })
 
-test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-active', 'racing-fill'] as const)(
+test.each([
+  'clear',
+  'restricted',
+  'uncertain',
+  'partial-observed',
+  'protection-active',
+  'superseded-generation',
+  'racing-fill',
+] as const)(
   'expired entry cancellation precedes failing full-history reconciliation and remains idempotent: %s',
   async (scenario) => {
     const fixture = await executionLifecycleFixture()
@@ -1779,6 +1784,10 @@ test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-a
     const baseAuthority = reconciliationResultAt(evaluatedAt).riskContext.authority
     if (baseAuthority === null) throw new Error('Expected bound PAPER authority')
     const expiredAt = utcInstantFromEpochMillis(Date.parse(fixture.risk.evaluation.decision.expiresAt) + 1_000)
+    const input =
+      scenario === 'superseded-generation'
+        ? { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
+        : fixture.input
     let authority =
       scenario === 'clear'
         ? baseAuthority
@@ -1787,9 +1796,11 @@ test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-a
             effective: Authority.Observe,
             kill: KillState.Active,
             reason: 'reconciliation pass incomplete',
+            generationHash: input.authorityGenerationHash,
           }
     const baseParent = expiredEntryBrokerOrder(fixture, expiredAt)
-    const requiresCompleteReconciliation = scenario === 'partial-observed' || scenario === 'protection-active'
+    const requiresCompleteReconciliation =
+      scenario === 'partial-observed' || scenario === 'protection-active' || scenario === 'superseded-generation'
     const parent: RawBrokerOrder = {
       ...baseParent,
       ...(scenario === 'partial-observed'
@@ -1866,13 +1877,13 @@ test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-a
         const admittedAuthority = authority
         for (const held of [
           { ...authority, effective: Authority.Observe, kill: KillState.Active, reason: 'operator hold' },
-          { ...authority, generationHash: 'f'.repeat(64) },
+          { ...authority, generationHash: 'e'.repeat(64) },
           { ...authority, maximum: Authority.Observe },
         ]) {
           authority = held
           expect(
             yield* executionCycleModule.recoverExpiredEntryBeforeReconciliation(
-              fixture.input,
+              input,
               fixture.boundCycle,
               fixture.policy,
               capability,
@@ -1882,7 +1893,7 @@ test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-a
         authority = admittedAuthority
         expect(
           yield* executionCycleModule.recoverExpiredEntryBeforeReconciliation(
-            fixture.input,
+            input,
             fixture.boundCycle,
             fixture.policy,
             { _tag: 'RecoveryOnly' },
@@ -1891,7 +1902,7 @@ test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-a
         expect([cancelCount, parentReads, recoveryCount]).toEqual([0, 0, 0])
         const driver = yield* Effect.fromResult(
           makeRecoveryFirstCycleDriver(
-            fixture.input,
+            input,
             { cycleBindingId: fixture.boundCycle.identity.qualificationRunId, recordPass: () => Effect.void },
             fixture.preparation,
             fixture.policy,
@@ -1903,12 +1914,13 @@ test.each(['clear', 'restricted', 'uncertain', 'partial-observed', 'protection-a
         const first = yield* driver.advance
         if (requiresCompleteReconciliation) {
           expect(first.observation.result).toBe('FAILURE')
-          expect([cancelCount, recoveryCount, parentReads, fullHistoryReads]).toEqual([0, 0, 1, 1])
+          const readsPerPass = scenario === 'superseded-generation' ? 0 : 1
+          expect([cancelCount, recoveryCount, parentReads, fullHistoryReads]).toEqual([0, 0, readsPerPass, 1])
           yield* TestClock.adjust(1_000)
           const second = yield* driver.advance
           expect(second.observation.result).toBe('FAILURE')
           // The ordinary broker snapshot cache retains the failed cut for its bounded cadence.
-          expect([cancelCount, recoveryCount, parentReads, fullHistoryReads]).toEqual([0, 0, 2, 1])
+          expect([cancelCount, recoveryCount, parentReads, fullHistoryReads]).toEqual([0, 0, readsPerPass * 2, 1])
           expect(authority).toEqual(admittedAuthority)
           return
         }
