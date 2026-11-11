@@ -3,8 +3,9 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Context, Effect, Exit, FiberMap, FiberSet, Layer, Logger, Redacted, Scope } from 'effect'
 
-import { NativeArrivalArchiveLive } from '../../db/native-arrival-archive'
+import { PostgresClientLive } from '../../db/postgres-client'
 import { makeNativeArrivalStore } from '../../db/native-arrival-postgres'
+import { initializeErrorTracking } from '../../error-tracking'
 import { makeConfiguredTelemetryRuntimeLayer } from '../../telemetry'
 import { KafkaMarketFailure, makeKafkaMarketProjection } from './kafka'
 import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
@@ -113,16 +114,20 @@ export const serveProjectionWorker = (
 
 export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: NonNullable<typeof parentPort>) =>
   Effect.gen(function* () {
+    initializeErrorTracking('bayn-market-projection')
     const scope = yield* Scope.make()
     yield* Effect.addFinalizer((exit) => Scope.close(scope, exit))
-    const archive = NativeArrivalArchiveLive({
-      ...options.archive,
-      postgres: { ...options.archive.postgres, url: Redacted.make(options.archive.postgres.url) },
-    })
+    const database = PostgresClientLive(
+      {
+        ...options.database,
+        postgres: { ...options.database.postgres, url: Redacted.make(options.database.postgres.url) },
+      },
+      { maxConnections: 1, applicationName: 'bayn-native-arrival' },
+    )
     const parent = yield* Effect.context<never>()
     const outerScope = yield* Effect.scope
     const context = yield* Layer.buildWithScope(
-      archive.pipe(
+      database.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-market-projection')),
       ),
@@ -156,7 +161,7 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
   })
 
 if (import.meta.main && parentPort !== null) {
-  // The parent passes only the existing Kafka/archive credentials and public source identity.
+  // The parent passes only the existing Kafka/PostgreSQL credentials and public source identity.
   const options = workerData as ProjectionWorkerOptions
   NodeRuntime.runMain(
     Layer.effectDiscard(

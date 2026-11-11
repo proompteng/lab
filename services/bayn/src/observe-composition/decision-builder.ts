@@ -1,6 +1,4 @@
-import { makeMomentumEntryQuery } from '../jev/observation-query'
-import { evaluateRepeatedMomentumFromSnapshot } from '../strategy/repeated-momentum/runtime'
-import { JevBatchPlanVersion } from '../jev/batch'
+import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
@@ -19,11 +17,9 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
-import { JevDecisionEvidenceSchema } from '../jev/decision'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
-  evaluateJevObservationFromSnapshot,
   JevAwaitingEvidence,
   JevAwaitingFreshWindow,
   jevObservationQuery,
@@ -97,7 +93,7 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner/index'
-import { strategyTradingProtocol, isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
+import { strategyTradingProtocol, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
@@ -625,6 +621,27 @@ const validateEntryDecisionContext = <R>(
   return Result.succeed(undefined)
 }
 
+const requireEntryTurnoverCapacity = <R>(
+  input: ObserveDecisionInput<R>,
+  facts: Pick<ObserveDecisionFacts, 'reconciliation' | 'evaluatedAt'>,
+  requiredAuthority: DecisionAuthorityRequirement,
+): Result.Result<void, ObserveDecisionAwaitingSignal> =>
+  requiredAuthority === Authority.Execution &&
+  BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros) >=
+    BigInt(input.policy.maxDailyTradedNotionalMicros)
+    ? Result.fail(
+        new ObserveDecisionAwaitingSignal({
+          message: 'The daily turnover budget is exhausted; new entries await fresh session capacity',
+          readiness: {
+            reason: DecisionReadinessReason.TurnoverBudgetExhausted,
+            message: 'The daily turnover budget is exhausted; new entries await fresh session capacity',
+          },
+          observedAt: facts.evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        }),
+      )
+    : Result.succeed(undefined)
+
 export const readObserveDecisionFacts = <R>(
   input: ObserveDecisionInput<R>,
   preparation: ObserveDecisionReadPreparation,
@@ -678,6 +695,7 @@ export const readObserveDecisionFacts = <R>(
         })
       }
     }
+    yield* Effect.fromResult(requireEntryTurnoverCapacity(input, { reconciliation, evaluatedAt }, requiredAuthority))
     const brokerRead = yield* BrokerRead
     const readCalendar: Effect.Effect<{ readonly value: MarketHours }, OperationalError> =
       input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -863,6 +881,7 @@ const compileObserveStrategyDecision = <R>(
   executionSession: ExecutionSessionBinding,
   requiredAuthority: DecisionAuthorityRequirement,
   portfolio: JevPortfolio,
+  observeEntry: EntryObservation,
 ): Effect.Effect<
   { readonly compiled: CompiledObserveStrategyDecision; readonly facts: ObserveDecisionFacts },
   OperationalError | ObserveDecisionAwaitingSignal | ObserveDecisionCompositionFailure,
@@ -880,16 +899,7 @@ const compileObserveStrategyDecision = <R>(
     const candidateQuery = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
-    const strategy = input.strategy
-    const query = isRepeatedMomentumRuntime(strategy)
-      ? makeMomentumEntryQuery({
-          protocol,
-          calendar: executionSession.calendar,
-          sessionDate: input.cycle.identity.executionSessionDate,
-          observedAtMs: Date.parse(initialFacts.evaluatedAt),
-          candidates: candidateQuery.candidateSymbols ?? [],
-        })
-      : candidateQuery
+    const query = candidateQuery
     const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
     const observationInput = {
       cycleId: input.cycle.identity.cycleId,
@@ -897,45 +907,27 @@ const compileObserveStrategyDecision = <R>(
       protocol,
       portfolio,
     }
-    const loadSnapshot = Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
-      Effect.catch((cause) =>
-        classifyIntradayEntrySnapshotFailure(
-          cause,
-          initialFacts.evaluatedAt,
-          input.cycle.window.submissionCutoffAt,
-          query,
-          input.cycle.identity.cycleId,
-        ).pipe(Effect.flatMap(Effect.fail)),
-      ),
-    )
-    const { snapshot, decision } = yield* Effect.gen(function* () {
-      if (isRepeatedMomentumRuntime(strategy))
-        return yield* evaluateRepeatedMomentumFromSnapshot(
-          observationInput,
-          query.rangeEndAt,
-          loadSnapshot,
-          strategy.definition.parameters,
-          admissionExpiresAt,
-        )
-      const evaluated = yield* evaluateJevObservationFromSnapshot(
-        observationInput,
-        query.rangeEndAt,
-        loadSnapshot,
-        strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
-          ? JevBatchPlanVersion.Ablation
-          : JevBatchPlanVersion.V8,
-        { admissionDeadlineAt: admissionExpiresAt },
+    const loadSnapshot = (query: IntradaySnapshotQuery) =>
+      Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
+        Effect.catch((cause) =>
+          classifyIntradayEntrySnapshotFailure(
+            cause,
+            initialFacts.evaluatedAt,
+            input.cycle.window.submissionCutoffAt,
+            query,
+            input.cycle.identity.cycleId,
+          ).pipe(Effect.flatMap(Effect.fail)),
+        ),
       )
-      const evidence = yield* Effect.fromResult(
-        Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
-      )
-      if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
-        return yield* new JevAwaitingEvidence({
-          message: 'Entry admission expired before its decision evidence completed',
-          readiness: DecisionReadinessReason.NoEligibleCandidate,
-        })
-      const decision = yield* Effect.fromResult(strategy.definition.decide({ market: evidence }))
-      return { snapshot: evaluated.snapshot, decision }
+    const { snapshot, decision } = yield* observeEntry({
+      strategy: input.strategy,
+      query,
+      observation: observationInput,
+      calendar: executionSession.calendar,
+      sessionDate: input.cycle.identity.executionSessionDate,
+      observedAt: initialFacts.evaluatedAt,
+      admissionExpiresAt,
+      loadSnapshot,
     })
     if (
       decision.selectedSymbols.length === 0 &&
@@ -971,6 +963,9 @@ const compileObserveStrategyDecision = <R>(
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingAt = yield* currentUtcInstant
+    yield* Effect.fromResult(
+      requireEntryTurnoverCapacity(input, { reconciliation, evaluatedAt: pricingAt }, requiredAuthority),
+    )
     const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
     const brokerHeadroomExhaustedAt = (at: number) =>
       pricingReconciliation?.freshUntil !== undefined &&
@@ -1300,21 +1295,34 @@ const reduceObserveRiskInputs = <R>(
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
 ): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
-  buildCycleDecision(input, { authorityRequirement: Authority.Observe, documentMode: Authority.Observe })
+  buildStrategyCycleDecision(input, {
+    authorityRequirement: Authority.Observe,
+    documentMode: Authority.Observe,
+    observeEntry: observeNativeEntry,
+  })
 
-type CycleDecisionRequirements =
+type CycleDecisionRequirements = { readonly observeEntry: EntryObservation } & (
   | { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe }
   | { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution }
+)
 
-function buildCycleDecision<R>(
+export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
-  requirements: { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe },
+  requirements: {
+    readonly observeEntry: EntryObservation
+    readonly authorityRequirement: Authority.Observe
+    readonly documentMode: Authority.Observe
+  },
 ): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
-function buildCycleDecision<R>(
+export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
-  requirements: { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution },
+  requirements: {
+    readonly observeEntry: EntryObservation
+    readonly authorityRequirement: Authority.Execution
+    readonly documentMode: Authority.Execution
+  },
 ): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
-function buildCycleDecision<R>(
+export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: CycleDecisionRequirements,
 ): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> {
@@ -1332,6 +1340,7 @@ function buildCycleDecision<R>(
       initialSession,
       requirements.authorityRequirement,
       portfolio,
+      requirements.observeEntry,
     )
     const executionAuthority = yield* Effect.fromResult(
       requireDecisionAuthority(
@@ -1480,7 +1489,11 @@ function buildCycleDecision<R>(
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
 ): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
-  buildCycleDecision(input, { authorityRequirement: Authority.Execution, documentMode: Authority.Execution })
+  buildStrategyCycleDecision(input, {
+    authorityRequirement: Authority.Execution,
+    documentMode: Authority.Execution,
+    observeEntry: observeNativeEntry,
+  })
 
 export const makeClosingDecisionPlan = (
   identity: {

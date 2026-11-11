@@ -1,7 +1,7 @@
+import type { LoadedRuntimeConfig } from '../../config/model'
 import { Worker } from 'node:worker_threads'
-import { Deferred, Effect, Exit, Redacted, type Result } from 'effect'
+import { Deferred, Effect, Exit, Redacted } from 'effect'
 
-import type { nativeArrivalArchiveConfig } from '../../db/native-arrival-archive'
 import type { NativeArrivalEpoch } from './native-arrival'
 import type { MarketSources } from './raw-events'
 import {
@@ -16,7 +16,7 @@ export type ProjectionStatus = Effect.Success<KafkaMarketProjection['Service']['
 
 export interface ProjectionWorkerOptions {
   readonly kafka: Omit<KafkaMarketConfig, 'password'> & { readonly password: string }
-  readonly archive: {
+  readonly database: {
     readonly postgres: { readonly url: string; readonly tls: boolean; readonly caPath: string }
     readonly operationTimeoutMs: number
   }
@@ -62,12 +62,12 @@ type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' }>
 
 export const projectionWorkerOptions = (
   kafka: KafkaMarketConfig,
-  archive: Result.Result.Success<ReturnType<typeof nativeArrivalArchiveConfig>>,
+  database: Pick<LoadedRuntimeConfig, 'postgres' | 'operationTimeoutMs'>,
   sources: MarketSources,
   build: NativeArrivalEpoch['build'],
 ): ProjectionWorkerOptions => ({
   kafka: { ...kafka, password: Redacted.value(kafka.password) },
-  archive: { ...archive, postgres: { ...archive.postgres, url: Redacted.value(archive.postgres.url) } },
+  database: { ...database, postgres: { ...database.postgres, url: Redacted.value(database.postgres.url) } },
   sources,
   build,
 })

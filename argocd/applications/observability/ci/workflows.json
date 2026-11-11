@@ -59,6 +59,14 @@
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "research-image",
+      "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "publish-cohort",
+      "pattern": "^publish-cohort(?: \\(.*\\))?$"
     }
   ],
   "bayn-ci.yml": [
@@ -109,6 +117,10 @@
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "research-image",
+      "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "required",

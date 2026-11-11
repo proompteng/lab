@@ -17,8 +17,12 @@ request hashes use the domain-separated canonical hash domains `bayn.fee-diagnos
 can be correlated with existing read evidence; metadata from different responses is not presented as one atomic cut.
 
 The allowlist covers optional fee status, subtype and timing fields and optional account `accrued_fees` and
-`pending_reg_taf_fees`. Absence, null, invalid types and unrecognized values remain explicit. These optional fields
-are not promised by the Trading API contract. Recognized strings are reported lexical values, never settlement or
+`pending_reg_taf_fees`. Absence, null, invalid types and unrecognized values remain explicit. The v2 REST
+[activity endpoint](https://docs.alpaca.markets/us/reference/getaccountactivitiesbyactivitytype-1) documents
+`activity_sub_type`; it is recorded separately from `activity_subtype` and `entry_sub_type`, without alias fallback
+or reconciling contradictory values. Older diagnostics did not inspect `activity_sub_type`, so their silence cannot
+establish its absence. Other optional fields are not assumed to exist on this endpoint.
+Recognized strings are reported lexical values, never settlement or
 booking authority. The description field contributes only presence/type and a non-authoritative REG/TAF/CAT prefix
 category. Free text, unknown strings, raw response bodies, account numbers, credentials, absolute balances and
 equity-minus-cash are excluded. Diagnostic fee decimals retain their reported precision without financial rounding.

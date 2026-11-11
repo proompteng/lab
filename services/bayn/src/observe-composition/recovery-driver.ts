@@ -52,6 +52,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleAdvance,
   RecoveryFirstRuntime,
+  RecoveryFirstCyclePassResult,
   PostMutationReconciliation,
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
@@ -73,6 +74,8 @@ import {
   isPostMutationReconciliation,
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
+  recoverExpiredEntryBeforeReconciliation,
+  readUnfinishedMutationCycle,
 } from './execution-cycle'
 
 type MutationReconciliationCadenceState = ReconciliationCadenceState & {
@@ -681,7 +684,43 @@ const makeRecoveryFirstCycleDriverEffect = (
             : observeCycleFailure(error),
         ),
       )
-    const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
+    const completeCycleAdvance = (result: RecoveryFirstCyclePassResult) =>
+      Effect.gen(function* () {
+        if (isPostMutationReconciliation(result)) {
+          yield* Ref.set(
+            cancellationContinuation,
+            result.cancellationConfirmationIntentId !== undefined ? result : undefined,
+          )
+          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
+          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
+          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
+          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
+          yield* Ref.set(cadence, {})
+          yield* Ref.set(
+            postExitCloseAt,
+            result.logContext.mutationPhase === 'CLOSE' ? result.cycle.window.executionCloseAt : undefined,
+          )
+          return {
+            result: deferPostMutationReconciliation(result),
+            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
+          }
+        }
+        return { result }
+      }).pipe(
+        Effect.flatMap(({ result, nextDelayMs }) =>
+          observeMutationCycleResult(startup, cadence, result).pipe(
+            Effect.map((observation) => ({
+              observation,
+              result,
+              ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+            })),
+          ),
+        ),
+      )
+    const advanceCycle = (
+      preflight: ReconciliationPassResult | undefined,
+      unfinished?: { readonly cycle: AutonomousCycle | undefined },
+    ) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
         const {
@@ -712,65 +751,36 @@ const makeRecoveryFirstCycleDriverEffect = (
             { read: reconcileForAdvance, refresh: refreshForAdvance },
             capability,
             preflight,
+            unfinished,
           ),
           cyclePassTimeoutMs,
         )
-        if (isPostMutationReconciliation(result)) {
-          yield* Ref.set(
-            cancellationContinuation,
-            result.cancellationConfirmationIntentId !== undefined ? result : undefined,
-          )
-          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
-          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
-          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
-          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
-          yield* Ref.set(cadence, {})
-          yield* Ref.set(
-            postExitCloseAt,
-            result.logContext.mutationPhase === 'CLOSE' ? result.cycle.window.executionCloseAt : undefined,
-          )
-          return {
-            result: deferPostMutationReconciliation(result),
-            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
-          }
-        }
-        return { result }
-      }).pipe(
-        Effect.matchEffect({
-          onFailure: observeCycleFailure,
-          onSuccess: ({ result, nextDelayMs }) =>
-            observeMutationCycleResult(startup, cadence, result).pipe(
-              Effect.map((observation) => ({
-                observation,
-                result,
-                ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
-              })),
-            ),
-        }),
-      )
+        return result
+      }).pipe(Effect.matchEffect({ onFailure: observeCycleFailure, onSuccess: completeCycleAdvance }))
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(
       input,
       policy.maxBrokerStateAgeMs,
       cadence,
       reconcile,
     )
-    const reconcileAndAdvance = Ref.set(preflightOnly, true).pipe(
-      Effect.andThen(reconciliationPreflight),
-      Effect.matchEffect({
-        onFailure: observeReconciliationFailure,
-        onSuccess: (preflight) =>
-          Ref.set(preflightOnly, false).pipe(
-            Effect.andThen(advanceCycle(preflight)),
-            Effect.flatMap((advanced) =>
-              capability._tag !== 'Mutation' ||
-              input.intradayMarketData === undefined ||
-              advanced.observation.result === 'FAILURE'
-                ? Effect.succeed(advanced)
-                : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
+    const reconcileAndAdvance = (unfinished?: { readonly cycle: AutonomousCycle | undefined }) =>
+      Ref.set(preflightOnly, true).pipe(
+        Effect.andThen(reconciliationPreflight),
+        Effect.matchEffect({
+          onFailure: observeReconciliationFailure,
+          onSuccess: (preflight) =>
+            Ref.set(preflightOnly, false).pipe(
+              Effect.andThen(advanceCycle(preflight, unfinished)),
+              Effect.flatMap((advanced) =>
+                capability._tag !== 'Mutation' ||
+                input.intradayMarketData === undefined ||
+                advanced.observation.result === 'FAILURE'
+                  ? Effect.succeed(advanced)
+                  : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
+              ),
             ),
-          ),
-      }),
-    )
+        }),
+      )
     const runCycleAdvance = Effect.gen(function* () {
       // Confirmation can persist recovery evidence, so its failures keep the cycle-phase restriction policy.
       yield* Ref.set(preflightOnly, false)
@@ -793,7 +803,24 @@ const makeRecoveryFirstCycleDriverEffect = (
         // Confirmation never replaces fresh, post-recovery reconciliation or grants submission authority.
         yield* Ref.set(cadence, {})
       }
-      return yield* reconcileAndAdvance
+      const lookup =
+        capability._tag === 'RecoveryOnly'
+          ? Result.succeed(undefined)
+          : yield* readUnfinishedMutationCycle({
+              cycleBindingId: startup.cycleBindingId,
+              accountId: input.accountId,
+            }).pipe(Effect.result)
+      if (Result.isFailure(lookup)) return yield* observeCycleFailure(lookup.failure)
+      const unfinished = capability._tag === 'RecoveryOnly' ? undefined : { cycle: lookup.success }
+      const containment = yield* recoverExpiredEntryBeforeReconciliation(
+        input,
+        unfinished?.cycle,
+        policy,
+        capability,
+      ).pipe(Effect.result)
+      if (Result.isFailure(containment)) return yield* observeCycleFailure(containment.failure)
+      if (containment.success !== undefined) return yield* completeCycleAdvance(containment.success)
+      return yield* reconcileAndAdvance(unfinished)
     }).pipe(
       Effect.map((advanced): RecoveryFirstCycleAdvance => advanced),
       Effect.flatMap((advanced) => {
@@ -920,9 +947,10 @@ export const mutationDecisionBuilder =
     input: ObserveAutonomousCycleInput,
     preparation: ObserveStartupPreparation,
     policy: Policy,
+    buildDecision: typeof buildMutationShadowCycleDecision,
   ): RecoveryFirstDecisionBuilder =>
   (cycle, reconcile, reconcileForPricing) =>
-    buildMutationShadowCycleDecision({
+    buildDecision({
       ...mutationDecisionInput(input, preparation, policy, cycle, reconcile),
       ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
     }).pipe(Effect.mapError(decisionBuildError))

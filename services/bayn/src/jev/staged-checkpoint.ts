@@ -16,6 +16,7 @@ import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
 import * as observedChartStages from './retained-observed-staged-chart-questions'
 import { hasFeasibleEntrySource } from './entry-inference'
 import type { EntryInferenceMaterial } from './entry-inference-input'
+import { JevProviderDiagnosticsSchema } from './provider-diagnostics'
 
 export const VisualStageSchema = Schema.Literals(['CHART', 'BASE_START'])
 export type ChartStageCodecs = typeof chartStages | typeof retainedJevChartStages | typeof observedChartStages
@@ -30,6 +31,7 @@ export const VisualStageFailureSchema = Schema.Struct({
   httpStatus: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
   responseHash: Schema.NullOr(Sha256Schema),
   usage: Schema.NullOr(ChartStageUsageSchema),
+  providerDiagnostics: Schema.optionalKey(JevProviderDiagnosticsSchema),
 })
 const ClaimMaterial = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.staged-dispatch-claim.v1'),

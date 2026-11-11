@@ -1338,6 +1338,7 @@ export const compareSnapshots = (
       failures.push(`Required Kafka consumer group has no baseline offsets: ${groupName}`)
       continue
     }
+    if (!explicitGroup && before.every((group) => group.currentOffset === null)) continue
     if (explicitGroup && before.some((group) => group.currentOffset === null)) {
       checks.groupOffsets = false
       failures.push(`Kafka explicit consumer group has null baseline committed offset: ${groupName}`)

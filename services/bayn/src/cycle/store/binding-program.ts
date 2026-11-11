@@ -18,7 +18,7 @@ import {
 } from './model'
 import type { CycleMutationPrimitives } from './mutations'
 import type { CycleQueries } from './queries'
-import { decodeDecisionInput } from './rows'
+import { decodeDecisionInput, decodeDecisionInputDigestRows } from './rows'
 
 export interface CycleBindingPrograms {
   readonly bindDecision: CycleStoreShape['bindDecision']
@@ -113,20 +113,27 @@ export const makeCycleBindingPrograms = (
     observedAt: string,
     decision: Extract<DecisionBindingDecision, { readonly _tag: 'Persist' }>,
   ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
-    sql`
+    Effect.gen(function* () {
+      const [input] = yield* sql`
+        WITH decision_input AS MATERIALIZED (
+          SELECT ${sql.json(decision.document)}::jsonb AS document
+        )
         INSERT INTO autonomous_cycle_shadow_decisions (
           cycle_id,
           schema_version,
           document,
           created_at
-        ) VALUES (
+        ) SELECT
           ${decision.cycle.identity.cycleId},
           ${decision.document.schemaVersion},
-          ${sql.json(decision.document)},
+          decision_input.document,
           ${decision.document.createdAt}
-        )
-    `.pipe(
-      Effect.andThen(sql<Record<string, unknown>>`
+        FROM decision_input
+        RETURNING (
+          SELECT encode(sha256(convert_to(document::text, 'UTF8')), 'hex') FROM decision_input
+        ) AS document_digest
+      `.pipe(Effect.flatMap(decodeDecisionInputDigestRows))
+      yield* sql<Record<string, unknown>>`
         UPDATE autonomous_cycles
         SET
           snapshot_id = ${decision.document.bindings.snapshotId},
@@ -145,11 +152,14 @@ export const makeCycleBindingPrograms = (
             )
           )
         RETURNING cycle_id
-      `),
-      Effect.flatMap((rows) => mutations.requireApplied('bind-decision', rows)),
-      Effect.flatMap(() => mutations.readLocked('bind-decision', decision.cycle.identity.cycleId)),
-      Effect.map((cycle) => ({ cycle, changed: true })),
-    )
+      `.pipe(Effect.flatMap((rows) => mutations.requireApplied('bind-decision', rows)))
+      const cycle = yield* mutations.readLocked('bind-decision', decision.cycle.identity.cycleId)
+      // This is the encoded input digest, not a claim that the transaction committed
+      // or a trigger preserved the row. Every read must still match the actual row
+      // digest and refresh its database guards, even after rollback or interruption.
+      yield* queries.retainDecisionInput(decision.document, input.document_digest)
+      return { cycle, changed: true }
+    })
 
   const interpretDecisionBinding = (
     observedAt: string,
