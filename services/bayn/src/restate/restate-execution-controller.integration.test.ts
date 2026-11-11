@@ -562,6 +562,14 @@ describeRestate('Real Restate execution deployment activation', () => {
           ctx.objectClient(controller, config.controllerKey).deactivate(deactivation),
       },
     })
+    class LocalRestateResponseError extends Error {
+      constructor(
+        readonly status: number,
+        body: string,
+      ) {
+        super(`Local Restate returned ${status}: ${body}`)
+      }
+    }
     const json = (url: string, body: unknown) =>
       Effect.tryPromise({
         try: async (signal) => {
@@ -571,7 +579,7 @@ describeRestate('Real Restate execution deployment activation', () => {
             headers: { 'content-type': 'application/json' },
             signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
           })
-          if (!response.ok) throw new Error(`Local Restate returned ${response.status}: ${await response.text()}`)
+          if (!response.ok) throw new LocalRestateResponseError(response.status, await response.text())
           return response.json() as Promise<unknown>
         },
         catch: (cause) => cause,
@@ -595,6 +603,18 @@ describeRestate('Real Restate execution deployment activation', () => {
           const address = server.address()
           if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
           yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}` })
+          // Admin registration can precede ingress visibility. Probe only the read-only status handler;
+          // activation and tick mutations keep their original single-attempt behavior and assertions.
+          const uninitialized = yield* invoke('status').pipe(
+            Effect.retry({
+              while: (cause) => cause instanceof LocalRestateResponseError && cause.status === 404,
+              schedule: Schedule.spaced('100 millis'),
+              times: 100,
+            }),
+            Effect.timeout('15 seconds'),
+          )
+          expect(uninitialized).toBeNull()
+          expect(attempts).toHaveLength(0)
           yield* invoke('activate')
           // Deactivate before closing the endpoint even if an assertion fails while a delayed tick is pending.
           yield* Effect.addFinalizer(() => invoke('deactivate').pipe(Effect.ignore))
