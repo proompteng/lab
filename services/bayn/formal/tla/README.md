@@ -72,8 +72,11 @@ generation and version changes, each bound identity field, BUY versus SELL, miss
 fresh evidence, exact expiry and expired evidence. The model captures eligibility when a start is committed; it
 deliberately includes later authority/time changes without pretending that committed external I/O can be revoked.
 The PostgreSQL implementation reads these facts after acquiring its existing writer, authority and intent locks,
-uses database `clock_timestamp()` for freshness, and commits `CANCEL_STARTED` before broker I/O. Database integration
-tests exercise those implementation boundaries. The model does not prove PostgreSQL locking, broker atomicity or
+uses `execution_account_commit_now(intent.account_id)` for freshness, and commits `CANCEL_STARTED` before broker I/O.
+That existing volatile function uses current database wall time for live accounts and the bound source clock plus
+measured elapsed work for isolated replay accounts, excluding paused source reads. The selector comes from the
+locked durable intent, not caller-supplied time.
+Database integration tests exercise those implementation boundaries. The model does not prove PostgreSQL locking, broker atomicity or
 that a zero-fill observation prevents a fill racing a later cancellation. Subsequent reconciliation remains required.
 
 There are no state constraints, symmetry reductions or disabled deadlock checks. TLC runs with one worker and a

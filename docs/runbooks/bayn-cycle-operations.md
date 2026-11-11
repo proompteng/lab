@@ -56,8 +56,9 @@ match. A fresh isolated parent lookup must report zero filled quantity; every na
 unfilled and held. True OBSERVE `RecoveryOnly` remains lookup-only and cannot issue this cancellation.
 
 The cancellation carries the observed authority generation/version and exact account, intent, client and parent
-identities. The existing fenced admission transaction checks them again and samples the database clock after
-acquiring its locks. Expired evidence, a changed authority version/generation, an operator hold or a protective
+identities. The existing fenced admission transaction checks them again and samples the intent account's execution
+commit clock after acquiring its locks: current database wall time for live accounts, and the existing bound source
+clock plus measured elapsed work for isolated replay. Expired evidence, a changed authority version/generation, an operator hold or a protective
 SELL rejects fresh admission. `CANCEL_STARTED` commits before broker I/O; replay and unknown outcomes use the
 existing durable mutation identity and lookup recovery. No new entry, capital activation or kill clear follows
 from this permission.
