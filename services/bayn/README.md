@@ -149,9 +149,12 @@ Demonstrate repeatable positive net profit after execution, inference, data, inf
 untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
 fully costed profit and positive absolute and paired lower bounds over the exact registered calendar. It has no
 fixed session count, activity or turnover quota, dollar profit hurdle, control-profit multiple, or mandatory stress
-scenario. Allocation and loss limits come from the registered source-approved risk policy. Bootstrap terms and
-selected matched controls are fixed before the first open. Operational reliability remains 99.9% independently for
-eligible classes, with zero safety violations and complete realistic evidence. An assessment grants no capital authority.
+scenario. Allocation and loss limits come from the registered source-approved risk policy. Current qualification
+uses conditional Hoeffding bounds with prospectively registered policy supports and matched controls. The causal
+filtration, conditional mean model and bounded-support assumptions must be fixed before the first open; observed
+returns cannot establish those assumptions. Retained assessments reproduce their original statistical methods.
+Operational reliability remains 99.9% independently for eligible classes, with zero safety violations and complete
+realistic evidence. An assessment grants no capital authority.
 See [current and retained acceptance rules](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
 Historical contracts and assessment receipts retain their original terms and hashes; prospective attempt numbering
 continues across the policy change.
@@ -1314,10 +1317,14 @@ applicable to the requested period; a list price is an estimate, not proof of a 
 intervals may not overlap. Missing model/date coverage is unpriced, not free. An explicit zero output rate is valid.
 
 For non-200 Jev responses, the client reads at most 8 KiB within the original inference deadline and retains only
-validated pinned-model and input/output usage fields. The failed receipt's response hash binds that exact metering
-projection, not the complete HTTP error body. Error text, echoed prompts, credentials and arbitrary fields are not
-retained. Missing, malformed, oversized or interrupted bodies remain unknown; status failures never authorize a
-decision or trigger an inference retry. Previously saved receipts and their missing usage remain unchanged.
+validated pinned-model and input/output usage fields for metering. The failed receipt's response hash binds that
+exact metering projection, not the complete HTTP error body. A separate optional
+`bayn.jev-provider-diagnostics.v1` projection retains a provider request ID (at most 128 ASCII identifier characters),
+structured error code/type (at most 64 characters each), and a valid `Retry-After` delay up to 24 hours or HTTP date.
+Client errors retain header identifiers and retry hints when reading the body fails or reaches its original deadline.
+Error text, echoed prompts, credentials and arbitrary fields are excluded. These provider-supplied diagnostics
+describe the response; they neither establish billable usage nor schedule a retry. Missing, malformed, oversized or interrupted usage remains
+unknown; status failures never authorize a decision. Previously saved receipts and their missing usage remain unchanged.
 
 The report verifies immutable request, receipt, rejected-response, and resolution hashes. A rejected or abandoned
 decision can still carry billable usage. A claim without retained usage stays unknown: it does not prove either that

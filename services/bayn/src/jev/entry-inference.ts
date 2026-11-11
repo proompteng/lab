@@ -30,12 +30,14 @@ import {
   type EntryProposal,
 } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
+import type { JevProviderDiagnostics } from './provider-diagnostics'
 
 export type VisualFailureEvidence = {
   readonly category: DecisionsError['category']
   readonly httpStatus: number | null
   readonly responseHash: string | null
   readonly usage: typeof ChartStageUsageSchema.Type | null
+  readonly providerDiagnostics?: JevProviderDiagnostics
 }
 type ProposalEvaluation = {
   readonly proposals: readonly EntryProposal[]
@@ -180,6 +182,7 @@ export type EntryInferenceCompletion = {
         readonly httpStatus: number | null
         readonly responseHash: string | null
         readonly usage: typeof JevResponseSchema.fields.usage.Type | null
+        readonly providerDiagnostics?: JevProviderDiagnostics
       }
     | { readonly status: 'NOT_REQUESTED' }
     | { readonly status: 'NOT_DISPATCHED' }

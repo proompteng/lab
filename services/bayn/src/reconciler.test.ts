@@ -1001,6 +1001,135 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
+  test.each([false, true])(
+    'reconciles a protection child repeated across a full history page; conflicting=%s',
+    async (conflicting) => {
+      const cut = '2026-11-10T16:49:33.150Z'
+      const parentSubmittedAt = '2026-10-30T13:39:55.166114Z'
+      const childSubmittedAt = '2026-10-30T13:39:55.158403Z'
+      const parentOrder = {
+        ...order(2_000),
+        createdAt: parentSubmittedAt,
+        updatedAt: '2026-10-30T13:40:00.000Z',
+        submittedAt: parentSubmittedAt,
+        orderClass: OrderClass.Bracket,
+        orderType: BrokerOrderType.Limit,
+        limitPriceMicros: '100000000',
+      }
+      const children: readonly BrokerOrder[] = [BrokerOrderType.StopLimit, BrokerOrderType.Limit].map(
+        (orderType, index) => ({
+          ...parentOrder,
+          brokerOrderId: `protection-child-${index}`,
+          clientOrderId: `protection-client-${index}`,
+          parentBrokerOrderId: parentOrder.brokerOrderId,
+          createdAt: childSubmittedAt,
+          updatedAt: '2026-10-30T13:55:18.637306Z',
+          canceledAt: '2026-10-30T13:55:18.637306Z',
+          submittedAt: childSubmittedAt,
+          orderClass: OrderClass.Simple,
+          orderType,
+          side: BrokerSide.Sell,
+          status: BrokerOrderStatus.Canceled,
+          filledQuantityAtoms: '0',
+          limitPriceMicros: index === 0 ? '89000000' : '110000000',
+          ...(index === 0 ? { stopPriceMicros: '90000000' } : {}),
+        }),
+      )
+      const parent = { ...parentOrder, legs: children }
+      const stop = children[0]!
+      const { parentBrokerOrderId: _parent, ...flatStop } = stop
+      const standalone = { ...flatStop, ...(conflicting ? { limitPriceMicros: '88000000' } : {}) }
+      const deferred = { ...order(2_001), status: BrokerOrderStatus.Canceled, filledQuantityAtoms: '0' }
+      const newer = Array.from({ length: 496 }, (_, index) => ({
+        ...order(index),
+        submittedAt: utcInstantFromEpochMillis(Date.parse(parentSubmittedAt) + 1_000 + index),
+        status: BrokerOrderStatus.Canceled,
+        filledQuantityAtoms: '0',
+      })).reverse()
+      // Alpaca counts both nested legs toward 500. The old group is deferred, while the
+      // child submitted 7.711ms before its retained parent reappears below the next cursor.
+      const firstPage = [...newer, parent, deferred]
+      expect(firstPage.reduce((count, row) => count + 1 + (row.legs?.length ?? 0), 0)).toBe(500)
+      const cursors: Array<string | undefined> = []
+      const fee = { accountId, activityId: 'retained-fee', date: '2026-10-30', netAmountMicros: '-230000' }
+      const read: BrokerReadShape = {
+        ...emptyRead(cut),
+        orders: (query = {}) => {
+          cursors.push(query.until)
+          expect(query).toMatchObject({ direction: SortDirection.Descending, limit: 500 })
+          expect(query.after).toBeUndefined()
+          const rows = query.until === cut ? firstPage : [standalone, deferred]
+          const pageAt = utcInstantFromEpochMillis(Date.parse(cut) + cursors.length)
+          return Effect.succeed({
+            value: rows.map((row) => ({
+              ...row,
+              observedAt: pageAt,
+              ...(row.legs === undefined ? {} : { legs: row.legs.map((child) => ({ ...child, observedAt: pageAt })) }),
+            })),
+            evidence: evidence(`overlap-page-${cursors.length}`, pageAt),
+          })
+        },
+        fillActivities: () =>
+          Effect.succeed({
+            value: { items: [{ ...fill(2_000, parent), transactionTime: parent.updatedAt }] },
+            evidence: evidence('retained-fill', cut),
+          }),
+        feeActivities: () => Effect.succeed({ value: { items: [fee] }, evidence: evidence('retained-fee', cut) }),
+      }
+      const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+      const intentId = hash('protection-intent')
+      const store: TestStore = {
+        ...makeStore(control, true, cut),
+        bindings: () =>
+          Effect.succeed([
+            {
+              intentId,
+              clientOrderId: parent.clientOrderId,
+              symbol: parent.symbol,
+              quantityAtoms: parent.quantityAtoms!,
+              protection: {
+                _tag: 'Bracket' as const,
+                stopPriceMicros: '90000000',
+                stopLimitPriceMicros: '89000000',
+                profitLimitPriceMicros: '110000000',
+              },
+            },
+          ]),
+      }
+      const result = await Effect.runPromise(provide(read, store, fence, Effect.succeed(cut)).pipe(Effect.result))
+      expect(cursors).toEqual([cut, parentSubmittedAt, cut, parentSubmittedAt])
+      if (conflicting) {
+        expect(Result.isFailure(result) && result.failure).toMatchObject({
+          failure: {
+            _tag: 'Validation',
+            reason: 'UnexpectedOrderEvent',
+            detail: 'conflicting standalone protection child',
+          },
+        })
+        expect(control.writes).toBe(0)
+        expect(control.reconciliations).toEqual([])
+        expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+      } else {
+        expect(Result.isSuccess(result)).toBe(true)
+        expect(control.reconciliations).toHaveLength(1)
+        const persisted = control.reconciliations[0]!
+        expect(persisted.orders).toHaveLength(500)
+        expect(new Set(persisted.orders.map((row) => row.brokerOrderId)).size).toBe(500)
+        expect(persisted.orders.filter((row) => row.intentId === intentId)).toHaveLength(3)
+        expect(persisted.orders.find((row) => row.brokerOrderId === stop.brokerOrderId)).toMatchObject({
+          intentId,
+          parentBrokerOrderId: parent.brokerOrderId,
+          limitPriceMicros: stop.limitPriceMicros,
+          observedAt: utcInstantFromEpochMillis(Date.parse(cut) + 3),
+        })
+        expect(persisted.fills).toHaveLength(1)
+        expect(persisted.fills[0]).toMatchObject({ intentId, brokerOrderId: parent.brokerOrderId, fillId: 'fill-2000' })
+        expect(persisted.fees.map((row) => row.value)).toEqual([fee])
+        expect(control.restrictions).toEqual([])
+      }
+    },
+  )
+
   test('preserves causal broker read order and clock cutoffs', async () => {
     let accountReads = 0
     let positionReads = 0

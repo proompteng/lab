@@ -5,13 +5,13 @@ are protected from ordinary Argo prune/delete operations. They must only be remo
 evidence-retention change. The database has two synchronous amd64 instances; loss of the standby blocks writes instead
 of acknowledging unreplicated evidence.
 
-The platform app installs Barman Cloud Plugin 0.13.0 in the same namespace as the CloudNativePG 1.30 operator. Its
+The platform app installs Barman Cloud Plugin 0.15.0 in the same namespace as the CloudNativePG 1.30 operator. Its
 manager and injected sidecar images are pinned by multi-architecture digest. Bayn uses the plugin API from its first
 backup, avoiding the native Barman API that CloudNativePG removes in 1.31.
 
 Upstream contracts: [CloudNativePG 1.30 release notes](https://cloudnative-pg.io/docs/1.30/release_notes/v1.30/),
 [Barman Cloud Plugin installation](https://cloudnative-pg.io/plugin-barman-cloud/docs/installation/),
-[Barman Cloud Plugin usage](https://cloudnative-pg.io/plugin-barman-cloud/docs/usage/), and
+[Barman Cloud Plugin usage](https://cloudnative-pg.io/plugin-barman-cloud/docs/0.15.0/usage/), and
 [required CNPG network ports](https://cloudnative-pg.io/docs/1.30/security/#exposed-ports).
 
 ## Primary checks
@@ -37,6 +37,19 @@ both instances must be present and healthy:
 ```promql
 count(up{cluster="bayn-db",job="cnpg-postgres"} == 1) == 2
 ```
+
+The Barman sidecar has a 1 GiB memory limit. At the previous 512 MiB limit, its last termination was `OOMKilled`
+at 00:18:58 UTC on November 10, 2026. The sidecar had seven restarts; PostgreSQL itself retained zero. Keep the
+configured backup bandwidth, single backup job and two WAL workers when evaluating this resource change. Database
+growth alone does not prove the cause of a longer backup.
+
+ObjectStore sidecar resources are evaluated on the next Cluster reconciliation. CNPG detects the changed init-container
+resources and rolls the database pods through its configured standby-first switchover procedure. After GitOps applies
+a resource change, verify the resources of the injected `plugin-barman-cloud` init container
+on both database pods, their restart counts and WAL archiving. An updated ObjectStore alone does not prove that
+existing sidecars received the new limit. Preserve two synchronous instances and the CNPG switchover procedure
+during any operator-managed rollout. Confirm the next completed backup and retain the isolated restore drill below
+as the recovery check; a healthy sidecar alone does not prove that a backup can be restored.
 
 ## Isolated restore drill
 
@@ -96,3 +109,15 @@ the recovery Cluster has no backup stanza and only reads that archive.
 6. Remove the temporary manifest through GitOps only after the evidence is recorded. Deleting the recovery Cluster or
    its PVC requires explicit approval. Never alter or delete `bayn-db`, `cnpg-bayn-db`, or another service's storage as
    part of the drill.
+
+## Backup interruption during rollout
+
+An active plugin backup does not defer [CNPG 1.30.1 rolling replacement](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_upgrade.go).
+The [backup controller](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/backup_controller.go)
+can restart some interruptions, but a changed instance-manager session fails the running backup, and a `failed` record
+is terminal and does not automatically resume. If the backup actually reaches `failed`, retain its record. After the
+Cluster is 2/2 Ready, both injected sidecars have the configured 1 GiB limit, and fresh successful WAL archiving is
+observed, check that no backup is still running before requesting a uniquely named replacement with the
+`kubectl cnpg backup` command in step 2 above and a fresh UTC suffix. An ordinary retry needs only that backup command,
+not the restore-probe steps. Verify that the replacement starts and WAL archiving continues, then record its eventual
+`completed` status. A full backup can take hours; the 30-minute observer timeout alone does not mean that it failed.

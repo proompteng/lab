@@ -41,6 +41,7 @@ import {
   type ChartCheckpointCodecs,
 } from './staged-checkpoint'
 import * as chartStages from './staged-chart-questions'
+import { JevProviderDiagnosticsSchema } from './provider-diagnostics'
 
 const HttpStatus = Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })))
 const Evaluation = Schema.Struct({
@@ -57,6 +58,7 @@ const makeDispositionSchema = <S extends Schema.Top>(assessments: S) =>
         httpStatus: HttpStatus,
         responseHash: Schema.NullOr(Sha256Schema),
         usage: Schema.NullOr(ChartStageUsageSchema),
+        providerDiagnostics: Schema.optionalKey(JevProviderDiagnosticsSchema),
       }),
     }),
     Schema.Struct({
@@ -118,6 +120,7 @@ export const makeEntryInferenceCompletionSchema = <S extends Schema.Top>(handoff
         httpStatus: HttpStatus,
         responseHash: Schema.NullOr(Sha256Schema),
         usage: Schema.NullOr(JevResponseSchema.fields.usage),
+        providerDiagnostics: Schema.optionalKey(JevProviderDiagnosticsSchema),
       }),
       Schema.Struct({ status: Schema.Literal('NOT_REQUESTED') }),
       Schema.Struct({ status: Schema.Literal('NOT_DISPATCHED') }),

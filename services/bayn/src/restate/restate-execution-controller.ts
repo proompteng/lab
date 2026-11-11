@@ -20,6 +20,7 @@ import {
   decideExecutionControllerTick,
   executionControllerMaximumDeliveryAttempt,
   executionControllerMaximumRecoveryWindow,
+  nextExecutionControllerRecoveryWindow,
   executionControllerSuccessorPassCompleted,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
@@ -618,35 +619,9 @@ export const makeBaynExecutionController = (
             if (tick.sourceCatchUpRevision !== undefined) return
             if (state === null) throw terminal('execution controller state disappeared during retry recovery')
             const currentRecoveryWindow = tick.retryWindowHash === undefined ? 0 : (tick.recoveryWindow ?? 1)
-            if (currentRecoveryWindow >= executionControllerMaximumRecoveryWindow) {
-              await writeRuntimeLog(runtime, 'error', 'Bayn execution controller recovery budget exhausted', {
-                controllerKey: ctx.key,
-                epoch: state.epoch,
-                ...failure,
-                invocationId: ctx.request().id,
-                recoveryWindow: currentRecoveryWindow,
-                sequence: state.nextSequence,
-                sourceRevision: state.sourceRevision,
-              })
-              throw new restate.TerminalError('execution controller recovery budget exhausted', {
-                errorCode: 503,
-                metadata: {
-                  ...(failure.failureCauseCategory === undefined
-                    ? {}
-                    : { failureCauseCategory: failure.failureCauseCategory }),
-                  ...(failure.failureCauseOperation === undefined
-                    ? {}
-                    : { failureCauseOperation: failure.failureCauseOperation }),
-                  ...(failure.failureCauseTag === undefined ? {} : { failureCauseTag: failure.failureCauseTag }),
-                  failureFingerprint: failure.failureFingerprint,
-                  failureMessage: failure.failureMessage,
-                  failureOperation: failure.failureOperation,
-                  failureTag: failure.failureTag,
-                  recoveryWindow: String(currentRecoveryWindow),
-                },
-              })
-            }
-            const nextRecoveryWindow = currentRecoveryWindow + 1
+            // Bound each delivery's retries, not the lifetime of recovery. Saturating this diagnostic counter
+            // preserves the wire contract while the invocation-bound hash gives each later window a durable key.
+            const nextRecoveryWindow = nextExecutionControllerRecoveryWindow(currentRecoveryWindow)
             const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
             const recoveryDelayMs = executionControllerRecoveryTickDelayMs
             scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
