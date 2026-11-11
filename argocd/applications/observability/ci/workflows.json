@@ -49,12 +49,24 @@
   ],
   "bayn-build-push.yml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "validation",
       "pattern": "^validation(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "research-image",
+      "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "publish-cohort",
+      "pattern": "^publish-cohort(?: \\(.*\\))?$"
     }
   ],
   "bayn-ci.yml": [
@@ -105,6 +117,10 @@
     {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "research-image",
+      "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "required",
@@ -369,6 +385,10 @@
     {
       "id": "build",
       "pattern": "^Restate build and fault tests \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "cache-proof",
+      "pattern": "^cache-proof(?: \\(.*\\))?$"
     },
     {
       "id": "publish",

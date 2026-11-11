@@ -51,11 +51,11 @@ spec:
       cpu: "2"
       memory: 8Gi
   storage:
-    storageClass: rook-ceph-block
-    size: 100Gi
-    resizeInUseVolumes: true
+    storageClass: local-path
+    size: 500Gi
+    resizeInUseVolumes: false
   walStorage:
-    storageClass: local-path-bayn-wal
+    storageClass: local-path
     size: 32Gi
     resizeInUseVolumes: false
   bootstrap:

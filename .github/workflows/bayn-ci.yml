@@ -36,15 +36,16 @@ jobs:
           filters: |
             bayn:
               - 'services/bayn/**'
+              - '!services/bayn/README.md'
               - '!services/bayn/formal/**'
               - 'services/dorvud/**'
               - 'packages/scripts/src/bayn/**'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
               - 'argocd/applications/bayn/**'
+              - '!argocd/applications/bayn/README.md'
               - 'argocd/applications/torghut/clickhouse/**'
               - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
-              - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/bayn-frozen-control.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
@@ -77,9 +78,9 @@ jobs:
               - '.github/workflows/bayn-ci.yml'
             image:
               - 'services/bayn/**'
+              - '!services/bayn/README.md'
               - '!services/bayn/formal/**'
               - 'nix/images/bayn.nix'
-              - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/bayn-frozen-control.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
@@ -426,7 +427,7 @@ jobs:
           bash nix/images/bun-workspace-deps-source.test.sh
       - name: Verify registered replay image membership against a disposable registry
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts
           SCRIPT
@@ -449,13 +450,15 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
       - name: Verify replay execution capture against a disposable container and registry
         env:
           BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
           BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
           BAYN_TEST_REPLAY_EXECUTION: '1'
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
           docker pull "${BAYN_TEST_REGISTRY_IMAGE}"
@@ -469,6 +472,21 @@ jobs:
     with:
       image_name: bayn
       package_attr: bayn-image
+      tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
+      publish_kargo_tag: false
+      source_revision: ${{ github.event.pull_request.head.sha }}
+      pr_number: ''
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
+  research-image:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn-research
+      package_attr: bayn-research-image
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
       publish_kargo_tag: false
       source_revision: ${{ github.event.pull_request.head.sha }}
@@ -493,6 +511,7 @@ jobs:
       - dependency-input-invariant
       - replay-execution-observer
       - image
+      - research-image
     runs-on: ubuntu-latest
     steps:
       - name: Require every applicable Bayn release check
@@ -512,6 +531,7 @@ jobs:
           DEPENDENCY_INPUT_RESULT: ${{ needs.dependency-input-invariant.result }}
           REPLAY_EXECUTION_RESULT: ${{ needs.replay-execution-observer.result }}
           IMAGE_RESULT: ${{ needs.image.result }}
+          RESEARCH_IMAGE_RESULT: ${{ needs.research-image.result }}
         run: |
           set -euo pipefail
           if [[ "${CHANGES_RESULT}" != 'success' ]]; then
@@ -544,6 +564,10 @@ jobs:
           done
           if [[ "${IMAGE_RELEVANT}" == 'true' && "${IMAGE_RESULT}" != 'success' ]]; then
             echo "IMAGE_RESULT must be success for image-affecting changes, got ${IMAGE_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${IMAGE_RELEVANT}" == 'true' && "${RESEARCH_IMAGE_RESULT}" != 'success' ]]; then
+            echo "RESEARCH_IMAGE_RESULT must be success for image-affecting changes, got ${RESEARCH_IMAGE_RESULT}" >&2
             exit 1
           fi
           echo 'All applicable Bayn unit, type, archive, PostgreSQL, ledger, replay, dependency-boundary, and multi-architecture image checks passed.'

@@ -117,6 +117,7 @@
         "@elysiajs/eden": "^1.4.9",
         "@octokit/webhooks": "^14.2.0",
         "@proompteng/agent-contracts": "workspace:*",
+        "@restatedev/restate-sdk": "1.16.5",
         "@sinclair/typebox": "^0.34.49",
         "discord-interactions": "^4.4.0",
         "effect": "4.1.2",
@@ -743,7 +744,6 @@
       "name": "@proompteng/bayn",
       "version": "0.1.0",
       "dependencies": {
-        "@aws-sdk/client-s3": "3.1042.0",
         "@effect/platform-node": "4.0.0",
         "@effect/sql-clickhouse": "4.0.0",
         "@effect/sql-pg": "4.0.0",
@@ -965,6 +965,9 @@
     },
     "services/memories": {
       "name": "memories",
+      "dependencies": {
+        "@proompteng/agent-contracts": "workspace:*",
+      },
       "devDependencies": {
         "@types/bun": "1.4.2",
       },

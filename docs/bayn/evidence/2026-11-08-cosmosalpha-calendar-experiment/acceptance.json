@@ -1,0 +1,323 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-execution-evidence.v1",
+  "experimentId": "ac8ca5234e7e28e7064722aa77a581807ef1e32629a17f7c64d6dc4036bde00a",
+  "kind": "acceptance",
+  "status": "COMPLETE",
+  "planSha256": "9735fc92153eabb64a19c18c25a8f54ccf5403f8a78b4b0c137e4526703bd2d2",
+  "resultSha256": "1bdc338db0379e4db4801292822af7e6cc1d45a21e43f8af27960dcab2baf2e8",
+  "verificationSha256": "22e2f0012961e151b8d0fe2a2b1e717bad6fe25404aace9127379cc9d518872f",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "limits": {
+    "evaluable_factors": 4,
+    "proposal_slots": 16,
+    "physical_requests": 80,
+    "completion_tokens": 800000,
+    "max_output_tokens": 20000
+  },
+  "sourceConsumption": {
+    "schemaVersion": "bayn.cosmosalpha-calendar-target-verification.v1",
+    "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+    "verifierSha256": "a8ac4ba9fcac6c3f1b07d44250cf0b7077c32446068d61082d412c6a4d05d37e",
+    "status": "PASS",
+    "unexplainedMismatches": 0,
+    "numericTolerance": 0,
+    "sourceFilesVerified": 2403,
+    "rows": 1165440,
+    "instruments": 800,
+    "eligibleRows": 1127893,
+    "unknownEligibleRows": 0,
+    "labeledRows": 1122941,
+    "eligibleLabeledRows": 1110130,
+    "statuses": {
+      "outside-split": 17267,
+      "ok": 1122941,
+      "invalid-current-close": 24322,
+      "cutoff": 910
+    },
+    "splitRows": {
+      "outside": 17267,
+      "train": 668244,
+      "validation": 116400,
+      "test": 363529
+    },
+    "nativeSnapshots": [
+      {
+        "snapshotId": "dadff2a60ada41d5c33ef3dbefe03c4972c31411e6faaeaa1ab612cb013d37df",
+        "referenceSha256": "340e3e84b8a1a241a12126055dd9c5bbd36d6ffb20d4c6cc59b91ef7f5710573",
+        "marketArtifactSha256": "2ee6dceeb0103759abe82ccaedc595274f429fde8fea03d4ae5e481c281fe0c8",
+        "maskArtifactSha256": "54d624e341ce8f931795898620dcc2455040218eb9b04f962e15f49e877c97d2",
+        "priceAndMaskRowsVerified": 685511,
+        "instrumentCount": 629
+      },
+      {
+        "snapshotId": "dc252d4fd10541b535c8d810e100dc95e87a501e806607bbf3818b700865046f",
+        "referenceSha256": "81e11e421fff754ae024e981d336dbae253773a75176df253f7fd376c7647339",
+        "marketArtifactSha256": "22cb3eed4bc0df571afeb29eae3fa52b9d6de4ddb9e4d0f9b94d4b596cbf8fb2",
+        "maskArtifactSha256": "8feaeed5f43e6171570b76e52098db1db46478ee51367f4e860865d6e330a656",
+        "priceAndMaskRowsVerified": 1165440,
+        "instrumentCount": 800
+      }
+    ],
+    "examples": [],
+    "scope": "Target/source/coverage agreement under the declared rule. No industry-PIT, predictive, execution or economic qualification."
+  },
+  "arms": [
+    {
+      "runId": "calendar-acceptance-20260823-graph",
+      "arm": "graph",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "failure": null,
+      "identityVerificationFailure": null,
+      "identityUnchanged": true,
+      "resources": {
+        "requestedProposalSlots": 6,
+        "physicalRequests": 14,
+        "completionTokens": 41778,
+        "promptTokens": 37505,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 0,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      },
+      "wallSeconds": 501.6722559160553,
+      "receiptSha256": "1ecfdd6bcb26344384f1d675f5cd76905ca4fceae9a5d7b21a830988db4b075b",
+      "nativeResultSha256": "587f9e4c8bdad2f8edfe3fe6ed3d2a5b2f5f86df89bd37af7dc009d0b2a6058c",
+      "model": {
+        "selectedFactors": 4,
+        "modelResultSha256": "a801e799b589e219fab68af164bd600a681e787a91d7a8c47aeaf22903d4700e",
+        "targetBindingMatches": true,
+        "artifacts": [
+          {
+            "role": "model_ref",
+            "sha256": "3c80af6df704ffb6a7f17185d54534559e2f49f8617e55e91ea9ca2b83974540",
+            "sizeBytes": 22844
+          },
+          {
+            "role": "training_curve_ref",
+            "sha256": "960dbc252942d63185c663572e684dad26f5403dee71f3c46b22a4a9851c7088",
+            "sizeBytes": 2150
+          },
+          {
+            "role": "predictions_ref",
+            "sha256": "474ac81f70df86ab0021a96d31387c0cd4756eec788197edb2c45b666178ddd8",
+            "sizeBytes": 4781372
+          },
+          {
+            "role": "daily_signal_metrics_ref",
+            "sha256": "e07594d23bd16f6c69fbf44c393e0895e43344baa1a25c5166551674b2fb1117",
+            "sizeBytes": 25804
+          },
+          {
+            "role": "portfolio_report_ref",
+            "sha256": "b05e7e20794acf7c52bef7097185efe1f6aa8aa2bea6d3c752aaf1070c15a2e0",
+            "sizeBytes": 63784
+          },
+          {
+            "role": "portfolio_positions_ref",
+            "sha256": "07d699eaad3685daa924766387fa7a6bf593a3566977b88c89bae6c63527a4c9",
+            "sizeBytes": 1298508
+          }
+        ]
+      }
+    },
+    {
+      "runId": "calendar-acceptance-20260823-mcts",
+      "arm": "mcts",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "failure": null,
+      "identityVerificationFailure": null,
+      "identityUnchanged": true,
+      "resources": {
+        "requestedProposalSlots": 10,
+        "physicalRequests": 14,
+        "completionTokens": 61682,
+        "promptTokens": 38384,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 4,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      },
+      "wallSeconds": 1004.424327916,
+      "receiptSha256": "3d272879c9d97ca6bd863792c264e498626228e9e4109e44bcca001eddf2bf2d",
+      "nativeResultSha256": "d4e6f88f54642339bd86c764af3c9b6424a697d548492d43db5a47770d11c214",
+      "nativeTerminationReason": "evaluable-factor-target",
+      "model": {
+        "selectedFactors": 4,
+        "modelResultSha256": "707c2a9c6ace5cabe260403fef9cf1c402774a7e301b683b1d985a45a8e772fa",
+        "targetBindingMatches": true,
+        "artifacts": [
+          {
+            "role": "model_ref",
+            "sha256": "2ae310ecc1a7bf396eca4b89c17b4b267275743a92068927d99052728754c7f7",
+            "sizeBytes": 16713
+          },
+          {
+            "role": "training_curve_ref",
+            "sha256": "87d41a3377988600e46c2b16da30791a92a4950c9b57534ec3d4d604c129c524",
+            "sizeBytes": 2078
+          },
+          {
+            "role": "predictions_ref",
+            "sha256": "bfbce5e5e1f8c0113f9b602fc612ac7cb8762e9df0407074127ab3e3ab98245d",
+            "sizeBytes": 4655529
+          },
+          {
+            "role": "daily_signal_metrics_ref",
+            "sha256": "8404cc4d338eb366f19a9ade9f1972140e3b3168d61e16acf6bbd7f01b39d53f",
+            "sizeBytes": 25774
+          },
+          {
+            "role": "portfolio_report_ref",
+            "sha256": "9fcec3cf0f5b4d10e36651416d53a163e9a64608566c7e485a99d22bc4668688",
+            "sizeBytes": 63726
+          },
+          {
+            "role": "portfolio_positions_ref",
+            "sha256": "e9eca3fd81bd913869169b0d0c8f5a16f375290e8b7fc78615b865898742f75d",
+            "sizeBytes": 1262979
+          }
+        ]
+      }
+    },
+    {
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "arm": "no-flow",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "failure": null,
+      "identityVerificationFailure": null,
+      "identityUnchanged": true,
+      "resources": {
+        "requestedProposalSlots": 6,
+        "physicalRequests": 14,
+        "completionTokens": 39381,
+        "promptTokens": 37554,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 0,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      },
+      "wallSeconds": 502.2802877081558,
+      "receiptSha256": "8c66305ed075e7d55ea430a69ac37141db6eb656d3dddb2464fe6226caf75a80",
+      "nativeResultSha256": "2e4517aea693223d13d14ab4de26df6b1733b69bbaba57aa1366cc7f877a2e86",
+      "model": {
+        "selectedFactors": 4,
+        "modelResultSha256": "0c6637cde2e97eabdb6f679609f69bb91baaf9c463cc924221d97e293618f791",
+        "targetBindingMatches": true,
+        "artifacts": [
+          {
+            "role": "model_ref",
+            "sha256": "3f4bedd8b24f297cd7daccd95c65bc4c371b93d5daf4deaf910fb87f8574e203",
+            "sizeBytes": 40688
+          },
+          {
+            "role": "training_curve_ref",
+            "sha256": "73c530c30adf5392ee319e7f945ab7ec143bc820af8119ab5f7a621a7c01df66",
+            "sizeBytes": 2260
+          },
+          {
+            "role": "predictions_ref",
+            "sha256": "8b8118add11bdc53801ea406809fd827f04316fbd1cee1917a83f42616c0c680",
+            "sizeBytes": 5356574
+          },
+          {
+            "role": "daily_signal_metrics_ref",
+            "sha256": "8c4c90314c6ecb551edef4f8037f0d212fd70826a1493bb8fd64dd6c25d935f3",
+            "sizeBytes": 25799
+          },
+          {
+            "role": "portfolio_report_ref",
+            "sha256": "62e1c3372954e175a3a040f2eacd087a3cefc54212ccc7e88f022b7554b6e363",
+            "sizeBytes": 63764
+          },
+          {
+            "role": "portfolio_positions_ref",
+            "sha256": "f169366bf9397e145fd685c1935097130c7d758d34267e381224d09f86e5843d",
+            "sizeBytes": 1302406
+          }
+        ]
+      }
+    }
+  ],
+  "audit": {
+    "experimentId": "ac8ca5234e7e28e7064722aa77a581807ef1e32629a17f7c64d6dc4036bde00a",
+    "kind": "acceptance",
+    "status": "PASS",
+    "arms": [
+      {
+        "runId": "calendar-acceptance-20260823-graph",
+        "resources": {
+          "physicalRequests": 14,
+          "completionTokens": 41778,
+          "promptTokens": 37505,
+          "rejectedRequests": 0,
+          "unknownUsageRequests": 0,
+          "evaluableFactors": 4,
+          "requestedProposalSlots": 6,
+          "successfulAuxiliaryResponses": 0,
+          "failedAuxiliaryResponses": 0
+        },
+        "receiptSha256": "1ecfdd6bcb26344384f1d675f5cd76905ca4fceae9a5d7b21a830988db4b075b",
+        "modelSha256": "a801e799b589e219fab68af164bd600a681e787a91d7a8c47aeaf22903d4700e"
+      },
+      {
+        "runId": "calendar-acceptance-20260823-mcts",
+        "resources": {
+          "physicalRequests": 14,
+          "completionTokens": 61682,
+          "promptTokens": 38384,
+          "rejectedRequests": 0,
+          "unknownUsageRequests": 0,
+          "evaluableFactors": 4,
+          "requestedProposalSlots": 10,
+          "successfulAuxiliaryResponses": 4,
+          "failedAuxiliaryResponses": 0
+        },
+        "receiptSha256": "3d272879c9d97ca6bd863792c264e498626228e9e4109e44bcca001eddf2bf2d",
+        "modelSha256": "707c2a9c6ace5cabe260403fef9cf1c402774a7e301b683b1d985a45a8e772fa"
+      },
+      {
+        "runId": "calendar-acceptance-20260823-no-flow",
+        "resources": {
+          "physicalRequests": 14,
+          "completionTokens": 39381,
+          "promptTokens": 37554,
+          "rejectedRequests": 0,
+          "unknownUsageRequests": 0,
+          "evaluableFactors": 4,
+          "requestedProposalSlots": 6,
+          "successfulAuxiliaryResponses": 0,
+          "failedAuxiliaryResponses": 0
+        },
+        "receiptSha256": "8c66305ed075e7d55ea430a69ac37141db6eb656d3dddb2464fe6226caf75a80",
+        "modelSha256": "0c6637cde2e97eabdb6f679609f69bb91baaf9c463cc924221d97e293618f791"
+      }
+    ],
+    "verificationFailures": 0,
+    "findings": [],
+    "scope": "Frozen targets, all planned pools, actual requests, matched allowances and downstream consumption. No industry-PIT or economic qualification."
+  },
+  "comparison": null,
+  "interpretation": "Declared calendar-target and self-hosted Qwen variant. Acceptance is functional only. Industry history, feature-calendar semantics and executable costed edge remain unqualified.",
+  "capitalAuthority": "NONE"
+}

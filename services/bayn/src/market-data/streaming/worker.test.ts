@@ -37,7 +37,7 @@ const options: ProjectionWorkerOptions = {
     bootstrapTimeoutMs: 5000,
     timestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
   },
-  archive: { postgres: { url: 'postgres://unused/unused', tls: false, caPath: '' }, operationTimeoutMs: 500 },
+  database: { postgres: { url: 'postgres://unused/unused', tls: false, caPath: '' }, operationTimeoutMs: 500 },
   build: nativeArrivalEpochFixture.build,
   sources: nativeArrivalEpochFixture.sources,
 }

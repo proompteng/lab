@@ -28,6 +28,48 @@ The worker still enforces the signed registration and its exact serving policy. 
 The migration requires outstanding priced historical expenses to be settled first. Existing evidence is retained
 without enabling retired decoders or new legacy inference.
 
+## Research cost coverage triage
+
+`BaynResearchCostCoverageIncomplete` reports three independent retained-evidence conditions. The annotation shows
+the same maximum across worker replicas as the alert expression; it does not sum duplicate views of one store.
+An unavailable metric is not zero. Check worker telemetry separately before interpreting missing values.
+
+- **Unpriced retained attempts** have a receipt with `costPicoUsd: null`. They can be historical; the count does not
+  establish a current failed worker or a backlog of priced expenses. Inspect the original run's `costBasis`, receipt
+  outcome and dates. Complete receipts require a frozen, source-backed allocation; non-complete outcomes also retain
+  unknown cost under the receipt contract. Model usage or a free provider charge alone does not price CPU/GPU capacity.
+- **Ambiguous claims** have no retained receipt more than 180 seconds after claim. Reconcile retained run and provider
+  evidence before recovery. Do not replay a claimed attempt to obtain a convenient successful receipt.
+- **Oldest pending priced expense** measures the age of receipts with a known cost but no verified expense projection.
+  Inspect the existing projector and ledger verification. Zero lag means no pending priced receipt, not that unknown
+  allocations have been resolved. The alert retains its existing greater-than-300-second threshold and ten-minute hold.
+
+For a bounded read-only diagnosis, use the existing authorized database connection and retain only aggregate results:
+
+```sql
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '5s';
+SELECT count(*) FILTER (WHERE payload->>'costPicoUsd' IS NULL) AS unpriced,
+       count(*) FILTER (WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL) AS pending_priced,
+       min(created_at) FILTER (WHERE payload->>'costPicoUsd' IS NULL) AS oldest_unpriced,
+       max(created_at) FILTER (WHERE payload->>'costPicoUsd' IS NULL) AS newest_unpriced
+FROM research_inference_receipts;
+SELECT CASE WHEN r.payload->'costBasis' = 'null'::jsonb THEN 'null'
+            WHEN NOT (r.payload ? 'costBasis') THEN 'missing' ELSE 'present' END AS cost_basis,
+       c.payload->>'outcome' AS outcome, count(*) AS receipts
+FROM research_inference_receipts c JOIN research_inference_runs r USING (run_id)
+WHERE c.payload->>'costPicoUsd' IS NULL
+GROUP BY 1, 2;
+ROLLBACK;
+```
+
+Do not clear the warning by deleting receipts, changing their immutable run or cost hashes, substituting zero cost,
+manually marking expenses verified, or retrying inference. A new priced registration needs the original source evidence
+hash, its effective interval, the declared reserved-capacity allocation and a positive rate covering its attempt.
+Historical attribution requires separately reviewed evidence that preserves the original unknown receipt; this runbook
+does not authorize financial postings or invent a recovery mechanism. The alert covers the retained research-inference
+store, not every external study artifact. Its absence would not establish an all-cost or economically qualified result.
+
 ## OpenCode free inference
 
 `opencode-research` runs the pinned native OpenCode 2.1.3 CLI on CPU in the standalone `opencode`
@@ -155,7 +197,7 @@ production accounting/recovery behavior.
 This development comparison measures selection together with measured Jev latency and cost. It does not isolate
 selection from latency or replace the separately frozen matched-entry acceptance experiment.
 
-The control input `bayn.control-study-input.v9` requires an explicit `costObjective`. `ALL_COSTS` retains the priced
+The control input `bayn.control-study-input.v10` requires an explicit `costObjective`. `ALL_COSTS` retains the priced
 data requirement. `KNOWN_COST_DIAGNOSTIC` can report known-cost outcomes with unknown data allocation kept null and
 all-cost net results unavailable. It grants no qualification and cannot bypass Ridge's training provenance/cost
 requirements. See [control portfolios](control-portfolios.md) and [matched entry study](matched-entry-study.md).

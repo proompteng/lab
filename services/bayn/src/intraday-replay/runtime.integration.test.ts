@@ -1,3 +1,4 @@
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
@@ -61,7 +62,8 @@ import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeActiveStrategyRuntime, makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from '../strategy'
+import { makeActiveStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevClient, JevError } from '../jev/client'
 import { nativeJevInference } from '../jev/native.test-support'
@@ -97,7 +99,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { CycleStore } from '../cycle/store/model'
 import { CycleTerminalReason } from '../cycle/model'
 import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'
@@ -1430,6 +1432,7 @@ durableTest.each(
                 }),
               )
               const engine = yield* makeTradingEngine({
+                buildDecision: buildResearchMutationCycleDecision,
                 authority,
                 riskPolicyHash: generation.riskPolicyHash,
                 executionMode: mode,
@@ -1554,9 +1557,27 @@ durableTest.each(
             expect(yield* readAuthority).toEqual(restricted)
             expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
             if (scenario !== 'accepted-cancel-terminal') {
+              const reconciliationCount = sql<{ count: number }>`SELECT count(*)::int AS count
+                FROM reconciliations WHERE account_id=${accountId}`.pipe(
+                Effect.map(([row]) => {
+                  if (row === undefined) throw new Error('Missing persisted reconciliation count')
+                  return row.count
+                }),
+              )
               for (let pass = 0; pass < 3; pass++) {
-                yield* advanceBy(1000)
+                const lookupUnavailable = scenario === 'accepted-cancel-lookup-failed'
+                // Make the driver's normal reconciliation cadence due while only the isolated lookup is unavailable.
+                yield* advanceBy(lookupUnavailable ? config.operationTimeoutMs : 1000)
+                const beforeReconciliations = lookupUnavailable ? yield* reconciliationCount : undefined
                 yield* recovery.advance
+                if (beforeReconciliations !== undefined) {
+                  // This must come before runtime.reconcile below; that manual call used to mask driver starvation.
+                  expect(yield* reconciliationCount).toBeGreaterThan(beforeReconciliations)
+                  expect((yield* mutations.latest(entry.intent_id, MutationOperation.Cancel))?.eventType).toBe(
+                    MutationEventType.RecoveryUnknown,
+                  )
+                  expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+                }
                 expect(yield* readAuthority).toMatchObject({
                   generationHash: runtime.authorityGenerationHash,
                   effective: Authority.Observe,

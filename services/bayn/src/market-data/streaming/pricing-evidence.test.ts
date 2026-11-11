@@ -8,6 +8,10 @@ import { marketFeatureClockSkewAllowanceMs } from '../features/feature-core'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
 import { latestQuotes, persistIntradayRecordRows } from '../intraday/verification'
 import { reproduceStreamingSnapshot } from './replay'
+import { constructStreamingSnapshot } from './snapshot'
+import { compactStreamingProjection } from './query-cut'
+import { cryptoMarketFixture } from '../../testing/crypto-market-fixture'
+import { jevProtectiveQuoteIsFresh } from '../../jev/exit'
 
 const fixture = streamingFixture()
 const { candidateSymbols: _candidates, candidateEvidencePolicy: _policy, ...baseQuery } = fixture.query
@@ -21,6 +25,50 @@ const query: IntradaySnapshotQuery = {
 }
 const quote = fixture.snapshot.latestQuotes['AAPL']
 if (quote === undefined) throw new Error('Missing fixture quote')
+
+test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
+  'held %s pricing needs no entry chart history and retains replay and stale-quote rejection',
+  (symbol) => {
+    const crypto = cryptoMarketFixture(symbol)
+    const { candidateSymbols: _candidates, candidateEvidencePolicy: _policy, ...request } = crypto.query
+    const pricing = {
+      ...request,
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      rangeStartAt: new Date(Date.parse(request.rangeEndAt) - 60_000).toISOString(),
+      minimumWatermarkLagMs: 0,
+    }
+    const original = Result.getOrThrow(constructStreamingSnapshot(crypto.cut, pricing))
+    const projection = Result.getOrThrow(compactStreamingProjection(crypto.cut, pricing))
+    expect(projection.bars.size).toBe(0)
+    expect(projection.features.size).toBe(0)
+    const recent = {
+      ...crypto.cut,
+      projection,
+      bootstrap: {
+        ...crypto.cut.bootstrap,
+        observedAtMs: Date.parse(pricing.observedAt) - 1000,
+        lowerTimestampMs: Date.parse(pricing.rangeEndAt) - 125_000,
+      },
+    }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(recent, pricing))
+    expect(snapshot.latestQuotes).toEqual(original.latestQuotes)
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+      ),
+    ).toEqual(snapshot)
+    const heldQuote = snapshot.latestQuotes[symbol]
+    if (heldQuote === undefined) throw new Error('Held crypto pricing fixture must retain its executable quote')
+    expect(jevProtectiveQuoteIsFresh(heldQuote, pricing.observedAt, pricing.maximumQuoteAgeMs)).toBe(true)
+    expect(
+      jevProtectiveQuoteIsFresh(
+        heldQuote,
+        new Date(Date.parse(pricing.observedAt) + 11_000).toISOString(),
+        pricing.maximumQuoteAgeMs,
+      ),
+    ).toBe(false)
+  },
+)
 
 describe.each([IntradaySnapshotPurpose.EntryPricing, IntradaySnapshotPurpose.Liquidation])(
   '%s quotes across the completed-minute boundary',

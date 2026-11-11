@@ -104,24 +104,26 @@ def content_digest(path):
 def tag_inventory(path):
     """Record every metadata inode before rename, so partial purges remain verifiable."""
     result = {}
-    for current, directories, files in os.walk(checked_path(path), followlinks=False):
-        directory = Path(current)
-        checked_path(directory)
+    directories = [checked_path(path)]
+    while directories:
+        directory = checked_path(directories.pop())
         result[directory.relative_to(path).as_posix()] = {
             "inode": directory.stat().st_ino
         }
-        for name in directories + files:
-            checked_path(directory / name)
-        for name in files:
-            file = directory / name
-            before = signature(file)
-            digest = content_digest(file)
-            if signature(file) != before:
-                raise ValueError("Tag metadata changed while hashing")
-            result[file.relative_to(path).as_posix()] = {
-                "signature": before,
-                "sha256": digest,
-            }
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                file = checked_path(Path(entry.path))
+                if stat.S_ISDIR(entry.stat(follow_symlinks=False).st_mode):
+                    directories.append(file)
+                    continue
+                before = signature(file)
+                digest = content_digest(file)
+                if signature(file) != before:
+                    raise ValueError("Tag metadata changed while hashing")
+                result[file.relative_to(path).as_posix()] = {
+                    "signature": before,
+                    "sha256": digest,
+                }
     return result
 
 
@@ -554,12 +556,15 @@ class Store:
         if not re.fullmatch(r"[a-z0-9-]{1,80}", quarantine_id):
             raise ValueError("Invalid quarantine identifier")
         quarantine = checked_path(self.root / "_gc_quarantine" / quarantine_id)
+
+        def inventory_tag(row):
+            path = self.repository(row["repository"]) / "_manifests/tags" / row["tag"]
+            return {**row, "entries": tag_inventory(path)}
+
+        with worker_pool(min(self.workers, 16)) as map_work:
+            tag_rows = list(map_work(inventory_tag, deletes))
         quarantine.mkdir(parents=True, exist_ok=False)
         receipt = quarantine / "receipt.json"
-        tag_rows = []
-        for row in deletes:
-            path = self.repository(row["repository"]) / "_manifests/tags" / row["tag"]
-            tag_rows.append({**row, "entries": tag_inventory(path)})
         document = {
             "version": 3,
             "batch": quarantine_id,
@@ -643,6 +648,9 @@ class Store:
                     raise ValueError("Quarantine directory identity changed")
                 receipt_path.unlink()
             finished.rmdir()
+            return {"deletedTags": 0, "deletedBlobs": 0, "deletedBytes": 0}
+        if not any(quarantine.iterdir()):
+            quarantine.rmdir()
             return {"deletedTags": 0, "deletedBlobs": 0, "deletedBytes": 0}
         receipt_path = checked_path(quarantine / "receipt.json")
         signature(receipt_path)
