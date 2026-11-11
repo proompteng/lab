@@ -23,11 +23,13 @@ import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './t
 export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(function* (
   store: Pick<
     ReturnType<typeof makeInferenceExpenseStore>,
-    'newSources' | 'freeze' | 'pending' | 'acknowledge' | 'settleExpiredTerminalBatches'
+    'newSources' | 'freeze' | 'pending' | 'acknowledge' | 'settleExpiredTerminalBatches' | 'settleExpiredInferenceWork'
   >,
   client: TigerBeetleRequestClient,
   rateCard: Parameters<typeof makeInferenceExpenseQuotes>[1] = inferenceExpenseRateCard,
 ) {
+  // This history scan owns independent expense SQL; it must never extend an account's protection turn.
+  const inferenceWork = yield* store.settleExpiredInferenceWork
   const settlement = yield* store.settleExpiredTerminalBatches
   const sources = yield* store.newSources
   const quotes = (yield* Effect.forEach(sources, (source) =>
@@ -49,11 +51,20 @@ export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(
     sealedBatchCount: settlement.sealed,
     pendingBatchCount: settlement.pending,
     failedBatchCount: settlement.failed,
+    sealedInferenceWorkCount: inferenceWork.sealed,
+    failedInferenceWorkCount: inferenceWork.failed,
+    inferenceWorkRecoveryPending: inferenceWork.remaining,
     ledger: inferenceExpenseLedger,
     unit: 'USD_PICO',
     invoiceReconciled: false,
   }
-  if (sources.length > 0 || pending.length > 0 || settlement.candidates > 0)
+  if (
+    sources.length > 0 ||
+    pending.length > 0 ||
+    settlement.candidates > 0 ||
+    inferenceWork.sealed > 0 ||
+    inferenceWork.failed > 0
+  )
     yield* Effect.logInfo('Bayn inference expense projection completed').pipe(Effect.annotateLogs(summary))
   return summary
 })

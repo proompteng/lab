@@ -142,7 +142,6 @@ export const bindRecoveryFirstCycleDriver = (
     readonly nextDelayMs: number
   },
   executionBuild: ExecutionBuild,
-  accountId?: string,
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
@@ -231,25 +230,11 @@ export const bindRecoveryFirstCycleDriver = (
           })
         } else complete = false
         const advanced = yield* Effect.provideContext(driver.advance, observedContext)
-        const work = Context.getOption(context, JevInferenceWorkStore)
-        let recoveryAt: number | undefined
-        if (Option.isSome(work)) {
-          if (accountId === undefined)
-            return yield* operationalError({
-              component: 'config',
-              operation: 'jev-batch',
-              message: 'inference settlement requires its immutable account binding',
-            })
-          const settled = yield* work.value.settleExpired(accountId)
-          if (settled.nextAttemptAt !== undefined) recoveryAt = Date.parse(settled.nextAttemptAt)
-          else if (settled.failed > 0 || settled.remaining)
-            recoveryAt = (yield* Clock.currentTimeMillis) + (settled.failed > 0 ? 30_000 : 1)
-        }
         const pending = yield* pendingInferenceForAuthority(context)
         const expiry = pending.reduce<number | undefined>((earliest, job) => {
           const at = Date.parse(job.expiresAt)
           return earliest === undefined ? at : Math.min(earliest, at)
-        }, recoveryAt)
+        }, undefined)
         const nextWakeAt =
           expiry === undefined
             ? advanced.nextWakeAt
@@ -577,15 +562,11 @@ export const ExecutionCycleDriverLive = (plan: ApplicationPlan) =>
     plan.config.operationTimeoutMs,
     makeExecutionCycleDriver(plan, nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs)).pipe(
       Effect.flatMap(({ driver, context }) =>
-        bindRecoveryFirstCycleDriver(
-          driver,
-          {
-            sourceRevision: plan.config.build.sourceRevision,
-            imageRepository: plan.config.build.imageRepository,
-            imageDigest: plan.config.build.imageDigest,
-          },
-          plan.config.alpaca.expectedAccountId,
-        ).pipe(Effect.provideContext(context)),
+        bindRecoveryFirstCycleDriver(driver, {
+          sourceRevision: plan.config.build.sourceRevision,
+          imageRepository: plan.config.build.imageRepository,
+          imageDigest: plan.config.build.imageDigest,
+        }).pipe(Effect.provideContext(context)),
       ),
     ),
   )

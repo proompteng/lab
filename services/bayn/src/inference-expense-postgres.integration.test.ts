@@ -11,6 +11,7 @@ import batchMigration from '../migrations/0078_jev_batches'
 import expenseMigration from '../migrations/0091_inference_expense_quotes'
 import inferenceRequestVersion from '../migrations/0150_inference_request_version'
 import expenseSourceQueue from '../migrations/0173_inference_expense_source_queue'
+import inferenceWork from '../migrations/0195_jev_inference_work'
 import {
   buildInferenceExpensePlan,
   inferenceExpenseBatchSize,
@@ -69,6 +70,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         if (withRequestVersion) yield* inferenceRequestVersion
         yield* resolutionMigration
         yield* batchMigration
+        yield* inferenceWork
         yield* expenseMigration
         yield* sql`CREATE TABLE jev_inference_handoffs (request_id text PRIMARY KEY, handoff_hash text NOT NULL, payload jsonb NOT NULL)`
         yield* sql`ALTER TABLE inference_expense_quotes

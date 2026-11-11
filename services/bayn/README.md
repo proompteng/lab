@@ -445,6 +445,8 @@ service can run while the account processes broker updates, protection or close 
 binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
 worker from repeating paid work whose provider outcome is uncertain. Unknown outcomes retain their original expiry and
 existing expense classification; a retry cannot invent a fresh validity window.
+Expired outbox history, including earlier authority generations, settles under the existing independent account
+inference-expense owner. Its SQL page scan and persisted retry backoff never run in the account's protection turn.
 
 Completion returns a compact event to the same account owner, bound to its source revision and activation epoch.
 The owner resumes the original retained observation and result rather than discovering another batch for the consumed

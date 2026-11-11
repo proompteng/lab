@@ -12,6 +12,7 @@ import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/e
 import { decideEntryAblation } from '../jev/entry-ablation'
 import { makeInferenceCostReport, InferenceStage } from '../inference-costs'
 import { inferenceExpenseRateCard } from '../inference-expense'
+import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
@@ -526,12 +527,13 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('more than 64 expired jobs settle in bounded pages while a current prepared job remains discoverable', async () => {
+  test('expense ownership settles more than 64 expired jobs while current prepared work remains discoverable', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const batches = yield* JevBatchStore
         const work = yield* JevInferenceWorkStore
+        const expenses = makeInferenceExpenseStore(sql, replayAccountId)
         let expiredRequests = 0
         let blockedRequestId: string | undefined
         const admitAt = (at: number, generation = plan.authorityGenerationHash) =>
@@ -608,7 +610,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* work.pending(plan.authorityGenerationHash)).toEqual([])
         expect((yield* work.pending(currentGeneration)).map(({ jobId }) => jobId)).toEqual([current.batchId])
         expect(yield* work.settleExpired('unrelated-account')).toEqual({ sealed: 0, failed: 0, remaining: false })
-        expect(yield* work.settleExpired(replayAccountId)).toEqual({
+        expect(yield* expenses.settleExpiredInferenceWork).toEqual({
           sealed: 63,
           failed: 1,
           remaining: true,
@@ -616,7 +618,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         })
         expect((yield* work.pending(currentGeneration)).map(({ jobId }) => jobId)).toEqual([current.batchId])
         for (let event = 0; event < 100; event += 1)
-          expect(yield* work.settleExpired(replayAccountId)).toEqual({
+          expect(yield* expenses.settleExpiredInferenceWork).toEqual({
             sealed: 0,
             failed: 0,
             remaining: true,

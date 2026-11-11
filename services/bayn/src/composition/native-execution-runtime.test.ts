@@ -45,6 +45,7 @@ import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
 import { operationalError } from '../errors'
+import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeRebindingCycleDriver } from './generation-cycle'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import { completeExecutionControllerTick, executionControllerPlanHash } from '../execution/controller'
@@ -239,6 +240,97 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
 }
 
 describe('native execution runtime', () => {
+  test('blocked historical expense cleanup cannot delay serialized protection advances', async () => {
+    let cleanupStarts = 0
+    let cleanupFinalizers = 0
+    let advances = 0
+    const nextWakeAt = '2026-08-13T18:00:05.000Z'
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const cleanup = Effect.gen(function* () {
+            cleanupStarts += 1
+            yield* Deferred.succeed(entered, undefined)
+            return yield* Effect.never
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                cleanupFinalizers += 1
+              }),
+            ),
+          )
+          const forbidden = () => Effect.die('blocked cleanup must not reach other expense or provider work')
+          const work = {
+            pending: () => Effect.succeed([]),
+            settleExpired: (_accountId: string) => cleanup,
+            resume: forbidden,
+            read: forbidden,
+            claim: forbidden,
+          } satisfies typeof JevInferenceWorkStore.Service
+          const expense = yield* runInferenceExpensePass(
+            {
+              newSources: forbidden(),
+              freeze: forbidden,
+              pending: forbidden(),
+              acknowledge: forbidden,
+              settleExpiredTerminalBatches: forbidden(),
+              settleExpiredInferenceWork: work.settleExpired(brokerAccountId),
+            },
+            { request: forbidden },
+          ).pipe(Effect.forkScoped)
+          yield* Deferred.await(entered)
+          const captured = Context.make(AuthorityGenerationStore, {
+            readAuthorityState: Effect.succeed({
+              schemaVersion: 'bayn.paper-authority.v1' as const,
+              generationHash: hash('1'),
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
+              kill: KillState.Clear,
+              version: 1,
+              updatedAt: completedAt,
+            }),
+            ensureAuthorityGeneration: forbidden,
+            readOrInitializeObserveAuthority: forbidden,
+            readResearchAuthorityGeneration: forbidden,
+            readAuthorityGenerationLineage: forbidden,
+          }).pipe(Context.add(JevInferenceWorkStore, work)) as Context.Context<RecoveryFirstRuntime>
+          const bound = yield* bindRecoveryFirstCycleDriver(
+            {
+              nextDelayMs: 30_000,
+              advance: Effect.sync(() => {
+                advances += 1
+                return {
+                  nextWakeAt,
+                  observation: {
+                    result: 'SUCCESS' as const,
+                    outcome: 'RECOVERED' as const,
+                    recoveryAction: 'WAITING' as const,
+                    waitReason: 'JEV_POSITION_HELD' as const,
+                    observedAt: completedAt,
+                  },
+                }
+              }),
+            },
+            executionBuild,
+          ).pipe(Effect.provideContext(captured))
+          const protection = yield* Effect.all([bound.advance, bound.advance], { concurrency: 1 }).pipe(
+            Effect.timeout('1 second'),
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* TestClock.adjust('1 second')
+          const results = yield* Fiber.join(protection)
+          expect(results.map((result) => result.nextWakeAt)).toEqual([nextWakeAt, nextWakeAt])
+          expect(advances).toBe(2)
+          expect(cleanupStarts).toBe(1)
+          expect(cleanupFinalizers).toBe(0)
+          yield* Fiber.interrupt(expense)
+          expect(cleanupFinalizers).toBe(1)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
+
   test.each([
     {
       name: 'execution allowed',
@@ -335,9 +427,7 @@ describe('native execution runtime', () => {
       }),
     ) as Context.Context<RecoveryFirstRuntime>
     const bound = await Effect.runPromise(
-      bindRecoveryFirstCycleDriver(windowClosedDriver, executionBuild, brokerAccountId).pipe(
-        Effect.provideContext(captured),
-      ),
+      bindRecoveryFirstCycleDriver(windowClosedDriver, executionBuild).pipe(Effect.provideContext(captured)),
     )
     authority = {
       ...authority,

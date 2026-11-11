@@ -17,6 +17,7 @@ import {
   type InferenceExpenseQuote,
 } from './inference-expense'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
+import { makeJevInferenceWorkStore } from './db/jev-inference-work-postgres'
 
 const FrozenRowSchema = Schema.Struct({
   quoteHash: Sha256Schema,
@@ -198,5 +199,18 @@ export const makeInferenceExpenseStore = (
   // callers get a local hint, while the background projection keeps fair progress
   // across its reconnects without making the hint authoritative state.
   const settleExpiredTerminalBatches = settleExpiredTerminalJevBatches(sql, accountId, settlementCursor)
-  return { newSources, freeze, pending, acknowledge, session, currentSession, settleExpiredTerminalBatches }
+  const settleExpiredInferenceWork = makeJevInferenceWorkStore.pipe(
+    Effect.provideService(PgClient.PgClient, sql),
+    Effect.flatMap((work) => work.settleExpired(accountId)),
+  )
+  return {
+    newSources,
+    freeze,
+    pending,
+    acknowledge,
+    session,
+    currentSession,
+    settleExpiredTerminalBatches,
+    settleExpiredInferenceWork,
+  }
 }
