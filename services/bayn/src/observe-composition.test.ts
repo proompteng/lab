@@ -8,6 +8,7 @@ import {
   type Order as RawBrokerOrder,
 } from './broker/alpaca/model'
 import { prepareExpiredEntryCancellation } from './observe-composition/mutation-intent-interpreter'
+import { cancellationIdentity, decideRecoverySuccess } from './execution/coordinator-decisions'
 import { makeEntryAblationRuntime } from './intraday-replay/strategy'
 import { buildResearchMutationCycleDecision } from './intraday-replay/decision-builder'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from './jev/entry-ablation-policy'
@@ -1527,7 +1528,7 @@ const expiredEntryBrokerOrder = (
   const request = Result.getOrThrow(orderRequestBody(intent))
   const parent: RawBrokerOrder = {
     accountId: intent.accountId,
-    brokerOrderId: 'expired-entry-parent',
+    brokerOrderId: '11111111-1111-4111-8111-111111111111',
     clientOrderId: intent.clientOrderId,
     createdAt: intent.createdAt,
     assetId: 'expired-entry-asset',
@@ -1685,6 +1686,7 @@ test('expired entry containment verifies the isolated parent and preserves uncer
           fixture.document,
           now,
           fixture.policy.maxBrokerStateAgeMs,
+          2,
         ).pipe(Effect.result)
       }).pipe(
         Effect.provideService(IntentStore, {
@@ -1729,11 +1731,7 @@ test('expired entry containment verifies the isolated parent and preserves uncer
         Effect.provide(TestClock.layer()),
       ),
     )
-    if (
-      ['foreign-account', 'foreign-client', 'changed-protection', 'stale-observation', 'future-observation'].includes(
-        scenario,
-      )
-    ) {
+    if (['foreign-account', 'foreign-client', 'changed-protection'].includes(scenario)) {
       expect(Result.isFailure(outcome)).toBe(true)
     } else {
       expect(Result.isSuccess(outcome)).toBe(true)
@@ -1744,15 +1742,33 @@ test('expired entry containment verifies the isolated parent and preserves uncer
         scenario === 'partial' ||
         scenario === 'active-protection' ||
         scenario === 'filled-protection' ||
+        scenario === 'stale-observation' ||
+        scenario === 'future-observation' ||
         scenario === 'terminal-broker'
           ? undefined
-          : ({
-              _tag: 'Execute',
-              intentId: fixture.intent.intentId,
-              observedAt: now,
-              action:
-                scenario === 'exact' ? 'CANCEL' : scenario === 'unknown-cancel' ? 'RECOVER_CANCEL' : 'RECOVER_SUBMIT',
-            } as const)
+          : scenario === 'exact'
+            ? ({
+                _tag: 'Execute',
+                intentId: fixture.intent.intentId,
+                observedAt: now,
+                action: 'CANCEL',
+                cancellationAdmission: {
+                  accountId: fixture.intent.accountId,
+                  authorityGenerationHash: fixture.input.authorityGenerationHash,
+                  authorityVersion: 2,
+                  intentId: fixture.intent.intentId,
+                  clientOrderId: fixture.intent.clientOrderId,
+                  brokerOrderId: baseOrder.brokerOrderId,
+                  observedAt: brokerAt,
+                  validUntil: utcInstantFromEpochMillis(Date.parse(brokerAt) + fixture.policy.maxBrokerStateAgeMs),
+                },
+              } as const)
+            : ({
+                _tag: 'Execute',
+                intentId: fixture.intent.intentId,
+                observedAt: now,
+                action: scenario === 'unknown-cancel' ? 'RECOVER_CANCEL' : 'RECOVER_SUBMIT',
+              } as const)
       expect(Result.getOrThrow(outcome)).toEqual(expected)
     }
     if (
@@ -1775,7 +1791,10 @@ test.each([
   'partial-observed',
   'protection-active',
   'superseded-generation',
+  'changed-policy',
+  'lookup-unavailable',
   'racing-fill',
+  'racing-partial',
 ] as const)(
   'expired entry cancellation precedes failing full-history reconciliation and remains idempotent: %s',
   async (scenario) => {
@@ -1788,6 +1807,10 @@ test.each([
       scenario === 'superseded-generation'
         ? { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
         : fixture.input
+    const policy =
+      scenario === 'changed-policy'
+        ? { ...fixture.policy, maxBrokerStateAgeMs: fixture.policy.maxBrokerStateAgeMs + 1 }
+        : fixture.policy
     let authority =
       scenario === 'clear'
         ? baseAuthority
@@ -1800,7 +1823,11 @@ test.each([
           }
     const baseParent = expiredEntryBrokerOrder(fixture, expiredAt)
     const requiresCompleteReconciliation =
-      scenario === 'partial-observed' || scenario === 'protection-active' || scenario === 'superseded-generation'
+      scenario === 'partial-observed' ||
+      scenario === 'protection-active' ||
+      scenario === 'superseded-generation' ||
+      scenario === 'changed-policy' ||
+      scenario === 'lookup-unavailable'
     const parent: RawBrokerOrder = {
       ...baseParent,
       ...(scenario === 'partial-observed'
@@ -1841,13 +1868,24 @@ test.each([
       ...sandboxExecutionProgram(),
       submit: forbidden,
       cancelProtectionOrder: forbidden,
-      cancel: (id) =>
+      cancel: (id, _delayMs, admission) =>
         Effect.gen(function* () {
           expect(id).toBe(fixture.intent.intentId)
+          expect(admission).toEqual({
+            accountId: fixture.intent.accountId,
+            authorityGenerationHash: input.authorityGenerationHash,
+            authorityVersion: authority.version,
+            intentId: fixture.intent.intentId,
+            clientOrderId: fixture.intent.clientOrderId,
+            brokerOrderId: parent.brokerOrderId,
+            observedAt: expiredAt,
+            validUntil: utcInstantFromEpochMillis(Date.parse(expiredAt) + fixture.policy.maxBrokerStateAgeMs),
+          })
           cancelCount += 1
           latestCancel = {
             ...accepted,
             eventId: '3'.repeat(64),
+            requestHash: Result.getOrThrow(cancellationIdentity(accepted)).requestHash,
             operation: MutationOperation.Cancel,
             eventType: scenario === 'uncertain' ? MutationEventType.CancelUnknown : MutationEventType.CancelAccepted,
             occurredAt: yield* currentUtcInstant,
@@ -1859,6 +1897,37 @@ test.each([
           expect([id, operation]).toEqual([fixture.intent.intentId, MutationOperation.Cancel])
           if (latestCancel === undefined) throw new Error('Missing cancellation evidence')
           recoveryCount += 1
+          const recoveredAt = yield* currentUtcInstant
+          const filledQuantityAtoms =
+            scenario === 'racing-fill'
+              ? fixture.intent.quantityAtoms
+              : scenario === 'racing-partial'
+                ? '1000000000'
+                : '0'
+          const recovered = decideRecoverySuccess(
+            fixture.intent,
+            MutationOperation.Cancel,
+            latestCancel,
+            {
+              value: {
+                ...parent,
+                status: scenario === 'racing-fill' ? RawOrderStatus.Filled : RawOrderStatus.Canceled,
+                filledQuantityAtoms,
+                observedAt: recoveredAt,
+                legs: (parent.legs ?? []).map((leg) => ({ ...leg, status: RawOrderStatus.Canceled })),
+              },
+              evidence: {
+                requestId: 'confirmed-parent',
+                status: 200,
+                contentHash: '6'.repeat(64),
+                observedAt: recoveredAt,
+              },
+            },
+            accepted,
+          )
+          if (recovered._tag !== 'RecoveryFound') throw new Error('Expected exact terminal cancellation recovery')
+          expect(recovered.terminalOutcome).toBe(recoveredTerminalOutcome)
+          expect(parent.quantityAtoms).toBe(fixture.intent.quantityAtoms)
           terminal = true
           latestCancel = {
             ...latestCancel,
@@ -1885,19 +1954,16 @@ test.each([
             yield* executionCycleModule.recoverExpiredEntryBeforeReconciliation(
               input,
               fixture.boundCycle,
-              fixture.policy,
+              policy,
               capability,
             ),
           ).toBeUndefined()
         }
         authority = admittedAuthority
         expect(
-          yield* executionCycleModule.recoverExpiredEntryBeforeReconciliation(
-            input,
-            fixture.boundCycle,
-            fixture.policy,
-            { _tag: 'RecoveryOnly' },
-          ),
+          yield* executionCycleModule.recoverExpiredEntryBeforeReconciliation(input, fixture.boundCycle, policy, {
+            _tag: 'RecoveryOnly',
+          }),
         ).toBeUndefined()
         expect([cancelCount, parentReads, recoveryCount]).toEqual([0, 0, 0])
         const driver = yield* Effect.fromResult(
@@ -1905,7 +1971,7 @@ test.each([
             input,
             { cycleBindingId: fixture.boundCycle.identity.qualificationRunId, recordPass: () => Effect.void },
             fixture.preparation,
-            fixture.policy,
+            policy,
             scenario === 'clear' ? { _tag: 'Mutation', executionProgram: program } : capability,
             forbidden,
             'mutation autonomous cycle loop',
@@ -1914,7 +1980,7 @@ test.each([
         const first = yield* driver.advance
         if (requiresCompleteReconciliation) {
           expect(first.observation.result).toBe('FAILURE')
-          const readsPerPass = scenario === 'superseded-generation' ? 0 : 1
+          const readsPerPass = scenario === 'superseded-generation' || scenario === 'changed-policy' ? 0 : 1
           expect([cancelCount, recoveryCount, parentReads, fullHistoryReads]).toEqual([0, 0, readsPerPass, 1])
           yield* TestClock.adjust(1_000)
           const second = yield* driver.advance
@@ -2001,9 +2067,16 @@ test.each([
               )
             }),
           orderByClientId: (id) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               expect(id).toBe(fixture.intent.clientOrderId)
               parentReads += 1
+              if (scenario === 'lookup-unavailable')
+                return yield* new BrokerReadError({
+                  operation: 'order-by-client-id',
+                  kind: BrokerReadErrorKind.NotFound,
+                  retryable: false,
+                  message: 'isolated lookup unavailable while complete history remains independently readable',
+                })
               return {
                 value: parent,
                 evidence: {

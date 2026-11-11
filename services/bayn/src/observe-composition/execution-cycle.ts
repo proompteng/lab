@@ -1045,6 +1045,7 @@ const executePreparedMutationCycleStep = (
             step.intentId,
             step.action,
             step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+            step.action === 'CANCEL' ? step.cancellationAdmission : undefined,
           )
         : executeMutationIntentWithExecutor({
             executor: { recover: recoverMutation },
@@ -1118,13 +1119,17 @@ export const recoverExpiredEntryBeforeReconciliation = (
     const document = yield* readBoundMutationDocument(cycle)
     if (document.mode === 'OBSERVE' || document.bindings.authorityGenerationHash !== input.authorityGenerationHash)
       return undefined
-    yield* recoverBoundExecutionContext(policy, cycle, document, input.simulation)
+    // Older policy/context bindings still belong to ordinary reconciliation and its existing diagnosis.
+    // They cannot use the optional cancellation path to skip that reconciliation.
+    const context = yield* recoverBoundExecutionContext(policy, cycle, document, input.simulation).pipe(Effect.result)
+    if (Result.isFailure(context)) return undefined
     const step = yield* prepareExpiredEntryCancellation(
       { ...input, mutationPhase: 'ENTRY' },
       cycle,
       document,
       yield* currentUtcInstant,
       policy.maxBrokerStateAgeMs,
+      authority.version,
     )
     if (step === undefined) return undefined
     const outcome =

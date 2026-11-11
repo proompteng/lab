@@ -6,7 +6,12 @@ import { CycleRunnerError } from '../cycle/runner/model'
 import { CycleStoreError } from '../cycle/store/model'
 import { AuthorityRestrictionStore } from '../db/execution-store/contract'
 import { OperationalError } from '../errors'
-import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations/model'
+import {
+  MutationEventType,
+  MutationStore,
+  type ExpiredEntryCancellationAdmission,
+  type MutationEvent,
+} from '../execution/mutations/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
@@ -190,11 +195,15 @@ export const executeMutationIntent = (
   intentId: string,
   action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
   submitExpiresAt?: string,
+  cancellationAdmission?: ExpiredEntryCancellationAdmission,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
   executeMutationIntentWithExecutor({
     executor: {
       submit: executionProgram.submit,
-      cancel: executionProgram.cancel,
+      cancel:
+        cancellationAdmission === undefined
+          ? executionProgram.cancel
+          : (id, delayMs) => executionProgram.cancel(id, delayMs, cancellationAdmission),
       recover: executionProgram.recover,
     },
     intentId,

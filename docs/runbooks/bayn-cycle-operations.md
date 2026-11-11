@@ -46,6 +46,40 @@ Check the deployed revision and the controller's `RECOVERED` pass, then verify `
 the active kill state and current reconciliation in `GET /v1/status`. Confirm an actual usable decision or an explicit
 waiting reason in the native pass. A restored authority alone does not prove a decision, order or fill.
 
+### Expired entry recovery during a reconciliation outage
+
+An accepted BUY may still be working when its original approval or submission deadline expires. On a scheduled
+recovery pass, the existing PAPER owner can attempt a narrowly scoped cancellation before rebuilding full account
+history. Its current generation must match the bound decision, with either clear PAPER authority or a recognized
+system restriction. The immutable decision, risk commit, intent, client order and acknowledged broker parent must
+match. A fresh isolated parent lookup must report zero filled quantity; every native bracket exit must also be
+unfilled and held. True OBSERVE `RecoveryOnly` remains lookup-only and cannot issue this cancellation.
+
+The cancellation carries the observed authority generation/version and exact account, intent, client and parent
+identities. The existing fenced admission transaction checks them again and samples the database clock after
+acquiring its locks. Expired evidence, a changed authority version/generation, an operator hold or a protective
+SELL rejects fresh admission. `CANCEL_STARTED` commits before broker I/O; replay and unknown outcomes use the
+existing durable mutation identity and lookup recovery. No new entry, capital activation or kill clear follows
+from this permission.
+
+Partial or filled parents, activated or filled exit legs, superseded generations, changed policy bindings, and
+unavailable or stale isolated lookup evidence return to ordinary reconciliation and protection recovery. An
+unrelated full-history failure may therefore leave these cases pending. An already bound generation with an
+incomplete reconciliation can construct its restricted driver, but settlement, rollover and restored PAPER
+authority still require their existing exact reconciliation gates.
+
+Under [Alpaca's order contract](https://docs.alpaca.markets/us/docs/orders-at-alpaca), bracket cancellation can
+cancel the remaining group orders. A zero-fill observation is not atomic with
+the broker DELETE: a partial or complete fill can race cancellation, including a terminal canceled order with
+nonzero fills. Keep its original quantity and accounting history, confirm the cancellation outcome, and obtain
+fresh complete reconciliation before sizing protection or declaring settlement. The entry deadline prevents
+fresh submission; it does not guarantee that an accepted broker order cannot fill after that deadline.
+
+The Restate recovery-window counter saturates at seven while bounded recovery deliveries continue at the
+existing recovery cadence. Retries retain the original command issue time and ownership identity; a new
+delivery does not renew a trade deadline. Check continuing durable delivery, the cancellation event and its
+confirmation, and a later exact reconciliation separately when accepting a repair.
+
 ## Trace one lifecycle pass
 
 1. Query Tempo for `resource.service.name = "restate"`, `"bayn-execution-controller"`, and `"bayn"` over the same
