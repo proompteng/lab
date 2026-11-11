@@ -23,8 +23,12 @@ const PersistedChunk = Schema.Struct({
 })
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
+const CannotConnectNow = Schema.Struct({ code: Schema.Literal('57P03') })
 const retryableAppendFailure = (cause: unknown): cause is SqlError =>
-  isSqlError(cause) && (cause.reason._tag === 'ConnectionError' || cause.reason._tag === 'StatementTimeoutError')
+  isSqlError(cause) &&
+  (cause.reason._tag === 'ConnectionError' ||
+    cause.reason._tag === 'StatementTimeoutError' ||
+    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause)))
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,

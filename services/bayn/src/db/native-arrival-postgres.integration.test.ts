@@ -21,6 +21,7 @@ import {
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
 import { makeNativeArrivalStore, streamNativeArrivalChunkPage, readNativeArrivalEpoch } from './native-arrival-postgres'
+import { nativeArrivalPostgresFailure } from './native-arrival-postgres.test-support'
 import { PostgresClientLive } from './postgres-client'
 import { migrationLoader } from './migrations'
 import { postgresMigrations } from './postgres-migrations'
@@ -89,85 +90,91 @@ describePostgres('PostgreSQL native arrival retention', () => {
     )
   })
 
-  test('a 35-second connection refusal retains the capture and its exact queued prefix', async () => {
-    await runtime.runPromise(
-      provideTestLayer(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            const firstCommitted = yield* Deferred.make<void>()
-            const secondCommitted = yield* Deferred.make<void>()
-            let available = false
-            let commits = 0
-            const disconnected = new SqlError({
-              reason: new ConnectionError({
-                cause: new Error('connect ECONNREFUSED during PostgreSQL switchover'),
-                message: 'PgConnection: Failed to connect',
-                operation: 'connect',
-              }),
-            })
-            const reconnecting = new Proxy(sql, {
-              get(target, property, receiver) {
-                if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
-                return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-                  Effect.suspend(() =>
-                    available
-                      ? target
-                          .withTransaction(effect)
-                          .pipe(
-                            Effect.tap(() =>
-                              Deferred.succeed(++commits === 1 ? firstCommitted : secondCommitted, undefined),
-                            ),
-                          )
-                      : Effect.fail(disconnected),
-                  )
-              },
-            })
-            const capture = yield* makeNativeArrivalJournal(epoch, makeNativeArrivalStore(reconnecting), {
-              chunkBytes: 1,
-              queueBytes: 1024 * 1024,
-            })
-            yield* capture.observe(observation(1))
-            yield* TestClock.adjust('35 seconds')
-            const duringOutage = capture.status()
-            available = true
-            expect(duringOutage).toMatchObject({
-              status: 'RECORDING',
-              observedConsumerSequence: 1,
-              durableConsumerSequence: 0,
-              failure: null,
-            })
-            yield* TestClock.adjust('1 second')
-            yield* Deferred.await(firstCommitted)
-            yield* capture.observe(observation(2))
-            yield* Deferred.await(secondCommitted)
-            yield* TestClock.adjust(0)
-            expect(capture.status()).toMatchObject({
-              status: 'RECORDING',
-              observedConsumerSequence: 2,
-              durableConsumerSequence: 2,
-              failure: null,
-            })
-            const first = chunk(0, null)
-            expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([
-              first,
-              chunk(1, first.contentHash),
-            ])
-          }),
+  test.each(['connection', '57P03'] as const)(
+    'a 35-second %s refusal retains the capture and its exact queued prefix',
+    async (failure) => {
+      await runtime.runPromise(
+        provideTestLayer(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              const firstCommitted = yield* Deferred.make<void>()
+              const secondCommitted = yield* Deferred.make<void>()
+              let available = false
+              let commits = 0
+              const disconnected =
+                failure === '57P03'
+                  ? yield* nativeArrivalPostgresFailure(failure)
+                  : new SqlError({
+                      reason: new ConnectionError({
+                        cause: new Error('connect ECONNREFUSED during PostgreSQL switchover'),
+                        message: 'PgConnection: Failed to connect',
+                        operation: 'connect',
+                      }),
+                    })
+              const reconnecting = new Proxy(sql, {
+                get(target, property, receiver) {
+                  if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
+                  return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                    Effect.suspend(() =>
+                      available
+                        ? target
+                            .withTransaction(effect)
+                            .pipe(
+                              Effect.tap(() =>
+                                Deferred.succeed(++commits === 1 ? firstCommitted : secondCommitted, undefined),
+                              ),
+                            )
+                        : Effect.fail(disconnected),
+                    )
+                },
+              })
+              const capture = yield* makeNativeArrivalJournal(epoch, makeNativeArrivalStore(reconnecting), {
+                chunkBytes: 1,
+                queueBytes: 1024 * 1024,
+              })
+              yield* capture.observe(observation(1))
+              yield* TestClock.adjust('35 seconds')
+              const duringOutage = capture.status()
+              available = true
+              expect(duringOutage).toMatchObject({
+                status: 'RECORDING',
+                observedConsumerSequence: 1,
+                durableConsumerSequence: 0,
+                failure: null,
+              })
+              yield* TestClock.adjust('1 second')
+              yield* Deferred.await(firstCommitted)
+              yield* capture.observe(observation(2))
+              yield* Deferred.await(secondCommitted)
+              yield* TestClock.adjust(0)
+              expect(capture.status()).toMatchObject({
+                status: 'RECORDING',
+                observedConsumerSequence: 2,
+                durableConsumerSequence: 2,
+                failure: null,
+              })
+              const first = chunk(0, null)
+              expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([
+                first,
+                chunk(1, first.contentHash),
+              ])
+            }),
+          ),
+          TestClock.layer(),
         ),
-        TestClock.layer(),
-      ),
-    )
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const [end] = yield* sql`SELECT payload FROM native_arrival_ends WHERE capture_id=${epoch.captureId}`
-        expect(end?.['payload']).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 2 })
-      }),
-    )
-  })
+      )
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const [end] = yield* sql`SELECT payload FROM native_arrival_ends WHERE capture_id=${epoch.captureId}`
+          expect(end?.['payload']).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 2 })
+        }),
+      )
+    },
+  )
 
-  test.each(['connection', 'statement-timeout'] as const)(
+  test.each(['connection', 'statement-timeout', '57P03'] as const)(
     'a lost %s append acknowledgement resumes from the exact committed prefix without losing the recorder',
     async (failure) => {
       await runtime.runPromise(
@@ -175,20 +182,23 @@ describePostgres('PostgreSQL native arrival retention', () => {
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient
             let acknowledgements = 0
-            const disconnected = new SqlError({
-              reason:
-                failure === 'connection'
-                  ? new ConnectionError({
-                      cause: new Error('PostgreSQL connection exceeded its inactivity deadline'),
-                      message: 'PgConnection: Socket error',
-                      operation: 'query',
-                    })
-                  : new StatementTimeoutError({
-                      cause: new Error('canceling statement due to statement timeout'),
-                      message: 'PgConnection: Query failed',
-                      operation: 'query',
-                    }),
-            })
+            const disconnected =
+              failure === '57P03'
+                ? yield* nativeArrivalPostgresFailure(failure)
+                : new SqlError({
+                    reason:
+                      failure === 'connection'
+                        ? new ConnectionError({
+                            cause: new Error('PostgreSQL connection exceeded its inactivity deadline'),
+                            message: 'PgConnection: Socket error',
+                            operation: 'query',
+                          })
+                        : new StatementTimeoutError({
+                            cause: new Error('canceling statement due to statement timeout'),
+                            message: 'PgConnection: Query failed',
+                            operation: 'query',
+                          }),
+                  })
             const losingAcknowledgement = new Proxy(sql, {
               get(target, property, receiver) {
                 if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
