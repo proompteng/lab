@@ -19,6 +19,10 @@ const DeliveryAttemptSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: executionControllerMaximumDeliveryAttempt }),
 )
 export const executionControllerMaximumRecoveryWindow = 7
+/** The counter saturates; a failed owner must keep its bounded recovery cadence alive. */
+export const nextExecutionControllerRecoveryWindow = (current: number): number =>
+  Math.min(current + 1, executionControllerMaximumRecoveryWindow)
+
 const RecoveryWindowSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: executionControllerMaximumRecoveryWindow }),
 )

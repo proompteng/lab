@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Clock, Config, ConfigProvider, Effect, Option, Result } from 'effect'
+import { Clock, Config, ConfigProvider, Effect, Option, Result, Schedule } from 'effect'
 
-import { decodeExecutionControllerState } from '../execution/controller'
+import { decodeExecutionControllerState, executionControllerMaximumRecoveryWindow } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { makeBaynBrokerObservations } from './restate-broker-observations'
@@ -12,7 +12,12 @@ import {
   restateExecutionActivationRequest,
   restateExecutionActivationTransportConfig,
 } from './restate-execution-activate'
-import { executionActivationAuthorizationHash, makeBaynExecutionController } from './restate-execution-controller'
+import {
+  executionActivationAuthorizationHash,
+  executionControllerAdvanceMaximumAttempts,
+  executionControllerRecoveryTickDelayMs,
+  makeBaynExecutionController,
+} from './restate-execution-controller'
 import { awaitRestateInvocation, RestateSendStatus, sendRestateInvocation } from './restate-invocation-client'
 
 const admin = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
@@ -482,4 +487,204 @@ describeRestate('Real Restate execution deployment activation', () => {
       ),
     )
   }, 120_000)
+
+  test('a saturated recovery window retains one durable successor and its original issuedAt', async () => {
+    if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
+    for (const target of [admin, ingress]) {
+      if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
+        throw new Error('Restate integration targets must be local')
+    }
+    const config = {
+      controllerKey: randomUUID().replaceAll('-', '').repeat(2),
+      planHash: 'b'.repeat(64),
+      sourceRevision: 'c'.repeat(40),
+      operationTimeoutMs: 5_000,
+      activationAuthorizationHash: Result.getOrThrow(
+        executionActivationAuthorizationHash(Buffer.alloc(32, 8).toString('base64url')),
+      ),
+    }
+    const activation = {
+      schemaVersion: 'bayn.execution-controller-activation.v1',
+      controllerKey: config.controllerKey,
+      epoch: 1,
+      firstSequence: 0,
+      planHash: config.planHash,
+      sourceRevision: config.sourceRevision,
+    }
+    const deactivation = {
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey: config.controllerKey,
+      epoch: activation.epoch,
+      planHash: config.planHash,
+      sourceRevision: config.sourceRevision,
+    }
+    let dependencyReady = true
+    const attempts: Array<{
+      readonly epoch: number
+      readonly sequence: number
+      readonly issuedAt: string
+      readonly startedAtMs: number
+      readonly succeeded: boolean
+    }> = []
+    const recoveryWindows: Array<Readonly<Record<string, string | number | boolean>>> = []
+    const controller = makeBaynExecutionController(config, {
+      advance: async (command) => {
+        const startedAtMs = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+        attempts.push({ ...command, startedAtMs, succeeded: dependencyReady })
+        if (!dependencyReady) throw new Error('Injected saturated-window dependency failure')
+        // Completion time stays live while issuedAt remains the original command's receipt provenance.
+        // The ordinary 60-second successor cannot satisfy the earlier 30-second recovery assertion.
+        const completedAt = new Date(startedAtMs).toISOString()
+        return {
+          completedAt,
+          outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 60_000 },
+        }
+      },
+      prepareActivation: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+      log: async (_level, message, annotations) => {
+        if (message === 'Bayn execution controller scheduled a recovery window') recoveryWindows.push(annotations)
+      },
+    })
+    // This public bridge exists only in the local fixture. All state changes still pass through the real
+    // controller's private, validated handlers; the test never writes Restate object state directly.
+    const bridge = restate.service({
+      name: 'ExecutionRecoveryTestBridge',
+      handlers: {
+        activate: (ctx: restate.Context) => ctx.objectClient(controller, config.controllerKey).activate(activation),
+        status: (ctx: restate.Context) => ctx.objectClient(controller, config.controllerKey).status(undefined),
+        tick: async (ctx: restate.Context, candidate: unknown) => {
+          const client = ctx.objectClient(controller, config.controllerKey)
+          await client.tick(candidate)
+          return client.status(undefined)
+        },
+        deactivate: (ctx: restate.Context) =>
+          ctx.objectClient(controller, config.controllerKey).deactivate(deactivation),
+      },
+    })
+    class LocalRestateResponseError extends Error {
+      constructor(
+        readonly status: number,
+        body: string,
+      ) {
+        super(`Local Restate returned ${status}: ${body}`)
+      }
+    }
+    const json = (url: string, body: unknown) =>
+      Effect.tryPromise({
+        try: async (signal) => {
+          const response = await fetch(url, {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: { 'content-type': 'application/json' },
+            signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+          })
+          if (!response.ok) throw new LocalRestateResponseError(response.status, await response.text())
+          return response.json() as Promise<unknown>
+        },
+        catch: (cause) => cause,
+      })
+    const invoke = (method: string, body: unknown = {}) =>
+      json(`${ingress}/ExecutionRecoveryTestBridge/${method}`, body)
+    const stateAtSequence = (sequence: number, maximumAttempts: number) =>
+      invoke('status').pipe(
+        Effect.map((value) => Result.getOrThrow(decodeExecutionControllerState(value))),
+        Effect.flatMap((state) =>
+          state.nextSequence === sequence ? Effect.succeed(state) : Effect.fail('controller has not advanced'),
+        ),
+        Effect.retry({ schedule: Schedule.spaced('100 millis'), times: maximumAttempts }),
+      )
+    const completionOptions = { maximumAttempts: 100, pollIntervalMs: 100, requestTimeoutMs: 5_000 }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = createServer(restate.createEndpointHandler({ services: [controller, bridge] }))
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}` })
+          // Admin registration can precede ingress visibility. Probe only the read-only status handler;
+          // activation and tick mutations keep their original single-attempt behavior and assertions.
+          const uninitialized = yield* invoke('status').pipe(
+            Effect.retry({
+              while: (cause) => cause instanceof LocalRestateResponseError && cause.status === 404,
+              schedule: Schedule.spaced('100 millis'),
+              times: 100,
+            }),
+            Effect.timeout('15 seconds'),
+          )
+          expect(uninitialized).toBeNull()
+          expect(attempts).toHaveLength(0)
+          yield* invoke('activate')
+          // Deactivate before closing the endpoint even if an assertion fails while a delayed tick is pending.
+          yield* Effect.addFinalizer(() => invoke('deactivate').pipe(Effect.ignore))
+          const initial = yield* stateAtSequence(1, 100)
+          expect(initial).toMatchObject({ active: true, epoch: 1, lastCompletion: { sequence: 0 }, nextSequence: 1 })
+          expect(attempts).toHaveLength(1)
+
+          const issuedAt = new Date((yield* Clock.currentTimeMillis) - 1_000).toISOString()
+          const tick = {
+            schemaVersion: 'bayn.execution-controller-tick.v1',
+            epoch: initial.epoch,
+            sequence: initial.nextSequence,
+            attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
+            issuedAt,
+            recoveryWindow: executionControllerMaximumRecoveryWindow,
+            retryWindowHash: 'e'.repeat(64),
+          }
+          const url = `${ingress}/restate/send/ExecutionRecoveryTestBridge/tick`
+          const options = { timeoutMs: 5_000, headers: { 'idempotency-key': randomUUID() } }
+          dependencyReady = false
+          const receipt = yield* sendRestateInvocation(url, tick, options)
+          const pending = yield* awaitRestateInvocation(ingress, receipt.invocationId, completionOptions)
+          expect(pending).toEqual(initial)
+          expect(attempts).toHaveLength(2)
+          expect(attempts[1]).toMatchObject({ epoch: tick.epoch, sequence: tick.sequence, issuedAt, succeeded: false })
+          expect(recoveryWindows).toEqual([
+            expect.objectContaining({
+              recoveryWindow: executionControllerMaximumRecoveryWindow,
+              recoveryDelayMs: executionControllerRecoveryTickDelayMs,
+              sequence: tick.sequence,
+            }),
+          ])
+
+          const replay = yield* sendRestateInvocation(url, tick, options)
+          expect(replay.invocationId).toBe(receipt.invocationId)
+          expect(replay.status).toBe(RestateSendStatus.PreviouslyAccepted)
+          expect(yield* awaitRestateInvocation(ingress, replay.invocationId, completionOptions)).toEqual(pending)
+          expect(attempts).toHaveLength(2)
+          expect(recoveryWindows).toHaveLength(1)
+
+          dependencyReady = true
+          const recovered = yield* stateAtSequence(2, 450)
+          expect(recovered).toMatchObject({
+            active: true,
+            epoch: tick.epoch,
+            nextSequence: tick.sequence + 1,
+            lastCompletion: { sequence: tick.sequence, receiptHash: 'd'.repeat(64) },
+          })
+          expect(attempts).toHaveLength(3)
+          expect(attempts[2]).toMatchObject({ epoch: tick.epoch, sequence: tick.sequence, issuedAt, succeeded: true })
+          expect(attempts[2]!.startedAtMs - attempts[1]!.startedAtMs).toBeGreaterThanOrEqual(
+            executionControllerRecoveryTickDelayMs,
+          )
+          expect(attempts.filter((attempt) => attempt.succeeded).map((attempt) => attempt.sequence)).toEqual([0, 1])
+          expect(recoveryWindows).toHaveLength(1)
+
+          // A retained replay returns its original response; a fresh stale delivery reads the advanced sequence.
+          const completedReplay = yield* sendRestateInvocation(url, tick, options)
+          expect(completedReplay.invocationId).toBe(receipt.invocationId)
+          expect(yield* awaitRestateInvocation(ingress, completedReplay.invocationId, completionOptions)).toEqual(
+            pending,
+          )
+          expect(yield* invoke('tick', tick)).toEqual(recovered)
+          expect(attempts).toHaveLength(3)
+          const inactive = yield* invoke('deactivate')
+          expect(inactive).toMatchObject({ active: false, epoch: tick.epoch + 1, nextSequence: tick.sequence + 1 })
+          expect(yield* invoke('tick', { ...tick, sequence: tick.sequence + 1, attempt: 0 })).toEqual(inactive)
+          expect(attempts).toHaveLength(3)
+        }),
+      ),
+    )
+  }, 75_000)
 })
