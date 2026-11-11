@@ -7,7 +7,11 @@ import type * as Undici from '@effect/platform-node/Undici'
 import { Cause, Clock, Config, Deferred, Effect, Exit, Fiber, Logger, Option } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { readTransportInterceptor, withReadTransportDiagnostics } from './transport-diagnostics'
+import {
+  readTransportInterceptor,
+  withReadTransportCoverage,
+  withReadTransportDiagnostics,
+} from './transport-diagnostics'
 
 const controller: Undici.Dispatcher.DispatchController = {
   aborted: false,
@@ -34,6 +38,37 @@ test('unobserved dispatch preserves the exact options, handler and return value'
   })
   expect(dispatch(options, handler)).toBe(false)
 })
+
+test.each([true, false])(
+  'coverage %s does not claim a dispatcher callback or replace an early interruption',
+  async (installed) => {
+    await run(
+      Effect.gen(function* () {
+        const span = yield* Effect.currentSpan
+        const exit = yield* Effect.interrupt.pipe(
+          withReadTransportCoverage(installed),
+          withReadTransportDiagnostics('market-calendar'),
+          Effect.exit,
+        )
+        assertInterrupted(exit)
+        expect(annotations(span)).toEqual({
+          'broker.transport.interceptor_available': installed,
+          'broker.transport.interceptor_installed': installed,
+          'broker.transport.phase': 'unobserved',
+          'broker.transport.attempts': 0,
+          'broker.transport.started': 0,
+          'broker.transport.last_pre_dispatch_ms': 0,
+          'broker.transport.last_response_wait_ms': 0,
+        })
+      }),
+    )
+  },
+)
+
+const assertInterrupted = (exit: Exit.Exit<unknown, unknown>) => {
+  if (Exit.isSuccess(exit)) throw new Error('Expected interruption')
+  expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+}
 
 test('request-local timing forwards every callback and excludes all request values', async () => {
   await run(
@@ -312,28 +347,35 @@ test.each(['failure', 'defect', 'interrupt'] as const)(
   },
 )
 
-test('production Node Undici preserves response, body and dispatcher lifetime', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'bayn-broker-transport-'))
-  try {
-    const built = await Bun.build({
-      entrypoints: [join(import.meta.dir, '../../testing/broker-transport-node-test-support.ts')],
-      target: 'node',
-      outdir: directory,
-    })
-    expect(built.success).toBe(true)
-    const node = Effect.runSync(Config.String('BAYN_TEST_NODE_BINARY').pipe(Config.withDefault('node')))
-    const child = Bun.spawn([node, join(directory, 'broker-transport-node-test-support.js')], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ])
-    expect({ code, stderr }).toEqual({ code: 0, stderr: '' })
-    expect(stdout).toContain('broker transport node passed')
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-}, 30000)
+test.each([
+  ['broker-transport-node-test-support', 'broker transport node passed'],
+  ['broker-transport-coverage-node-test-support', 'broker transport coverage passed'],
+])(
+  'production Node Undici %s',
+  async (fixture, receipt) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-broker-transport-'))
+    try {
+      const built = await Bun.build({
+        entrypoints: [join(import.meta.dir, `../../testing/${fixture}.ts`)],
+        target: 'node',
+        outdir: directory,
+      })
+      expect(built.success).toBe(true)
+      const node = Effect.runSync(Config.String('BAYN_TEST_NODE_BINARY').pipe(Config.withDefault('node')))
+      const child = Bun.spawn([node, join(directory, `${fixture}.js`)], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect({ code, stderr }).toEqual({ code: 0, stderr: '' })
+      expect(stdout).toContain(receipt)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  30000,
+)
