@@ -19,7 +19,7 @@ export type { MemoriesStats, MemoriesStatsInput, MemoryRecord, PersistMemoryInpu
 
 export type MemoriesStore = {
   persist: (input: PersistMemoryInput) => Promise<MemoryRecord>
-  retrieve: (input: RetrieveMemoryInput) => Promise<MemoryRecord[]>
+  retrieve: (input: RetrieveMemoryInput, signal?: AbortSignal) => Promise<MemoryRecord[]>
   list: (input: AgentsMemoryNoteFilters) => Promise<MemoryRecord[]>
   retire: (input: AgentsRetireMemoryNoteInput) => Promise<MemoryRecord>
   count: (input?: { namespace?: string }) => Promise<number>
@@ -29,7 +29,7 @@ export type MemoriesStore = {
 
 type PostgresMemoriesStoreOptions = {
   url?: string
-  embedText?: (text: string) => Promise<number[]>
+  embedText?: (text: string, signal?: AbortSignal) => Promise<number[]>
   createDb?: (url: string) => Db
 }
 
@@ -178,10 +178,11 @@ const loadEmbeddingConfig = () => {
   return config
 }
 
-const embedText = async (text: string): Promise<number[]> => {
+const embedText = async (text: string, signal?: AbortSignal): Promise<number[]> => {
   try {
-    return await requestEmbedding(text, loadEmbeddingConfig())
+    return await requestEmbedding(text, loadEmbeddingConfig(), signal)
   } catch (error) {
+    signal?.throwIfAborted()
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`embedding request timed out after ${loadEmbeddingConfig().timeoutMs}ms`)
     }
@@ -290,8 +291,9 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     return memoryRecord(row)
   }
 
-  const retrieve: MemoriesStore['retrieve'] = async (input) => {
+  const retrieve: MemoriesStore['retrieve'] = async (input, signal) => {
     await ensureSchema()
+    signal?.throwIfAborted()
     const resolvedQuery = input.query.trim()
     if (resolvedQuery.length === 0) {
       throw new Error('query is required')
@@ -304,7 +306,8 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     )
     const queryTerms = normalizeQueryTerms(resolvedQuery)
 
-    const embedding = await embed(resolvedQuery)
+    const embedding = await embed(resolvedQuery, signal)
+    signal?.throwIfAborted()
     const vectorString = vectorToPgArray(embedding)
 
     const distanceExpr = sql<number>`embedding <=> ${vectorString}::vector`
@@ -327,6 +330,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       return Array.from(new Map([...semantic, ...lexical].map((row) => [row.id, row])).values())
     })
 
+    signal?.throwIfAborted()
     const relevantRows = rankMemoryNotes(rows.map(memoryRecord), resolvedQuery, resolvedLimit)
 
     const ids = relevantRows.map((row) => row.id)

@@ -24,6 +24,7 @@ import { createPostgresMemoriesStore } from './memory-notes-store'
 import * as initial from './migrations/20260521_agents_memory_notes'
 import * as retirement from './migrations/20261111_agents_memory_note_retirement'
 import { getMemoryNotesHandler, postMemoryNotesHandler, postRetireMemoryNoteHandler } from './v1/memory-notes'
+import { postRepoContextHandler } from './v1/repo-context'
 
 vi.mock('./kysely-migrations', () => ({ ensureMigrations: async () => undefined }))
 
@@ -70,11 +71,33 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
           method: request.method,
           ...(request.method === 'POST' ? { body: Buffer.concat(chunks) } : {}),
         })
-        const result = request.url?.startsWith('/v1/memory-notes/retire')
-          ? await postRetireMemoryNoteHandler(req, deps)
-          : request.method === 'POST'
-            ? await postMemoryNotesHandler(req, deps)
-            : await getMemoryNotesHandler(req, deps)
+        const result =
+          request.url === '/v1/context'
+            ? await postRepoContextHandler(req, {
+                ...deps,
+                fetch: async () =>
+                  Response.json({
+                    ok: true,
+                    indexHealth: { status: 'ok', indexedCommit: 'a'.repeat(40) },
+                    items: [
+                      {
+                        repository: 'proompteng/lab',
+                        ref: 'main',
+                        commit: 'a'.repeat(40),
+                        path: 'services/agents/src/server/memory-notes-store.ts',
+                        startLine: 1,
+                        endLine: 10,
+                        contentHash: 'b'.repeat(64),
+                        snippet: 'MCTS candidate context source code.',
+                      },
+                    ],
+                  }),
+              })
+            : request.url?.startsWith('/v1/memory-notes/retire')
+              ? await postRetireMemoryNoteHandler(req, deps)
+              : request.method === 'POST'
+                ? await postMemoryNotesHandler(req, deps)
+                : await getMemoryNotesHandler(req, deps)
         response.writeHead(result.status, { 'content-type': 'application/json' })
         response.end(await result.text())
       } catch (error) {
@@ -154,6 +177,40 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
     expect(latest.memories).toHaveLength(1)
     expect(latest.memories[0].summary).toContain('Synthesis')
     await expect(run('--latest', '--after', 'not-a-date')).rejects.toThrow()
+  })
+
+  it('retrieves code and notes with a bounded JSON CLI response and withholds stale code', async () => {
+    const command = resolve('..', 'memories', 'context.ts')
+    const run = async (expectedCommit: string) => {
+      const { stdout } = await promisify(execFile)(
+        'bun',
+        [
+          command,
+          '--query',
+          'MCTS candidate metrics',
+          '--expected-commit',
+          expectedCommit,
+          '--max-bytes',
+          '4096',
+          '--json',
+        ],
+        { env: { ...process.env, MEMORIES_AGENTS_URL: baseUrl } },
+      )
+      expect(Buffer.byteLength(stdout)).toBeLessThanOrEqual(4097)
+      return JSON.parse(stdout)
+    }
+    const current = await run('a'.repeat(40))
+    expect(current.snapshotVerified).toBe(true)
+    expect(current.code).toMatchObject({
+      state: 'ready',
+      items: [expect.objectContaining({ path: 'services/agents/src/server/memory-notes-store.ts' })],
+    })
+    expect(current.memory.state).toBe('ready')
+    expect(current.memory.items.length).toBeGreaterThan(0)
+    const stale = await run('d'.repeat(40))
+    expect(stale.snapshotVerified).toBe(false)
+    expect(stale.code).toMatchObject({ state: 'stale', items: [] })
+    expect(stale.memory.state).toBe('ready')
   })
 
   it('retires atomically, preserves history and rejects incompatible retries and replacements', async () => {
@@ -238,11 +295,18 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
         expect(list.structuredContent).toHaveProperty('memories', expect.any(Array))
         expect(list.structuredContent).toMatchObject({ memories: [expect.any(Object), expect.any(Object)] })
         const search = await client.callTool({
-          name: 'memory_search',
-          arguments: { query: 'MCTS candidate expression metrics evaluation', repository: 'proompteng/lab' },
+          name: 'retrieve_context',
+          arguments: {
+            query: 'MCTS candidate expression metrics evaluation',
+            repository: 'proompteng/lab',
+            expectedCommit: 'a'.repeat(40),
+          },
         })
         expect(search.isError).not.toBe(true)
-        expect(search.structuredContent).toHaveProperty('memories', expect.arrayContaining([expect.any(Object)]))
+        expect(search.structuredContent).toHaveProperty('snapshotVerified', true)
+        expect(search.structuredContent).toHaveProperty('memory.state', 'ready')
+        expect(search.structuredContent).toHaveProperty('code.state', 'ready')
+        expect(Buffer.byteLength(JSON.stringify(search))).toBeLessThan(4096)
         const invalid = await client.callTool({
           name: 'memory_retire',
           arguments: { id: 'invalid', reason: 'obsolete' },
