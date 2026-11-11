@@ -3,14 +3,55 @@
 Agents owns one PostgreSQL note store and its `/v1/memory-notes` API. The Bun CLI, Agent Shell and Agent Shell
 Tunnel use that API. The tunnel forwards to the same MCP server as Agent Shell.
 
-## Retrieve context
+## Database and delivery
+
+Production notes live in `agents.memories.entries` on the Galactic cluster: namespace `agents`, CNPG cluster
+`agents-db-next`, read/write service `agents-db-next-rw.agents`. The [cluster manifest](../../argocd/applications/agents/postgres-cluster.yaml)
+owns its 50 GiB `rook-ceph-block` volume. Agents reads the connection from the existing `agents-db-app` Secret.
+
+Schema changes are registered in [the Kysely migration provider](../../services/agents/src/server/kysely-migrations.ts).
+With `AGENTS_MIGRATIONS=auto`, initializing a database store runs pending migrations under Kysely's migration lock;
+`agents_kysely_migration` records applied versions. Migration errors fail the operation. The retirement migration adds
+columns and active-note indexes in place; existing notes and embeddings remain in this database.
+
+After a reviewed merge, the [Agents image workflow](../../.github/workflows/agents-build-push.yml) publishes the immutable
+image cohort. Kargo promotes it through `kargo/agents`, then Argo reconciles the rollout. See the
+[release contract](../release-automation.md). No manual SQL or separate memory deployment is required for this change.
+
+## Retrieve repository context
+
+Use one query to retrieve current code and durable engineering notes:
+
+```sh
+bun run context:retrieve --query 'Agent Shell memory tools' --path services/agents/
+```
+
+The CLI supplies the checkout's Git commit automatically. `--expected-commit` overrides it. Code is returned only when
+Atlas is ready and its indexed commit agrees with the requested checkout. A stale snapshot is reported explicitly;
+use local Git and `rg` for branch changes. Without an expected commit, `snapshotVerified` is false.
+
+Each code hit includes a distinct file path, line bounds, commit and content hash. Each note includes its ID,
+creation time and source commit. Excerpts are bounded UTF-8 previews with explicit truncation and omission counts.
+`--json` emits compact machine-readable output. `--path` filters code; `--tags` filters notes. Both sources share
+the repository scope, which defaults to `proompteng/lab`.
+
+`code.state` and `memory.state` distinguish usable results from stale, degraded or unavailable sources. An available
+source with no matches has `state=ready` and an empty result list. One source failure preserves the other source's
+evidence. Neither source establishes current runtime behavior; use the existing operational tools for live readback.
+Each source has a 15-second deadline, below the shared client's 35-second deadline. A stalled memory embedding is
+cancelled and reported as unavailable while usable code is retained.
+
+The same API powers the CLI and the `retrieve_context` tool on both Agent Shell connectors. It replaces `memory_search`.
+The MCP reply budget includes structured and text content plus transport metadata.
+
+## Search or list notes
 
 Before substantial work, search for the task and its identifiers. Scope the repository and tags when known.
 Search combines semantic and lexical candidates, ranks their relevance, and can return fewer results than requested.
 An unrelated request should return no notes.
 
 ```sh
-bun run --filter memories retrieve-memory \
+bun run --cwd services/memories retrieve-memory \
   --query 'native arrival copy psql partial stdout verification' \
   --repository proompteng/lab --tags bayn --limit 5
 ```
@@ -18,7 +59,7 @@ bun run --filter memories retrieve-memory \
 For recent changes, list by creation time instead of using a semantic query:
 
 ```sh
-bun run --filter memories retrieve-memory --latest \
+bun run --cwd services/memories retrieve-memory --latest \
   --repository proompteng/lab --model qwen38-flamingo --after 2026-11-01 --limit 5 --json
 ```
 
@@ -29,12 +70,12 @@ Unsupported flags fail instead of being silently ignored.
 
 Agent Shell and Agent Shell Tunnel expose the same tools without a repo session:
 
-| Tool            | Purpose                                                                                                        |
-| --------------- | -------------------------------------------------------------------------------------------------------------- |
-| `memory_search` | Search by query, repository, tags, model and creation-date range.                                              |
-| `memory_list`   | List newest notes with the same filters, without requesting an embedding.                                      |
-| `memory_save`   | Save durable knowledge when the user explicitly requests it. Put repository and commit provenance in metadata. |
-| `memory_retire` | Retire a verified obsolete or incorrect note, with a reason and optional active replacement.                   |
+| Tool               | Purpose                                                                                                        |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `retrieve_context` | Retrieve bounded code and engineering notes with explicit snapshot freshness and source availability.          |
+| `memory_list`      | List newest notes with the same filters, without requesting an embedding.                                      |
+| `memory_save`      | Save durable knowledge when the user explicitly requests it. Put repository and commit provenance in metadata. |
+| `memory_retire`    | Retire a verified obsolete or incorrect note, with a reason and optional active replacement.                   |
 
 Memory tool audit events retain call identity and outcome without copying queries, note bodies or results into shell logs.
 Save and retire return compact receipts with note IDs and timestamps. Read full notes through search or listing.
@@ -67,6 +108,7 @@ Run the real CLI evaluation against the configured Agents endpoint:
 
 ```sh
 bun run --filter memories evaluate-memory
+bun run context:evaluate --expected-commit "$(git rev-parse origin/main)"
 ```
 
 The fixed cases cover MCTS evidence binding, partial database reads, Valkey promotion, paraphrases and an unrelated request.

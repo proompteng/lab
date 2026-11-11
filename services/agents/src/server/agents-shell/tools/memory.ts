@@ -2,9 +2,10 @@ import {
   listMemoryNotesFromAgentsService,
   persistMemoryNoteToAgentsService,
   retireMemoryNoteInAgentsService,
-  retrieveMemoryNotesFromAgentsService,
+  retrieveRepoContextFromAgentsService,
+  fitRepoContext,
   type AgentsServiceJsonResult,
-  type AgentsRetrieveMemoryNotesInput,
+  type RepoContextInput,
   type AgentsMemoryNoteFilters,
   type AgentsPersistMemoryNoteInput,
   type AgentsPersistMemoryNoteResult,
@@ -12,7 +13,13 @@ import {
 } from '@proompteng/agent-contracts'
 import { Effect, Schema } from 'effect'
 
-import { READ_SCOPES, WRITE_SCOPES, readOnlyAnnotations, writeAnnotations } from '../constants'
+import {
+  READ_SCOPES,
+  WRITE_SCOPES,
+  REPLY_META_RESERVE_BYTES,
+  readOnlyAnnotations,
+  writeAnnotations,
+} from '../constants'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { type EffectTool, toolSecurityMeta } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
@@ -57,23 +64,40 @@ const mutationResult = (response: AgentsServiceJsonResult<AgentsPersistMemoryNot
 
 export const createMemoryTools = (): EffectTool[] => [
   {
-    name: 'memory_search',
-    title: 'Search engineering memory',
+    name: 'retrieve_context',
+    title: 'Retrieve repository context',
     auditArguments: false,
     auditResult: false,
     description:
-      'Search notes with repository, tag, model and date filters. Excludes retired notes. Verify historical claims against current evidence.',
-    inputSchema: Schema.Struct({ ...filters, query: Schema.String.pipe(Schema.minLength(1)) }),
+      'Retrieve bounded code and notes together. Supply expectedCommit to verify freshness. Reports stale or unavailable sources explicitly.',
+    inputSchema: Schema.Struct({
+      query: Schema.String.pipe(Schema.minLength(1)),
+      repository: Schema.optional(Schema.String),
+      expectedCommit: Schema.optional(Schema.String),
+      pathPrefix: Schema.optional(Schema.String),
+      tags: Schema.optional(Schema.Array(Schema.String)),
+      limit: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.between(1, 10))),
+    }),
     annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (input: AgentsRetrieveMemoryNotesInput, { config }) =>
+    handler: (input: RepoContextInput, { config }) =>
       Effect.tryPromise({
-        try: async () =>
-          result(
-            await retrieveMemoryNotesFromAgentsService({ ...input, limit: input.limit ?? 5 }),
-            config.maxOutputBytes,
-          ),
+        try: async () => {
+          const body = responseBody(
+            await retrieveRepoContextFromAgentsService({
+              ...input,
+              maxBytes: Math.min(config.defaultOutputBytes, 64_000),
+            }),
+          )
+          return jsonTextResult(
+            fitRepoContext(
+              body,
+              config.defaultOutputBytes,
+              (value) => Buffer.byteLength(JSON.stringify(jsonTextResult(value))) + REPLY_META_RESERVE_BYTES,
+            ),
+          )
+        },
         catch: agentsShellErrorFromUnknown,
       }),
   },
