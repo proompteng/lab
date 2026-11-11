@@ -82,8 +82,8 @@ import {
   type ExecutionStageTiming,
 } from './telemetry'
 import {
-  buildExecutionDecision,
-  buildObserveShadowDecision,
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
   type ExecutionDecisionInput,
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
