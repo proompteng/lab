@@ -98,6 +98,8 @@
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",
     "atlas:code-search": "bun run packages/scripts/src/atlas/code-search.ts",
+    "context:retrieve": "bun run services/memories/context.ts",
+    "context:evaluate": "bun run services/memories/context-evaluate.ts",
     "atlas:rebuild": "bun run packages/scripts/src/atlas/rebuild.ts",
     "atlas:verify": "bun run packages/scripts/src/atlas/verify.ts",
     "lint:flamingo-hard-migration": "bun run scripts/jangar/validate-flamingo-hard-migration.ts",
