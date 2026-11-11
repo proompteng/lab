@@ -103,6 +103,13 @@ const decodeResponse = <A>(schema: Schema.Codec<A, unknown>, candidate: unknown)
     ),
   )
 const http = (input: BrokerPollRetirementInput, token: Redacted.Redacted<string> | undefined) => {
+  const withDeadline = <A, E, R>(path: string, operation: Effect.Effect<A, E, R>) =>
+    operation.pipe(
+      Effect.timeoutOrElse({
+        duration: '10 seconds',
+        orElse: () => fail(path, 'Restate Admin request failed or timed out'),
+      }),
+    )
   const request = (path: string, method: 'GET' | 'POST' | 'PATCH', body?: unknown) =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient
@@ -115,7 +122,6 @@ const http = (input: BrokerPollRetirementInput, token: Redacted.Redacted<string>
       if (response.status !== 200) return yield* fail(path, `Restate Admin returned HTTP ${response.status}`)
       return response
     }).pipe(
-      Effect.timeout('10 seconds'),
       Effect.mapError((cause) =>
         cause instanceof BrokerPollRetirementError
           ? cause
@@ -123,10 +129,13 @@ const http = (input: BrokerPollRetirementInput, token: Redacted.Redacted<string>
       ),
     )
   const json = <A>(path: string, schema: Schema.Codec<A, unknown>, body?: unknown) =>
-    Effect.gen(function* () {
-      const response = yield* request(path, body === undefined ? 'GET' : 'POST', body)
-      return yield* decodeResponse(schema, yield* response.json)
-    }).pipe(
+    withDeadline(
+      path,
+      Effect.gen(function* () {
+        const response = yield* request(path, body === undefined ? 'GET' : 'POST', body)
+        return yield* decodeResponse(schema, yield* response.json)
+      }),
+    ).pipe(
       Effect.mapError((cause) =>
         cause instanceof BrokerPollRetirementError
           ? cause
@@ -135,7 +144,11 @@ const http = (input: BrokerPollRetirementInput, token: Redacted.Redacted<string>
     )
   const query = <A>(sql: string, schema: Schema.Codec<A, unknown>) =>
     json('/query', Schema.Struct({ rows: Schema.Array(schema) }), { query: sql })
-  return { json, query, kill: (id: string) => request(`/invocations/${id}/kill`, 'PATCH') }
+  return {
+    json,
+    query,
+    kill: (id: string) => withDeadline(`/invocations/${id}/kill`, request(`/invocations/${id}/kill`, 'PATCH')),
+  }
 }
 
 const validateService = (service: Service, input: BrokerPollRetirementInput) => {

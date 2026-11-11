@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
+import { createServer } from 'node:http'
+import type { Socket } from 'node:net'
+import { NodeHttpClient, NodeServices } from '@effect/platform-node'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
+import { TestClock } from 'effect/testing'
 
+import { provideTestLayer } from '../src/effect-test-support'
 import { parseBrokerPollRetirementArgs, retireBrokerPolls } from './retire-broker-polls'
 
 const key = 'a'.repeat(64),
@@ -171,6 +176,72 @@ describe('scoped obsolete broker polling retirement', () => {
       }),
     )
     expect(finalized).toBe(1)
+  })
+  test('the Admin deadline includes its JSON body and closes a stalled socket before releasing the client', async () => {
+    const sockets = new Set<Socket>()
+    let closed = 0
+    let onClosed = () => {}
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.write('{')
+    })
+    server.on('connection', (socket) => {
+      sockets.add(socket)
+      socket.once('close', () => {
+        sockets.delete(socket)
+        closed++
+        onClosed()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Missing local Admin test address')
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const headersReceived = yield* Deferred.make<void>()
+          const socketClosed = yield* Deferred.make<void>()
+          const completed = yield* Deferred.make<void>()
+          onClosed = () => {
+            Deferred.doneUnsafe(socketClosed, Exit.void)
+          }
+          const client = HttpClient.transformResponse(yield* HttpClient.HttpClient, (response) =>
+            response.pipe(
+              Effect.tap(() => TestClock.adjust('4 seconds')),
+              Effect.tap(() => Deferred.succeed(headersReceived, undefined)),
+            ),
+          )
+          const fiber = yield* retireBrokerPolls({ ...input, adminUrl: `http://127.0.0.1:${address.port}` }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+            Effect.result,
+            Effect.tap(() => Deferred.succeed(completed, undefined)),
+            Effect.forkChild,
+          )
+          yield* Deferred.await(headersReceived)
+          yield* TestClock.adjust('5 seconds')
+          expect(yield* Deferred.isDone(completed)).toBe(false)
+          yield* TestClock.adjust('1 second')
+          const result = yield* Fiber.join(fiber)
+          expect(result).toMatchObject({ _tag: 'Failure', failure: { operation: '/services/BaynBrokerObservations' } })
+          if (Result.isFailure(result)) expect(result.failure.message).toContain('timed out')
+          yield* Deferred.await(socketClosed)
+          expect(closed).toBe(1)
+          expect(sockets.size).toBe(0)
+        }).pipe(
+          (effect) =>
+            provideTestLayer(
+              effect,
+              Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, TestClock.layer()),
+            ),
+          Effect.timeout('3 seconds'),
+        ),
+      )
+    } finally {
+      for (const socket of sockets) socket.destroy()
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+      )
+    }
   })
   test('defaults to a reviewable dry run, with no cancellation, kills, state edits or SQL writes', async () => {
     const h = harness(),
