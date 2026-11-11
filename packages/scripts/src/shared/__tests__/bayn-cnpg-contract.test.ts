@@ -282,7 +282,7 @@ test('Bayn backups use an isolated protected plugin object store and bounded sch
       retentionPolicyIntervalSeconds: 1800,
       resources: {
         requests: { cpu: '100m', memory: '128Mi' },
-        limits: { cpu: '500m', memory: '512Mi' },
+        limits: { cpu: '500m', memory: '1Gi' },
       },
     },
     configuration: {

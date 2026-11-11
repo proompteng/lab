@@ -484,3 +484,60 @@ test('a cutover mandate rearms through current proof and exact reconciliation be
     }
   }
 })
+
+test('an incomplete reconciliation retains only the exact restricted generation for cancellation recovery', async () => {
+  const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const retained = generation(current, 'a'.repeat(64))
+  for (const scenario of ['bound', 'operator-hold', 'foreign-request'] as const) {
+    const authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: scenario === 'operator-hold' ? 'operator hold' : 'reconciliation pass incomplete',
+      version: 2,
+      updatedAt: '2026-11-10T16:49:33.128Z',
+    }
+    const forbidden = Effect.die(
+      'restricted recovery must not reconcile, activate or clear authority during acquisition',
+    )
+    const store: AuthorityGenerationStoreShape = {
+      readAuthorityState: Effect.succeed(authority),
+      readResearchAuthorityGeneration: () => Effect.succeed(retained),
+      readOrInitializeObserveAuthority: () => forbidden,
+      readAuthorityGenerationLineage: () => forbidden,
+      ensureAuthorityGeneration: () => forbidden,
+    }
+    const result = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        plan(),
+        scenario === 'foreign-request' ? request({}, 'b'.repeat(64)) : current,
+        null,
+        null,
+        store,
+        { activateResearchCapitalGrant: () => forbidden },
+        Effect.fail(
+          new OperationalError({
+            component: 'http',
+            operation: 'reconciliation',
+            retryable: false,
+            message: 'unavailable full history',
+          }),
+        ),
+        1000,
+      ).pipe(Effect.result),
+    )
+    expect(result).toEqual(
+      scenario === 'bound' ? Result.succeed(retained) : expect.objectContaining({ _tag: 'Failure' }),
+    )
+    expect(authority).toMatchObject({
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      version: 2,
+    })
+  }
+})

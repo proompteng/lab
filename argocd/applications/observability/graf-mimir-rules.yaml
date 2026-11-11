@@ -1461,67 +1461,63 @@ data:
         rules:
           - alert: TorghutWSForwarderDown
             expr: |
-              up{
-                job="torghut",
-                namespace="torghut",
-                service="torghut-ws"
-              } == 0
+              (
+                max by (job, namespace, service) (
+                  up{job="torghut",namespace="torghut",service="torghut-ws"}
+                ) == 0
+                or absent(up{job="torghut",namespace="torghut",service="torghut-ws"})
+              )
+              and on()
+              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
             for: 5m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
               summary: Torghut WS forwarder is down
               description: |
-                torghut-ws is not being scraped (up=0) for 5 minutes. Market data will not flow into Kafka, and TA will stall.
+                The enabled torghut-ws deployment has no reachable metrics target for 5 minutes. Inspect the pod, metrics discovery and market-data flow into Kafka.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSForwarderNotReady
             expr: |
-              torghut_ws_readyz_status{
-                namespace="torghut",
-                service="torghut-ws"
-              } == 0
+              max by (job, namespace, service) (
+                (
+                  torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws"}
+                  or on (job, namespace, service, instance)
+                  0 * up{job="torghut",namespace="torghut",service="torghut-ws"}
+                )
+                and on (job, namespace, service, instance)
+                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)
+              ) == 0
+              and on()
+              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
             for: 2m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
               summary: Torghut WS forwarder not ready
               description: |
-                torghut-ws /readyz is failing for 2 minutes (Alpaca/Kafka gates not healthy).
+                No reachable torghut-ws target reports healthy readiness for 2 minutes while the deployment is enabled. Inspect /readyz Alpaca, Kafka, trade-update and market-data-channel gates. Missing readiness telemetry also fails this check; it runs overnight for crypto feeds.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
-          - alert: TorghutWSRestartsOrOOM
+          - alert: TorghutWSContainerRestarts
             expr: |
-              (
-                sum(
-                  increase(
-                    kube_pod_container_status_restarts_total{
-                      namespace="torghut",
-                      pod=~"torghut-ws-.*",
-                      container="torghut-ws"
-                    }[10m]
-                  )
-                ) > 0
-              )
-              or
-              (
-                max(
-                  max_over_time(
-                    kube_pod_container_status_last_terminated_reason{
-                      namespace="torghut",
-                      pod=~"torghut-ws-.*",
-                      container="torghut-ws",
-                      reason="OOMKilled"
-                    }[10m]
-                  )
-                ) >= 1
-              )
+              sum by (namespace) (
+                increase(kube_pod_container_status_restarts_total{
+                  namespace="torghut",pod=~"torghut-ws-.*",container="torghut-ws"
+                }[10m])
+              ) > 0
             for: 1m
             labels:
-              severity: critical
+              severity: warning
+              team: trading
+              service: torghut-ws
             annotations:
-              summary: Torghut WS container restarted or OOMKilled
+              summary: Torghut WS container restarted recently
               description: |
-                torghut-ws restarted in the last 10 minutes or terminated with OOMKilled.
-                Inspect /readyz gates, recent ws logs, and JVM heap settings before market-hour impact grows.
+                torghut-ws restarted in the last 10 minutes. Inspect the termination reason, recent logs and JVM heap settings. Sustained unavailability and failed readiness have separate critical email alerts.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSDesiredSymbolsFetchFailing
             expr: |
@@ -1580,9 +1576,17 @@ data:
                 * (hour(vector(time())) >= 14)
                 * (hour(vector(time())) < 21)
               )
+              and on()
+              (max(torghut_ws_readyz_status{namespace="torghut",service="torghut-ws"}
+                and on (job, namespace, service, instance)
+                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)) == 1)
             for: 8m
             labels:
               severity: critical
+              team: trading
+              namespace: torghut
+              service: torghut-ws
+              notify: email
             annotations:
               summary: Torghut WS is not publishing Kafka records (market hours)
               description: |
@@ -1590,6 +1594,41 @@ data:
 
                 This usually means the Alpaca WS isn't receiving events or subscriptions are broken.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+      - name: registry.rules
+        rules:
+          - alert: RegistryCleanupMissed
+            expr: |
+              (
+                max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="registry",cronjob="registry-cleanup"}
+                )
+                > on (namespace, cronjob)
+                (
+                  max by (namespace, cronjob) (
+                    kube_cronjob_status_last_successful_time{namespace="registry",cronjob="registry-cleanup"}
+                  )
+                  or on (namespace, cronjob)
+                  0 * max by (namespace, cronjob) (
+                    kube_cronjob_created{namespace="registry",cronjob="registry-cleanup"}
+                  )
+                )
+              )
+              and on (namespace, cronjob)
+              (
+                time() - max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="registry",cronjob="registry-cleanup"}
+                ) > 7200
+              )
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: registry
+              notify: email
+            annotations:
+              summary: Registry cleanup missed its deadline
+              description: The latest scheduled registry cleanup has no subsequent successful run after its two-hour deadline. Inspect the cleanup Job and write gate before recovery. A successful CronJob-owned recovery clears this alert; retained failed Jobs do not keep it firing.
+              runbook_url: docs/registry/manual-garbage-collection.md
       - name: torghut-ta.rules
         rules:
           - alert: TorghutSignalPipelineMetricsDown

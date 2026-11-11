@@ -1932,8 +1932,8 @@ describe('native Restate execution controller', () => {
     },
   )
 
-  test('retries recovery windows at the controller cadence and terminates after the durable recovery budget', async () => {
-    const state: ExecutionControllerState = {
+  test('keeps bounded recovery windows alive through a long outage and resumes the same owned sequence', async () => {
+    let state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
       epoch: 7,
@@ -1950,6 +1950,8 @@ describe('native Restate execution controller', () => {
     }
     const deliveries: Delivery[] = []
     let invocation = 0
+    let healthy = false
+    const issuedAt: string[] = []
     const failure = new TransientExecutionFailure({
       operation: 'advance',
       message: 'execution advance did not complete within its bounded interpreter',
@@ -1958,18 +1960,32 @@ describe('native Restate execution controller', () => {
     const context = {
       key: controllerKey,
       get: async () => state,
-      set: () => undefined,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
       genericSend: (delivery: Delivery) => deliveries.push(delivery),
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
       date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
       request: () => ({
-        id: `recovery-budget-${invocation++}`,
+        id: `recovery-budget-${invocation}`,
         attemptCompletedSignal: new AbortController().signal,
       }),
     } as unknown as TestContext
     const object = handlers(
       makeBaynExecutionController(config, {
-        advance: () => Promise.reject(failure),
+        advance: (command) => {
+          issuedAt.push(command.issuedAt)
+          return healthy
+            ? Promise.resolve({
+                completedAt: '2026-08-13T18:10:00.000Z',
+                outcome: {
+                  _tag: ExecutionControllerOutcome.Completed,
+                  receiptHash: 'e'.repeat(64),
+                  nextDelayMs: 30_000,
+                },
+              })
+            : Promise.reject(failure)
+        },
         log: () => Promise.resolve(),
         prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
@@ -1982,32 +1998,44 @@ describe('native Restate execution controller', () => {
       attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
     }
 
-    for (let recoveryWindow = 1; recoveryWindow <= executionControllerMaximumRecoveryWindow; recoveryWindow += 1) {
+    const keys = new Set<string | undefined>()
+    for (let recoveryWindow = 1; recoveryWindow <= executionControllerMaximumRecoveryWindow + 3; recoveryWindow += 1) {
       await object.tick(context, tick)
       const recovery = deliveries.shift()
       if (recovery === undefined) throw new Error(`recovery window ${recoveryWindow} was not scheduled`)
       expect(recovery.delay).toBe(executionControllerRecoveryTickDelayMs)
-      expect(recovery.parameter).toMatchObject({ recoveryWindow })
+      await object.tick(context, tick)
+      const replayed = deliveries.shift()
+      expect(replayed?.idempotencyKey).toBe(recovery.idempotencyKey)
+      expect(replayed?.parameter).toEqual(recovery.parameter)
+      expect(recovery.parameter).toMatchObject({
+        recoveryWindow: Math.min(recoveryWindow, executionControllerMaximumRecoveryWindow),
+        epoch: 7,
+        sequence: 12,
+        attempt: 0,
+        issuedAt: '2026-08-13T18:00:00.000Z',
+      })
+      expect(keys.has(recovery.idempotencyKey)).toBe(false)
+      keys.add(recovery.idempotencyKey)
+      expect(state.nextSequence).toBe(12)
       tick = {
         ...(recovery.parameter as object),
         attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
       }
+      invocation += 1
     }
 
-    let terminalFailure: unknown
-    try {
-      await object.tick(context, tick)
-    } catch (cause: unknown) {
-      terminalFailure = cause
-    }
-    expect(terminalFailure).toBeInstanceOf(TerminalError)
-    expect((terminalFailure as TerminalError).message).toBe('execution controller recovery budget exhausted')
-    expect((terminalFailure as TerminalError).metadata).toMatchObject({
-      failureOperation: 'advance',
-      failureTag: 'TransientExecutionFailure',
-      recoveryWindow: String(executionControllerMaximumRecoveryWindow),
-    })
-    expect((terminalFailure as TerminalError).metadata?.['failureFingerprint']).toMatch(/^[0-9a-f]{64}$/)
+    healthy = true
+    await object.tick(context, tick)
+    expect(state.nextSequence).toBe(13)
+    expect(state.epoch).toBe(7)
+    expect(state.sourceRevision).toBe(sourceRevision)
+    expect(new Set(issuedAt)).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
+    const successor = deliveries.shift()
+    expect(successor?.parameter).toMatchObject({ epoch: 7, sequence: 13, attempt: 0 })
+    const completedAdvances = issuedAt.length
+    await object.tick(context, tick)
+    expect(issuedAt).toHaveLength(completedAdvances)
     expect(deliveries).toHaveLength(0)
   })
 
