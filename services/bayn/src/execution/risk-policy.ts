@@ -73,14 +73,13 @@ export const approvedExecutionRiskPolicyHashes = (accountId: string, allowedSymb
     ].map((policy) => Result.flatMap(policy, canonicalHashV1Result)),
   )
 
-export const strategyExecutionRiskPolicy = (
+export const resolveExecutionRiskPolicy = (
   accountId: string,
-  strategy: StrategyRuntime,
+  symbols: readonly string[],
   brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
   riskPolicyHash?: string,
 ) =>
   Result.gen(function* () {
-    const symbols = strategyTradingProtocol(strategy).universe
     const retainedPolicy = yield* makeExecutionRiskPolicy(accountId, symbols)
     if (riskPolicyHash === undefined || riskPolicyHash === (yield* canonicalHashV1Result(retainedPolicy)))
       return retainedPolicy
@@ -109,3 +108,11 @@ export const strategyExecutionRiskPolicy = (
           }),
     ),
   )
+
+export const strategyExecutionRiskPolicy = (
+  accountId: string,
+  strategy: StrategyRuntime,
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
+  riskPolicyHash?: string,
+) =>
+  resolveExecutionRiskPolicy(accountId, strategyTradingProtocol(strategy).universe, brokerEnvironment, riskPolicyHash)

@@ -1831,7 +1831,10 @@ no production registration, qualification or capital authority.
 ### Bounded mechanical control and turnover comparison
 
 The sole development contract is `bayn.control-study-input.v10`, with explicit `entry`, `management`,
-`turnoverPolicy`, `costObjective`, `riskEnvironment` and `openingPeakEquityMicros`. The risk environment selects the native live or sandbox
+`turnoverPolicy`, `costObjective`, `riskEnvironment` and `openingPeakEquityMicros`. The optional `riskPolicy` pins
+approved native policy material; opening capture resolves the request's hash and binding carries that policy into replay.
+Preparation validates the native policy before rebinding only its account ID to the simulation account, so historical v4
+mandates retain their limits. Without an explicit policy, the risk environment selects the current native live or sandbox
 profile instead of silently defaulting to live limits for a PAPER comparison. It retains the deterministic
 controls, optional frozen residual-shock candidate and Ridge pair.
 Older development input versions are rejected. See [control portfolios](../../docs/bayn/control-portfolios.md).

@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { BrokerIdentitySchema } from '../broker/identity'
 import { AccountStatus, Authority, KillState } from '../execution/contracts'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { resolveExecutionRiskPolicy } from '../execution/risk-policy'
 import { canonicalHashV1Result } from '../hash'
 import { AccountProtectionInputsSchema } from '../jev/account-protection'
 import { defaultJevProtocolDocument } from '../jev/protocol'
@@ -87,12 +87,13 @@ export const bindControlStudyInput = (
         exported.epoch.captureId
     )
       return yield* fail('Source must bind the unchanged original native export')
-    const nativePolicy = yield* makeExecutionRiskPolicy(
+    const policyHash = yield* canonicalHashV1Result(candidate.riskPolicy)
+    const nativePolicy = yield* resolveExecutionRiskPolicy(
       candidate.broker.accountId,
       defaultJevProtocolDocument.universe,
       candidate.broker.environment,
+      policyHash,
     )
-    const policyHash = yield* canonicalHashV1Result(candidate.riskPolicy)
     if (
       candidate.broker.identityHash !== opening.broker.identityHash ||
       candidate.broker.environment !== controlTemplate.riskEnvironment ||
@@ -101,6 +102,8 @@ export const bindControlStudyInput = (
       inputs.policy.accountId !== candidate.broker.accountId ||
       brokerState.account.accountId !== candidate.broker.accountId ||
       policyHash !== (yield* canonicalHashV1Result(inputs.policy)) ||
+      (controlTemplate.riskPolicy !== undefined &&
+        (yield* canonicalHashV1Result(controlTemplate.riskPolicy)) !== policyHash) ||
       policyHash !== (yield* canonicalHashV1Result(nativePolicy))
     )
       return yield* fail('Opening account, request, authority or native risk policy differs from the frozen plan')
@@ -119,6 +122,7 @@ export const bindControlStudyInput = (
       return yield* fail('Opening requires exact native accounting, settled state and unchanged PAPER authority')
     const input = {
       ...controlTemplate,
+      riskPolicy: nativePolicy,
       openingPeakEquityMicros: inputs.peakEquityMicros,
       backtest: { ...controlTemplate.backtest, source, openingCashMicros: brokerState.account.cashMicros },
     }
