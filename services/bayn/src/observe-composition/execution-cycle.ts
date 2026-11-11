@@ -14,7 +14,7 @@ import {
   type ExecutionCycleClosure,
   type ExecutionCycleClosureStoreShape,
 } from '../db/execution-cycle-closure'
-import { AuthorityRestrictionStore } from '../db/execution-store/contract'
+import { AuthorityGenerationStore, AuthorityRestrictionStore } from '../db/execution-store/contract'
 import { WriterFence } from '../execution/writer-fence'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { withPassMarketCalendarRead } from '../broker/alpaca/calendar-cache'
@@ -29,9 +29,10 @@ import {
   decideExecutionMandateCycleTerminalization,
   executionCycleRestrictionSubject,
   executionMandateFailureRestrictionPrefix,
+  isExecutionMandateRecoveryRestriction,
 } from '../execution/mandate'
 import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
-import { IntentState, OrderStatus, ReconciliationStatus } from '../execution/contracts'
+import { Authority, IntentState, KillState, OrderStatus, ReconciliationStatus } from '../execution/contracts'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -57,6 +58,7 @@ import {
 } from './mutation-interpreter'
 import {
   prepareMutationIntent,
+  prepareExpiredEntryCancellation,
   type MutationPreparationFacts,
   type MutationPreparationFactsRequest,
 } from './mutation-intent-interpreter'
@@ -1013,6 +1015,16 @@ const executeBoundExecutionCycle = (
           return step
       }
     }
+    return yield* executePreparedMutationCycleStep(cycle, step, capability, closeOnly)
+  })
+
+const executePreparedMutationCycleStep = (
+  cycle: AutonomousCycle,
+  step: Extract<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>,
+  capability: ExecutionCapability,
+  closeOnly: boolean,
+): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
+  Effect.gen(function* () {
     const logContext: ExecutionMutationLogContext = {
       cycleId: cycle.identity.cycleId,
       intentId: step.intentId,
@@ -1073,6 +1085,64 @@ const executeBoundExecutionCycle = (
     return { _tag: 'Wait' as const, observedAt: step.observedAt, waitReason: 'MUTATION_NOT_ADVANCED' }
   })
 
+export const recoverExpiredEntryBeforeReconciliation = (
+  input: ObserveAutonomousCycleInput,
+  cycle: AutonomousCycle | undefined,
+  policy: Policy,
+  capability: ExecutionCapability,
+): Effect.Effect<RecoveryFirstCyclePassResult | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
+  Effect.gen(function* () {
+    if (capability._tag === 'RecoveryOnly') return undefined
+    if (cycle === undefined || !mutationBound(cycle)) return undefined
+    const authorityStore = yield* AuthorityGenerationStore
+    const authority = yield* authorityStore.readAuthorityState.pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({
+          message: 'expired entry cancellation authority read failed',
+          cause,
+          failure: 'store',
+        }),
+      ),
+    )
+    if (
+      authority.generationHash !== input.authorityGenerationHash ||
+      authority.maximum !== Authority.Execution ||
+      !(
+        (authority.effective === Authority.Execution && authority.kill === KillState.Clear) ||
+        (authority.effective === Authority.Observe &&
+          authority.kill === KillState.Active &&
+          isExecutionMandateRecoveryRestriction(authority.reason))
+      )
+    )
+      return undefined
+    const document = yield* readBoundMutationDocument(cycle)
+    if (document.mode === 'OBSERVE') return undefined
+    yield* recoverBoundExecutionContext(policy, cycle, document, input.simulation)
+    const step = yield* prepareExpiredEntryCancellation(
+      { ...input, mutationPhase: 'ENTRY' },
+      cycle,
+      document,
+      yield* currentUtcInstant,
+      policy.maxBrokerStateAgeMs,
+    )
+    if (step === undefined) return undefined
+    const outcome =
+      step._tag === 'Execute' ? yield* executePreparedMutationCycleStep(cycle, step, capability, false) : step
+    if (outcome._tag === 'PostMutationReconciliation') return outcome
+    if (outcome._tag !== 'Wait')
+      return yield* mutationRunnerError({
+        message: 'expired entry containment selected an action outside cancellation recovery',
+        failure: 'contract',
+      })
+    return {
+      outcome: 'RECOVERED',
+      action: 'WAITING',
+      observedAt: outcome.observedAt,
+      cycle,
+      ...(outcome.readiness === undefined ? { waitReason: outcome.waitReason } : { readiness: outcome.readiness }),
+    }
+  })
+
 export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({
   outcome: 'RECOVERED' as const,
   action: 'WAITING' as const,
@@ -1081,8 +1151,8 @@ export const deferPostMutationReconciliation = (pending: PostMutationReconciliat
   cycle: pending.cycle,
 })
 
-const readUnfinishedMutationCycle = (
-  context: CycleRunContext<ObserveDecisionRuntime>,
+export const readUnfinishedMutationCycle = (
+  context: Pick<CycleRunContext<ObserveDecisionRuntime>, 'cycleBindingId' | 'accountId'>,
 ): Effect.Effect<AutonomousCycle | undefined, CycleRunnerError, CycleStore> =>
   CycleStore.pipe(
     Effect.flatMap((store) =>
@@ -1322,9 +1392,10 @@ export const runRecoveryFirstCyclePass = (
   reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
   preflight?: ReconciliationPassResult,
+  unfinished?: { readonly cycle: AutonomousCycle | undefined },
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
-    let cycle = yield* readUnfinishedMutationCycle(context)
+    let cycle = unfinished === undefined ? yield* readUnfinishedMutationCycle(context) : unfinished.cycle
     const completedProgress = new Set<CyclePassProgress>()
     while (true) {
       if (cycle !== undefined && mutationBound(cycle)) {
