@@ -1,3 +1,4 @@
+import { buildExecutionDecision, buildObserveShadowDecision } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
   isProtectedEntryTarget,
@@ -63,13 +64,7 @@ import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { accountEntryProtectionReasons, BrokerMode, type Policy, type State, type EntryQuoteFreshness } from '../risk'
-import {
-  buildObserveShadowDecision,
-  buildExecutionDecision,
-  type ExecutionDecisionInput,
-  type ShadowDecisionError,
-  type ShadowDeltaRiskInput,
-} from '../shadow-decision'
+import { type ExecutionDecisionInput, type ShadowDecisionError, type ShadowDeltaRiskInput } from '../shadow-decision'
 import {
   ExecutionMarketDataBindingSchema,
   reconciledPositionLiquidationBindingSchemaVersion,

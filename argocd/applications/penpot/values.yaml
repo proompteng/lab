@@ -1,0 +1,105 @@
+# Official Penpot chart 1.12.0 / app 2.19.1; HTTPS is private to the tailnet.
+config:
+  publicUri: https://penpot.ide-newton.ts.net
+  flags: enable-registration enable-login-with-password disable-email-verification enable-mcp
+  telemetryEnabled: false
+  existingSecret: penpot-api-key
+  secretKeys:
+    apiSecretKey: PENPOT_SECRET_KEY
+  postgresql:
+    host: penpot-db-rw.penpot.svc.cluster.local
+    database: penpot
+    existingSecret: penpot-db-app
+    secretKeys:
+      usernameKey: username
+      passwordKey: password
+  redis:
+    host: penpot-valkey.penpot.svc.cluster.local
+  objectsStorage:
+    storageBackend: fs
+
+persistence:
+  assets:
+    enabled: true
+    size: 20Gi
+    storageClass: rook-ceph-block
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+
+ingress:
+  enabled: true
+  className: tailscale
+  annotations:
+    tailscale.com/tags: tag:k8s
+    argocd.argoproj.io/sync-wave: "2"
+  hosts:
+    - penpot.ide-newton.ts.net
+  tls:
+    - hosts:
+        - penpot.ide-newton.ts.net
+
+backend:
+  podSecurityContext:
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    capabilities:
+      drop: [ALL]
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+frontend:
+  podSecurityContext:
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    capabilities:
+      drop: [ALL]
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+exporter:
+  podSecurityContext:
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    capabilities:
+      drop: [ALL]
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+mcp:
+  podSecurityContext:
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    capabilities:
+      drop: [ALL]
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+adminConsole:
+  podSecurityContext:
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    capabilities:
+      drop: [ALL]
