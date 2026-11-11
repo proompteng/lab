@@ -15,6 +15,7 @@ import {
   HttpStatus,
   MutationEventType,
   Sequence,
+  type ExpiredEntryCancellationFacts,
   type MutationAuthoritySnapshot,
   type MutationEvent,
   type MutationIntentSnapshot,
@@ -57,6 +58,24 @@ const AuthorityRows = Schema.Array(
   }),
 )
 
+const ExpiredEntryCancellationRows = Schema.Array(
+  Schema.Struct({
+    account_id: NonEmptyString,
+    authority_generation_hash: Sha256,
+    authority_version: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
+    maximum: Schema.Enum(Authority),
+    effective: Schema.Enum(Authority),
+    kill_state: Schema.Enum(KillState),
+    reason: Schema.NullOr(NonEmptyString),
+    intent_id: Sha256,
+    intent_authority_generation_hash: Sha256,
+    client_order_id: NonEmptyString,
+    side: Schema.Enum(OrderSide),
+    broker_order_id: NonEmptyString,
+    admitted_at: UtcInstant,
+  }),
+)
+
 const IntentRows = Schema.Array(
   Schema.Struct({
     account_id: NonEmptyString,
@@ -87,6 +106,7 @@ const AcknowledgedRows = Schema.Array(Schema.Struct({ acknowledged: Schema.Boole
 const decodeStoredEventRows = Schema.decodeUnknownResult(StoredEventRows, strictParseOptions)
 const decodeAuthorityRows = Schema.decodeUnknownResult(AuthorityRows, strictParseOptions)
 const decodeIntentRows = Schema.decodeUnknownResult(IntentRows, strictParseOptions)
+const decodeExpiredEntryCancellationRows = Schema.decodeUnknownResult(ExpiredEntryCancellationRows, strictParseOptions)
 const decodeUnresolvedRows = Schema.decodeUnknownResult(UnresolvedRows, strictParseOptions)
 const decodeEventIdRows = Schema.decodeUnknownResult(EventIdRows, strictParseOptions)
 const decodeIntentIdRows = Schema.decodeUnknownResult(IntentIdRows, strictParseOptions)
@@ -150,6 +170,40 @@ export const decodeAuthoritySnapshot = (
             generationHash: authority.generation_hash,
             generationMaximum: authority.generation_maximum,
             generationAccountId: authority.generation_account_id,
+          }
+    },
+  )
+
+export const decodeExpiredEntryCancellationFacts = (
+  rows: unknown,
+): Result.Result<ExpiredEntryCancellationFacts | undefined, MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeExpiredEntryCancellationRows(rows), (cause) =>
+      storeError({
+        operation: 'begin-cancel',
+        failure: 'decode',
+        message: 'expired entry cancellation admission snapshot failed decoding',
+        cause,
+      }),
+    ),
+    (decoded) => {
+      const row = decoded[0]
+      return row === undefined
+        ? undefined
+        : {
+            accountId: row.account_id,
+            authorityGenerationHash: row.authority_generation_hash,
+            authorityVersion: Number(row.authority_version),
+            maximum: row.maximum,
+            effective: row.effective,
+            killState: row.kill_state,
+            ...(row.reason === null ? {} : { reason: row.reason }),
+            intentId: row.intent_id,
+            intentAuthorityGenerationHash: row.intent_authority_generation_hash,
+            clientOrderId: row.client_order_id,
+            side: row.side,
+            brokerOrderId: row.broker_order_id,
+            admittedAt: row.admitted_at,
           }
     },
   )

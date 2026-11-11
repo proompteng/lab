@@ -28,7 +28,7 @@ import {
   type NativeProtectionCancelReceipt,
   type StoredIntent,
 } from './intents/domain'
-import { MutationStore, type MutationStoreShape } from './mutations/model'
+import { MutationStore, type ExpiredEntryCancellationAdmission, type MutationStoreShape } from './mutations/model'
 import {
   makeAuthorityGuardedBrokerMutation,
   constrainExecutionCapitalLimits,
@@ -353,10 +353,17 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
           }),
         ),
       ),
-    cancel: (intentId: string, consistencyDelayMs: number) =>
+    cancel: (
+      intentId: string,
+      consistencyDelayMs: number,
+      expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+    ) =>
       dependencies.brokerStateCache.invalidate.pipe(
         Effect.andThen(
-          provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+          provideCoordinatorDependencies(
+            cancel(intentId, consistencyDelayMs, expiredEntryCancellation),
+            defaultCoordinatorDependencies,
+          ),
         ),
       ),
     recover: (intentId: string, operation: MutationOperation) =>
