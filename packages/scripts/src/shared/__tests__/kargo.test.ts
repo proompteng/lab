@@ -227,7 +227,7 @@ const expected = {
     requiresBuildReceipt: true,
     verifyCohortSource: true,
     tagRegex: runQualifiedTagRegex,
-    images: [imageRepo('bayn'), imageRepo('bayn-research')],
+    images: [imageRepo('bayn'), imageRepo('bayn-research'), imageRepo('bayn-broker-feed')],
     apps: ['bayn'],
     includePaths: [],
   },

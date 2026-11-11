@@ -94,8 +94,6 @@ spec:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: secret-key
-            - name: BAYN_CYCLE_POLL_INTERVAL_MS
-              value: "30000"
             - name: BAYN_RECONCILIATION_INTERVAL_MS
               value: "30000"
             - name: BAYN_HEALTH_INTERVAL_MS

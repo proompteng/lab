@@ -17,6 +17,19 @@ on:
       - '!services/bayn/tools/test-*.ts'
       - '!services/bayn/tools/ci-*-timings.json'
       - '!services/bayn/tools/verify-image-metadata.ts'
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - '!services/dorvud/platform/src/test/**'
+      - '!services/dorvud/platform/README.md'
+      - 'services/dorvud/websockets/**'
+      - '!services/dorvud/websockets/src/test/**'
+      - '!services/dorvud/websockets/README.md'
+      - 'nix/images/bayn-broker-feed.nix'
+      - 'nix/images/dorvud-jvm-service.nix'
       - 'nix/images/bayn.nix'
       - 'nix/images/bayn-runtime-root.nix'
       - 'nix/images/bayn-frozen-control.nix'
@@ -68,6 +81,22 @@ jobs:
     uses: ./.github/workflows/bayn-ci.yml
     secrets: inherit
 
+  broker-feed-validation:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+      - name: Verify the broker feed and shared platform
+        working-directory: services/dorvud
+        run: ./gradlew :platform:ktlintCheck :platform:test :websockets:ktlintCheck :websockets:test
+
   image:
     needs: validation
     uses: ./.github/workflows/nix-oci-build-common.yml
@@ -97,13 +126,28 @@ jobs:
       publish_on_dispatch: false
     secrets: inherit
 
+  broker-feed-image:
+    needs: [validation, broker-feed-validation]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn-broker-feed
+      package_attr: bayn-broker-feed-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: false
+      kargo_tag_include_run_id: true
+      source_revision: ${{ github.sha }}
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
   publish-cohort:
-    needs: [image, research-image]
+    needs: [image, research-image, broker-feed-image]
     runs-on: arc-amd64-publish
     timeout-minutes: 15
     env:
       BAYN_DIGEST: ${{ needs.image.outputs.digest }}
       RESEARCH_DIGEST: ${{ needs.research-image.outputs.digest }}
+      BROKER_FEED_DIGEST: ${{ needs.broker-feed-image.outputs.digest }}
       KARGO_TAG: kargo-sha-${{ github.sha }}-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
@@ -116,11 +160,15 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
-      - name: Verify both immutable images before making the cohort discoverable
+      - name: Verify every immutable image before making the cohort discoverable
         run: |
           set -euo pipefail
-          for member in bayn bayn-research; do
-            if [[ "$member" = bayn ]]; then digest="$BAYN_DIGEST"; else digest="$RESEARCH_DIGEST"; fi
+          for member in bayn bayn-research bayn-broker-feed; do
+            case "$member" in
+              bayn) digest="$BAYN_DIGEST" ;;
+              bayn-research) digest="$RESEARCH_DIGEST" ;;
+              bayn-broker-feed) digest="$BROKER_FEED_DIGEST" ;;
+            esac
             reference="registry.ide-newton.ts.net/lab/${member}@${digest}"
             bun run packages/scripts/src/shared/oci.ts assert "$reference" --platform linux/amd64 --platform linux/arm64
             crane manifest "$reference" | jq -e --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '
@@ -129,8 +177,8 @@ jobs:
               .annotations["ai.proompteng.github-actions-run-id"] == $run and
               .annotations["ai.proompteng.github-actions-build-conclusion"] == "success"'
           done
-          jq -n --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg native "$BAYN_DIGEST" --arg research "$RESEARCH_DIGEST" \
-            '{sourceRevision: $source, runId: $run, tradingDigest: $native, researchDigest: $research}' > bayn-image-cohort.json
+          jq -n --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg native "$BAYN_DIGEST" --arg research "$RESEARCH_DIGEST" --arg broker "$BROKER_FEED_DIGEST" \
+            '{sourceRevision: $source, runId: $run, tradingDigest: $native, researchDigest: $research, brokerFeedDigest: $broker}' > bayn-image-cohort.json
       - uses: actions/upload-artifact@v6
         with:
           name: bayn-image-cohort
@@ -140,8 +188,12 @@ jobs:
       - name: Publish the verified cohort for Kargo
         run: |
           set -euo pipefail
-          for member in bayn bayn-research; do
-            if [[ "$member" = bayn ]]; then digest="$BAYN_DIGEST"; else digest="$RESEARCH_DIGEST"; fi
+          for member in bayn bayn-research bayn-broker-feed; do
+            case "$member" in
+              bayn) digest="$BAYN_DIGEST" ;;
+              bayn-research) digest="$RESEARCH_DIGEST" ;;
+              bayn-broker-feed) digest="$BROKER_FEED_DIGEST" ;;
+            esac
             image="registry.ide-newton.ts.net/lab/${member}"
             bun run packages/scripts/src/shared/oci.ts publish-kargo-tag \
               --image "$image" --reference "${image}@${digest}" --kargo-tag "$KARGO_TAG"

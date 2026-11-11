@@ -190,6 +190,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-research
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-broker-feed
       ports:
         - port: 3128
           protocol: TCP

@@ -127,8 +127,6 @@ spec:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: secret-key
-            - name: BAYN_CYCLE_POLL_INTERVAL_MS
-              value: "30000"
             - name: BAYN_RECONCILIATION_INTERVAL_MS
               value: "30000"
             - name: BAYN_HEALTH_INTERVAL_MS
@@ -171,6 +169,8 @@ spec:
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
             - name: PORT
               value: "9080"
             - name: NODE_ENV
