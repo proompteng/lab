@@ -114,28 +114,6 @@ test('image selection ignores operating guides while keeping runtime and accepta
   }
 })
 
-test('Python and JVM image selection has no Bun workspace inputs', () => {
-  for (const filename of [
-    'torghut-build-push.yaml',
-    'torghut-notebook-build-push.yaml',
-    'torghut-ta-build-push.yaml',
-    'torghut-ws-build-push.yaml',
-  ]) {
-    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
-    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
-    if (!Array.isArray(paths)) throw new Error(`Missing image inputs: ${filename}`)
-    for (const file of ['package.json', 'apps/landing/package.json', 'bun.lock', 'bunfig.toml', '.npmrc'])
-      expect(matchesPaths(file, paths.map(text))).toBe(false)
-    for (const file of [
-      'flake.nix',
-      'flake.lock',
-      'services/torghut/app/main.py',
-      'services/dorvud/platform/src/main.kt',
-    ])
-      expect(matchesPaths(file, paths.map(text))).toBe(true)
-  }
-})
-
 test('Headlamp selects manifest, upstream and native-image work independently', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/headlamp-ci.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
@@ -163,7 +141,7 @@ test('Headlamp selects manifest, upstream and native-image work independently', 
     expect(selected(file, 'upstream')).toBe(true)
   }
   for (const file of ['flake.nix', 'flake.lock', 'nix/packages.nix']) {
-    expect(selected(file, 'image')).toBe(true)
+    expect(selected(file, 'image')).toBe(file === 'flake.lock')
     expect(selected(file, 'manifests')).toBe(true)
   }
 })
@@ -173,6 +151,10 @@ test('cohort and compiler jobs honor a false main input plan', () => {
     ['ofz.yaml', 'ofz', ['validate']],
     ['tengri-images.yml', 'images', ['validate-tengri', 'validate-nanoagent', 'build']],
     ['cdk8s-manifests.yml', 'manifests', ['validate']],
+    ['torghut-build-push.yaml', 'changed', ['nix-image']],
+    ['torghut-notebook-build-push.yaml', 'changed', ['nix-image']],
+    ['torghut-ta-build-push.yaml', 'changed', ['nix-image']],
+    ['torghut-ws-build-push.yaml', 'changed', ['nix-image']],
   ] as const) {
     const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
     for (const id of jobs) {

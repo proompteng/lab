@@ -368,13 +368,13 @@ describe('ARC Nix runner toolchain', () => {
     expect(setupAction).toContain('toolchain-doctor')
     expect(setupAction).toContain('oci-doctor')
 
-    for (const workflow of [nixOciWorkflow, agentsBuildWorkflow, headlampWorkflow]) {
+    for (const workflow of [nixOciWorkflow, agentsBuildWorkflow]) {
       expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
       expect(workflow).toContain("require-preinstalled: 'true'")
     }
 
-    for (const workflow of [argoLintWorkflow, kubeconformWorkflow]) {
-      expect(workflow).toContain('runs-on: ubuntu-latest')
+    for (const workflow of [argoLintWorkflow, kubeconformWorkflow, headlampWorkflow]) {
+      expect(workflow).toContain(workflow === headlampWorkflow ? 'runs-on: ubuntu-24.04' : 'runs-on: ubuntu-latest')
       expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
       expect(workflow).not.toContain("require-preinstalled: 'true'")
     }

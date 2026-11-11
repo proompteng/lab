@@ -485,6 +485,10 @@
   ],
   "torghut-build-push.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
@@ -497,11 +501,19 @@
   ],
   "torghut-notebook-build-push.yaml": [
     {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
   "torghut-ta-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
@@ -514,6 +526,10 @@
     }
   ],
   "torghut-ws-build-push.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
     {
       "id": "nix-image",
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"

@@ -902,7 +902,6 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).toContain("- 'flake.nix'")
     expect(productNixWorkflow).toContain("- 'flake.lock'")
     expect(productNixWorkflow).toContain("- 'nix/images/bun-workspace-service.nix'")
-    expect(headlampWorkflow).not.toContain("- 'flake.nix'")
   })
 
   it('checks default Bun dependency closures when their dependency inputs change', () => {

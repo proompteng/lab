@@ -235,6 +235,8 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -252,6 +254,8 @@ jobs:
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
               - tsconfig.base.json
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
@@ -269,6 +273,8 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
@@ -286,6 +292,8 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             app_dependencies:
               - "**/package.json"
               - bun.lock

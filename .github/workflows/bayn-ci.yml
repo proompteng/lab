@@ -102,6 +102,11 @@ jobs:
             echo 'gepa=true'
           } >> "$GITHUB_OUTPUT"
 
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name != 'pull_request'
+        with:
+          bun-version: 1.4.2
+
       - name: Plan owned test execution
         id: tests
         env:
