@@ -353,7 +353,10 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     return rows.map(memoryRecord)
   }
 
-  const retire: MemoriesStore['retire'] = async ({ id, reason, replacementId }) => {
+  const retire: MemoriesStore['retire'] = async (input) => {
+    const id = input.id.toLowerCase()
+    const replacementId = input.replacementId?.toLowerCase()
+    const reason = input.reason
     await ensureSchema()
     return db.transaction().execute(async (trx) => {
       const rows = await trx

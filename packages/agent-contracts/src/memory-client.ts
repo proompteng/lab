@@ -240,9 +240,9 @@ export const parseRetireMemoryNoteInput = (
   payload: Record<string, unknown>,
 ): ValidationResult<AgentsRetireMemoryNoteInput> => {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  const id = typeof payload.id === 'string' ? payload.id : ''
+  const id = typeof payload.id === 'string' ? payload.id.toLowerCase() : ''
   const reason = typeof payload.reason === 'string' ? payload.reason.trim() : ''
-  const replacementId = typeof payload.replacementId === 'string' ? payload.replacementId : undefined
+  const replacementId = typeof payload.replacementId === 'string' ? payload.replacementId.toLowerCase() : undefined
   if (!uuid.test(id) || (replacementId !== undefined && !uuid.test(replacementId))) {
     return { ok: false, message: 'id and replacementId must be UUIDs.' }
   }

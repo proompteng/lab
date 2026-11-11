@@ -169,6 +169,9 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
     expect(first).toMatchObject({ retirementReason: input.reason, replacementId: replacement.id, content: old.content })
     expect(first.retiredAt).toBeTruthy()
     expect(
+      await store.retire({ ...input, id: old.id.toUpperCase(), replacementId: replacement.id.toUpperCase() }),
+    ).toEqual(first)
+    expect(
       (await store.retrieve({ query: 'MCTS old instruction', namespace: 'memory-evaluation' })).some(
         (row) => row.id === old.id,
       ),
@@ -187,6 +190,7 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
       const config = defaultAgentsShellConfigFromEnv({
         AGENTS_SHELL_WORKSPACE_ROOT: root,
         AGENTS_SHELL_RESOURCE: resource,
+        AGENTS_SHELL_MAX_OUTPUT_BYTES: '4096',
       })
       const auth: AuthContext = {
         subject: 'memory-test',
@@ -206,13 +210,14 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
           name: 'memory_save',
           arguments: {
             namespace: 'mcp-evaluation',
-            content: 'MCTS candidate binding must preserve matching metrics.',
+            content: 'MCTS candidate binding must preserve matching metrics.'.repeat(200),
             summary: 'MCTS candidate binding',
             tags: ['mcts'],
             metadata: { repository: 'proompteng/lab' },
           },
         })
         expect(saved.isError).not.toBe(true)
+        expect(Buffer.byteLength(JSON.stringify(saved))).toBeLessThan(4096)
         const savedBody = JSON.parse(
           CallToolResultSchema.parse(saved).content.find((item) => item.type === 'text')?.text ?? '{}',
         ) as {
@@ -220,13 +225,11 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
         }
         const retired = await client.callTool({
           name: 'memory_retire',
-          arguments: { id: savedBody.memory.id, reason: 'Synthetic integration-test note retired.' },
+          arguments: { id: savedBody.memory.id.toUpperCase(), reason: 'Synthetic integration-test note retired.' },
         })
         expect(retired.isError).not.toBe(true)
-        expect(retired.structuredContent).toHaveProperty(
-          'memory.retirementReason',
-          'Synthetic integration-test note retired.',
-        )
+        expect(retired.structuredContent).toHaveProperty('memory.retiredAt', expect.any(String))
+        expect(Buffer.byteLength(JSON.stringify(retired))).toBeLessThan(4096)
         const list = await client.callTool({
           name: 'memory_list',
           arguments: { repository: 'proompteng/lab', model: 'test-model', limit: 2 },

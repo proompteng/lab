@@ -7,6 +7,7 @@ import {
   type AgentsRetrieveMemoryNotesInput,
   type AgentsMemoryNoteFilters,
   type AgentsPersistMemoryNoteInput,
+  type AgentsPersistMemoryNoteResult,
   type AgentsRetireMemoryNoteInput,
 } from '@proompteng/agent-contracts'
 import { Effect, Schema } from 'effect'
@@ -27,12 +28,31 @@ const filters = {
   limit: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.between(1, 50))),
 }
 
-const result = <T extends { ok: boolean }>(response: AgentsServiceJsonResult<T>, maxBytes: number) => {
+const responseBody = <T extends { ok: boolean }>(response: AgentsServiceJsonResult<T>) => {
   if (!response.ok) throw new Error(`Memory API failed (${response.status}): ${response.error ?? 'request failed'}`)
   if (!response.body.ok) throw new Error('Memory API did not return a successful response.')
-  if (Buffer.byteLength(JSON.stringify(response.body)) > maxBytes)
+  return response.body
+}
+
+const result = <T extends { ok: boolean }>(response: AgentsServiceJsonResult<T>, maxBytes: number) => {
+  const body = responseBody(response)
+  if (Buffer.byteLength(JSON.stringify(body)) > maxBytes)
     throw new Error('Memory response exceeds the output limit. Reduce limit or narrow the filters.')
-  return jsonTextResult(response.body)
+  return jsonTextResult(body)
+}
+
+const mutationResult = (response: AgentsServiceJsonResult<AgentsPersistMemoryNoteResult>) => {
+  const note = responseBody(response).memory
+  if (!note) throw new Error('Memory API returned no mutation receipt.')
+  return jsonTextResult({
+    ok: true,
+    memory: {
+      id: note.id,
+      createdAt: note.createdAt,
+      retiredAt: note.retiredAt,
+      replacementId: note.replacementId,
+    },
+  })
 }
 
 export const createMemoryTools = (): EffectTool[] => [
@@ -92,9 +112,9 @@ export const createMemoryTools = (): EffectTool[] => [
     annotations: writeAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([WRITE_SCOPES[0]]),
-    handler: (input: AgentsPersistMemoryNoteInput, { config }) =>
+    handler: (input: AgentsPersistMemoryNoteInput) =>
       Effect.tryPromise({
-        try: async () => result(await persistMemoryNoteToAgentsService(input), config.maxOutputBytes),
+        try: async () => mutationResult(await persistMemoryNoteToAgentsService(input)),
         catch: agentsShellErrorFromUnknown,
       }),
   },
@@ -113,9 +133,9 @@ export const createMemoryTools = (): EffectTool[] => [
     annotations: { ...writeAnnotations, idempotentHint: true },
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([WRITE_SCOPES[0]]),
-    handler: (input: AgentsRetireMemoryNoteInput, { config }) =>
+    handler: (input: AgentsRetireMemoryNoteInput) =>
       Effect.tryPromise({
-        try: async () => result(await retireMemoryNoteInAgentsService(input), config.maxOutputBytes),
+        try: async () => mutationResult(await retireMemoryNoteInAgentsService(input)),
         catch: agentsShellErrorFromUnknown,
       }),
   },

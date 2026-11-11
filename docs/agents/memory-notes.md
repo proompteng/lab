@@ -37,6 +37,7 @@ Agent Shell and Agent Shell Tunnel expose the same tools without a repo session:
 | `memory_retire` | Retire a verified obsolete or incorrect note, with a reason and optional active replacement.                   |
 
 Memory tool audit events retain call identity and outcome without copying queries, note bodies or results into shell logs.
+Save and retire return compact receipts with note IDs and timestamps. Read full notes through search or listing.
 
 ## Retire obsolete notes
 
