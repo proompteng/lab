@@ -2,7 +2,7 @@
 
 ## Findings
 
-Observations below were captured between 20:40 and 20:51 UTC. These alerts have separate causes.
+Observations below were captured between 20:40 and 20:55 UTC. These alerts have separate causes.
 
 | Incident                              | Evidence                                                                                                                                     | Action                                                                                                                                   |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -39,6 +39,19 @@ The twenty-minute job threshold remains unchanged. The collector now reports bou
 `unattributed`; it cannot suppress the whole-job warning. Log artifact uploads have a five-minute hard deadline.
 An upload failure still prevents a successful publication receipt and cohort promotion.
 See [CI observability](../../argocd/applications/observability/ci/README.md).
+
+## CI telemetry quota
+
+At 20:54 UTC, `CiObservabilityCollectionStale` fired and the history-scan warning became pending.
+The collector remained ready, had no restarts, and its metrics scrape was healthy. Its logs repeatedly reported
+`GitHubQuotaError: GitHub shared API quota reserve reached; waiting for reset`.
+The last recorded API allowance was 996 requests. The existing collector deliberately pauses below 1,000 requests
+until the shared quota resets, preserving capacity for ARC and other consumers.
+
+This is distinct from the upstream Actions outage. Polling staleness correctly suppressed `CiBuildStalled`,
+since its job observations could no longer establish a currently running build. Keep the reserve and freshness gates;
+do not lower them to clear either alert. The available evidence does not attribute shared-account consumption
+to a particular consumer.
 
 ## Ceph HDD read pressure
 
