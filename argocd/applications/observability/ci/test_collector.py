@@ -649,6 +649,79 @@ class CollectorTests(unittest.TestCase):
             running["status"] = "completed"
             observer.poll(self.now)
             self.assertNotIn("ci_job_oldest_execution_seconds", observer.active_metrics)
+            self.assertNotIn(
+                "ci_job_current_phase_age_seconds", observer.active_metrics
+            )
+
+    def test_active_phase_distinguishes_artifact_upload_from_github_finalization(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None)
+        upload = {
+            "name": "Upload Nix OCI log artifact",
+            "status": "in_progress",
+            "started_at": "2026-10-25T12:29:00Z",
+            "completed_at": None,
+        }
+        running["steps"] = [upload]
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+        ):
+            for expected_phase, age in [("artifacts", 360), ("finalizing", 240)]:
+                with self.subTest(phase=expected_phase):
+                    observer.poll(self.now)
+                    line = next(
+                        x
+                        for x in observer.active_metrics.splitlines()
+                        if x.startswith("ci_job_current_phase_age_seconds")
+                    )
+                    self.assertIn(f'phase="{expected_phase}"', line)
+                    self.assertEqual(float(line.rsplit(" ", 1)[1]), age)
+                    self.assertNotIn(upload["name"], line)
+                    self.assertIn(
+                        "ci_job_oldest_execution_seconds", observer.active_metrics
+                    )
+                upload.update(status="completed", completed_at="2026-10-25T12:31:00Z")
+
+    def test_missing_steps_keep_whole_job_and_unattributed_phase_visible(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None, steps=[])
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+        ):
+            observer.poll(self.now)
+        age = self.now - timestamp(running["started_at"])
+        lines = observer.active_metrics.splitlines()
+        for metric in (
+            "ci_job_oldest_execution_seconds",
+            "ci_job_current_phase_age_seconds",
+        ):
+            line = next(x for x in lines if x.startswith(metric))
+            self.assertTrue(line.endswith(f" {age}"), line)
+        self.assertIn('phase="unattributed"', observer.active_metrics)
 
     def test_finished_job_is_collected_before_its_workflow_finishes(self):
         active_run = run()

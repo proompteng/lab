@@ -110,9 +110,14 @@ The initial historical scan and backfill must complete before duration alerts ca
 continues when GitHub polling fails; GitHub collection continues during a Loki outage.
 
 Independent alerts cover failed or missing Attic probes, unsuccessful build-cache uploads, and exhausted cache download
-retries. `CiBuildStalled` alerts when one active push image build exceeds twenty minutes for two minutes, without requiring
+retries. `CiBuildStalled` alerts when one active push image job exceeds twenty minutes for two minutes, without requiring
 baseline samples. All use the existing email route. Completed cache errors remain visible for the one-hour event window;
 active build ages disappear on completion. Stale GitHub polling cannot trigger build/cache-event alerts.
+`ci_job_current_phase_age_seconds` separates building, publishing, artifacts and cleanup using the existing bounded phase
+names. `finalizing` means every reported step has completed while GitHub still reports the job as running; its age
+starts at the last step completion. Missing step telemetry remains `unattributed` and does not suppress the job-age
+alert. Check the exact GitHub job and ARC runner before attributing a long job to compilation. Nix OCI log uploads
+have a five-minute step budget and remain required for successful publication.
 
 Queue alerts select image build jobs and aggregate by namespace, runner pool and architecture. Workflow and job-family
 changes do not create new alert identities. The first alert still requires a queue over ten minutes for five minutes
