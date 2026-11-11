@@ -1,7 +1,14 @@
-# Keeper storage
+# ClickHouse and Keeper storage
 
-Keeper uses its existing Ceph RBD claim. The local NVMe migration was not activated, and no dedicated Keeper
-StorageClass is provisioned. Preserve the existing PVC, server identity and native membership during rollouts.
+ClickHouse uses two 200 GiB `local-path` claims, one on Altra and one on Turin. Keeper uses its 1 GiB claim on
+Altra. The local volumes bind each instance to its host. Preserve the existing ClickHouse replica names,
+Keeper server ID and membership, and the insert quorum.
+
+To replace a backing volume, stop its writers and the owning instance, copy and verify the complete data
+directory, then bind the existing claim name to the replacement before the operator starts the instance.
+Keep the old volume until both ClickHouse replicas can read their data, Keeper serves the original state,
+and the archive and technical-analysis jobs have resumed from saved state and completed fresh checkpoints.
+Recover a lost Keeper volume from a verified copy of its state before starting the singleton.
 
 ## Signal schema reconciliation
 
