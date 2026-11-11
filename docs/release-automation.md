@@ -107,7 +107,10 @@ Every application image follows this transaction:
 
 App, Synthesis, Docs, Bumba, Oirat and Froussard also take their source revision from the immutable image.
 Their Warehouse verifies the revision-qualified tag and this repository's source annotation; their Stage checks out
-that exact annotation. They have no separate Git subscription or duplicated path list: an unrelated lockfile,
+that exact annotation only after GitHub's compare API confirms it is an ancestor of protected `main` (or its tip).
+This read-only public-repository check runs before cloning or writing desired state, rejects unmerged revisions
+and missing commits, and fails closed on unavailable or rate-limited responses within two minutes. Registry
+annotations alone are not main-branch authority. They have no separate Git subscription or duplicated path list: an unrelated lockfile,
 root script alias or operating guide can advance filtered Git history without producing a new runtime image.
 
 Torghut's five-image release takes its source commit from the immutable images. Its Warehouse requires every image

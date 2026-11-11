@@ -108,6 +108,18 @@ spec:
   promotionTemplate:
     spec:
       steps:
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}
+            queryParams:
+              - name: per_page
+                value: "1"
+            timeout: 10s
+            successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
+            failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -187,6 +199,18 @@ spec:
   promotionTemplate:
     spec:
       steps:
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}
+            queryParams:
+              - name: per_page
+                value: "1"
+            timeout: 10s
+            successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
+            failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -266,6 +290,18 @@ spec:
   promotionTemplate:
     spec:
       steps:
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}
+            queryParams:
+              - name: per_page
+                value: "1"
+            timeout: 10s
+            successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
+            failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -345,6 +381,18 @@ spec:
   promotionTemplate:
     spec:
       steps:
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}
+            queryParams:
+              - name: per_page
+                value: "1"
+            timeout: 10s
+            successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
+            failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -430,6 +478,18 @@ spec:
   promotionTemplate:
     spec:
       steps:
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}
+            queryParams:
+              - name: per_page
+                value: "1"
+            timeout: 10s
+            successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
+            failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -588,6 +648,18 @@ spec:
   promotionTemplate:
     spec:
       steps:
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}
+            queryParams:
+              - name: per_page
+                value: "1"
+            timeout: 10s
+            successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
+            failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}

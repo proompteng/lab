@@ -456,12 +456,13 @@ const expected = {
 
 const expectedStageNames = Object.keys(expected).sort()
 const cohortStages = new Set(['ofz', 'tengri', 'proompteng'])
+const ancestryGuardedStages = ['app', 'synthesis', 'docs', 'bumba', 'oirat', 'froussard'] as const
 
 const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
-  it.each(['torghut', 'app', 'synthesis', 'docs', 'bumba', 'oirat', 'froussard'] as const)(
+  it.each(['torghut', ...ancestryGuardedStages] as const)(
     'promotes the immutable %s source despite a different filtered Git commit',
     (name) => {
       const source = '21c7541cea499b753c4003bab998ac1e2818239b'
@@ -533,6 +534,35 @@ describe('Kargo direct-push GitOps contract', () => {
           { timeout: 100 },
         ),
       ).toBe(source)
+    },
+  )
+
+  it.each(ancestryGuardedStages)(
+    '%s rejects an unmerged image revision before cloning or writing desired state',
+    (name) => {
+      const steps = byName(stages).get(name)?.spec?.promotionTemplate?.spec?.steps
+      const guard = steps[0]
+      expect(guard.uses).toBe('http')
+      expect(guard.retry.timeout).toBe('2m')
+      expect(guard.config.timeout).toBe('10s')
+      expect(guard.config.url).toBe(
+        "${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}",
+      )
+      for (const [status, relation, success, failure] of [
+        [200, 'ahead', true, false],
+        [200, 'identical', true, false],
+        [200, 'behind', false, true],
+        [200, 'diverged', false, true],
+        [200, 'unknown', false, true],
+        [404, undefined, false, true],
+        [403, undefined, false, false],
+        [500, undefined, false, false],
+      ]) {
+        const context = { response: { status, body: { status: relation } } }
+        expect(runInNewContext(guard.config.successExpression, context)).toBe(success)
+        expect(runInNewContext(guard.config.failureExpression, context)).toBe(failure)
+      }
+      expect(steps[1].uses).toBe('git-clone')
     },
   )
 
@@ -906,6 +936,9 @@ describe('Kargo direct-push GitOps contract', () => {
         expect(steps[0].uses).toBe('fail')
         expect(steps[0].if).toContain('imageFrom(vars.tengriImage).Tag')
         expect(steps[0].if).toContain('imageFrom(vars.nanoagentImage).Tag')
+      } else if (ancestryGuardedStages.some((name) => name === stageName)) {
+        expect(steps[0].uses).toBe('http')
+        expect(steps[1].uses).toBe('git-clone')
       } else {
         expect(steps[0].uses).toBe('git-clone')
       }
