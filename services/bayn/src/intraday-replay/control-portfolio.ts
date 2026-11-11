@@ -186,7 +186,8 @@ export const controlEntryQuantity = (input: {
       dailyTradedNotionalMicros: portfolio.tradedNotionalMicros,
       maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
       maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
-      maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+      maxDailyTradedNotionalMicros:
+        policy.maxDailyTradedNotionalMicros === null ? null : BigInt(policy.maxDailyTradedNotionalMicros),
       maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
       targetWeights,
       positions: [],
@@ -239,8 +240,10 @@ export const controlEntryQuantity = (input: {
         Result.isSuccess(tentative) &&
         (fixedPrincipalCap === undefined || notional <= fixedPrincipalCap) &&
         notional <= BigInt(policy.maxOrderNotionalMicros) &&
-        portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros) &&
+        (policy.maxDailyTradedNotionalMicros === null ||
+          portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros)) &&
         (input.turnoverPolicy !== EntryTurnoverPolicy.EntryAndExpectedExit ||
+          policy.maxDailyTradedNotionalMicros === null ||
           (yield* assessEntryTurnoverReserve({
             filledTurnoverMicros: portfolio.tradedNotionalMicros,
             maximumTurnoverMicros: BigInt(policy.maxDailyTradedNotionalMicros),

@@ -23,6 +23,35 @@ import {
 } from './mandate'
 
 describe('executionMandateAllocationCapitalMicros', () => {
+  test('uncapped turnover ignores cumulative volume but retains equity, exposure and position validation', () => {
+    const facts = {
+      accountEquityMicros: 100_000_000_000n,
+      dailyTradedNotionalMicros: 1_018_000_000_000n,
+      maxGrossExposureMicros: 100_000_000_000n,
+      maxNetExposureMicros: 100_000_000_000n,
+      maxDailyTradedNotionalMicros: null,
+      maxAdverseSlippageBps: 10n,
+      positions: [],
+      referencePriceMicros: {},
+      targetWeights: { NVDA: 0.2 },
+    }
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros(facts))).toBe(100_000_000_000n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, maxNetExposureMicros: 10_000_000_000n })),
+    ).toBe(50_000_000_000n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, maxGrossExposureMicros: 8_000_000_000n })),
+    ).toBe(40_000_000_000n)
+    expect(
+      Result.isFailure(
+        executionMandateAllocationCapitalMicros({
+          ...facts,
+          positions: [{ symbol: 'NVDA', quantityAtoms: '1000000000' }],
+        }),
+      ),
+    ).toBe(true)
+  })
+
   test('keeps the recorded partial target at its account weight while the complete order fits remaining turnover', () => {
     const facts = {
       accountEquityMicros: 99_766_030_000n,

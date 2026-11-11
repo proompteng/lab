@@ -8729,6 +8729,7 @@ test.each([
 test.each([0n, 1n])('exhausted turnover blocks entry inference at %s excess micros', async (excess) => {
   const fixture = await executionLifecycleFixture()
   const original = reconciliationResult(generationHash, Authority.Execution)
+  if (fixture.policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
   const facts = {
     ...original,
     riskContext: {
@@ -8766,12 +8767,59 @@ test.each([0n, 1n])('exhausted turnover blocks entry inference at %s excess micr
     })
 })
 
+test('uncapped paper policy admits entry inference above the former million-dollar cap', async () => {
+  const fixture = await executionLifecycleFixture()
+  const policy = Result.getOrThrow(
+    makeExecutionRiskPolicy(accountId, fixtureProtocol.universe, BrokerEnvironment.Sandbox),
+  )
+  const original = reconciliationResult(generationHash, Authority.Execution)
+  let snapshots = 0
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* Effect.result(
+        buildMutationShadowCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixture.preparation.executionModel,
+          policy,
+          strategy: fixtureRuntime,
+          reconcile: Effect.succeed({
+            ...original,
+            riskContext: { ...original.riskContext, dailyTradedNotionalMicros: '1018000000000' },
+          }),
+          intradayMarketData: {
+            ...fixture.input.intradayMarketData,
+            loadSnapshot: (query) => {
+              snapshots++
+              return fixture.input.intradayMarketData.loadSnapshot(query)
+            },
+          },
+        }),
+      )
+    }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
+  )
+  expect(Result.isSuccess(result)).toBe(true)
+  expect(snapshots).toBeGreaterThan(0)
+  const facts = {
+    ...reconciliationResultAt(evaluatedAt),
+    riskContext: { ...original.riskContext, dailyTradedNotionalMicros: '1018000000000' },
+  }
+  expect(protectedAccountAdmission(facts, policy, generationHash, evaluatedAt)).toBeUndefined()
+  expect(
+    protectedAccountAdmission(withAdmissionDrawdown(facts, policy), policy, generationHash, evaluatedAt)?.readiness
+      .reason,
+  ).toBe(DecisionReadinessReason.AccountProtection)
+})
+
 test('account drawdown and exhausted turnover do not suppress read-only strategy observations', async () => {
   const fixture = await executionLifecycleFixture()
   const original = reconciliationResult(generationHash, Authority.Observe)
   const policy = await Effect.runPromise(
     Effect.fromResult(makeExecutionRiskPolicy(accountId, fixtureProtocol.universe)),
   )
+  if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
+  const maximumTurnover = policy.maxDailyTradedNotionalMicros
   let snapshots = 0
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -8792,7 +8840,7 @@ test('account drawdown and exhausted turnover do not suppress read-only strategy
                 BigInt(policy.maxDrawdownMicros) +
                 1n
               ).toString(),
-              dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros,
+              dailyTradedNotionalMicros: maximumTurnover,
             },
           }),
           intradayMarketData: {
@@ -8822,16 +8870,20 @@ const withAdmissionDrawdown = (facts: ReconciliationPassResult, policy: Policy):
   },
 })
 
-const withAdmissionTurnover = (facts: ReconciliationPassResult, policy: Policy): ReconciliationPassResult => ({
-  ...facts,
-  riskContext: { ...facts.riskContext, dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros },
-})
+const withAdmissionTurnover = (facts: ReconciliationPassResult, policy: Policy): ReconciliationPassResult => {
+  if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
+  return {
+    ...facts,
+    riskContext: { ...facts.riskContext, dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros },
+  }
+}
 
 test('flat turnover admission blocks at the exact cap and resumes from fresh capacity', async () => {
   const policy = await Effect.runPromise(
     Effect.fromResult(strategyExecutionRiskPolicy(accountId, currentIntradayRuntime)),
   )
   const original = reconciliationResultAt(evaluatedAt)
+  if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
   for (const excess of [-1n, 0n, 1n]) {
     const facts = {
       ...original,

@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { AccountStatus, Authority } from '../execution/contracts'
 import { sha256 } from '../hash'
+import { prepareControlStudy } from './control-study'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { bindControlStudyInput, ControlStudyOpeningSchema } from './control-binding'
 import { controlBindingFixture } from './control-binding.test-support'
@@ -16,6 +17,49 @@ test('binding inherits native cash and the used drawdown without pricing unknown
   expect(input.backtest.allocatedDataCostPerSessionMicros).toBeNull()
   expect(input.backtest.assumptions).toEqual(plan.controlTemplate.backtest.assumptions)
 })
+
+test.each(['retained', 'current'] as const)(
+  'binding and preparation preserve the exact %s sandbox policy',
+  (version) => {
+    const { plan, opening, exported, source, receipt } = controlBindingFixture()
+    const policy =
+      version === 'current'
+        ? plan.candidate.riskPolicy
+        : {
+            ...plan.candidate.riskPolicy,
+            schemaVersion: 'bayn.execution-risk-policy.v4' as const,
+            maxDailyTradedNotionalMicros: '1000000000000',
+          }
+    const bound = Result.getOrThrow(
+      bindControlStudyInput(
+        { ...plan, candidate: { ...plan.candidate, riskPolicy: policy } },
+        { ...opening, inputs: { ...opening.inputs, policy } },
+        exported,
+        source,
+        receipt,
+      ),
+    )
+    expect(bound.riskPolicy).toEqual(policy)
+    const prepared = Result.getOrThrow(prepareControlStudy(bound, receipt))
+    expect(prepared.risk).toEqual({ ...policy, accountId: prepared.prepared.identity.accountId })
+    expect(Result.isFailure(prepareControlStudy({ ...bound, riskEnvironment: BrokerEnvironment.Live }, receipt))).toBe(
+      true,
+    )
+    const changedPolicy = { ...policy, maxOrderNotionalMicros: '1' }
+    expect(Result.isFailure(prepareControlStudy({ ...bound, riskPolicy: changedPolicy }, receipt))).toBe(true)
+    expect(
+      Result.isFailure(
+        bindControlStudyInput(
+          { ...plan, controlTemplate: { ...plan.controlTemplate, riskPolicy: changedPolicy } },
+          opening,
+          exported,
+          source,
+          receipt,
+        ),
+      ),
+    ).toBe(true)
+  },
+)
 
 test.each([
   { recorded: '0', declared: '0', admissible: true },
