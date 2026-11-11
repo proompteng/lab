@@ -242,7 +242,10 @@ Confirm the current Restate registration's label selector before comparing worke
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
-  Native recovery retries retain their durable attempt budget and retry every thirty seconds. A newly deployed
+  Native recovery retains a bounded attempt budget per delivery and schedules another recovery window after thirty
+  seconds when those attempts fail. Its diagnostic window counter saturates at seven; reaching that value keeps
+  recovery scheduled with a new invocation-bound idempotency key and the original issuance time. This never renews
+  a trade admission deadline. A newly deployed
   source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
   recovery timer into the new epoch.
 

@@ -7,7 +7,12 @@ import { MutationOperation } from '../../src/broker/alpaca-mutations/model'
 import { AutonomousCycleSchema, CycleState } from '../../src/cycle/model'
 import { DecisionReadinessReason } from '../../src/cycle/runner/readiness'
 import { Authority, KillState } from '../../src/execution/contracts'
-import { completeExecutionControllerTick, decideExecutionControllerTick } from '../../src/execution/controller'
+import {
+  completeExecutionControllerTick,
+  decideExecutionControllerTick,
+  executionControllerMaximumRecoveryWindow,
+  nextExecutionControllerRecoveryWindow,
+} from '../../src/execution/controller'
 import { ExecutionControllerOutcome } from '../../src/execution/controller-status'
 import {
   allowsOutcomeEvent,
@@ -78,6 +83,18 @@ const EntryState = Schema.Struct({
   normalDelay: int,
   retryDelay: int,
 })
+const RecoverySchedulerState = Schema.Struct({
+  active: bool,
+  scheduled: bool,
+  due: bool,
+  dependencyReady: bool,
+  recovered: bool,
+  recoveryWindow: int,
+  deliveryParity: int,
+  nextRecoveryWindow: int,
+  maximumRecoveryWindow: int,
+  canDeliver: bool,
+})
 const MutationState = Schema.Struct({
   operation: Schema.Enum(MutationOperation),
   closeOnly: bool,
@@ -121,6 +138,31 @@ const revision = (source: number) => String(source).repeat(40)
 const at = (seconds: number) => new Date(Date.parse('2026-09-04T14:31:02.000Z') + seconds * 1_000).toISOString()
 
 describe.skipIf(directory === undefined)('TLC reachable states conform to production', () => {
+  test('recovery window transitions retain bounded production counters at saturation', () => {
+    const cases = Schema.decodeUnknownSync(
+      Schema.Array(RecoverySchedulerState),
+      strictParseOptions,
+    )(states('RecoveryScheduler'))
+    expect(cases.some((s) => !s.active)).toBe(true)
+    expect(cases.some((s) => s.recovered)).toBe(true)
+    for (const parity of [0, 1]) {
+      expect(
+        cases.some(
+          (s) =>
+            s.active &&
+            !s.dependencyReady &&
+            s.canDeliver &&
+            s.recoveryWindow === executionControllerMaximumRecoveryWindow &&
+            s.deliveryParity === parity,
+        ),
+      ).toBe(true)
+    }
+    for (const s of cases) {
+      expect(s.maximumRecoveryWindow).toBe(executionControllerMaximumRecoveryWindow)
+      expect(nextExecutionControllerRecoveryWindow(s.recoveryWindow)).toBe(s.nextRecoveryWindow)
+    }
+  })
+
   test('controller delivery and completion guards reject stale epochs, sequences and worker sources', () => {
     const cases = Schema.decodeUnknownSync(Schema.Array(ControllerState), strictParseOptions)(states('Controller'))
     expect(cases.some((s) => s.canAdvance)).toBe(true)
