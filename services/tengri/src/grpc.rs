@@ -414,6 +414,22 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(agent_from_microvm(&agent)))
     }
 
+    async fn record_agent_activity(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RecordAgentActivity").await?;
+        let agent = self
+            .authorized_agent(&principal, &request.get_ref().id)
+            .await?;
+        let claim = crate::slot::client::claim_for(&agent)
+            .map_err(|error| Status::failed_precondition(error.to_string()))?;
+        self.activity
+            .admit_control(&claim, crate::activity::ControlActivity::Interaction)
+            .await?;
+        Ok(Response::new(Empty {}))
+    }
+
     type WatchAgentStream = Pin<Box<dyn Stream<Item = Result<Agent, Status>> + Send>>;
 
     async fn watch_agent(
@@ -2886,6 +2902,88 @@ pub(crate) mod tests {
             ActivityTracker::new(client, namespace),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn desktop_activity_uses_control_admission_and_rejects_a_changed_sleep_fence() {
+        for changed in ["none", "sleep", "epoch"] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let control = test_control_plane(Client::new(service, "tengri"));
+            let mut agent = provisional_terminal_test_agent(Utc::now());
+            agent.metadata.resource_version = Some("7".into());
+            agent.spec.slot = Some(crate::crd::MicroVMSlot {
+                name: "slot-a".into(),
+                pod_uid: "55555555-5555-4555-8555-555555555555".into(),
+                pvc_name: "home-a".into(),
+                pvc_uid: "home-uid".into(),
+                epoch: 7,
+            });
+            let principal = Principal::fixture(
+                &agent.spec.owner_hash,
+                &agent.uid().unwrap(),
+                crate::ofz::proto::Action::WorkspacePowerConfigure,
+            );
+            let request = crate::auth::signed_fixture_request(
+                GetAgentRequest {
+                    id: agent.name_any(),
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/RecordAgentActivity"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move { control.record_agent_activity(request).await });
+            for read in 0..2 {
+                let (request, response) = handle.next_request().await.unwrap();
+                assert_eq!(request.method(), http::Method::GET);
+                if read == 1 {
+                    agent.metadata.resource_version = Some("8".into());
+                    if changed == "sleep" {
+                        let sleep_claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+                        agent
+                            .annotations_mut()
+                            .insert(crate::activity::ACTIVE_RUN_ANNOTATION.into(), sleep_claim);
+                    } else if changed == "epoch" {
+                        agent.spec.runtime_epoch = uuid::Uuid::new_v4().to_string();
+                    }
+                }
+                response.send_response(
+                    HttpResponse::builder()
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                        .unwrap(),
+                );
+            }
+            if changed != "none" {
+                assert_eq!(
+                    task.await.unwrap().unwrap_err().code(),
+                    tonic::Code::FailedPrecondition
+                );
+                continue;
+            }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::PATCH);
+            let patch: Value =
+                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                    .unwrap();
+            assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+            assert_eq!(patch["metadata"]["resourceVersion"], "8");
+            assert!(patch.get("spec").is_none());
+            let at = DateTime::parse_from_rfc3339(
+                patch["metadata"]["annotations"][LAST_ACTIVITY_ANNOTATION]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(at >= Utc::now() - chrono::Duration::seconds(5));
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            task.await.unwrap().unwrap();
+        }
     }
 
     #[tokio::test]
