@@ -11,6 +11,8 @@ from unittest.mock import patch
 from collector import (
     Collector,
     GitHub,
+    GitHubError,
+    GitHubQuotaError,
     Store,
     cache_evidence,
     job_record,
@@ -305,7 +307,7 @@ class CollectorTests(unittest.TestCase):
             self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
         )
         self.store.discover(second, self.now)
-        while pending := self.store.pending():
+        for pending in self.store.pending():
             observer.collect_attempt(pending)
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 2
@@ -749,7 +751,7 @@ class CollectorTests(unittest.TestCase):
             self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 0
         )
         self.store.discover(run(), self.now)
-        observer.collect_attempt(self.store.pending())
+        observer.collect_attempt(self.store.pending()[0])
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
         )
@@ -761,6 +763,86 @@ class CollectorTests(unittest.TestCase):
         ]
         self.assertTrue(completed)
         self.assertTrue(all(line.endswith(" 1") for line in completed))
+
+    def test_inconsistent_attempt_does_not_block_other_completed_attempts(self):
+        good = run()
+        bad = run() | {"id": good["id"] + 1, "updated_at": "2026-10-25T12:34:59Z"}
+        unfinished = job() | {
+            "id": job()["id"] + 1,
+            "status": "in_progress",
+            "conclusion": None,
+            "completed_at": None,
+        }
+        api = FakeGitHub({}, {})
+        runs = {good["id"]: good, bad["id"]: bad}
+        jobs = {good["id"]: [job()], bad["id"]: [unfinished]}
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        for value in runs.values():
+            self.store.discover(value, self.now)
+        with (
+            patch.object(
+                api, "get", side_effect=lambda path: runs[int(path.split("/")[2])]
+            ),
+            patch.object(
+                api,
+                "pages",
+                side_effect=lambda path, _key: iter(jobs[int(path.split("/")[2])]),
+            ),
+            patch("time.time", return_value=self.now),
+        ):
+            observer.collect_pending(self.now + 20)
+            self.assertEqual(
+                dict(self.store.db.execute("SELECT run_id,state FROM attempts")),
+                {good["id"]: "complete", bad["id"]: "pending"},
+            )
+            self.assertEqual(observer.errors, 1)
+            self.assertEqual(
+                self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
+            )
+            jobs[bad["id"]] = [job() | {"id": unfinished["id"]}]
+            observer.collect_pending(self.now + 20)
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 2
+        )
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM attempts WHERE state='pending'"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_terminal_facts_reconcile_stale_github_status_without_losing_the_original(
+        self,
+    ):
+        api = FakeGitHub({1: run()}, {1: [job() | {"status": "in_progress"}]})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        self.store.discover(run(), self.now)
+        with patch("time.time", return_value=self.now):
+            observer.collect_pending(self.now + 20)
+        stored = self.store.db.execute("SELECT record FROM jobs").fetchone()
+        self.assertIsNotNone(stored)
+        record = json.loads(stored[0])
+        self.assertEqual(record["github_status"], "in_progress")
+        self.assertEqual(record["outcome"], "success")
+        self.assertEqual(record["completed_at"], job()["completed_at"])
+
+    def test_quota_backoff_stops_the_pending_batch(self):
+        self.store.discover(run(), self.now)
+        self.store.discover(run() | {"id": run()["id"] + 1}, self.now)
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        for error in (GitHubQuotaError("reserve"), GitHubError(403), GitHubError(429)):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch("time.time", return_value=self.now),
+                patch.object(observer, "collect_attempt", side_effect=error) as collect,
+            ):
+                with self.assertRaises(type(error)):
+                    observer.collect_pending(self.now + 20)
+                self.assertEqual(collect.call_count, 1)
 
     def test_slow_historical_discovery_cannot_starve_pending_attempts(self):
         api = FakeGitHub({1: run()}, {1: [job()]})

@@ -331,3 +331,79 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 0
+  - name: validation regression postgres-integration with 5 samples
+    interval: 1m
+    input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_duration_percentile_seconds{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",percentile="50",window="1h"}
+        values: 500+0x30
+      - series: ci_job_duration_percentile_seconds{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",percentile="50",window="7d_baseline"}
+        values: 100+0x30
+      - series: ci_job_duration_samples{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",window="1h"}
+        values: 5+0x30
+      - series: ci_job_duration_samples{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",window="7d_baseline"}
+        values: 20+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiValidationDurationRegression",alertstate="firing"}) or vector(0)
+        eval_time: 15m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+  - name: validation regression postgres-integration with 4 samples
+    interval: 1m
+    input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_duration_percentile_seconds{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",percentile="50",window="1h"}
+        values: 500+0x30
+      - series: ci_job_duration_percentile_seconds{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",percentile="50",window="7d_baseline"}
+        values: 100+0x30
+      - series: ci_job_duration_samples{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",window="1h"}
+        values: 4+0x30
+      - series: ci_job_duration_samples{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="postgres-integration",event="pull_request",outcome="success",phase="execution",cache_state="unknown",window="7d_baseline"}
+        values: 20+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiValidationDurationRegression",alertstate="firing"}) or vector(0)
+        eval_time: 15m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: validation regression unit-tests with 5 samples
+    interval: 1m
+    input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_duration_percentile_seconds{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="unit-tests",event="pull_request",outcome="success",phase="execution",cache_state="unknown",percentile="50",window="1h"}
+        values: 500+0x30
+      - series: ci_job_duration_percentile_seconds{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="unit-tests",event="pull_request",outcome="success",phase="execution",cache_state="unknown",percentile="50",window="7d_baseline"}
+        values: 100+0x30
+      - series: ci_job_duration_samples{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="unit-tests",event="pull_request",outcome="success",phase="execution",cache_state="unknown",window="1h"}
+        values: 5+0x30
+      - series: ci_job_duration_samples{workflow="bayn-ci.yml",architecture="amd64",runner_pool="hosted",job_role="validate",job_family="unit-tests",event="pull_request",outcome="success",phase="execution",cache_state="unknown",window="7d_baseline"}
+        values: 20+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiValidationDurationRegression",alertstate="firing"}) or vector(0)
+        eval_time: 15m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: failed scheduled delivery is visible
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x10
+      - series: ci_workflows_completed{workflow="temporal-bun-sdk-protos.yml",event="schedule",outcome="failure",window="1h"}
+        values: 1+0x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiScheduledWorkflowFailed",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 1

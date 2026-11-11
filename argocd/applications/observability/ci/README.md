@@ -32,7 +32,10 @@ Run ID and attempt number identify each workflow attempt. Jobs come from the att
 carried-forward jobs from another attempt are excluded. Job creation-to-start gives queue time. Assigned job
 start-to-completion gives execution time. A cancelled job without a runner contributes queue time but no invented
 execution duration. Workflow duration uses that attempt's job timestamps rather than the original run creation
-time, which would include time between reruns. A workflow outcome is retained separately from its jobs' outcomes.
+time, which would include time between reruns. A workflow outcome is retained separately from its jobs' outcomes. A completion timestamp and terminal
+conclusion also establish completion when GitHub leaves its status stale; records retain `github_status`
+so that inconsistency remains inspectable. A pending pass visits each attempt once. An incomplete or failed
+attempt remains pending while other completed attempts proceed; API quota backoff still ends the pass.
 
 Alloy scrapes the collector every 30 seconds and remote-writes its metrics to Mimir. The durable outbox pushes
 sanitized workflow/job records to existing Loki. Retries preserve the same timestamp, labels and line. The Loki
@@ -50,7 +53,7 @@ cache class and fixed statistical windows. Run IDs, commit SHAs, job names and r
 not metric or Loki stream labels. Raw job logs, GitHub actor profiles and credentials are not stored or forwarded.
 Signed log download URLs receive no GitHub Authorization header.
 
-`workflows.json` enrolls image workflows, their reusable callers and Bayn's validation pipeline. Bayn remains
+`workflows.json` enrolls image workflows, their reusable callers, Bayn validation, root PR validation, scripts CI and the scheduled proto updater. Bayn remains
 observable after moving its images to main-only publication. The scripts CI check discovers build actions
 and reusable callers from workflow YAML and fails if a new image workflow is missing. Regenerate it with
 `bun run packages/scripts/src/ci/generate-observability-workflows.ts` when adding a workflow. Diagnostic image builds
@@ -99,6 +102,11 @@ attempt and job. Source revisions and cache evidence support investigation; a ti
 establish that a CI change caused an improvement.
 
 ## Alerts and recovery
+
+Fixed-scope Bayn PostgreSQL, ledger, formal, archive and replay families also have a median-duration regression
+alert using the existing gauges, sample thresholds and freshness gates. Validation may have unknown image-cache
+evidence. Variable changed-test unit runs and mixed root-router targets remain visible without applying that
+fixed-workload alert. Failed scheduled workflows alert from their one-hour outcome window.
 
 The `ci-build-performance.rules` Mimir group covers unavailable scraping, stale GitHub polling, stalled historical
 discovery, delayed Loki records, sustained queues and duration regressions. History liveness uses index-reading
