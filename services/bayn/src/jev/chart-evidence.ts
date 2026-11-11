@@ -4,6 +4,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
+import { candleProjection } from './chart-projection'
 
 const Bar = Schema.Struct({
   minuteBeforeWindowEnd: Schema.Finite,
@@ -86,8 +87,8 @@ const renderCandlesPng = (bars: readonly VisualBar[], minimumVolume: number): Bu
   const first = bars[0]
   const last = bars.at(-1)
   if (first === undefined || last === undefined) throw new RangeError('Cannot render empty OHLCV')
-  const width = 640
-  const height = 384
+  const projection = candleProjection(bars)
+  const { width, height, bodyWidth } = projection
   const pixels = Buffer.alloc(width * height * 4, 255)
   const pixel = (x: number, y: number, color: readonly [number, number, number]) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return
@@ -112,23 +113,18 @@ const renderCandlesPng = (bars: readonly VisualBar[], minimumVolume: number): Bu
         }
     }
   }
-  const minimum = Math.min(...bars.map((bar) => bar.low))
-  const maximum = Math.max(...bars.map((bar) => bar.high))
-  const range = maximum - minimum || maximum * 0.001
-  const timeRange = first.minuteBeforeWindowEnd - last.minuteBeforeWindowEnd || 1
-  const yFor = (price: number) => 16 + Math.round(((maximum - price) / range) * 236)
+  const yFor = projection.priceY
   const volumeMax = Math.max(minimumVolume, ...bars.map((bar) => bar.volume)) || 1
   const ink: readonly [number, number, number] = [83, 94, 103]
   const up: readonly [number, number, number] = [22, 136, 109]
   const down: readonly [number, number, number] = [190, 64, 69]
   for (let x = 8; x < width - 8; x++) pixel(x, 273, ink)
-  const bodyWidth = Math.max(1, Math.min(5, Math.floor(616 / timeRange / 3)))
-  for (const [index, bar] of bars.entries()) {
-    const x = 12 + Math.round(((first.minuteBeforeWindowEnd - bar.minuteBeforeWindowEnd) / timeRange) * 616)
+  for (const [index, projected] of projection.bars.entries()) {
+    const { source: bar, x } = projected
     const color = bar.close >= bar.open ? up : down
     vertical(x, yFor(bar.high), yFor(bar.low), ink)
-    const top = Math.min(yFor(bar.open), yFor(bar.close))
-    const bottom = Math.max(yFor(bar.open), yFor(bar.close))
+    const top = projected.bodyTop
+    const bottom = projected.bodyBottom
     for (let column = x - bodyWidth; column <= x + bodyWidth; column++) {
       vertical(column, top, bottom, color)
       vertical(column, 349 - Math.round((bar.volume / volumeMax) * 67), 349, color)

@@ -172,7 +172,7 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
+        handlers: ['activate', 'rotate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
       },
       { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
     ])
@@ -195,6 +195,7 @@ describe('native Restate execution server', () => {
         })),
     ).toEqual([
       { name: 'activate', ingressPrivate: true },
+      { name: 'rotate', ingressPrivate: true },
       { name: 'tick', ingressPrivate: true },
       { name: 'deactivate', ingressPrivate: true },
       { name: 'prepareActivation', ingressPrivate: true },

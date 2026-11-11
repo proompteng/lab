@@ -37,6 +37,33 @@ const event: TengriCodexEvent = {
   rawJson: '{}',
 }
 
+test('replaces native image progress with completion or failure without regressing on replay', () => {
+  const started: TengriCodexEvent = {
+    ...event,
+    sequence: 1,
+    kind: 'tool-call',
+    method: 'item/started',
+    rawJson: JSON.stringify({ params: { item: { type: 'imageGeneration', id: event.itemId, status: 'in_progress' } } }),
+  }
+  for (const status of ['completed', 'failed']) {
+    const completed: TengriCodexEvent = {
+      ...started,
+      sequence: 2,
+      kind: 'tool-output',
+      method: 'item/completed',
+      rawJson: JSON.stringify({
+        params: { item: { type: 'imageGeneration', id: event.itemId, status, savedPath: '/workspace/cat.png' } },
+      }),
+    }
+    const current = appendCodexEvent([started], completed)
+    expect(current).toHaveLength(1)
+    expect(current[0]?.rawJson).toBe(completed.rawJson)
+    expect(appendCodexEvent(current, started)).toBe(current)
+    expect(appendCodexEvent(current, { ...started, sequence: 3 })).toBe(current)
+    expect(appendCodexEvent(current, { ...completed, sequence: 4, turnId: 'other-turn' })).toHaveLength(2)
+  }
+})
+
 describe('Accepted prompt retention', () => {
   test('restores textless async questions with their choices instead of dropping them', () => {
     const items = codexTranscriptFromThread(

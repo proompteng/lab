@@ -52,6 +52,29 @@ const inferenceSnapshotError = (cause: unknown) =>
     ? cause
     : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause })
 
+/** Source projection shared by financial snapshots and bounded read-only research exports. */
+export const inferenceCostRequestRows = (sql: PgClient.PgClient, accountId: string, sessionDate: string) => sql`
+  SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
+    request.authority_generation_hash AS "authorityGenerationHash",
+    request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff,
+    CASE WHEN chart_claim.request_id IS NULL THEN NULL ELSE
+      jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint",
+    CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3' THEN jsonb_build_object(
+      'claims', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb),
+      'terminals', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb),
+      'skips', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb)
+    ) END AS "stagedCheckpoint"
+  FROM jev_evaluation_requests AS request
+  JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+  LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
+  LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+  LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+  LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+  LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
+  WHERE cycle.account_id = ${accountId}
+    AND cycle.execution_session_date = ${sessionDate}::date
+`
+
 export interface InferenceCostSnapshot {
   readonly evidence: DecodedInferenceCostEvidence
   readonly quotes: readonly InferenceExpenseRecord[]
@@ -101,25 +124,7 @@ export const acquireInferenceExpenseSnapshot = (
               CASE WHEN item."stagedCheckpoint" IS NULL THEN '{}'::jsonb
                 ELSE jsonb_build_object('stagedCheckpoint', item."stagedCheckpoint") END
               FROM cut CROSS JOIN (
-                SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
-                  request.authority_generation_hash AS "authorityGenerationHash",
-                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff,
-                  CASE WHEN chart_claim.request_id IS NULL THEN NULL ELSE
-                    jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint",
-                  CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3' THEN jsonb_build_object(
-                    'claims', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb),
-                    'terminals', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb),
-                    'skips', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb)
-                  ) END AS "stagedCheckpoint"
-                FROM jev_evaluation_requests AS request
-                JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
-                LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
-                LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
-                LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
-                LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
-                LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
-                WHERE cycle.account_id = ${scope.accountId}
-                  AND cycle.execution_session_date = ${scope.sessionDate}::date
+                ${inferenceCostRequestRows(sql, scope.accountId, scope.sessionDate)}
               ) AS item
             UNION ALL
             SELECT cut.as_of, cut.request_count, cut.quote_count, 'QUOTE', to_jsonb(item)

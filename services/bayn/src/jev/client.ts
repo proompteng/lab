@@ -4,6 +4,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
+import { projectJevProviderDiagnostics, type JevProviderDiagnostics } from './provider-diagnostics'
 import {
   decodeJevResponse,
   jevEndpoint,
@@ -11,6 +12,7 @@ import {
   JevFailure,
   JevInferenceSchema,
   JevResponseSchema,
+  jevModel,
 } from './contract'
 
 const failedResponseUsageSchema = Schema.Struct({
@@ -25,6 +27,7 @@ export class JevError extends Data.TaggedError('JevError')<{
   readonly requestHash?: string
   readonly responseHash?: string
   readonly status?: number
+  readonly providerDiagnostics?: JevProviderDiagnostics
   readonly rejectedResponse?: Redacted.Redacted<unknown>
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
@@ -67,8 +70,15 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             ),
           )
           const { requestHash } = prepared
+          if (prepared.request.model !== jevModel)
+            return yield* new JevError({
+              failure: JevFailure.Request,
+              message: 'New inference requires the current pinned Jev model',
+              requestHash,
+            })
           const started = yield* Clock.currentTimeMillis
           let failureHttpStatus: number | undefined
+          let providerDiagnostics: JevProviderDiagnostics | undefined
           return yield* Effect.gen(function* () {
             const request = HttpClientRequest.post(jevEndpoint).pipe(
               HttpClientRequest.bearerToken(key),
@@ -82,9 +92,10 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             )
             if (response.status !== 200) {
               failureHttpStatus = response.status
-              // Retain only validated metering, never provider error text or echoed requests/credentials.
+              providerDiagnostics = projectJevProviderDiagnostics(response.headers, undefined, Redacted.value(key))
+              // Metering and diagnostic identifiers are independent projections. Neither retains raw error text.
               // The hash binds this exact projection, not the original error body. No missing usage is invented.
-              const rejected = yield* response.stream.pipe(
+              const body = yield* response.stream.pipe(
                 Stream.runFoldEffect(
                   () => new Uint8Array(0),
                   (body, chunk) => {
@@ -109,15 +120,18 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                       }),
                   }),
                 ),
-                Effect.flatMap(Schema.decodeUnknownEffect(failedResponseUsageSchema)),
                 Effect.result,
               )
+              if (Result.isSuccess(body))
+                providerDiagnostics = projectJevProviderDiagnostics(response.headers, body.success, Redacted.value(key))
+              const rejected = Result.flatMap(body, Schema.decodeUnknownResult(failedResponseUsageSchema))
               const responseHash = Result.isSuccess(rejected) ? canonicalHashV1Result(rejected.success) : undefined
               return yield* new JevError({
                 failure: JevFailure.Status,
                 message: 'Jev evaluation returned an unsuccessful status',
                 requestHash,
                 status: response.status,
+                ...(providerDiagnostics === undefined ? {} : { providerDiagnostics }),
                 ...(Result.isSuccess(rejected) && responseHash !== undefined && Result.isSuccess(responseHash)
                   ? { responseHash: responseHash.success, rejectedResponse: Redacted.make(rejected.success) }
                   : {}),
@@ -176,6 +190,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                     message: Cause.isTimeoutError(cause) ? 'Jev inference deadline elapsed' : 'Jev transport failed',
                     requestHash,
                     ...(failureHttpStatus === undefined ? {} : { status: failureHttpStatus }),
+                    ...(providerDiagnostics === undefined ? {} : { providerDiagnostics }),
                     cause: Redacted.make(cause),
                   }),
             ),

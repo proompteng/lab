@@ -79,8 +79,15 @@ import {
 
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 import { positionDecodeDiagnostic } from './response-decode-diagnostics'
+import {
+  readTransportInterceptor,
+  withReadTransportCoverage,
+  withReadTransportDiagnostics,
+} from './transport-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
+// Calendar discovery must leave time for the rest of the bounded recovery pass.
+const marketCalendarTimeoutMs = 5_000
 
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
@@ -112,7 +119,9 @@ const normalizeRead = <A>(
   )
 
 const defaultProxyDispatcherDependencies: ProxyDispatcherDependencies = {
-  create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+  // Normal quota-paced polls are about fifteen seconds apart; the four-second default reconnects every poll.
+  create: (url) =>
+    new Undici.ProxyAgent({ uri: url.toString(), keepAliveTimeout: 30_000, keepAliveMaxTimeout: 30_000 }),
   destroy: (dispatcher) => dispatcher.destroy(),
 }
 
@@ -129,17 +138,25 @@ const makeVerifiedProxyDispatcher = (
     (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
   )
 
-const proxyLayer = (
-  connection: BrokerConnection,
-  dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
-): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
-
 export const alpacaHttpLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
-  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection, dependencies)))
+  HttpClient.layerMergedContext(
+    Effect.gen(function* () {
+      const rawDispatcher = yield* NodeHttpClient.Dispatcher
+      // Bun's compatibility dispatcher lacks interceptors; preserve that fallback and report its coverage.
+      const interceptorAvailable = typeof rawDispatcher.compose === 'function'
+      const dispatcher = interceptorAvailable ? rawDispatcher.compose(readTransportInterceptor) : rawDispatcher
+      const client = yield* NodeHttpClient.makeUndici.pipe(Effect.provideService(NodeHttpClient.Dispatcher, dispatcher))
+      // A composed dispatcher reaching this point installed the interceptor successfully, not necessarily invoked it.
+      return HttpClient.transformResponse(client, withReadTransportCoverage(interceptorAvailable))
+    }),
+  ).pipe(
+    Layer.provide(
+      Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies)),
+    ),
+  )
 
 export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
@@ -154,6 +171,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       operation: BrokerReadOperation,
       url: URL,
       decoder: Decoder<A>,
+      timeoutMs = connection.operationTimeoutMs,
     ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> =>
       Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
@@ -164,6 +182,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           },
         })
         const response = yield* client.execute(request).pipe(
+          withReadTransportDiagnostics(operation),
           withObservedStage('bayn.alpaca.read.headers', { dependency: 'alpaca', operation, diagnosticOnly: true }),
           Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)),
         )
@@ -276,12 +295,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             : undefined
         return { value, evidence, ...(diagnostic === undefined ? {} : { diagnostic }) }
       }).pipe(
-        Effect.timeout(`${connection.operationTimeoutMs} millis`),
+        Effect.timeout(timeoutMs),
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
             : Cause.isTimeoutError(cause)
-              ? timeoutError(operation, connection.operationTimeoutMs, cause, sensitiveValues)
+              ? timeoutError(operation, timeoutMs, cause, sensitiveValues)
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
@@ -361,9 +380,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson('market-calendar', marketCalendarUrl(connection, decoded), decodeMarketCalendar).pipe(
-            Effect.map((result) => ({ decoded, result })),
-          ),
+          readJson(
+            'market-calendar',
+            marketCalendarUrl(connection, decoded),
+            decodeMarketCalendar,
+            Math.min(connection.operationTimeoutMs, marketCalendarTimeoutMs),
+          ).pipe(Effect.map((result) => ({ decoded, result }))),
         ),
         Effect.flatMap(({ decoded, result }) =>
           normalizeRead('market-calendar', result.evidence, normalizeMarketCalendarResult(result.value, decoded)),

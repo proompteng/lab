@@ -1,33 +1,41 @@
-# Keeper storage migration
+# ClickHouse and Keeper storage
 
-Keeper's current Ceph RBD log blocks on durable writes. A 60-sample, 4 KiB append-and-fsync comparison in the
-same Keeper container measured 1.27 s p95 on its RBD volume and 0.01 s p95 on local storage. This migration
-moves Keeper to retained local NVMe claims with native Raft replication across three hosts. Keep `force_sync`
-enabled. Do not tune Ceph or weaken ClickHouse insert quorum as part of this migration.
+ClickHouse uses two 200 GiB `local-path` claims, one on Altra and one on Turin. Keeper uses its 1 GiB claim on
+Altra. The local volumes bind each instance to its host. Preserve the existing ClickHouse replica names,
+Keeper server ID and membership, and the insert quorum.
 
-Each stage must complete its reviewed main release, matching-image Kargo promotion and live verification
-before the next stage is merged:
+To replace a backing volume, stop its writers and the owning instance, copy and verify the complete data
+directory, then bind the existing claim name to the replacement before the operator starts the instance.
+Keep the old volume until both ClickHouse replicas can read their data, Keeper serves the original state,
+and the archive and technical-analysis jobs have resumed from saved state and completed fresh checkpoints.
+Recover a lost Keeper volume from a verified copy of its state before starting the singleton.
 
-1. Enable native reconfiguration on the existing singleton, retain its PVC and take `keeper-pre-nvme-20261105`.
-   Verify the snapshot is ready, the original server ID is still 0, and existing ClickHouse replicas remain active.
-2. Add only replica 1 on `local-path-keeper`, on a different host. Verify `/keeper/config` includes IDs 0 and 1
-   and that the new replica has caught up before starting another replica.
-3. Add replica 2 on the third host. Verify all three members agree on membership and serve the existing state.
-   Native membership changes must be incremental. Re-read `/keeper/config` after an uncertain response.
-4. Only after both new members are caught up, move replica 0 to its own local claim, retaining its original ID,
-   hostname, Ceph PVC and snapshot. Let it recover from the surviving majority. Do not replace all claim
-   templates at once or start an empty singleton. Allow at most one unavailable member after all three are ready.
+## Signal schema reconciliation
 
-If a stage fails, stop adding or replacing replicas and preserve all claims. Recover the existing membership
-before continuing; reverting YAML cannot undo a committed Raft membership change. Local volumes cannot move
-between hosts. A lost device requires recovery from the surviving Keeper quorum.
+One wave-3 Sync hook verifies the Signal schemas on both configured ClickHouse replicas before the retained
+Flink jobs and publishers can roll out. The hook uses the server's pinned client version and reads the SQL
+contracts from a generated ConfigMap. It checks existing columns, engines, keys, retention and the Webull view
+before applying anything. A complete replica performs only reads. An incomplete replica applies its local,
+idempotent DDL and must pass verification before the runner advances. Replicated table engines retain their
+existing Keeper paths and replica identities; application insert quorum and data retention are unchanged.
 
-Completion requires active ClickHouse replicas, measured Keeper write latency and archive commit latency
-under representative load. Argo health and successful replica creation do not establish a performance repair.
+The former four hooks repeated `ON CLUSTER` DDL concurrently on every sync. During the November 8 failure,
+individual statements took 80–157 seconds while each complete hook had a 300-second deadline. The single runner
+addresses each replica directly, avoiding distributed DDL queue entries for unchanged objects. Its 30-minute Job
+budget includes bootstrap and repair; individual schema statements have a 300-second execution budget and a
+360-second receive timeout. A failed verification blocks the release. Retrying resumes from current metadata.
 
-The exact deployed Keeper 26.8.2.7 image was rehearsed with synthetic state: singleton, sequential additions,
-writes with the original stopped, original restart and recovery onto an empty replacement disk all preserved
-the expected value. The rehearsal does not replace production catch-up and post-change measurements.
+The v1-to-v2 intraday backfill is an explicit historical migration in
+[backfill-intraday-bars-v2.sql](backfill-intraday-bars-v2.sql), outside the deployed Kustomization. It is not a
+routine release hook. Both production replicas were checked on November 8: all 155,615 retained legacy rows
+were represented in v2, and the running archive already wrote v2. Preserve both tables. An operator restoring
+older data must run and verify that migration through the existing ClickHouse identity before resuming the
+v2 archive; the SQL retains the anti-join coverage assertion and does not erase legacy data.
 
-References: [native membership procedure](https://clickhouse.com/docs/guides/oss/deployment-and-scaling/keeper#converting-a-single-node-keeper-into-a-cluster),
-[local storage contract](../../local-path/README.md).
+The native fixture runs the actual schema runner against two disposable ClickHouse replicas and Keeper. It
+covers empty bootstrap, a read-only repeat, second-replica view and security drift, recovery after a missing replicated table,
+precision-column repair and failure on incompatible extra columns:
+
+```sh
+python3 argocd/applications/torghut/clickhouse/tests/schema.py
+```

@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: penpot
+
+resources:
+  - postgres-cluster.yaml
+  - application-secret.yaml
+  - valkey.yaml
+
+helmCharts:
+  - name: penpot
+    repo: https://helm.penpot.app/
+    version: 1.12.0
+    releaseName: penpot
+    namespace: penpot
+    valuesFile: values.yaml
+
+patches:
+  - target:
+      kind: Pod
+      name: penpot-test-connection
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: penpot-test-connection

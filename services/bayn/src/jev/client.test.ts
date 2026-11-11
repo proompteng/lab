@@ -18,6 +18,24 @@ const responseClient = (body: unknown, status = 200) =>
   )
 
 describe('Jev inference transport', () => {
+  test('historical Jev receipts cannot dispatch the retired model', async () => {
+    let calls = 0
+    const http = HttpClient.make(() => {
+      calls++
+      return Effect.die('Retired model reached the transport')
+    })
+    const result = await Effect.runPromise(
+      run(
+        JevClient.pipe(
+          Effect.flatMap((client) => client.evaluate({ ...requestFixture, model: 'jev-1.13.0' }, 1000)),
+          Effect.result,
+        ),
+        http,
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(calls).toBe(0)
+  })
   test.each([200, 429])(
     'redacts sensitive HTTP headers while retaining trace diagnostics for status %i',
     async (status) => {
@@ -107,6 +125,36 @@ describe('Jev inference transport', () => {
       expect(JSON.stringify(result.failure)).not.toContain(Redacted.value(key))
     }
   })
+
+  test.each(['{invalid', 'x'.repeat(8193)])(
+    'retains header diagnostics when failure body is unusable',
+    async (body) => {
+      let calls = 0
+      const http = HttpClient.make((request) => {
+        calls += 1
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(body, {
+              status: 529,
+              headers: { 'request-id': 'provider-request-529', 'retry-after': '2' },
+            }),
+          ),
+        )
+      })
+      const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+      expect(calls).toBe(1)
+      if (Result.isSuccess(result)) throw new Error('Expected provider failure')
+      expect(result.failure.status).toBe(529)
+      expect(result.failure.providerDiagnostics).toEqual({
+        schemaVersion: 'bayn.jev-provider-diagnostics.v1',
+        requestId: 'provider-request-529',
+        retryAfter: { kind: 'DELAY', seconds: 2 },
+      })
+      expect(result.failure.responseHash).toBeUndefined()
+      expect(result.failure.rejectedResponse).toBeUndefined()
+    },
+  )
 
   test.each([422, 503, 529])(
     'preserves metered failure body for status %i without authorizing inference',
@@ -216,7 +264,15 @@ describe('Jev inference transport', () => {
       },
     })
     const http = HttpClient.make((request) =>
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, {
+            status: 503,
+            headers: { 'request-id': 'unfinished-provider-request' },
+          }),
+        ),
+      ),
     )
     await Effect.runPromise(
       Effect.scoped(
@@ -231,6 +287,7 @@ describe('Jev inference transport', () => {
             if (Result.isFailure(result)) {
               expect(result.failure.failure).toBe(JevFailure.Timeout)
               expect(result.failure.rejectedResponse).toBeUndefined()
+              expect(result.failure.providerDiagnostics?.requestId).toBe('unfinished-provider-request')
             }
           } else yield* Fiber.interrupt(fiber)
           expect(cancelled).toBe(1)

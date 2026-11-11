@@ -390,7 +390,10 @@ export const verifyAccountingHistory = (
           cause,
         }),
       )
-      if ((yield* accountingHash(transaction)) !== (yield* accountingHash(expected.transaction)))
+      const { contentHash, ...material } = transaction
+      const expectedContentHash = expected.transaction.contentHash
+      // Reconstruction already hashes expected material; verify both the stored body and its claimed hash.
+      if ((yield* accountingHash(material)) !== expectedContentHash || contentHash !== expectedContentHash)
         return yield* fail({
           _tag: 'AccountingTransactionMismatch',
           transactionId: transaction.transactionId,

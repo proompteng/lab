@@ -10,19 +10,7 @@ test('registry cleanup preserves retained graphs and fails closed before deletio
   expect(result.exitCode, result.stderr.toString()).toBe(0)
 })
 
-test('registry collection timeout restores writes only after the collector is gone', () => {
-  const path = fileURLToPath(new URL('../test_collection.py', import.meta.url))
-  const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
-  expect(result.exitCode, result.stderr.toString()).toBe(0)
-})
-
-test('legacy quarantine recovery preserves data before current retention collects it again', () => {
-  const path = fileURLToPath(new URL('../test_recover.py', import.meta.url))
-  const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
-  expect(result.exitCode, result.stderr.toString()).toBe(0)
-})
-
-test('online registry maintenance does not create another RWO attachment', () => {
+test('registry cleanup confirms the exact worker stopped before reopening uploads', () => {
   const path = fileURLToPath(new URL('../test_maintenance.py', import.meta.url))
   const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
   expect(result.exitCode, result.stderr.toString()).toBe(0)
@@ -51,9 +39,15 @@ test('registry cleanup grants only the named image-reference reads', () => {
   const argocdRole = documents.find(
     (document) => document.get('kind') === 'Role' && document.getIn(['metadata', 'namespace']) === 'argocd',
   )
-  const maintenance = argocdRole?.get('rules')
+  expect(argocdRole).toBeUndefined()
+  const maintenanceRole = documents.find(
+    (document) => document.get('kind') === 'Role' && document.getIn(['metadata', 'namespace']) === 'registry',
+  )
+  const maintenance = maintenanceRole?.get('rules')
   if (!isSeq(maintenance)) throw new Error('Missing namespaced Argo maintenance permissions')
   expect(maintenance.toJSON()).toEqual([
-    { apiGroups: ['argoproj.io'], resources: ['applications'], resourceNames: ['registry'], verbs: ['get', 'patch'] },
+    { apiGroups: [''], resources: ['pods'], verbs: ['get', 'list'] },
+    { apiGroups: [''], resources: ['pods/exec'], verbs: ['get', 'create'] },
+    { apiGroups: [''], resources: ['persistentvolumeclaims'], resourceNames: ['registry-data'], verbs: ['get'] },
   ])
 })

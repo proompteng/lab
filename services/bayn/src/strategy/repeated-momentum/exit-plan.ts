@@ -11,10 +11,10 @@ import { JevFundedExitPlanSchema, JevStrategyExitPlanSchema } from '../../jev/st
 import { Sha256Schema, strictParseOptions } from '../../schemas'
 import { priceNumberToMicros } from '../execution-model/fixed-point'
 import { momentumExitDefinition, type RepeatedMomentumPolicy } from './policy'
-import type { JevProtocol, RetainedJevProtocolV38Schema } from '../../jev/protocol'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from '../../jev/protocol'
 
 export type MomentumPolicyMaterial = Omit<RepeatedMomentumPolicy, 'sharedProtocol'> & {
-  readonly sharedProtocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+  readonly sharedProtocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
 }
 export type MomentumFundingObservation = Pick<
   Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,

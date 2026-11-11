@@ -20,7 +20,6 @@ import {
 } from '../jev/entry-ablation-policy'
 
 import { canonicalHashV1Result } from '../hash'
-import { jevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
 import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
@@ -246,12 +245,16 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       new Set(registration.policies.map((policy) => policy.accountBindingHash)),
       new Set(registration.calendar.sessions.map((session) => session.sessionDate)),
     )
-    const markets = registration.obligations.configuration.protocol.marketProfiles.map((profile) => profile.market)
+    const runtime = registration.obligations.configuration
+    const markets = runtime.protocol.marketProfiles.map((profile) => profile.market)
+    const entryMarkets = runtime.entryMarkets ?? markets
     if (
-      registration.calendar.tradingMarkets.length !== markets.length ||
-      markets.some((market) => !registration.calendar.tradingMarkets.includes(market))
+      registration.calendar.tradingMarkets.some((market) => !markets.includes(market)) ||
+      entryMarkets.some((market) => !markets.includes(market) || !registration.calendar.tradingMarkets.includes(market))
     )
-      return yield* invalid('Registered trading markets must include the complete native policy')
+      return yield* invalid(
+        'Registered trading markets must cover the native entry scope within its authorized profiles',
+      )
     const ablationQuestionHash =
       version === JevAcceptanceVersion.Current
         ? entryAblationQuestionPolicyHash
@@ -300,7 +303,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
         'maxNetExposureMicros',
         'maxDailyTradedNotionalMicros',
       ] as const)
-        if (legacy && BigInt(policy.riskPolicy[key]) > riskCeilings[key])
+        if (legacy && (policy.riskPolicy[key] === null || BigInt(policy.riskPolicy[key]) > riskCeilings[key]))
           return yield* invalid('Registered risk limits cannot expand the frozen qualification ceilings')
       if (
         policy.policy === JevResearchPolicy.Deployed &&
@@ -341,11 +344,15 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       const requiredModels =
         policy.policy === JevResearchPolicy.Candidate
           ? [
-              { provider: 'typesafe', model: jevModel },
+              { provider: 'typesafe', model: registration.obligations.configuration.protocol.model },
               ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
             ]
           : policy.policy === JevResearchPolicy.Ablation
-            ? [jevOnly ? { provider: 'typesafe', model: jevModel } : { provider: 'openai', model: decisionsModel }]
+            ? [
+                jevOnly
+                  ? { provider: 'typesafe', model: registration.obligations.configuration.protocol.model }
+                  : { provider: 'openai', model: decisionsModel },
+              ]
             : []
       const firstSession = registration.calendar.sessions[0]
       const lastSession = registration.calendar.sessions.at(-1)

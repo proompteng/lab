@@ -2,7 +2,10 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -16,6 +19,63 @@ spec.loader.exec_module(cleanup)
 
 
 class CleanupTest(unittest.TestCase):
+    def test_failed_phase_cancels_queued_work_before_returning(self):
+        started = threading.Event()
+        release = threading.Event()
+        ran = []
+
+        def work(index):
+            if index == 0:
+                return index
+            started.set()
+            release.wait(2)
+            ran.append(index)
+            return index
+
+        with self.assertRaisesRegex(RuntimeError, "interrupted phase"):
+            with cleanup.worker_pool(1) as map_work:
+                results = map_work(work, range(101))
+                self.assertEqual(next(results), 0)
+                self.assertTrue(started.wait(1))
+                timer = threading.Timer(0.1, release.set)
+                timer.start()
+                raise RuntimeError("interrupted phase")
+        timer.join(timeout=2)
+        self.assertEqual(ran, [1])
+
+    def test_signal_orders_cannot_interrupt_joining_active_workers(self):
+        script = r"""import json,os,signal,sys,threading,time
+sys.path.insert(0,sys.argv[1])
+import cleanup
+started=threading.Event();done=threading.Event()
+def work(index):
+ if index == 0:return 0
+ started.set();time.sleep(.15);done.set();return 1
+def terminate(*_):raise InterruptedError('SIGTERM')
+def alarm(*_):raise TimeoutError('SIGALRM')
+signal.signal(signal.SIGTERM,terminate);signal.signal(signal.SIGALRM,alarm)
+try:
+ with cleanup.worker_pool(1) as map_work:
+  values=map_work(work,[0,1]);next(values);assert started.wait(1)
+  signal.setitimer(signal.ITIMER_REAL,.03)
+  if sys.argv[2]=='term-first':os.kill(os.getpid(),signal.SIGTERM)
+  else:
+   threading.Timer(.05,lambda:os.kill(os.getpid(),signal.SIGTERM)).start()
+   time.sleep(.04)
+except (InterruptedError,TimeoutError):
+ print(json.dumps({'allWorkersStopped':done.is_set()}))
+finally:signal.setitimer(signal.ITIMER_REAL,0)
+"""
+        for order in ["term-first", "alarm-first"]:
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(Path(__file__).parent), order],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+            self.assertTrue(json.loads(result.stdout)["allWorkersStopped"], order)
+
     def test_cooperative_deadline_reports_unfinished_quarantine(self):
         orphan = self.blob(b"deadline candidate")
         plan = self.prepare()
@@ -141,6 +201,46 @@ class CleanupTest(unittest.TestCase):
         receipt = json.loads((quarantine / "receipt.json").read_text())
         tag = self.store.quarantined_tag(quarantine, receipt["tags"][0])
         return cleanup.Store(root, workers=1), batch, blob, tag
+
+    def test_empty_unreceipted_quarantine_is_removed(self):
+        root = self.root / "_gc_quarantine"
+        batch = "registry-collect-empty"
+        (root / batch).mkdir(parents=True)
+        result = cleanup.Store(root).purge(batch, "claim", "volume")
+        self.assertEqual(
+            result, {"deletedTags": 0, "deletedBlobs": 0, "deletedBytes": 0}
+        )
+        self.assertFalse((root / batch).exists())
+
+    def test_tag_inventory_propagates_filesystem_failures_and_deadlines(self):
+        tag = self.store.repository("lab/test") / "_manifests/tags/latest"
+        scandir = os.scandir
+        for error in (PermissionError, TimeoutError, InterruptedError):
+            with self.subTest(error=error.__name__):
+
+                def unreadable(path):
+                    if Path(path) == tag / "current":
+                        raise error("Cannot enumerate tag metadata")
+                    return scandir(path)
+
+                with (
+                    patch.object(cleanup.os, "scandir", side_effect=unreadable),
+                    self.assertRaises(error),
+                ):
+                    cleanup.tag_inventory(tag)
+
+    def test_failed_tag_inventory_does_not_create_quarantine_batch(self):
+        for number in range(6):
+            self.tag(format(number, "040x"), self.image)
+        plan = self.prepare(prune=True)
+        with (
+            patch.object(
+                cleanup, "tag_inventory", side_effect=TimeoutError("Inventory deadline")
+            ),
+            self.assertRaises(TimeoutError),
+        ):
+            self.collect(plan)
+        self.assertFalse(any((self.root / "_gc_quarantine").glob("registry-collect-*")))
 
     def test_partial_tag_and_blob_purge_resumes_after_process_interruption_and_remount(
         self,

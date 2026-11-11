@@ -207,7 +207,6 @@ const baseConfig = (
   jevKey: parsed.jevKey,
   clickhouse: parsed.clickhouse,
   postgres: parsed.postgres,
-  nativeArrivalPostgres: parsed.nativeArrivalPostgres,
   tigerBeetle: parsed.tigerBeetle,
 })
 

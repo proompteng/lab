@@ -5,11 +5,10 @@ import type { ApplicationPlan } from '../app'
 import { databaseUtcInstant } from '../db/clock'
 import { authorityStateFromRow } from '../db/execution-store/authority-shared'
 import { decodeAuthorityStateObservationRows } from '../db/execution-store/rows'
-import { validateAuthorityObservation } from '../execution/capital-grant-algebra'
+import { observeCycleGenerationHash, validateAuthorityObservation } from '../execution/capital-grant-algebra'
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
 import { isExecutionMandateRecoveryRestriction, isRetiredOneShotMandateRestriction } from '../execution/mandate'
 import { configuredCapitalActivation } from './capital-activation'
-import { observeCycleGenerationHash } from './lifecycle'
 
 export class NativeActivationPreflightError extends Data.TaggedError('NativeActivationPreflightError')<{
   readonly message: string

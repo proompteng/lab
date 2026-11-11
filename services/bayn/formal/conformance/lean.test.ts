@@ -3,7 +3,8 @@ import { nativeSafetyCoverage, SafetyCheckStatus } from '../../src/system-assess
 import { nextIntradayEntryAttemptOrdinal } from '../../src/cycle/runner/calendar-decisions'
 import { reconciliationCompletionSupported } from '../../src/system-assessment/obligation-witnesses'
 import { closedEntryWindowTimingSupported } from '../../src/system-assessment/decision-work'
-import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../../src/execution/trading-scope'
+import { currentEntryMarketEnabled } from '../../src/execution/trading-scope'
+import { currentSubmissionMarketAllowed } from '../../src/execution/mutation-authority'
 import { JevAcceptanceVersion } from '../../src/jev/acceptance'
 import { OrderStatus, OrderSchema } from '../../src/execution/contracts'
 import type { SystemSourceCut } from '../../src/system-assessment/source-cut'
@@ -2998,18 +2999,21 @@ formal('pinned Lean executable conformance', () => {
             ...registration,
             policies: registration.policies.map((definition) => ({
               ...definition,
-              inferenceRateCard: replayRateCardFixture({
-                jev: {
-                  inputMicrosPerMillionTokens: String(sample.inputRate),
-                  outputMicrosPerMillionTokens: String(sample.outputRate),
+              inferenceRateCard: replayRateCardFixture(
+                {
+                  jev: {
+                    inputMicrosPerMillionTokens: String(sample.inputRate),
+                    outputMicrosPerMillionTokens: String(sample.outputRate),
+                  },
+                  chart: {
+                    inputMicrosPerMillionTokens: '1',
+                    outputMicrosPerMillionTokens: '0',
+                    cachedInputMicrosPerMillionTokens: '0',
+                    cacheWriteInputMicrosPerMillionTokens: '0',
+                  },
                 },
-                chart: {
-                  inputMicrosPerMillionTokens: '1',
-                  outputMicrosPerMillionTokens: '0',
-                  cachedInputMicrosPerMillionTokens: '0',
-                  cacheWriteInputMicrosPerMillionTokens: '0',
-                },
-              }),
+                registration.obligations.configuration.protocol.model,
+              ),
             })),
           }),
         ),
