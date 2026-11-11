@@ -75,7 +75,7 @@ export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
   readonly timeoutMs: number
   readonly onTimeout: (error: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
-  /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
+  /** Retained receipt budget; only an explicit nextWakeAt schedules another command. */
   readonly nextDelayMs: number
 }
 
@@ -85,7 +85,6 @@ export type ObserveAutonomousCycleInput = {
   /** The exact policy hash from the verified durable mandate; absence retains the original policy. */
   readonly riskPolicyHash?: string
   readonly authorityGenerationHash: string
-  readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
@@ -100,13 +99,8 @@ export type ObserveAutonomousCycleInput = {
 }
 
 export const executionDecisionFinalizationHeadroomMs = (
-  input: Pick<
-    ObserveAutonomousCycleInput,
-    'pollIntervalMs' | 'reconciliationIntervalMs' | 'reconciliationPassTimeoutMs'
-  >,
-): number =>
-  Math.min(input.pollIntervalMs, input.reconciliationIntervalMs) +
-  Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
+  input: Pick<ObserveAutonomousCycleInput, 'reconciliationIntervalMs' | 'reconciliationPassTimeoutMs'>,
+): number => Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs) * 2
 
 export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
   readonly executionProgram: ExecutionProgram

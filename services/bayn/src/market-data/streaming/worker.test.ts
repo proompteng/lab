@@ -2,7 +2,9 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { Effect, Exit, Fiber, Result, Schedule } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Result, Schedule, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
+import type { MarketReadyWakeup } from '../../execution/events'
 
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
@@ -28,6 +30,7 @@ afterAll(async () => {
 })
 
 const options: ProjectionWorkerOptions = {
+  controllerKey: 'a'.repeat(64),
   kafka: {
     brokers: ['unused:9092'],
     username: 'test',
@@ -41,7 +44,7 @@ const options: ProjectionWorkerOptions = {
   build: nativeArrivalEpochFixture.build,
   sources: nativeArrivalEpochFixture.sources,
 }
-const setup = (mode: 'consume' | 'hang' | 'fail' | 'fixture' = 'consume') => {
+const setup = (mode: 'consume' | 'hang' | 'fail' | 'fixture' | 'readiness' | 'malformed-readiness' = 'consume') => {
   const shared = new SharedArrayBuffer(64)
   const signals = new Int32Array(shared)
   const times = new BigInt64Array(shared, 32)
@@ -60,6 +63,102 @@ const setup = (mode: 'consume' | 'hang' | 'fail' | 'fixture' = 'consume') => {
 }
 
 const query = streamingFixture().query
+
+test('an invalid readiness IPC timestamp fails closed before starting the publisher', async () => {
+  const fixture = setup('malformed-readiness')
+  const result = await Effect.runPromise(Effect.scoped(fixture.projection).pipe(Effect.result))
+  expect(result).toMatchObject({
+    _tag: 'Failure',
+    failure: { _tag: 'KafkaMarketFailure', message: 'Kafka projection returned an invalid market readiness event' },
+  })
+  expect(fixture.worker?.threadId).toBe(-1)
+}, 10_000)
+
+test('a two-minute scheduling outage keeps source reads healthy and retries exact bytes after cancellable deadlines', async () => {
+  const fixture = setup('readiness')
+  const events: MarketReadyWakeup[] = []
+  let available = false
+  let cancellations = 0
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* fixture.projection
+        yield* Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const ack = yield* Effect.callback<void>((resume) => {
+            const received = (reply: unknown) => {
+              if (Schema.is(Schema.TaggedStruct('MarketReadyAcknowledged', {}))(reply)) resume(Effect.void)
+            }
+            fixture.worker?.on('message', received)
+            return Effect.sync(() => {
+              fixture.worker?.off('message', received)
+            })
+          }).pipe(Effect.forkScoped)
+          yield* projection.startWakeups((event) =>
+            Effect.gen(function* () {
+              events.push(event)
+              yield* Deferred.succeed(started, undefined)
+              if (!available)
+                return yield* Effect.never.pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      cancellations++
+                    }),
+                  ),
+                )
+            }),
+          )
+          yield* Deferred.await(started)
+          yield* TestClock.adjust('2 minutes')
+          expect(cancellations).toBeGreaterThan(0)
+          expect(events.length).toBeLessThan(12)
+          expect(Atomics.load(fixture.signals, 0)).toBe(0)
+          expect((yield* projection.status).ready).toBe(true)
+          available = true
+          yield* TestClock.adjust('30 seconds')
+          yield* Fiber.join(ack)
+          expect(events).toEqual(Array.from({ length: events.length }, () => events[0]))
+          expect(Atomics.load(fixture.signals, 0)).toBe(1)
+        }).pipe(Effect.provide(TestClock.layer()))
+      }),
+    ),
+  )
+}, 10_000)
+
+test('market handoff crosses the isolated worker and acknowledges only completed durable scheduling', async () => {
+  const fixture = setup('readiness')
+  const events: MarketReadyWakeup[] = []
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* fixture.projection
+        const started = yield* Deferred.make<void>()
+        const complete = yield* Deferred.make<void>()
+        yield* projection.startWakeups((event) =>
+          Effect.gen(function* () {
+            events.push(event)
+            yield* Deferred.succeed(started, undefined)
+            yield* Deferred.await(complete)
+          }),
+        )
+        yield* Deferred.await(started)
+        expect(Atomics.load(fixture.signals, 0)).toBe(0)
+        yield* Deferred.succeed(complete, undefined)
+        yield* Effect.sync(() => Atomics.load(fixture.signals, 0)).pipe(
+          Effect.repeat({ until: (value) => value === 1, schedule: Schedule.spaced('1 millis') }),
+          Effect.timeout('1 second'),
+        )
+        expect(events).toHaveLength(1)
+        expect(events[0]).toMatchObject({
+          originalAvailableAt: '2026-11-11T17:00:00.001Z',
+          readyAt: '2026-11-11T17:00:00.100Z',
+          consumerSequence: 5,
+          projectionSequence: 4,
+        })
+      }),
+    ),
+  )
+}, 10_000)
 const cancelled = (signals: Int32Array) =>
   Effect.sync(() => Atomics.load(signals, 5)).pipe(
     Effect.repeat({ until: (value) => value === 1, schedule: Schedule.spaced('1 millis') }),

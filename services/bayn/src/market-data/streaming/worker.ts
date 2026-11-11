@@ -1,6 +1,9 @@
 import type { LoadedRuntimeConfig } from '../../config/model'
 import { Worker } from 'node:worker_threads'
-import { Deferred, Effect, Exit, Match, Redacted } from 'effect'
+import { Deferred, Effect, Exit, Match, Queue, Redacted, Result, Schema } from 'effect'
+import { MarketReadySchema, type MarketReadyWakeup } from '../../execution/events'
+import { strictParseOptions } from '../../schemas'
+import { marketReadyRecoverySchedule } from './readiness'
 
 import { observeCaptureWorker, type CaptureHealth } from './capture-health'
 import type { NativeArrivalEpoch } from './native-arrival'
@@ -16,6 +19,7 @@ import { IntradaySnapshotFailure, type IntradaySnapshotQuery } from '../intraday
 export type ProjectionStatus = Effect.Success<KafkaMarketProjection['Service']['status']>
 
 export interface ProjectionWorkerOptions {
+  readonly controllerKey: string
   readonly kafka: Omit<KafkaMarketConfig, 'password'> & { readonly password: string }
   readonly database: {
     readonly postgres: { readonly url: string; readonly tls: boolean; readonly caPath: string }
@@ -32,8 +36,10 @@ type ProjectionWorkerOperation =
 export type ProjectionWorkerRequest =
   | (ProjectionWorkerOperation & { readonly id: number })
   | { readonly operation: 'health-ack' }
+  | { readonly operation: 'market-ready-ack'; readonly eventId: string }
 
 export type ProjectionWorkerResponse =
+  | { readonly _tag: 'MarketReady'; readonly event: MarketReadyWakeup }
   | { readonly _tag: 'CaptureHealth'; readonly health: CaptureHealth }
   | { readonly _tag: 'Ready'; readonly value: ProjectionStatus }
   | {
@@ -62,14 +68,16 @@ export type ProjectionWorkerResponse =
       readonly cause: string
     }
 
-type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' | 'CaptureHealth' }>
+type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' | 'CaptureHealth' | 'MarketReady' }>
 
 export const projectionWorkerOptions = (
   kafka: KafkaMarketConfig,
   database: Pick<LoadedRuntimeConfig, 'postgres' | 'operationTimeoutMs'>,
   sources: MarketSources,
   build: NativeArrivalEpoch['build'],
+  controllerKey: string,
 ): ProjectionWorkerOptions => ({
+  controllerKey,
   kafka: { ...kafka, password: Redacted.value(kafka.password) },
   database: { ...database, postgres: { ...database.postgres, url: Redacted.value(database.postgres.url) } },
   sources,
@@ -87,6 +95,8 @@ export const makeThreadedKafkaProjection = (
   Effect.gen(function* () {
     const receiveHealth = yield* observeCaptureWorker
     const ready = yield* Deferred.make<void, KafkaMarketFailure>()
+    const marketReady = yield* Queue.dropping<MarketReadyWakeup>(1)
+    let publishing = false
     const pending = new Map<number, (reply: Effect.Effect<Reply, KafkaMarketFailure>) => void>()
     let sequence = 0
     let stopped = false
@@ -105,6 +115,15 @@ export const makeThreadedKafkaProjection = (
       catch: (cause) => unavailable('Kafka projection thread could not start', cause),
     })
     const onMessage = (reply: ProjectionWorkerResponse) => {
+      if (reply._tag === 'MarketReady') {
+        const event = Schema.decodeUnknownResult(MarketReadySchema, strictParseOptions)(reply.event)
+        if (Result.isFailure(event)) {
+          fail(unavailable('Kafka projection returned an invalid market readiness event'))
+          return
+        }
+        Queue.offerUnsafe(marketReady, event.success)
+        return
+      }
       if (reply._tag === 'CaptureHealth') {
         receiveHealth(reply.health)
         // Health acknowledgements never enter the request/deadline machinery.
@@ -227,6 +246,40 @@ export const makeThreadedKafkaProjection = (
         ),
       )
     return {
+      startWakeups: (publish: (event: MarketReadyWakeup) => Effect.Effect<void, KafkaMarketFailure>) =>
+        Effect.gen(function* () {
+          if (publishing) return yield* unavailable('Kafka market readiness publisher is already started')
+          publishing = true
+          yield* Effect.forever(
+            Queue.take(marketReady).pipe(
+              Effect.flatMap((event) =>
+                publish(event).pipe(
+                  Effect.timeoutOrElse({
+                    duration: options.kafka.operationTimeoutMs,
+                    orElse: () => Effect.fail(unavailable('Durable market readiness scheduling timed out')),
+                  }),
+                  Effect.andThen(
+                    Effect.try({
+                      try: () =>
+                        worker.postMessage({
+                          operation: 'market-ready-ack',
+                          eventId: event.eventId,
+                        } satisfies ProjectionWorkerRequest),
+                      catch: (cause) => unavailable('Market readiness delivery could not be acknowledged', cause),
+                    }),
+                  ),
+                  Effect.retry({
+                    schedule: marketReadyRecoverySchedule,
+                    while: () => terminal === undefined && !stopped,
+                  }),
+                ),
+              ),
+            ),
+          ).pipe(
+            Effect.tapError((failure) => Effect.sync(() => fail(failure))),
+            Effect.forkScoped,
+          )
+        }),
       check: request({ operation: 'check' }).pipe(
         Effect.flatMap((reply) =>
           reply._tag === 'Checked'

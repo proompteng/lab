@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import { registrationFixture } from './fixtures.test-support'
-import { captureQualificationRuntime, qualificationDeadlines } from './configuration'
+import { captureQualificationRuntime, qualificationDeadlines, QualificationRuntimeSchema } from './configuration'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { MarketKind } from '../instruments'
 import { executionControllerPlanHash } from '../execution/controller'
@@ -12,6 +12,7 @@ import { operationalRegistrationFixture } from './operational-period.test-suppor
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { bindOperationalObligations } from './operational-obligations'
 import { measureReliability, ObligationClass, ReliabilityStatus } from './reliability'
+import { strictParseOptions } from '../schemas'
 
 describe('capture runtime compatibility', () => {
   test('a retained scoped null plan cannot borrow controller evidence or complete its scheduled obligations', () => {
@@ -58,6 +59,7 @@ describe('capture runtime compatibility', () => {
   test('still rejects every changed field committed by a historical financial registration', () => {
     const registered = registrationFixture().obligations
     const current = { ...registered.configuration, entryMarkets: currentEntryMarkets }
+    if (current.schemaVersion !== 'bayn.qualification-runtime.v1') throw new Error('Expected retained polling runtime')
     for (const changed of [
       { ...current, controllerPlanHash: testHash('different controller') },
       { ...current, cyclePollIntervalMs: current.cyclePollIntervalMs + 1 },
@@ -76,6 +78,44 @@ describe('capture runtime compatibility', () => {
         captureQualificationRuntime(current, { ...registered, runtimeConfigurationHash: testHash('wrong') }),
       ),
     ).toBe(true)
+  })
+
+  test('streaming registrations have no polling cadence and cannot capture a retained polling period', () => {
+    const registered = registrationFixture().obligations
+    const retained = registered.configuration
+    if (retained.schemaVersion !== 'bayn.qualification-runtime.v1') throw new Error('Expected retained polling runtime')
+    const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = retained
+    const streaming = {
+      ...common,
+      schemaVersion: 'bayn.qualification-runtime.v2' as const,
+      decisionTrigger: 'streaming' as const,
+      entryMarkets: currentEntryMarkets,
+    }
+    const decoded = Result.getOrThrow(
+      Schema.decodeUnknownResult(QualificationRuntimeSchema, strictParseOptions)(streaming),
+    )
+    expect(decoded).toEqual(streaming)
+    expect(decoded).not.toHaveProperty('cyclePollIntervalMs')
+    expect(
+      Result.isFailure(
+        Schema.decodeUnknownResult(
+          QualificationRuntimeSchema,
+          strictParseOptions,
+        )({
+          ...streaming,
+          cyclePollIntervalMs: 30_000,
+        }),
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(captureQualificationRuntime(streaming, registered))).toBe(true)
+    const currentRegistration = { configuration: streaming, runtimeConfigurationHash: testHash(streaming) }
+    expect(Result.getOrThrow(captureQualificationRuntime(streaming, currentRegistration))).toEqual({
+      runtimeConfiguration: streaming,
+      runtimeConfigurationHash: currentRegistration.runtimeConfigurationHash,
+    })
+    expect(Result.isFailure(captureQualificationRuntime(retained, currentRegistration))).toBe(true)
+    expect(Schema.decodeUnknownSync(QualificationRuntimeSchema, strictParseOptions)(retained)).toEqual(retained)
+    expect(testHash(registered.configuration)).toBe(registered.runtimeConfigurationHash)
   })
 
   test('keeps the entry-market commitment for registrations that include it', () => {

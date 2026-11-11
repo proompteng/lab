@@ -22,7 +22,21 @@ import {
   type MessagesStream,
   type Offsets,
 } from '@platformatic/kafka'
-import { Cause, Clock, Context, Data, Duration, Effect, Redacted, Result, Schedule, Stream } from 'effect'
+import {
+  Cause,
+  Clock,
+  Context,
+  Data,
+  Duration,
+  Effect,
+  Queue,
+  Redacted,
+  Result,
+  Schedule,
+  Stream,
+  type Scope,
+} from 'effect'
+import type { MarketReadyWakeup } from '../../execution/events'
 import { makeKafkaArrivalEnvelope } from './arrival-envelope'
 import type { NativeArrivalCaptureFactory } from './native-arrival-journal'
 import {
@@ -103,6 +117,7 @@ export interface KafkaProjectionTransport {
   readonly consume: (
     positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
+    progressed: () => void,
   ) => Promise<KafkaProjectionStream>
   readonly close: () => Promise<KafkaProjectionClosed>
 }
@@ -212,7 +227,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
   return {
     offsets: async (topics, timestamp) =>
       positionList(await consumer.listOffsets({ topics: [...topics], timestamp, isolationLevel: 1 })),
-    consume: async (positions, invalidated) => {
+    consume: async (positions, invalidated, progressed) => {
       let joined = false
       consumer.on('consumer:group:join', () => {
         if (joined) invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.Reassigned }))
@@ -269,6 +284,8 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
         )
       })
       let pending = false
+      source.on('fetch', progressed)
+      source.on('offsets', progressed)
       return {
         queuedRecords: () => source.readableLength,
         drainedPositions: () =>
@@ -284,6 +301,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
           return {
             next: async (): Promise<IteratorResult<KafkaConsumedRecord>> => {
               pending = false
+              progressed()
               const result = await iterator.next()
               if (result.done === true) return { done: true, value: undefined }
               pending = true
@@ -337,6 +355,9 @@ export class KafkaMarketProjection extends Context.Service<
       readonly bootstrapDeadlineAtMs: number | null
       readonly failure?: string
     }>
+    readonly startWakeups: (
+      publish: (event: MarketReadyWakeup) => Effect.Effect<void, KafkaMarketFailure>,
+    ) => Effect.Effect<void, KafkaMarketFailure, Scope.Scope>
   }
 >()('@proompteng/bayn/KafkaMarketProjection') {}
 
@@ -346,6 +367,9 @@ export const makeKafkaMarketProjection = (
   factory: KafkaProjectionTransportFactory = platformaticProjectionTransport,
   diagnosticStartMs?: number,
   captureFactory?: NativeArrivalCaptureFactory,
+  notifications?: {
+    readonly ready: (bootstrap: KafkaBootstrapEvidence) => Effect.Effect<void, KafkaMarketFailure>
+  },
 ) =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
@@ -369,6 +393,8 @@ export const makeKafkaMarketProjection = (
     const cycle = Effect.scoped(
       Effect.gen(function* () {
         const epoch = yield* Effect.sync(randomUUID)
+        const progress = yield* Queue.dropping<void>(1)
+        Queue.offerUnsafe(progress, undefined)
 
         let consumerSequence = 0
         let consumerKnownRawBytes = 0
@@ -430,6 +456,7 @@ export const makeKafkaMarketProjection = (
           )
         const observedAtMs = yield* Clock.currentTimeMillis
         bootstrapDeadlineAtMs = observedAtMs + config.bootstrapTimeoutMs
+        const deadlineAtMs = bootstrapDeadlineAtMs
         const timestampForTopic = (source: MarketSources[number], topic: string) =>
           diagnosticStartMs ??
           Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
@@ -532,7 +559,9 @@ export const makeKafkaMarketProjection = (
                 startedAtMs: clock.currentTimeMillisUnsafe(),
                 reason: invalidationReason(cause),
               }
+              Queue.offerUnsafe(progress, undefined)
             },
+            () => Queue.offerUnsafe(progress, undefined),
           ),
         )
         let recordsSinceYield = 0
@@ -599,6 +628,7 @@ export const makeKafkaMarketProjection = (
                 partition: record.partition,
                 offset: record.offset,
               })
+              Queue.offerUnsafe(progress, undefined)
               if (projection.webull.rejections !== previousProjection.webull.rejections)
                 yield* Effect.logWarning('Kafka Webull context withheld', {
                   epoch,
@@ -669,7 +699,14 @@ export const makeKafkaMarketProjection = (
         const monitor = Effect.gen(function* () {
           let announced = false
           while (true) {
-            yield* Effect.sleep(Duration.seconds(1))
+            if (announced) yield* Queue.take(progress)
+            else
+              yield* Queue.take(progress).pipe(
+                Effect.timeoutOrElse({
+                  duration: Math.max(1, deadlineAtMs + 1 - (yield* Clock.currentTimeMillis)),
+                  orElse: () => Effect.void,
+                }),
+              )
             if (invalidation !== undefined) return yield* invalidation
             const drained = source.drainedPositions()
             const incorporated = new Map(
@@ -689,7 +726,7 @@ export const makeKafkaMarketProjection = (
             }
             positions = canonicalPositions([...incorporated.values()])
             const caughtUp = kafkaBootstrapComplete(evidence, positions)
-            if (!announced && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
+            if (!announced && (yield* Clock.currentTimeMillis) > deadlineAtMs)
               return yield* failure(
                 'bootstrap',
                 'Kafka bootstrap deadline exceeded',
@@ -698,6 +735,7 @@ export const makeKafkaMarketProjection = (
             ready = caughtUp
             if (ready && !announced) {
               announced = true
+              if (notifications !== undefined) yield* notifications.ready(evidence)
 
               yield* Effect.logInfo('Kafka market projection bootstrap completed', {
                 epoch,
@@ -847,6 +885,10 @@ export const makeKafkaMarketProjection = (
           : Effect.fail(lastFailure ?? failure('read', 'Kafka projection is rebuilding required history'))
       })
     return {
+      startWakeups: (
+        _publish: (event: MarketReadyWakeup) => Effect.Effect<void, KafkaMarketFailure>,
+      ): Effect.Effect<void, KafkaMarketFailure, Scope.Scope> =>
+        Effect.fail(failure('read', 'Market wakeups require the durable projection worker')),
       check: readCut(true).pipe(Effect.asVoid),
       read: readCut(true),
       readForLiquidation: readCut(false),

@@ -28,6 +28,7 @@ test('readiness validates the owner without transferring a retained cut and pres
     ),
     Layer.provide(
       Layer.succeed(KafkaMarketProjection, {
+        startWakeups: () => Effect.void,
         check: Effect.suspend(() => {
           checks++
           return fail ? Effect.fail(unavailable) : Effect.void
@@ -68,6 +69,7 @@ test('reuses an exact captured cut without reconstructing it again and still rej
             Layer.provide(Layer.succeed(PgClient.PgClient, sql as PgClient.PgClient)),
             Layer.provide(
               Layer.succeed(KafkaMarketProjection, {
+                startWakeups: () => Effect.void,
                 check: Effect.void,
                 read: () => Effect.succeed(fixture.cut),
                 status: Effect.succeed({

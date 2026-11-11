@@ -40,6 +40,10 @@ import type { RecoveryFirstRuntime } from '../observe-composition/model'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
+import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
+import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { Authority, KillState, type AuthorityState } from '../execution/contracts'
 import { operationalError } from '../errors'
 import { makeRebindingCycleDriver } from './generation-cycle'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
@@ -73,7 +77,6 @@ type PlanOverrides = {
   readonly brokerAccess?: 'mutation' | 'read-only'
   readonly capitalAuthorityKind?: 'granted-capital' | 'none'
   readonly imageDigest?: string
-  readonly cyclePollIntervalMs?: number
   readonly reconciliationStaleThresholdMs?: number
   readonly persistedGrantHash?: string
   readonly tigerBeetleClusterId?: bigint
@@ -226,7 +229,6 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
         ledger: overrides.tigerBeetleLedger ?? 7_001,
       },
       capitalActivationRequestJson: '{"schemaVersion":"test"}',
-      cyclePollIntervalMs: overrides.cyclePollIntervalMs ?? 30_000,
       reconciliationStaleThresholdMs: overrides.reconciliationStaleThresholdMs ?? config.reconciliationStaleThresholdMs,
       operationTimeoutMs: 30_000,
     },
@@ -237,6 +239,120 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
 }
 
 describe('native execution runtime', () => {
+  test.each([
+    {
+      name: 'execution allowed',
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      rotated: false,
+      claims: 1,
+    },
+    {
+      name: 'observe allowed',
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      rotated: false,
+      claims: 1,
+    },
+    {
+      name: 'operator kill',
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      rotated: false,
+      claims: 0,
+    },
+    {
+      name: 'safety restriction',
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      rotated: false,
+      claims: 0,
+    },
+    {
+      name: 'generation rotated',
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      rotated: true,
+      claims: 0,
+    },
+  ])('queued inference rereads authority before claiming provider expense: $name', async (scenario) => {
+    const evidence = nativeJevDecisionEvidence(nativeJevFixture())
+    const retained = { plan: evidence.batchPlan, result: evidence.batchResult }
+    const job: JevInferenceJob = {
+      schemaVersion: 'bayn.jev-inference-job.v1',
+      jobId: retained.plan.batchId,
+      batchId: retained.plan.batchId,
+      cycleId: retained.plan.cycleId,
+      authorityGenerationHash: retained.plan.authorityGenerationHash,
+      expiresAt: retained.plan.expiresAt,
+      status: 'Prepared',
+    }
+    let authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: job.authorityGenerationHash,
+      maximum: scenario.maximum,
+      effective: scenario.maximum,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: completedAt,
+    }
+    let claims = 0
+    let settlements = 0
+    const forbidden = () => Effect.die('queued dispatch must not mutate authority or financial state')
+    const captured = Context.make(AuthorityGenerationStore, {
+      readAuthorityState: Effect.sync(() => authority),
+      ensureAuthorityGeneration: forbidden,
+      readOrInitializeObserveAuthority: forbidden,
+      readResearchAuthorityGeneration: forbidden,
+      readAuthorityGenerationLineage: forbidden,
+    }).pipe(
+      Context.add(JevInferenceWorkStore, {
+        pending: forbidden,
+        settleExpired: forbidden,
+        resume: forbidden,
+        read: () => Effect.succeed(job),
+        claim: () =>
+          Effect.sync(() => {
+            claims += 1
+            return null
+          }),
+      }),
+      Context.add(JevBatchStore, {
+        read: forbidden,
+        pending: forbidden,
+        begin: forbidden,
+        complete: forbidden,
+        finish: () =>
+          Effect.sync(() => {
+            settlements += 1
+            return retained
+          }),
+      }),
+    ) as Context.Context<RecoveryFirstRuntime>
+    const bound = await Effect.runPromise(
+      bindRecoveryFirstCycleDriver(windowClosedDriver, executionBuild, brokerAccountId).pipe(
+        Effect.provideContext(captured),
+      ),
+    )
+    authority = {
+      ...authority,
+      effective: scenario.effective,
+      kill: scenario.kill,
+      generationHash: scenario.rotated ? hash('f') : authority.generationHash,
+    }
+    if (bound.inference === undefined) throw new Error('admitted inference adapter was not bound')
+    const completed = await Effect.runPromise(bound.inference.execute(job.jobId))
+    expect(claims).toBe(scenario.claims)
+    expect(settlements).toBe(1)
+    expect(completed?.status).toBe('Completed')
+    expect(completed?.authorityGenerationHash).toBe(job.authorityGenerationHash)
+  })
+
   const observePreflight = <E>(read: Effect.Effect<readonly unknown[], E>) => {
     const original = plan({ brokerAccess: 'read-only' })
     const { capitalActivationRequestJson: _request, ...config } = original.config
@@ -653,7 +769,6 @@ describe('native execution runtime', () => {
     const replay = executionControllerConfig(plan())
     const changedPlans = [
       plan({ imageDigest: `sha256:${hash('a')}` }),
-      plan({ cyclePollIntervalMs: 60_000 }),
       plan({ reconciliationStaleThresholdMs: 180_000 }),
       plan({ persistedGrantHash: hash('d') }),
       plan({ brokerAccess: 'read-only' }),
@@ -924,7 +1039,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.first).toBe(failure)
-    expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
+    expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 1 })
     expect(acquired).toBe(2)
     expect(released).toBe(2)
   })
@@ -967,7 +1082,7 @@ describe('native execution runtime', () => {
       ),
     )
 
-    expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
+    expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 1 })
     expect(result.observation).toEqual({ ...windowClosedObservation, executionIssuedAt: command.issuedAt })
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
@@ -982,9 +1097,8 @@ describe('native execution runtime', () => {
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
     }
-    expect(projected.nextDueAt).toBe(
-      new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
-    )
+    expect(projected.nextDueAt).toBeUndefined()
+    expect(result.outcome).not.toHaveProperty('nextWakeAt')
   })
 
   test.each([
@@ -993,6 +1107,7 @@ describe('native execution runtime', () => {
     [30_000, 2_000],
     [31_000, 2_000],
     [100_000, 2_000],
+    [259_200_000, 2_000],
   ])('preserves an absolute wake %dms ahead across %dms of work and projected replay', async (dueMs, elapsedMs) => {
     const start = Date.parse(completedAt)
     const nextWakeAt = new Date(start + dueMs).toISOString()
@@ -1043,17 +1158,18 @@ describe('native execution runtime', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
     expect(advances).toBe(1)
-    const expectedDelay = Math.min(delay, Math.max(1, dueMs - elapsedMs))
+    const expectedDelay = Math.min(86_400_000, Math.max(1, dueMs - elapsedMs))
     expect(result.outcome.nextDelayMs).toBe(expectedDelay)
     expect(result.outcome.nextWakeAt).toBe(nextWakeAt)
     expect(projected).toMatchObject({
-      nextDueAt: new Date(start + elapsedMs + expectedDelay).toISOString(),
+      nextDueAt: nextWakeAt,
       lastPass: { nextWakeAt },
     })
   })
 
-  test('old persisted completions do not opt into absolute-wake journal commands', async () => {
+  test('a retained completion replays its persisted absolute deadline without another pass', async () => {
     const retained = status({ lastPass: windowClosedObservation })
+    if (!executionControllerStatusHasCompletion(retained)) throw new Error('expected retained completion')
     const result = await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
@@ -1062,7 +1178,7 @@ describe('native execution runtime', () => {
         controllerPlanHash,
       ),
     )
-    expect(result.outcome).not.toHaveProperty('nextWakeAt')
+    expect(result.outcome.nextWakeAt).toBe(retained.nextDueAt)
     expect(result.outcome.nextDelayMs).toBe(30_000)
   })
 
@@ -1097,7 +1213,7 @@ describe('native execution runtime', () => {
     })
   })
 
-  test('keeps retained pass evidence in PostgreSQL while Restate state remains rollback-compatible', async () => {
+  test('keeps retained pass evidence in PostgreSQL while projecting its compact Restate state', async () => {
     const retained = status({ lastPass: windowClosedObservation })
     if (!executionControllerStatusHasCompletion(retained)) {
       throw new Error('retained projection fixture must contain completion evidence')
@@ -1305,7 +1421,7 @@ describe('native execution runtime', () => {
         outcome: {
           _tag: committed.lastOutcome,
           receiptHash: committed.lastReceiptHash,
-          nextDelayMs: 30_000,
+          nextDelayMs: 1,
         },
       })
       expect(first).toEqual(replay)
@@ -1323,6 +1439,7 @@ describe('native execution runtime', () => {
     if (!executionControllerStatusHasCompletion(authoritative)) {
       throw new Error('projection-race fixture requires completion evidence')
     }
+    if (authoritative.nextDueAt === undefined) throw new Error('projection-race fixture requires its retained deadline')
     const racingStore: ExecutionControllerStatusStoreShape = {
       read: () =>
         Effect.sync(() => {
@@ -1367,6 +1484,7 @@ describe('native execution runtime', () => {
         _tag: authoritative.lastOutcome,
         receiptHash: authoritative.lastReceiptHash,
         nextDelayMs: 30_000,
+        nextWakeAt: authoritative.nextDueAt,
       },
     })
   })

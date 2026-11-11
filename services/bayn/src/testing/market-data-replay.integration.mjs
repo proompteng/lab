@@ -58,18 +58,24 @@ try {
   for (let pass = 0; pass < 2; pass++) {
     const consumer = platformaticProjectionTransport(config, `${token}-${pass}`, true, true)
     const rows = []
+    let progress = 0
     const timer = setTimeout(() => {
       void consumer.close()
     }, 15000)
     try {
-      const stream = await consumer.consume([{ topic, partition: 0, offset: '0' }], () =>
-        assert.fail('Unexpected assignment change'),
+      const stream = await consumer.consume(
+        [{ topic, partition: 0, offset: '0' }],
+        () => assert.fail('Unexpected assignment change'),
+        () => {
+          progress++
+        },
       )
       for await (const record of stream) {
         rows.push(record)
         if (rows.length === payloads.length) break
       }
       assert.equal(rows.length, payloads.length)
+      assert.ok(progress >= rows.length)
       rows.forEach((row, index) => {
         const expected = payloads[index]
         assert.equal(row.offset, String(index))

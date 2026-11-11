@@ -283,6 +283,8 @@ test('registered latency replay preserves every equity session and the exact can
     calls: [],
   }
   const config = base.obligations.configuration
+  if (config.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Polling backtest fixture requires a retained polling runtime')
   const input = {
     ...original,
     source: {
@@ -356,6 +358,26 @@ test('registered latency replay preserves every equity session and the exact can
     ),
   }
   const windows = Result.getOrThrow(bindLatencyReplayInput(input, registration, identity))
+  const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...streamingFields } = config
+  const streaming = bindLatencyReplayInput(
+    input,
+    {
+      ...registration,
+      obligations: {
+        ...registration.obligations,
+        configuration: {
+          ...streamingFields,
+          schemaVersion: 'bayn.qualification-runtime.v2',
+          decisionTrigger: 'streaming',
+        },
+      },
+    },
+    identity,
+  )
+  expect(streaming).toMatchObject({
+    _tag: 'Failure',
+    failure: { message: 'Polling latency replay cannot establish a streaming runtime registration' },
+  })
   expect(windows).toEqual(sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })))
   expect(windows).toHaveLength(20)
   const tariffBoundary = sessions[10]?.openAt

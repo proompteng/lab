@@ -14,7 +14,7 @@ reconciliation and accounting. The scope is enforced by
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Understand current entries, pricing and exits | [Active strategy](#active-strategy), [strategy protection](../../docs/bayn/strategy-protection.md)                                              |
 | Change execution or recovery                  | [Execution contract](#execution-contract), [runtime architecture](#runtime-architecture)                                                        |
-| Trace broker polling, freshness or quota      | [Broker observation owner](#broker-observation-owner), [Valkey materializations](#required-valkey-broker-materializations)                      |
+| Trace broker captures, freshness or quota     | [Broker observation owner](#broker-observation-owner), [Valkey materializations](#required-valkey-broker-materializations)                      |
 | Inspect source availability                   | [Market data](#market-data), [Webull ingestion](#webull-live-ingestion), [streaming guide](src/market-data/streaming/README.md)                 |
 | Operate or release Bayn                       | [Operations](#operations), [delivery](#delivery), [cycle runbook](../../docs/runbooks/bayn-cycle-operations.md)                                 |
 | Read status or diagnose an outage             | [Endpoints](#endpoints), [cache runbook](../../docs/runbooks/bayn-cache-observability.md)                                                       |
@@ -318,26 +318,27 @@ lag or a root cause; no identifiers, symbols, amounts or quantities are logged. 
 rejection still precedes fill comparison, and no rejected cut is published. These diagnostics do not change admission, retry, quota,
 mutation, clock, source-revision or authority fences.
 
-`BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
-handlers poll without overlap and publish full and compact snapshots in Valkey before committing their fenced
+`BaynBrokerObservations` is an independent, account-keyed Restate Virtual Object. Only its authenticated `notify`
+ingress is public; activation, capture, completeness timers and status are private. Its exclusive handlers capture
+without overlap and publish full and compact snapshots in Valkey before committing their fenced
 references in PostgreSQL `broker_observations`. Execution and status processes read those shared materializations; they do not start local pollers. Endpoint registration remains separate
 from capital authority. Authorized bootstrap drains a predecessor controller, publishes a fresh observation for the
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
-inactive while the observation object's delayed loop continues to retry.
+inactive while the observation object's durable recovery continues to retry.
 
-A polling invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
-`broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later polls and
+A capture invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
+`broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later captures and
 source rotation, so a repeated or late invocation cannot repeat its capture. Publication and failure settle the claim
 atomically with their existing database update. Replaying or interrupting an unfinished claim invalidates and fences
 only the matching account, source revision and capture generation. A published lost result and a newer cut remain
 usable, and interruption retains unknown HTTP quota debt. Trading mutations still invalidate the account-wide
 projection. A reserved quota window schedules a
-successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
+successor without sleeping inside the exclusive capture handler. Deployment activation waits for reserved quota
 before capturing the fresh snapshot required to start execution. The same database transaction reserves the account quota before HTTP. Publication or failure replaces that reservation
 with measured request debt in PostgreSQL, so losing the Restate result cannot repeat HTTP or discard outstanding quota.
 The database generation continues to fence publication after mutations and rotation.
 
-The observation owner's child runtimes share the worker's configured logger and tracer. The polling span inherits
+The observation owner's child runtimes share the worker's configured logger and tracer. The capture operation inherits
 the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
 `bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
@@ -398,116 +399,102 @@ including after a fallback obtains a newer cut. Missing settlement evidence keep
 with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, terminalize the cycle, clear restrictions
 or authorize an order. The next exact cut can resume the same bounded close path.
 
-`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
-Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
-for elapsed polling time using the live transport clock, with a one-second minimum delay. Position closures waiting
-for fresh broker evidence resume after one second instead of the normal 30-second controller cadence. Capture is bounded by the smaller of the operation timeout
-and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
-observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
-poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
-If a successful capture races a mutation or newer broker evidence and cannot publish, its successor retries after
-one second, subject to the background HTTP budget. A failed capture keeps the regular polling cadence or waits for
-the budget deadline, whichever is later. Both paths remain unavailable until a cut passes all publication and
-freshness checks.
+Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservations/notify` handler through
+Restate Kafka ingress. Bayn verifies the exact signed payload against its loaded broker account and credentials in
+a journaled step, then retains its stable identity, original receipt time and database arrival time before
+acknowledgement. These compact receipts permanently deduplicate republication and fence projections or captures
+that started before a new notification arrived, including while the exclusive capture handler is running.
+The private owner coalesces pending notifications into one canonical capture. The first notification in a pending wave
+invalidates the older projection before waiting for quota. Raw websocket events never supply ledger fills or
+trading authority; the existing complete, bracketed account/history capture remains authoritative. A published
+canonical cut sends the controller a compact snapshot hash and original observation time.
+
+`BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000 milliseconds and accepts 1,000–60,000. Capture is bounded by the
+smaller of the operation timeout and half the maximum age. A named financial completeness timer starts the next
+refresh that far before the original observation expires, because quiet order streams do not prove that cash,
+fees or historical corrections stayed unchanged. Notifications can preempt that timer; no ordinary polling cadence
+or polling endpoint remains. Freshness starts at the earlier of capture start and the oldest original observation.
+Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's source,
+epoch and sequence plus the database generation fence duplicate, obsolete and late captures. A failed capture or
+publication invalidated by a mutation retries after one second, subject to the persisted HTTP quota deadline.
+Quota waits release the owner and retain one durable successor. Restart and source handover preserve that debt;
+neither transport deduplication nor a connected websocket replaces canonical financial idempotency or freshness.
 
 Jev validates cached account, position, order and reconciliation timestamps against the sixty-second broker
 observation ceiling, independently of its ten-second quote limit. A configured shorter cache lifetime still applies
 at the projection read, and final risk authorization retains its existing freshness checks.
 Maximum-hold, profit-target and protective exits use the same broker ceiling. An expired or future broker observation still
 rejects the exit; accepting a cached position does not extend an executable quote's deadline.
-A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
-still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
-Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
-normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
-The same continuation applies when a terminal close needs a newer exact broker cut, including partial-fill recovery.
-Transport failures, inexact accounting and unresolved order or mutation evidence retain the normal retry cadence.
-An advanced mutation with no remaining consistency delay still schedules its reconciliation continuation rather than
-falling back to the idle interval. Every continuation rechecks existing evidence, quantity and submission deadlines.
-Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
-wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
-authority restriction.
+### Streaming execution owner
 
-An expired Jev observation or completed batch reports `INFERENCE_EXPIRED`. While its cycle is active and unbound,
-and the original unused-entry lease remains open, the controller requests its minimum one-millisecond continuation
-instead of spending the ordinary poll interval idle. The next serialized pass reacquires current evidence and keeps
-the original cycle creation time, lease expiry, inference validity, risk checks, and authority. Expired receipts remain
-unusable. A consumed source window still waits for its next valid signal boundary. Missing, pending, failed, or
-inconsistent inference keeps the ordinary backoff. The same expiry classification applies when the source deadline
-passes during fresh reconciliation or pricing while the original lease is still open. A clock preceding the saved
-completion, missing reconciliation freshness, insufficient prospective quote coverage, or an expired admission
-keeps the ordinary backoff. A missing initial input cut or a cut for a strictly later unconsumed window retries
-within one second, bounded by the controller cadence and the original unused-entry expiry. A captured snapshot query
-is required; source failures without that query and already consumed windows retain the ordinary cadence.
-The readiness receipt retains any earlier window from this cycle's observation store.
-Both inference readiness
-conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
+`BaynExecutionController` is the sole account-keyed financial owner. Committed market readiness, canonical broker
+publication, and completed inference wake that owner. A successful pass does not schedule another ordinary pass.
+The removed `BAYN_CYCLE_POLL_INTERVAL_MS` setting cannot select a second discovery path.
+
+The market worker batches native arrival persistence with its existing size/time limits. The same transaction writes
+a compact readiness outbox item with its original source availability, capture, epoch and sequences. A scoped publisher
+holds one outstanding notification, conflates newer committed frontiers, and acknowledges the outbox only after Restate
+has durably registered the owner wake. Restart repeats the same event identity and original clocks. A notification is
+only a reevaluation hint: it cannot supply prices, make an unavailable source usable or grant order authority. The public
+`marketReady` gateway requires the existing activation credential; it forwards to private `wake`. The owner drops duplicate
+or regressed frontiers and retains the original close-plus-two-second eligibility timer while quotes arrive early.
+
+An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
+transaction with its inference outbox. It durably sends `BaynEntryInference.evaluate` and returns. The provider-only
+service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
+binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
+worker from repeating paid work whose provider outcome is uncertain. Unknown outcomes retain their original expiry and
+existing expense classification; a retry cannot invent a fresh validity window.
+
+Completion returns a compact event to the same account owner, bound to its source revision and activation epoch.
+The owner resumes the original retained observation and result rather than discovering another batch for the consumed
+window. Admission commits the already verified source reference so a replacement worker can verify that same manifest
+without treating replayed bytes as a new live capture. Before binding or transmitting, the existing financial path
+rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
+quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
+
+Only domain deadlines schedule a timer: source eligibility, original admission or inference expiry, position protection,
+maximum hold, session close, broker consistency, quota, financial freshness and explicit recovery. An actual state-machine
+transition can schedule one immediate continuation. Source and pending-inference discovery wait for events plus the original
+expiry, without a recurring one-second scan. Held-position protection still evaluates at most five seconds apart and keeps
+any earlier maximum-hold or execution-close deadline. These timers bound evaluation, not broker-flat time; unavailable
+quotes, accounting discrepancies and unresolved mutations still fail closed.
+
+Persisted absolute deadlines are never moved forward by completion projection, journal replay or source redelivery.
+The send boundary calculates a transport delay from the original deadline with a one-millisecond minimum. The retained
+`nextDelayMs` receipt field is canonical and capped at one day; it does not create a periodic timer or replace a later
+absolute deadline. Attempt receipt timestamps remain in the bounded durable advance and failure metadata. A committed
+completion replays the exact saved winner; latency claims require representative measured runs of the new runtime.
 
 Execution receipts bind the physical worker source revision, image repository and digest independently of the
 capital-authorizing build. Compatible releases preserve the original generation and mandate. The prospective
 registration binds the existing approved request and build lineage to its physical build. Financial capture verifies
 that saved binding when the reporting worker is later upgraded, preserving late-fee evidence. An unknown or different
-worker build cannot establish correctly completed controller work or supported reporting provenance. Repository
-identity must also match whenever the registration carries an activation lineage; matching source and digest alone
-cannot substitute a different repository. Historical registrations without that lineage retain their source/digest
-comparison. Retained operational v1 receipt replay keeps its frozen source/digest matcher even when a repository
-commitment is present; current operational v2 claims enforce that commitment. Receipts retain their original contents.
+worker build cannot establish correctly completed controller work or supported reporting provenance. Current qualification
+uses `bayn.qualification-runtime.v2` with `decisionTrigger: streaming`. Retained v1 registrations remain readable, while
+old polling latency/replay studies cannot qualify this runtime; a new prospective registration and live evidence are required.
 
-Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
-wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
-existing continuation qualifies. Elapsed, missing or invalid timestamps, other readiness reasons and failed passes
-keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
-does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
-
-Position pricing is bounded by the earliest of the first-fill holding deadline, quote-validity budget and
-broker-evidence freshness boundary. A completed or retryable result rechecks the holding deadline before returning.
-Cancellation waits for scoped finalizers. If finalization outlasts broker freshness, the result requires reconciliation.
-The holding-deadline log records any overrun and broker-evidence expiry; order authorization retains all risk checks.
-
-Held-position waits preserve the original deadline and schedule protection checks at most five seconds apart.
-An earlier deadline, execution close or existing continuation wins. This absolute next wake survives completion
-persistence and worker replay. If work crosses a previously future deadline, one continuation rechecks the position;
-an already-overdue evaluation retains the evidence-wait cadence. These bounds schedule evaluation, not guaranteed
-broker-flat time. Fresh reconciliation, executable quotes, risk checks and partial-fill recovery remain required.
-
-The send boundary uses a live transport clock rather than a journaled time sample, so a restart before send
-persistence cannot add the old remaining delay again. Ordinary polling waits also subtract time already spent on
-completion projection and journaling from their persisted due-time budget. An overdue successor is scheduled once
-with a one-millisecond minimum; a clock regression cannot extend the original requested delay. Completion logs expose
-the requested and scheduled delays plus completion-to-schedule time. Actual delivery still depends on Restate
-availability and the next pass repeats the normal execution guards.
-
-Ordinary controller ticks capture their receipt timestamp inside the existing durable advance, using eight journal
-entries instead of ten. They still await the advance's durable acknowledgement before committing controller state
-and scheduling the successor. Terminal failures retain the timestamp in bounded journal metadata, so explicit retry
-and recovery deliveries preserve it. A worker lost before completion projection or failure journaling can resample
-that receipt timestamp; durable mutation identities and live execution deadlines are independent of it. A committed
-completion always replays its original receipt and timestamp, and a competing completion cannot replace that winner.
-Issued-at latency describes the attempt whose completion was committed; it cannot measure an abandoned attempt or
-cover that attempt's earlier schedule window. Its value alone is not evidence of improved storage or delivery latency.
-This removes one clock acknowledgement round trip; it does not bound Restate storage or delivery latency.
-
-Removing the clock operation changes the journal shape. Roll this out through the existing immutable
-`RestateDeployment` revisions: in-flight invocations must drain on their pinned old deployment, while new invocations
-use the new revision. Do not force-repin old invocations to this journal shape. Controller state and tick payload
-schemas remain unchanged. See [Restate service versioning](https://docs.restate.dev/services/versioning).
+This hard migration changes handler and journal shapes. Roll out immutable `RestateDeployment` revisions so in-flight
+invocations retain their pinned old deployment. Do not force-repin an old invocation onto this revision. The controller
+plan identity rotates once into streaming; no runtime switch or compatibility polling implementation remains.
+See [Restate service versioning](https://docs.restate.dev/services/versioning).
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. Request cost
 depends on history size and whether a completed prior scan can be reused. The background client's transport counts
-every actual attempt, including startup verification, pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
+every actual attempt, including startup verification, pagination and transient retries. Each attempt charges at least 600 milliseconds to the next permissible capture, targeting
 100 background calls per minute on average, or half a smaller reported account limit. The three independent history endpoints run concurrently; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
 or unusable reset evidence causes a conservative sixty-second wait.
 
-The account's PostgreSQL observation row owns the next permissible poll time. The capture claim and its conservative
+The account's PostgreSQL observation row owns the next permissible capture time. The capture claim and its conservative
 unknown-work deadline commit atomically before HTTP. At default timeouts that deadline is three minutes. Completed
 captures atomically settle their claim and replace the reservation with measured HTTP debt, including rate-limit
 reset evidence. Snapshot invalidation and quota ownership use separate generations, so a mutation racing capture
 cannot strand the quota reservation or let an older capture shorten a newer reservation. A failed settlement leaves
 the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
 
-Ordinary native polls issue one journaled worker command and use eight journal entries rather than thirteen. They
-no longer journal separate clock and quota state updates. A quota-blocked poll returns its database deadline and
+Canonical captures issue one journaled worker command. A quota-blocked capture returns its database deadline and
 schedules a successor without holding the exclusive owner. Deployment activation uses a durable timer to wait for
 quota before obtaining its required fresh cut. On the first activation of the new revision, the exclusive owner copies
 any old Restate quota deadline into PostgreSQL with `GREATEST`, then deletes the old key. There is no second runtime
@@ -517,7 +504,7 @@ The worker starts its bounded capture clock immediately before the durable claim
 start deadline is invalidated without HTTP, and its unused reservation is settled only by the matching database
 owner. Clock regression fails closed. Lost, spent and replaced-worker claims cannot repeat HTTP. Failed acquisition
 and uncertain exits close their lazy runtime before recording failure or sampling request debt. A verified session
-can survive a retryable read failure, with the failed cut discarded and the next poll still quota-bound.
+can survive a retryable read failure, with the failed cut discarded and the next capture still quota-bound.
 Defects and interruption preserve unknown-work debt. Execution
 requests use their existing client and consume the remaining shared account quota; the background budget does not
 impose a global limit on other account callers.
@@ -674,8 +661,8 @@ headroom is reconciled once. Bayn then checks the original observation times aga
 limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
 deadline expires, the unbound entry waits for fresh evidence. Changed authority or expired broker facts still require
 reconciliation. The model evidence remains immutable, current reconciled facts supply risk inputs, and
-final intent, writer-fence and submission-expiry checks still apply. The controller's reconciliation cadence schedules
-preflights; it does not expire broker-valid facts during one serialized preparation. The pass rechecks authority on
+final intent, writer-fence and submission-expiry checks still apply. Each event or explicit deadline enters the same
+reconciliation preflight; it does not expire broker-valid facts during one serialized preparation. The pass rechecks authority on
 every reuse and discards its cache before post-mutation continuation. Quote and broker freshness limits are unchanged;
 the preparation ordering does not guarantee submission.
 
@@ -725,10 +712,10 @@ preserves the reviewed close authority; current equity entries retain their evid
 Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
 that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
 use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
-waits continue on the next configured controller pass. Failed close attempts retain the original data reason in logs.
+waits retain the explicit close-eligibility deadline and react to market or broker events. Failed close attempts retain the original data reason in logs.
 A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
-continuation, bounded by the configured cadence and session deadline. Source/bootstrap failures and archive timeouts
-retain the normal cadence. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
+continuation bounded by the session deadline. Source/bootstrap failures and archive timeouts
+retain explicit recovery backoff. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
 authority, quantity, and quote-freshness gates. This reduces avoidable idle time but cannot guarantee a fill or a
 maximum-hold exit when fresh executable evidence is unavailable.
 
@@ -759,7 +746,7 @@ a verified spread or displayed-size rule can. Execution pricing requires fresh q
 reconciled holdings.
 Historical momentum targets remain readable for audit.
 
-Entry observations commit at most once per completed signal window within a cycle. Later polls and restarts
+Entry observations commit at most once per completed signal window within a cycle. Later events and restarts
 consult the retained observation before another batch; interrupted or failed observations cannot repeat inference
 on the same window. Entry recovers pending batches before full signal history and preserves every source gate.
 Position management instead reads fresh liquidation quotes on each protection pass. Stop, profit-target and
@@ -1497,7 +1484,7 @@ Controller rotation commits the active successor in one exclusive transition aft
 it never persists an inactive intermediate owner. The exact predecessor epoch and binding still fence the change,
 and a failed or uncertain projection replays the same successor projection. A deactivation during preparation
 supersedes the pending rotation. Retained `activate` and `deactivate` calls remain supported.
-An unavailable initial broker capture waits for the existing serial poll owner to recover. Shared status establishes
+An unavailable initial broker capture waits for the existing serial observation owner to recover. Shared status establishes
 progress only; a fresh exclusive capture confirms publication before rotation. Readiness uses bounded journaled
 batches with durable waits and a new immutable-target/authority preflight between batches. The workflow can remain
 pending beyond the hook client's wait and finish when the broker recovers, while a superseding deployment or
@@ -1505,10 +1492,10 @@ deactivation fences it. It never resumes an administratively paused Restate invo
 store still has one revision-bound owner: cutover can make predecessor broker reads unavailable, and the old source
 does not regain trading permission. Native passes retain their independent freshness and authority checks.
 
-Controller completion persists the earlier of the worker's absolute next wake and the ordinary polling deadline.
-Worker completion, persistence and transport time consume that wait instead of restarting it. An elapsed wake runs
-on the next bounded continuation. A failed post-pass projection check discards both earlier scheduling hints and
-uses the failure's retry cadence. These wake times grant no execution authority and retain fresh reconciliation,
+Controller completion persists only an explicit absolute domain deadline. A completed pass without one waits for
+a stream event. Worker completion, persistence and transport time never reset the original deadline; an elapsed wake
+runs on the next bounded continuation. A failed post-pass projection check selects its explicit recovery deadline.
+These wake times grant no execution authority and retain fresh reconciliation,
 quote, risk and submission checks.
 
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below

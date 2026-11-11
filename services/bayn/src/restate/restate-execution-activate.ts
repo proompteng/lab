@@ -27,7 +27,7 @@ import {
 import { Sha256Schema } from '../schemas'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from '../telemetry'
 
-const InternalHttpOriginSchema = Schema.Trim.check(
+export const InternalHttpOriginSchema = Schema.Trim.check(
   Schema.makeFilter(
     (candidate: string) => {
       try {

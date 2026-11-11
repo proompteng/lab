@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schedule, Schema, Stream } from 'effect'
+import { Effect, Schema, Stream } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
@@ -13,6 +13,7 @@ import {
   type NativeArrivalEpoch,
 } from '../market-data/streaming/native-arrival'
 import type { NativeArrivalStore } from '../market-data/streaming/native-arrival-journal'
+import { marketReadyRecoverySchedule } from '../market-data/streaming/readiness'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { withObservedStage } from '../telemetry'
 
@@ -24,17 +25,26 @@ const PersistedChunk = Schema.Struct({
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
 const CannotConnectNow = Schema.Struct({ code: Schema.Literal('57P03') })
-const retryableAppendFailure = (cause: unknown): cause is SqlError =>
-  isSqlError(cause) &&
-  (cause.reason._tag === 'ConnectionError' ||
+const transientAppendSqlError = (cause: unknown): SqlError | undefined => {
+  if (cause instanceof NativeArrivalCaptureError) return transientAppendSqlError(cause.cause)
+  if (!isSqlError(cause)) return undefined
+  return cause.reason._tag === 'ConnectionError' ||
     cause.reason._tag === 'StatementTimeoutError' ||
-    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause)))
+    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause))
+    ? cause
+    : undefined
+}
+const retryableAppendFailure = (cause: unknown): boolean => transientAppendSqlError(cause) !== undefined
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
 )
 
-export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalStore => ({
+export const makeNativeArrivalStore = (
+  sql: PgClient.PgClient,
+  retainReadiness: (chunks: readonly NativeArrivalChunk[]) => Effect.Effect<void, NativeArrivalCaptureError> = () =>
+    Effect.void,
+): NativeArrivalStore => ({
   begin: (input) =>
     Effect.gen(function* () {
       const epoch = yield* Schema.decodeUnknownEffect(NativeArrivalEpochSchema, strictParseOptions)(input)
@@ -114,6 +124,9 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
                 ${sha256(chunks.map((chunk) => chunk.contentHash).join(''))}) > '0/0'::pg_lsn AS matches`,
             )
           }
+          // Market readiness and its original source prefix commit together. An uncertain COMMIT retries
+          // both immutable identities; no worker callback is the only record of pending delivery.
+          yield* retainReadiness(chunks)
         }),
       )
     }).pipe(
@@ -123,15 +136,15 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
         const errors = cause.reasons.map((reason) =>
           reason._tag === 'Fail' ? reason.error : reason._tag === 'Die' ? reason.defect : undefined,
         )
-        const first = errors[0]
-        return retryableAppendFailure(first) && errors.every(retryableAppendFailure)
+        const first = transientAppendSqlError(errors[0])
+        return first !== undefined && errors.every(retryableAppendFailure)
           ? Effect.fail(first)
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        // A managed PostgreSQL switchover can refuse connections for tens of seconds.
-        // Keep the immutable batch queued while reconnecting; the existing byte bound still backpressures ingestion.
-        schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ duration: '1 minute' })),
+        // Availability has no retry deadline. Every attempt retains its configured SQL/socket deadline,
+        // and the existing compressed byte bound backpressures ingestion while this exact batch waits.
+        schedule: marketReadyRecoverySchedule,
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),

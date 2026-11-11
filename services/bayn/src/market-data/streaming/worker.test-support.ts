@@ -16,12 +16,13 @@ import { serveProjectionWorker } from './market-projection-worker'
 import { sha256 } from '../../hash'
 import { CaptureDisposition } from './transport-evidence'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
+import type { ProjectionWorkerRequest, ProjectionWorkerResponse } from './worker'
 
 if (parentPort === null) throw new Error('Test requires a worker port')
 const port = parentPort
 const { signals: shared, mode } = workerData as {
   readonly signals: SharedArrayBuffer
-  readonly mode: 'consume' | 'hang' | 'fail' | 'fixture'
+  readonly mode: 'consume' | 'hang' | 'fail' | 'fixture' | 'readiness' | 'malformed-readiness'
 }
 const signals = new Int32Array(shared)
 const times = new BigInt64Array(shared, 32)
@@ -34,7 +35,7 @@ const source = {
 const positions = Object.values(source.topics).map((topic) => ({ topic, partition: 0, offset: '0' }))
 
 const program = Effect.gen(function* () {
-  if (mode === 'fixture') {
+  if (mode === 'fixture' || mode === 'readiness' || mode === 'malformed-readiness') {
     const fixture = streamingFixture()
     let read = false
     const cut = {
@@ -42,8 +43,34 @@ const program = Effect.gen(function* () {
       consumerSequence: fixture.cut.projection.sequence,
       deliveredPositions: fixture.cut.positions,
     }
+    if (mode === 'readiness' || mode === 'malformed-readiness') {
+      const acknowledged = (message: ProjectionWorkerRequest) => {
+        if (message.operation === 'market-ready-ack') {
+          Atomics.add(signals, 0, 1)
+          port.postMessage({ _tag: 'MarketReadyAcknowledged' })
+        }
+      }
+      port.on('message', acknowledged)
+      yield* Effect.addFinalizer(() => Effect.sync(() => port.off('message', acknowledged)))
+      port.postMessage({
+        _tag: 'MarketReady',
+        event: {
+          schemaVersion: 'bayn.execution-wakeup.v1',
+          _tag: 'MarketReady',
+          sourceRevision: nativeArrivalEpochFixture.build.sourceRevision,
+          eventId: 'a'.repeat(64),
+          captureId: nativeArrivalEpochFixture.captureId,
+          sourceEpoch: 'retained-source-epoch',
+          consumerSequence: 5,
+          projectionSequence: 4,
+          originalAvailableAt: mode === 'malformed-readiness' ? 'untrusted-clock' : '2026-11-11T17:00:00.001Z',
+          readyAt: '2026-11-11T17:00:00.100Z',
+        },
+      } satisfies ProjectionWorkerResponse)
+    }
     return yield* serveProjectionWorker(
       {
+        startWakeups: () => Effect.void,
         check: Effect.void,
         read: Effect.sync(() => {
           read = true

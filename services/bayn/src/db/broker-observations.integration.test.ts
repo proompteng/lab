@@ -202,6 +202,74 @@ describePostgres('Durable per-account broker observations', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
 
+  test('a notification after the final history read fences publication and the prior ready cut before owner delivery', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        expect(yield* store.publish(first, snapshot(first), 0)).toBe(true)
+        expect(yield* store.readState).toEqual(observedBrokerState(snapshot(first)))
+
+        // The complete provider history has already been read; ingress arrives before its SQL publication.
+        const second = yield* claim(store)
+        yield* advanceToTicket(second)
+        const capturedBeforeNotification = snapshot(second)
+        const receipt = {
+          eventId: 'd'.repeat(64),
+          receivedAt: utcInstantFromEpochMillis(Date.parse(first.startedAt) - 10_000),
+        }
+        expect(yield* store.recordNotification(receipt)).toEqual({ covered: false })
+        expect(yield* store.publish(second, capturedBeforeNotification, 0)).toBe(false)
+        expect(Result.isFailure(yield* store.readState.pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
+        yield* store.failed(second, 0)
+
+        const next = yield* claim(store)
+        yield* advanceToTicket(next)
+        expect(yield* store.publish(next, snapshot(next), 0)).toBe(true)
+        expect(yield* store.readState).toEqual(observedBrokerState(snapshot(next)))
+        expect(yield* store.recordNotification({ ...receipt, receivedAt: next.startedAt })).toEqual({ covered: true })
+        const retained = yield* sql`SELECT event_id, source_revision,
+          to_char(received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "receivedAt",
+          recorded_at > ${second.startedAt}::timestamptz AS "arrivedDuringCapture"
+          FROM broker_notification_receipts WHERE account_id = ${accountId}`
+        expect(retained).toEqual([
+          {
+            event_id: receipt.eventId,
+            source_revision: revision,
+            receivedAt: receipt.receivedAt,
+            arrivedDuringCapture: true,
+          },
+        ])
+      }),
+    ))
+
+  test('concurrent republication retains one receipt and a foreign account cannot revoke a canonical cut', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        const receipt = { eventId: 'e'.repeat(64), receivedAt: '2026-11-01T00:00:00.000Z' }
+        const records = yield* Effect.all([store.recordNotification(receipt), store.recordNotification(receipt)], {
+          concurrency: 2,
+        })
+        expect(records).toEqual([{ covered: false }, { covered: false }])
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        expect(yield* store.publish(ticket, snapshot(ticket), 0)).toBe(true)
+        const foreign = makeBrokerObservationStore(sql, 'another-account', revision, 60_000, cacheFixture.cache)
+        expect(yield* foreign.recordNotification(receipt)).toEqual({ covered: false })
+        expect(yield* store.readState).toEqual(observedBrokerState(snapshot(ticket)))
+        expect(yield* store.recordNotification(receipt)).toEqual({ covered: true })
+        expect(
+          yield* sql`SELECT account_id, COUNT(*)::integer AS count FROM broker_notification_receipts GROUP BY account_id ORDER BY account_id`,
+        ).toEqual([
+          { account_id: 'another-account', count: 1 },
+          { account_id: accountId, count: 1 },
+        ])
+      }),
+    ))
+
   test('consecutive poll tickets share a generation boundary until a durable invalidation', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {

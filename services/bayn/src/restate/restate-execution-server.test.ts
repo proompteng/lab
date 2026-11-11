@@ -123,8 +123,14 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [],
+      { executeInference: async () => null },
       {
         runtime: {
+          recordNotification: async () => ({ covered: false }),
+          verifyNotification: () => {
+            throw new Error('discovery does not verify notifications')
+          },
+          invalidate: async () => undefined,
           activate: () => Promise.resolve(),
           poll: () =>
             Promise.resolve({
@@ -133,7 +139,8 @@ describe('native Restate execution server', () => {
               completedAtMs: 0,
             }),
         },
-        pollIntervalMs: 30_000,
+        maxAgeMs: 60_000,
+        freshnessLeadMs: 30_000,
       },
     )
 
@@ -172,9 +179,23 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'rotate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
+        handlers: [
+          'activate',
+          'rotate',
+          'tick',
+          'wake',
+          'marketReady',
+          'deactivate',
+          'prepareActivation',
+          'status',
+          'activateDeployment',
+        ],
       },
-      { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
+      {
+        name: 'BaynBrokerObservations',
+        handlers: ['notify', 'accept', 'refresh', 'activate', 'capture', 'freshness', 'status'],
+      },
+      { name: 'BaynEntryInference', handlers: ['evaluate'] },
     ])
     expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
       ty: 'SHARED',
@@ -188,7 +209,7 @@ describe('native Restate execution server', () => {
     })
     expect(
       services[0]?.handlers
-        ?.filter(({ name }) => name !== 'activateDeployment')
+        ?.filter(({ name }) => name !== 'activateDeployment' && name !== 'marketReady')
         .map(({ name, ingressPrivate }) => ({
           name,
           ingressPrivate,
@@ -197,6 +218,7 @@ describe('native Restate execution server', () => {
       { name: 'activate', ingressPrivate: true },
       { name: 'rotate', ingressPrivate: true },
       { name: 'tick', ingressPrivate: true },
+      { name: 'wake', ingressPrivate: true },
       { name: 'deactivate', ingressPrivate: true },
       { name: 'prepareActivation', ingressPrivate: true },
       { name: 'status', ingressPrivate: true },
@@ -232,7 +254,7 @@ describe('native Restate execution server', () => {
       port: 9080,
       requestIdentityKeys: requestIdentityKey,
     })
-    expect(Object.keys(configured).sort()).toEqual(['activationToken', 'port', 'requestIdentityKeys'])
+    expect(Object.keys(configured).sort()).toEqual(['activationToken', 'ingressOrigin', 'port', 'requestIdentityKeys'])
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {
@@ -246,8 +268,14 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [requestIdentityKey],
+      { executeInference: async () => null },
       {
         runtime: {
+          recordNotification: async () => ({ covered: false }),
+          verifyNotification: () => {
+            throw new Error('discovery does not verify notifications')
+          },
+          invalidate: async () => undefined,
           activate: () => Promise.resolve(),
           poll: () =>
             Promise.resolve({
@@ -256,7 +284,8 @@ describe('native Restate execution server', () => {
               completedAtMs: 0,
             }),
         },
-        pollIntervalMs: 30_000,
+        maxAgeMs: 60_000,
+        freshnessLeadMs: 30_000,
       },
     )
 

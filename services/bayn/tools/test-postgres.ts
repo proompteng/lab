@@ -31,6 +31,7 @@ const files = [
   'src/db/forward-performance-receipt.integration.test.ts',
   'src/db/streaming-snapshot.integration.test.ts',
   'src/db/native-arrival-postgres.integration.test.ts',
+  'src/db/market-ready-postgres.integration.test.ts',
   'src/native-arrival-export-command.integration.test.ts',
   'src/db/jev-evaluation-postgres.integration.test.ts',
   'src/db/jev-evaluation-cohort-postgres.integration.test.ts',

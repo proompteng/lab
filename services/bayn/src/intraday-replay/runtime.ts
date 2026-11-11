@@ -315,7 +315,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
             blockedCycleIntentStore,
-            pollIntervalMs: input.pollIntervalMs,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
           },

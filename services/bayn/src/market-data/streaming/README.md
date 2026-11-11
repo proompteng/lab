@@ -9,6 +9,31 @@ Trading has one market-data capability: load a verified feature and raw-data sna
 The production adapter consumes Kafka; backtesting supplies recorded events on its simulated clock. An unavailable
 adapter blocks observations. ClickHouse remains the historical archive and does not supply an execution fallback.
 
+The isolated worker sends account-scoped `MarketReady` hints through a PostgreSQL outbox. A native journal append and
+its readiness event commit in the same transaction. Events bind the embedded source revision, capture and consumer
+epoch, incorporated consumer/projection sequences, original source-availability timestamp and first handoff-creation
+timestamp. An uncertain commit or repeated dispatch verifies the retained immutable identity and keeps both original
+timestamps. Readiness does not supply a snapshot, quote, financial authority or a new decision deadline. The account
+controller still verifies current source evidence and the existing completed-minute close plus two-second eligibility.
+
+The journal keeps its existing 256 KiB size batching and one-second short-tail durability timer; quotes do not create
+individual database commits. Committed appends signal a scoped publisher, which also drains pending work once on
+startup. It sends one outstanding worker message and waits for the parent's durable controller scheduling
+acknowledgement. New quotes coalesce into the latest stored frontier while that handoff is outstanding. A prefix
+cursor acknowledges superseded hints together; compact immutable events remain beside their retained native journal,
+with at most one event per append batch and one extra event when a consumer finishes bootstrap. The native source
+records remain the authority for original bytes and availability.
+
+Kafka incorporation and SDK fetch/offset progress now trigger bootstrap checks directly. The original per-epoch
+bootstrap deadline remains a timer; there is no one-second readiness-discovery loop. A replacement epoch still
+reconstructs and verifies its own source cut. Individual delivery attempts use the existing operation deadline;
+retained work retries with exponential delays capped at 30 seconds while its scope remains alive. A Restate ingress
+outage does not revoke healthy market source evidence. An incomplete native journal remains incomplete; it does not
+revoke the current full or liquidation projection reads. The next actual source-epoch replacement starts an independent
+capture with its own original observations. Scope shutdown interrupts pending handoffs. A crash after
+source commit but before dispatch, or after delivery but before cursor acknowledgement,
+leaves the same durable event available for replay.
+
 A replacement consumer captures partition bounds and rebuilds actual retained history before serving entry inputs.
 Separate equity quote and trade topics start at their captured end offsets: the strategy uses their latest values,
 so replaying obsolete ticks can exhaust the five-minute bootstrap budget and repeatedly restart an otherwise valid
@@ -56,8 +81,9 @@ An individual valid chunk above the SQL byte target is written whole under the e
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-Connection failures, statement timeouts and PostgreSQL `57P03` startup refusals retry the identical append on the
-existing one-minute schedule with one second between retries. The pinned driver classifies `57P03` as an unknown
+Connection failures, statement timeouts and PostgreSQL `57P03` startup refusals retry the identical append with
+exponential delays capped at 30 seconds while the capture scope remains alive. Each SQL and socket attempt retains
+its existing deadline. The pinned driver classifies `57P03` as an unknown
 SQL error, so the append policy recognizes that exact code without retrying other unknown errors. A failed COMMIT
 acknowledgement reported as a SQL defect follows the same policy. Each retry reads the existing ordinals and verifies their
 exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.

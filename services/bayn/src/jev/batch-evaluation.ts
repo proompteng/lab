@@ -16,6 +16,7 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevEvidenceError } from './evidence'
 import type { JevObservation } from './observation'
 import { utcInstantFromEpochMillis } from '../time'
+import type { MarketSnapshotReference } from '../market-data/intraday/model'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
@@ -27,6 +28,12 @@ export interface JevBatchAdmission extends JevBatchEvidence {
 }
 
 export type JevBatchEvaluationOptions = EntryInferenceEvaluationOptions
+
+export type JevBatchAdmissionOptions = JevBatchEvaluationOptions &
+  (
+    | { readonly deferProviderDispatch: true; readonly sourceReference: MarketSnapshotReference }
+    | { readonly deferProviderDispatch?: never }
+  )
 
 export class JevBatchExpired extends Data.TaggedError('JevBatchExpired')<{
   readonly batchId: string
@@ -47,6 +54,7 @@ export class JevBatchStore extends Context.Service<
     readonly begin: (
       plan: JevBatchPlan,
       observation: JevObservation,
+      options?: JevBatchAdmissionOptions,
     ) => Effect.Effect<JevBatchAdmission, OperationalError | JevBatchExpired>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
     readonly complete: (
@@ -67,17 +75,29 @@ export const evaluateJevBatch = (
     const sourceObservation = structuredClone(observation)
     const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
     const store = yield* JevBatchStore
-    const saved = yield* store.begin(plan, sourceObservation)
+    const saved = yield* store.begin(plan, sourceObservation, options)
+    if (saved.result !== null) return { plan: saved.plan, result: saved.result }
+    return yield* evaluateAdmittedJevBatch(saved, sourceObservation, options)
+  })
+
+/** The same admitted cohort is used by local replay and the provider-only durable worker. */
+export const evaluateAdmittedJevBatch = (
+  saved: JevBatchAdmission,
+  sourceObservation: JevObservation,
+  options: JevBatchEvaluationOptions = {},
+) =>
+  Effect.gen(function* () {
+    const store = yield* JevBatchStore
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
     const requested = saved.plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-    if (saved.dispatches.length !== requested.length) return yield* store.finish(plan.batchId)
+    if (saved.dispatches.length !== requested.length) return yield* store.finish(saved.plan.batchId)
     const completions = yield* evaluateClaimedEntryInferences(saved.dispatches, options).pipe(
       Effect.catchTags({
         EntryInferenceError: () => Effect.succeed(null),
         JevContractError: () => Effect.succeed(null),
       }),
     )
-    if (completions === null) return yield* store.finish(plan.batchId)
+    if (completions === null) return yield* store.finish(saved.plan.batchId)
     const byRequest = new Map(completions.map((completion) => [completion.handoff.requestId, completion]))
     const records: JevEvaluationRecord[] = []
     return yield* Effect.gen(function* () {

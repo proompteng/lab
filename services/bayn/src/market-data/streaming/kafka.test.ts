@@ -60,7 +60,15 @@ class FakeTransport implements KafkaProjectionTransport {
   commits: readonly KafkaConsumedRecord[][] = []
   lookups: bigint[] = []
   invalidated: ((cause: unknown) => void) | undefined
-  drained: readonly KafkaPartitionPosition[] | undefined = positions('0')
+  private drainedValue: readonly KafkaPartitionPosition[] | undefined = positions('0')
+  private progressed: (() => void) | undefined
+  get drained() {
+    return this.drainedValue
+  }
+  set drained(value: readonly KafkaPartitionPosition[] | undefined) {
+    this.drainedValue = value
+    this.progressed?.()
+  }
   queue: KafkaConsumedRecord[] = []
   pending: ((value: IteratorResult<KafkaConsumedRecord>) => void) | undefined
   closed = false
@@ -71,8 +79,10 @@ class FakeTransport implements KafkaProjectionTransport {
   consume = async (
     _positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
+    progressed: () => void,
   ): Promise<KafkaProjectionStream> => {
     this.invalidated = invalidated
+    this.progressed = progressed
     return {
       queuedRecords: () => this.queue.length,
       drainedPositions: () => this.drained,
@@ -126,7 +136,7 @@ test('history arriving after the original bootstrap deadline cannot make a cold 
         ),
         Effect.forkChild,
       )
-      yield* TestClock.adjust(6500)
+      yield* TestClock.adjust(5501)
       const status = yield* market.status
       expect(status.ready).toBe(false)
       expect(status.bootstrapDeadlineAtMs).toBe(5000)
@@ -157,6 +167,7 @@ test('native retention observes the trading consumer cut, including rejected rec
             captureEpoch = bootstrap.epoch
             expect(sources).toEqual([universe])
             return {
+              flush: Effect.void,
               observe: (record) =>
                 Effect.sync(() => {
                   captured.push(record)
@@ -582,10 +593,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     const consume = transport.consume
     let requested: readonly KafkaPartitionPosition[] = []
-    transport.consume = async (starts, invalidated) => {
+    transport.consume = async (starts, invalidated, progressed) => {
       requested = starts
       transport.drained = starts
-      return consume(starts, invalidated)
+      return consume(starts, invalidated, progressed)
     }
     await program(
       Effect.gen(function* () {
@@ -651,10 +662,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     const consume = transport.consume
     let requested: readonly KafkaPartitionPosition[] = []
-    transport.consume = async (starts, invalidated) => {
+    transport.consume = async (starts, invalidated, progressed) => {
       requested = starts
       transport.drained = starts
-      return consume(starts, invalidated)
+      return consume(starts, invalidated, progressed)
     }
     await program(
       Effect.gen(function* () {
@@ -1110,7 +1121,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
           }
           transport.send(record)
           yield* TestClock.adjust('100 millis')
-          expect((yield* projection.status).ready).toBe(false)
+          expect((yield* projection.status).ready).toBe(true)
           transport.send(record)
           transport.send({ ...record, offset: '1' })
           yield* TestClock.adjust('1 second')

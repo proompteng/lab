@@ -25,7 +25,12 @@ const config = {
 }
 type BrokerState = typeof BrokerObservationOwnerStateSchema.Type
 type ControllerContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
-type Delivery = { readonly parameter: unknown }
+type Delivery = {
+  readonly service: string
+  readonly method: string
+  readonly parameter: unknown
+  readonly idempotencyKey?: string
+}
 
 const handoff = (
   failure:
@@ -47,10 +52,24 @@ const handoff = (
     initialSequence: 7,
     nextSequence: 12,
   }
-  let brokerState: BrokerState = { sourceRevision: previousSourceRevision, epoch: 7, sequence: 19 }
+  let brokerState: BrokerState = {
+    sourceRevision: previousSourceRevision,
+    epoch: 7,
+    sequence: 19,
+    captureScheduled: false,
+    nextCaptureNotBeforeMs: 0,
+  }
   const events: string[] = []
   const brokerDeliveries: Delivery[] = []
   const controllerDeliveries: Delivery[] = []
+  const acceptedDeliveries = new Set<string>()
+  const send = (delivery: Delivery) => {
+    const identity = `${delivery.service}:${delivery.method}:${delivery.idempotencyKey ?? ''}`
+    if (acceptedDeliveries.has(identity)) return
+    acceptedDeliveries.add(identity)
+    if (delivery.service === 'BaynBrokerObservations') brokerDeliveries.push(delivery)
+    else controllerDeliveries.push(delivery)
+  }
   let captures = 0
   let advances = 0
   let sleeps = 0
@@ -59,8 +78,13 @@ const handoff = (
   const signal = new AbortController().signal
   const clock = { currentTimeMillisUnsafe: () => Date.parse('2026-11-09T18:00:00.000Z') }
   const broker = makeBaynBrokerObservations(
-    { ...config, pollIntervalMs: 10_000 },
+    { ...config, maxAgeMs: 60_000, freshnessLeadMs: 30_000 },
     {
+      verifyNotification: () => {
+        throw new Error('deployment activation does not ingest notifications')
+      },
+      recordNotification: async () => ({ covered: false }),
+      invalidate: async () => undefined,
       activate: async () => {
         brokerActivations += 1
       },
@@ -77,7 +101,12 @@ const handoff = (
         events.push(published ? 'broker-published' : 'broker-unavailable')
         return {
           poll: published
-            ? { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
+            ? {
+                _tag: 'Published',
+                snapshotHash: 'e'.repeat(64),
+                observedAt: '2026-11-09T18:00:00.000Z',
+                nextPollNotBeforeMs: 0,
+              }
             : { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
           startedAtMs: clock.currentTimeMillisUnsafe(),
           completedAtMs: clock.currentTimeMillisUnsafe(),
@@ -89,20 +118,22 @@ const handoff = (
   ) as unknown as {
     object: {
       activate: (ctx: ObjectContext, input: unknown) => Promise<BrokerState>
-      poll: (ctx: ObjectContext, input: unknown) => Promise<void>
+      capture: (ctx: ObjectContext, input: unknown) => Promise<void>
+      freshness: (ctx: ObjectContext, input: unknown) => Promise<void>
       status: (ctx: ObjectSharedContext, input: unknown) => Promise<BrokerState>
     }
   }
   const brokerContext = {
     key: controllerKey,
-    get: async (key: string) => (key === 'polling' ? brokerState : null),
+    date: { now: async () => clock.currentTimeMillisUnsafe() },
+    get: async (key: string) => (key === 'observation' ? brokerState : null),
     set: (_key: string, next: BrokerState) => {
       brokerState = next
     },
     clear: () => undefined,
     run: async <A>(_name: string, action: () => Promise<A>) => action(),
     request: () => ({ id: `broker-capture-${captures}`, attemptCompletedSignal: signal }),
-    genericSend: (delivery: Delivery) => brokerDeliveries.push(delivery),
+    genericSend: send,
     console: { warn: () => undefined },
   } as unknown as ObjectContext
 
@@ -133,19 +164,26 @@ const handoff = (
       rotate: (ctx: ControllerContext, input: unknown) => Promise<ExecutionControllerState>
       deactivate: (ctx: ControllerContext, input: unknown) => Promise<ExecutionControllerState>
       tick: (ctx: ControllerContext, input: unknown) => Promise<void>
+      wake: (ctx: ControllerContext, input: unknown) => Promise<void>
       activateDeployment: (ctx: ObjectSharedContext, input: unknown) => Promise<ExecutionControllerState>
     }
   }
   const controllerContext = {
     key: controllerKey,
+    date: { now: async () => clock.currentTimeMillisUnsafe() },
     get: async () => state,
     set: (_key: string, next: ExecutionControllerState) => {
       state = next
     },
     run: async <A>(_name: string, action: () => Promise<A>) => action(),
     request: () => ({ id: 'handoff-controller', attemptCompletedSignal: signal }),
-    genericSend: (delivery: Delivery) => controllerDeliveries.push(delivery),
+    genericSend: send,
   } as unknown as ControllerContext
+  const deliverController = async (delivery: Delivery) => {
+    if (delivery.method === 'wake') await controller.object.wake(controllerContext, delivery.parameter)
+    else if (delivery.method === 'tick') await controller.object.tick(controllerContext, delivery.parameter)
+    else throw new Error(`Unexpected controller delivery ${delivery.method}`)
+  }
   const coordinator = {
     key: controllerKey,
     date: { now: async () => clock.currentTimeMillisUnsafe() },
@@ -175,29 +213,36 @@ const handoff = (
       if (failure === 'interrupted') throw new Error('activation interrupted')
       if (brokerState.lastSnapshotHash === undefined) {
         expect(state).toMatchObject({ active: true, epoch: 4, sourceRevision: previousSourceRevision })
-        let delivery = brokerDeliveries.shift()
+        const takeCapture = () => {
+          const index = brokerDeliveries.findIndex((delivery) => delivery.method === 'capture')
+          return index < 0 ? undefined : brokerDeliveries.splice(index, 1)[0]
+        }
+        let delivery = takeCapture()
         if (delivery === undefined) throw new Error('broker recovery has no scheduled successor')
         // A retained predecessor delivery and a duplicated recovery delivery must not start another capture.
-        await broker.object.poll(brokerContext, {
+        await broker.object.capture(brokerContext, {
           sourceRevision: previousSourceRevision,
           epoch: 7,
           sequence: 19,
         })
         const before = captures
-        await broker.object.poll(brokerContext, delivery.parameter)
+        await broker.object.capture(brokerContext, delivery.parameter)
         while (captures === before) {
-          delivery = brokerDeliveries.shift()
+          delivery = takeCapture()
           if (delivery === undefined) throw new Error('broker recovery has no current successor')
-          await broker.object.poll(brokerContext, delivery.parameter)
+          await broker.object.capture(brokerContext, delivery.parameter)
         }
         expect(captures).toBe(before + 1)
-        await broker.object.poll(brokerContext, delivery.parameter)
+        await broker.object.capture(brokerContext, delivery.parameter)
         expect(captures).toBe(before + 1)
         if (failure === 'foreign') brokerState = { ...brokerState, sourceRevision: previousSourceRevision }
       } else {
-        const delivery = controllerDeliveries.shift()
-        if (delivery === undefined) throw new Error('controller recovery has no scheduled successor')
-        await controller.object.tick(controllerContext, delivery.parameter)
+        const before = advances
+        while (advances === before) {
+          const delivery = controllerDeliveries.shift()
+          if (delivery === undefined) throw new Error('controller activation has no scheduled financial pass')
+          await deliverController(delivery)
+        }
       }
     },
   } as unknown as ObjectSharedContext
@@ -218,7 +263,15 @@ const handoff = (
     staleBrokerTick: async () => {
       const retained = brokerDeliveries.shift()
       if (retained === undefined) throw new Error('missing retained broker delivery')
-      await broker.object.poll(brokerContext, retained.parameter)
+      if (retained.method === 'capture') await broker.object.capture(brokerContext, retained.parameter)
+      else if (retained.method === 'freshness') await broker.object.freshness(brokerContext, retained.parameter)
+      else throw new Error(`Unexpected broker delivery ${retained.method}`)
+    },
+    drainControllerEvents: async () => {
+      while (controllerDeliveries.length > 0) {
+        const delivery = controllerDeliveries.shift()
+        if (delivery !== undefined) await deliverController(delivery)
+      }
     },
     state: () => state,
     counts: () => ({ captures, advances, sleeps, brokerActivations }),
@@ -237,28 +290,30 @@ test.each(['unavailable', 'rejected'] as const)(
       active: true,
       epoch: 5,
       sourceRevision,
-      nextSequence: 14,
-      lastCompletion: { sequence: 13 },
+      nextSequence: 13,
+      lastCompletion: { sequence: 12 },
     })
     expect(h.events.indexOf('broker-published')).toBeLessThan(h.events.indexOf('controller-activated'))
     expect(h.events).not.toContain('controller-deactivated')
-    expect(h.counts()).toEqual({ captures: 3, advances: 2, sleeps: 3, brokerActivations: 1 })
+    expect(h.counts()).toEqual({ captures: 3, advances: 1, sleeps: 2, brokerActivations: 1 })
     await h.staleBrokerTick()
     expect(h.counts().captures).toBe(3)
     expect(h.brokerDeliveries).toHaveLength(1)
     expect(h.controllerDeliveries).toHaveLength(1)
+    await h.drainControllerEvents()
+    expect(h.controllerDeliveries).toHaveLength(0)
     await h.staleControllerTick()
-    expect(h.counts().advances).toBe(2)
+    expect(h.counts().advances).toBe(1)
   },
 )
 
 test('broker recovery after the first readiness budget completes the same activation with fresh journaled work', async () => {
   const h = handoff('extended')
   await h.run()
-  expect(h.state()).toMatchObject({ active: true, epoch: 5, sourceRevision, nextSequence: 14 })
+  expect(h.state()).toMatchObject({ active: true, epoch: 5, sourceRevision, nextSequence: 13 })
   const attempts = executionControllerDeploymentCompletionMaximumAttempts(config.operationTimeoutMs)
   expect(h.counts().captures).toBeGreaterThan(attempts)
-  expect(h.counts().advances).toBe(2)
+  expect(h.counts().advances).toBe(1)
   expect(h.counts().brokerActivations).toBe(1)
   expect(h.preflights()).toBe(2)
   expect(h.events).not.toContain('controller-deactivated')
@@ -268,7 +323,11 @@ test.each(['superseded', 'paused'] as const)(
   'a %s deployment cannot renew its broker-readiness wait',
   async (failure) => {
     const h = handoff(failure)
-    await expect(h.run()).rejects.toThrow()
+    const failureResult = await h.run().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(failureResult).toBeInstanceOf(Error)
     expect(h.counts().advances).toBe(0)
     expect(h.preflights()).toBe(2)
     expect(h.controllerDeliveries).toHaveLength(0)
@@ -280,11 +339,16 @@ test.each(['foreign', 'interrupted'] as const)(
   'a %s readiness wait cannot retire or activate a controller',
   async (failure) => {
     const h = handoff(failure)
-    await expect(h.run()).rejects.toThrow()
+    const failureResult = await h.run().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(failureResult).toBeInstanceOf(Error)
     expect(h.state()).toMatchObject({ active: true, epoch: 4, sourceRevision: previousSourceRevision })
     expect(h.counts().advances).toBe(0)
     expect(h.counts().sleeps).toBe(1)
     expect(h.brokerDeliveries).toHaveLength(1)
+    await h.drainControllerEvents()
     expect(h.controllerDeliveries).toHaveLength(0)
   },
 )
@@ -293,7 +357,7 @@ test('a failed fresh confirmation retries instead of accepting the retained succ
   const h = handoff('confirmation')
   await h.run()
   expect(h.state()).toMatchObject({ active: true, epoch: 5, sourceRevision })
-  expect(h.counts()).toEqual({ captures: 5, advances: 2, sleeps: 4, brokerActivations: 1 })
+  expect(h.counts()).toEqual({ captures: 5, advances: 1, sleeps: 3, brokerActivations: 1 })
   expect(h.events.lastIndexOf('broker-published')).toBeLessThan(h.events.indexOf('controller-activated'))
   expect(h.events).not.toContain('controller-deactivated')
 })

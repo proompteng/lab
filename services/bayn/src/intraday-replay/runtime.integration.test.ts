@@ -1443,7 +1443,6 @@ durableTest.each(
                   intradayMarketData: runtime.marketData,
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
-                  pollIntervalMs: 1000,
                   reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
                   reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
                 },

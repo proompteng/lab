@@ -25,6 +25,10 @@ import {
 } from '../telemetry'
 import { startInferenceExpenseProjection } from '../inference-expense-runtime'
 import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
+import { makeBaynEntryInference, type EntryInferenceRuntime } from './restate-entry-inference'
+import type { MarketReadyWakeup } from '../execution/events'
+import { KafkaMarketFailure } from '../market-data/streaming/kafka'
+import { InternalHttpOriginSchema } from './restate-execution-activate'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
   readonly message: string
@@ -35,7 +39,41 @@ export const restateExecutionServerConfig = Config.all({
   activationToken: Config.Redacted('BAYN_EXECUTION_ACTIVATION_TOKEN'),
   port: Config.Port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
+  ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
+    Config.withDefault('http://restate.restate.svc.cluster.local:8080'),
+  ),
 })
+
+export const publishMarketReadiness = (
+  ingressOrigin: string,
+  config: Pick<ExecutionControllerConfig, 'controllerKey' | 'operationTimeoutMs'>,
+  event: MarketReadyWakeup,
+  activationToken: Redacted.Redacted<string>,
+): Effect.Effect<void, KafkaMarketFailure> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await fetch(
+        `${ingressOrigin}/BaynExecutionController/${encodeURIComponent(config.controllerKey)}/marketReady`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': event.eventId,
+            authorization: `Bearer ${Redacted.value(activationToken)}`,
+          },
+          body: JSON.stringify(event),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(config.operationTimeoutMs)]),
+        },
+      )
+      try {
+        if (!response.ok) throw new Error(`market readiness registration returned HTTP ${response.status}`)
+      } finally {
+        await response.body?.cancel()
+      }
+    },
+    catch: (cause) =>
+      new KafkaMarketFailure({ operation: 'read', message: 'durable market readiness registration failed', cause }),
+  })
 
 export const withNativeStartupReadiness = (
   handler: (request: Http2ServerRequest, response: Http2ServerResponse) => void,
@@ -69,23 +107,29 @@ export const makeRestateExecutionEndpointHandler = (
   runtime: NativeExecutionRuntime,
   activationAuthorizationHash: string,
   identityKeys: readonly string[],
-  brokerObservations: { readonly runtime: BrokerObservationRuntime; readonly pollIntervalMs: number },
+  inferenceRuntime: EntryInferenceRuntime,
+  brokerObservations: {
+    readonly runtime: BrokerObservationRuntime
+    readonly maxAgeMs: number
+    readonly freshnessLeadMs: number
+  },
   hooks: readonly restate.HooksProvider[] = [],
 ) => {
   const observations = makeBaynBrokerObservations(
-    { ...config, pollIntervalMs: brokerObservations.pollIntervalMs },
+    { ...config, maxAgeMs: brokerObservations.maxAgeMs, freshnessLeadMs: brokerObservations.freshnessLeadMs },
     brokerObservations.runtime,
     hooks,
   )
   const controller = makeBaynExecutionController({ ...config, activationAuthorizationHash }, runtime, hooks)
+  const inference = makeBaynEntryInference(config, inferenceRuntime, hooks)
   return restate.createEndpointHandler({
-    services: [controller, observations],
+    services: [controller, observations, inference],
     identityKeys: [...identityKeys],
   })
 }
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
-  const [{ activationToken, port, requestIdentityKeys }, plan] = yield* Effect.all([
+  const [{ activationToken, port, requestIdentityKeys, ingressOrigin }, plan] = yield* Effect.all([
     restateExecutionServerConfig,
     loadApplicationPlan,
   ])
@@ -109,7 +153,8 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const { config, runtime, readMarketReadiness } = yield* acquireNativeExecutionRuntime(plan)
+  const { config, runtime, inferenceRuntime, readMarketReadiness, startMarketWakeups } =
+    yield* acquireNativeExecutionRuntime(plan)
   yield* startInferenceExpenseProjection(plan.config)
   const brokerObservations = yield* acquireBrokerObservationRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
@@ -123,6 +168,7 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         runtime,
         activationAuthorizationHash,
         identityKeys,
+        inferenceRuntime,
         brokerObservations,
         telemetry.hooks,
       ),
@@ -130,6 +176,7 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     ),
   )
   yield* acquireRestateHttp2Server(server, port)
+  yield* startMarketWakeups((event) => publishMarketReadiness(ingressOrigin, config, event, activationToken))
   yield* Effect.logInfo('Bayn native Restate execution endpoint is listening').pipe(
     Effect.annotateLogs({
       controllerKey: config.controllerKey,

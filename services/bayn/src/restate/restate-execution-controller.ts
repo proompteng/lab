@@ -32,6 +32,7 @@ import {
 import { sha256 } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
+import { decodeExecutionWakeup, MarketReadySchema } from '../execution/events'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -647,17 +648,47 @@ export const makeBaynExecutionController = (
           )
           ctx.set(stateKey, completed)
 
+          if (
+            result.observation?.result === 'SUCCESS' &&
+            (result.observation.waitReason === 'POST_MUTATION_RECONCILIATION' ||
+              result.observation.waitReason === 'PROTECTION_EXIT_COMMITTED')
+          )
+            ctx.genericSend({
+              service: 'BaynBrokerObservations',
+              method: 'refresh',
+              key: ctx.key,
+              parameter: { sourceRevision: config.sourceRevision },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `bayn-post-mutation-refresh-${completed.epoch}-${tick.sequence}`,
+            })
+
+          for (const job of result.inferenceJobs ?? []) {
+            if (job.status !== 'Prepared') continue
+            ctx.genericSend({
+              service: 'BaynEntryInference',
+              method: 'evaluate',
+              parameter: {
+                schemaVersion: 'bayn.inference-dispatch.v1',
+                controllerKey: ctx.key,
+                epoch: completed.epoch,
+                sourceRevision: config.sourceRevision,
+                jobId: job.jobId,
+              },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `bayn-inference-${job.jobId}`,
+            })
+          }
+
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
           // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
-          // Ordinary polling waits retain the same due-time contract; projection and journaling must consume their
-          // delay budget too, rather than starting a fresh wait after the persisted deadline has already passed.
+          // Only a domain deadline schedules a successor. Projection and journaling consume its remaining time;
+          // an idle successful pass waits for a source, broker or inference event.
           const scheduleAt = clock.currentTimeMillisUnsafe()
           const completionDelay =
-            completed.nextDueAt === undefined
-              ? result.outcome.nextDelayMs
-              : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
-          scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined)
+            completed.nextDueAt === undefined ? undefined : Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt)
+          if (completionDelay !== undefined)
+            scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             completionToScheduleMs: scheduleAt - Date.parse(result.completedAt),
             controllerKey: ctx.key,
@@ -667,9 +698,101 @@ export const makeBaynExecutionController = (
             outcome: result.outcome._tag,
             receiptHash: result.outcome.receiptHash,
             requestedNextDelayMs: result.outcome.nextDelayMs,
-            scheduledNextDelayMs: completionDelay,
+            ...(completionDelay === undefined ? {} : { scheduledNextDelayMs: completionDelay }),
             sourceRevision: completed.sourceRevision,
           })
+        },
+      ),
+
+      wake: restate.handlers.object.exclusive(
+        {
+          ingressPrivate: true,
+          idempotencyRetention: executionControllerActivationRetentionMs,
+          retryPolicy: executionControllerCommandRetryPolicy,
+        },
+        async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown): Promise<void> => {
+          const event = decodeOrTerminal(decodeExecutionWakeup(candidate), 'execution wakeup failed validation')
+          verifyTickKey(config, ctx.key)
+          const state = await readState(ctx)
+          if (state === null || !state.active || !ownsControllerState(config, state)) return
+          if (event.sourceRevision !== config.sourceRevision) return
+          if (event._tag === 'InferenceCompleted' && event.epoch !== state.epoch) {
+            await writeRuntimeLog(runtime, 'info', 'Bayn ignored a stale inference completion', {
+              controllerKey: ctx.key,
+              completionEpoch: event.epoch,
+              currentEpoch: state.epoch,
+              jobId: event.jobId,
+            })
+            return
+          }
+          if (event._tag === 'MarketReady') {
+            const frontier = state.marketFrontier
+            if (
+              frontier !== undefined &&
+              (frontier.eventId === event.eventId ||
+                event.readyAt < frontier.readyAt ||
+                (event.captureId === frontier.captureId &&
+                  event.sourceEpoch === frontier.sourceEpoch &&
+                  (event.consumerSequence < frontier.consumerSequence ||
+                    event.projectionSequence < frontier.projectionSequence)))
+            )
+              return
+            ctx.set(stateKey, {
+              ...state,
+              marketFrontier: {
+                eventId: event.eventId,
+                captureId: event.captureId,
+                sourceEpoch: event.sourceEpoch,
+                consumerSequence: event.consumerSequence,
+                projectionSequence: event.projectionSequence,
+                readyAt: event.readyAt,
+              },
+            })
+          }
+          if (event._tag === 'BrokerObservation') {
+            if (event.snapshotHash === state.lastBrokerSnapshotHash) return
+            ctx.set(stateKey, { ...state, lastBrokerSnapshotHash: event.snapshotHash })
+          }
+          if (
+            event._tag === 'MarketReady' &&
+            state.marketEligibleAt !== undefined &&
+            (await ctx.date.now()) < Date.parse(state.marketEligibleAt)
+          )
+            return
+          // The event only accelerates the serialized owner. Every account, quote, authority and deadline check
+          // remains inside the native financial pass; a market or broker hint never grants mutation authority.
+          ctx.genericSend({
+            service: 'BaynExecutionController',
+            method: 'tick',
+            key: ctx.key,
+            parameter: {
+              schemaVersion: 'bayn.execution-controller-tick.v1',
+              epoch: state.epoch,
+              sequence: state.nextSequence,
+            },
+            inputSerde: executionTickSerde,
+            idempotencyKey: `bayn-execution-wake-${state.epoch}-${state.nextSequence}-${event.eventId}`,
+          })
+        },
+      ),
+
+      marketReady: restate.handlers.object.shared(
+        {
+          ingressPrivate: false,
+          idempotencyRetention: executionControllerActivationRetentionMs,
+          journalRetention: 0,
+          retryPolicy: executionControllerCommandRetryPolicy,
+        },
+        async (ctx: restate.ObjectSharedContext<ControllerObjectState>, candidate: unknown): Promise<void> => {
+          const event = decodeOrTerminal(
+            Schema.decodeUnknownResult(MarketReadySchema, strictParseOptions)(candidate),
+            'market readiness notification failed validation',
+          )
+          verifyTickKey(config, ctx.key)
+          authorizeDeployment(config.activationAuthorizationHash, ctx.request().headers.get('authorization'))
+          if (event.sourceRevision !== config.sourceRevision) throw terminal('market readiness source differs')
+          // Await durable registration in the exclusive owner before acknowledging the SQL outbox item.
+          await ctx.objectClient(controller, ctx.key).wake(event)
         },
       ),
 

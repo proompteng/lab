@@ -68,6 +68,7 @@ mock.module('./kafka', () => ({
 }))
 const { projectionWorkerProgram } = await import('./market-projection-worker')
 const options: ProjectionWorkerOptions = {
+  controllerKey: 'a'.repeat(64),
   kafka: {
     brokers: ['unused:9092'],
     username: 'fixture',

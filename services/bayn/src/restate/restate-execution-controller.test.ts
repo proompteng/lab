@@ -35,12 +35,8 @@ import {
 const fixtureTransportClock = {
   currentTimeMillisUnsafe: () => Date.parse('2026-08-13T18:00:00.000Z'),
 }
-const makeBaynExecutionController: typeof makeController = (
-  configuration,
-  runtime,
-  hooks,
-  transportClock = fixtureTransportClock,
-) => makeController(configuration, runtime, hooks, transportClock)
+const makeBaynExecutionController: typeof makeController = (configuration, runtime, hooks, transportClock) =>
+  makeController(configuration, runtime, hooks, transportClock ?? fixtureTransportClock)
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -76,6 +72,8 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
         readonly activate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly rotate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly tick: (ctx: TestContext, candidate: unknown) => Promise<void>
+        readonly wake: (ctx: TestContext, candidate: unknown) => Promise<void>
+        readonly marketReady: (ctx: ObjectSharedContext, candidate: unknown) => Promise<void>
         readonly deactivate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly prepareActivation: (
           ctx: ObjectSharedContext,
@@ -93,7 +91,7 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
           ...context,
           date: {
             ...context.date,
-            now: context.date?.now ?? (async () => fixtureTransportClock.currentTimeMillisUnsafe()),
+            now: async () => (context.date?.now ? context.date.now() : fixtureTransportClock.currentTimeMillisUnsafe()),
           },
         } as ObjectSharedContext,
         candidate,
@@ -102,6 +100,234 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
 }
 
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
+
+test('a prepared inference is durably dispatched and releases the account owner without ordinary chaining', async () => {
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+  }
+  const deliveries: Array<{ service: string; method: string; parameter: unknown }> = []
+  const object = handlers(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async () => ({
+        completedAt: '2026-08-13T18:00:01.000Z',
+        outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1 },
+        inferenceJobs: [
+          {
+            schemaVersion: 'bayn.jev-inference-job.v1',
+            jobId: 'e'.repeat(64),
+            batchId: 'e'.repeat(64),
+            cycleId: 'f'.repeat(64),
+            authorityGenerationHash: '1'.repeat(64),
+            expiresAt: '2026-08-13T18:01:00.000Z',
+            status: 'Prepared',
+          },
+        ],
+      }),
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    run: async <A>(_name: string, action: () => Promise<A>) => action(),
+    genericSend: (delivery: { service: string; method: string; parameter: unknown }) => deliveries.push(delivery),
+    request: () => ({ id: 'prepared-inference-owner', attemptCompletedSignal: new AbortController().signal }),
+  } as unknown as TestContext
+  await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+  expect(state.nextSequence).toBe(5)
+  expect(state.nextDueAt).toBeUndefined()
+  expect(deliveries).toEqual([
+    expect.objectContaining({
+      service: 'BaynEntryInference',
+      method: 'evaluate',
+      parameter: expect.objectContaining({ controllerKey, epoch: 1, jobId: 'e'.repeat(64) }),
+    }),
+  ])
+})
+
+test('market bursts preserve eligibility and ignore duplicate, older and foreign readiness frontiers', async () => {
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+    marketEligibleAt: '2026-08-13T18:01:02.000Z',
+    nextDueAt: '2026-08-13T18:01:02.000Z',
+  }
+  let now = Date.parse('2026-08-13T18:01:00.000Z')
+  const deliveries: unknown[] = []
+  const object = handlers(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async () => {
+        throw new Error('a notification cannot directly execute financial work')
+      },
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    genericSend: (delivery: unknown) => deliveries.push(delivery),
+    date: { now: async () => now },
+  } as unknown as TestContext
+  const event = {
+    schemaVersion: 'bayn.execution-wakeup.v1',
+    _tag: 'MarketReady',
+    sourceRevision,
+    eventId: 'd'.repeat(64),
+    captureId: 'capture-1',
+    sourceEpoch: 'source-1',
+    consumerSequence: 2,
+    projectionSequence: 2,
+    originalAvailableAt: '2026-08-13T18:01:00.000Z',
+    readyAt: '2026-08-13T18:01:00.100Z',
+  }
+  await object.wake(context, event)
+  expect(deliveries).toHaveLength(0)
+  expect(state.nextDueAt).toBe('2026-08-13T18:01:02.000Z')
+  now += 2_000
+  await object.wake(context, event)
+  await object.wake(context, { ...event, eventId: 'e'.repeat(64), projectionSequence: 1 })
+  await object.wake(context, { ...event, eventId: 'f'.repeat(64), sourceRevision: 'a'.repeat(40) })
+  expect(deliveries).toHaveLength(0)
+  await object.wake(context, {
+    ...event,
+    eventId: '1'.repeat(64),
+    projectionSequence: 3,
+    consumerSequence: 3,
+    readyAt: '2026-08-13T18:01:02.100Z',
+  })
+  expect(deliveries).toHaveLength(1)
+  expect(state.marketFrontier?.projectionSequence).toBe(3)
+})
+
+test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+  }
+  const deliveries: unknown[] = []
+  const nextWakeAt = '2026-08-14T13:31:02.000Z'
+  const object = handlers(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async () => ({
+        completedAt: '2026-08-13T18:00:00.000Z',
+        observation: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: '2026-08-13T18:00:00.000Z' },
+        outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1, nextWakeAt },
+      }),
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    run: async <A>(_name: string, action: () => Promise<A>) => action(),
+    genericSend: (delivery: unknown) => deliveries.push(delivery),
+    request: () => ({ id: 'closed-session-eligibility', attemptCompletedSignal: new AbortController().signal }),
+    date: { now: async () => Date.parse('2026-08-13T18:00:01.000Z') },
+  } as unknown as TestContext
+  await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+  expect(state.marketEligibleAt).toBe(nextWakeAt)
+  await object.wake(context, {
+    schemaVersion: 'bayn.execution-wakeup.v1',
+    _tag: 'MarketReady',
+    sourceRevision,
+    eventId: 'e'.repeat(64),
+    captureId: 'capture',
+    sourceEpoch: 'epoch',
+    consumerSequence: 1,
+    projectionSequence: 1,
+    originalAvailableAt: '2026-08-13T18:00:00.000Z',
+    readyAt: '2026-08-13T18:00:01.000Z',
+  })
+  expect(deliveries).toHaveLength(1)
+  expect(state.nextDueAt).toBe(nextWakeAt)
+})
+
+test.each(['POST_MUTATION_RECONCILIATION', 'PROTECTION_EXIT_COMMITTED'] as const)(
+  'an accepted %s outcome requests one quota-bound canonical refresh',
+  async (waitReason) => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const deliveries: unknown[] = []
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        prepareActivation: async () => undefined,
+        projectState: async () => undefined,
+        log: async () => undefined,
+        advance: async () => ({
+          completedAt: '2026-08-13T18:00:01.000Z',
+          observation: {
+            result: 'SUCCESS',
+            outcome: 'RECOVERED',
+            recoveryAction: 'WAITING',
+            waitReason,
+            observedAt: '2026-08-13T18:00:01.000Z',
+          },
+          outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1 },
+        }),
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: unknown) => deliveries.push(delivery),
+      request: () => ({ id: 'post-mutation-refresh', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 }
+    await object.tick(context, tick)
+    await object.tick(context, tick)
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        service: 'BaynBrokerObservations',
+        method: 'refresh',
+        key: controllerKey,
+        parameter: { sourceRevision },
+        idempotencyKey: 'bayn-post-mutation-refresh-1-4',
+      }),
+    ])
+  },
+)
 
 test.each([
   { absoluteWake: true, replayed: false, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
@@ -183,7 +409,12 @@ test.each([
       sequence: 4,
       issuedAt: '2026-08-13T18:00:00.000Z',
     })
-    expect(state.nextDueAt).toBe(absoluteWake ? '2026-08-13T18:00:07.000Z' : '2026-08-13T18:00:04.000Z')
+    expect(state.nextDueAt).toBe(absoluteWake ? '2026-08-13T18:00:07.000Z' : undefined)
+    if (!absoluteWake) {
+      expect(deliveries).toHaveLength(0)
+      expect(events).toEqual(replayed ? ['set', 'transport-clock'] : ['advance', 'set', 'transport-clock'])
+      return
+    }
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
       delay,
@@ -225,7 +456,12 @@ describe('native Restate execution controller', () => {
             advanced.resolve()
             return {
               completedAt: command.issuedAt,
-              outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1_000 },
+              outcome: {
+                _tag: ExecutionControllerOutcome.Waiting,
+                receiptHash: 'd'.repeat(64),
+                nextDelayMs: 1_000,
+                nextWakeAt: '2026-08-13T18:00:01.000Z',
+              },
             }
           },
           log: async () => undefined,
@@ -305,7 +541,7 @@ describe('native Restate execution controller', () => {
     })
   })
 
-  test('serializes null activation into one immediate first pass and one normal successor', async () => {
+  test('serializes null activation into one first pass and its explicit recovery deadline', async () => {
     let state: ExecutionControllerState | null = null
     const deliveries: Delivery[] = []
     const events: string[] = []
@@ -330,6 +566,7 @@ describe('native Restate execution controller', () => {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: 'd'.repeat(64),
             nextDelayMs: 30_000,
+            nextWakeAt: '2026-08-13T18:00:31.000Z',
           },
         }
       },
@@ -397,7 +634,7 @@ describe('native Restate execution controller', () => {
     expect((state as ExecutionControllerState | null)?.lastCompletion).not.toHaveProperty('lastPass')
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
-      delay: 30_000,
+      delay: 31_000,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 5, 0),
       parameter: { epoch: 1, sequence: 5, attempt: 0 },
     })
@@ -852,7 +1089,14 @@ describe('native Restate execution controller', () => {
           key: controllerKey,
           parameter: { sourceRevision },
         })
-        return Promise.resolve({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) })
+        return Promise.resolve({
+          sourceRevision,
+          epoch: 1,
+          sequence: 1,
+          captureScheduled: false,
+          nextCaptureNotBeforeMs: 0,
+          lastSnapshotHash: 'a'.repeat(64),
+        })
       },
     } as unknown as ObjectSharedContext
 
@@ -897,7 +1141,13 @@ describe('native Restate execution controller', () => {
           activations += 1
         },
       }),
-      genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1 }),
+      genericCall: async () => ({
+        sourceRevision,
+        epoch: 1,
+        sequence: 1,
+        captureScheduled: false,
+        nextCaptureNotBeforeMs: 0,
+      }),
       sleep: async () => {
         throw new Error('readiness wait interrupted')
       },
@@ -947,6 +1197,7 @@ describe('native Restate execution controller', () => {
               _tag: ExecutionControllerOutcome.Blocked,
               receiptHash: 'e'.repeat(64),
               nextDelayMs: 30_000,
+              nextWakeAt: '2026-08-13T18:00:31.000Z',
             },
           }
         },
@@ -978,7 +1229,14 @@ describe('native Restate execution controller', () => {
         status: async () => state,
         activate: (request: unknown) => object.activate(controllerContext, request),
       }),
-      genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) }),
+      genericCall: async () => ({
+        sourceRevision,
+        epoch: 1,
+        sequence: 1,
+        captureScheduled: false,
+        nextCaptureNotBeforeMs: 0,
+        lastSnapshotHash: 'a'.repeat(64),
+      }),
       sleep: async () => {
         const index = deliveries.findIndex((delivery) => delivery !== deferred)
         if (index === -1) throw new Error('reactivation did not wake the deferred controller')
@@ -1000,15 +1258,15 @@ describe('native Restate execution controller', () => {
       epoch: 1,
       initialSequence: 4,
       sourceRevision,
-      nextSequence: 12,
-      lastCompletion: { sequence: 11 },
+      nextSequence: 11,
+      lastCompletion: { sequence: 10 },
     })
-    expect(calls).toEqual([10, 11])
+    expect(calls).toEqual([10])
     expect(deliveries).toHaveLength(2)
-    expect(deliveries[1]).toMatchObject({ delay: 30_000, parameter: { epoch: 1, sequence: 12 } })
+    expect(deliveries[1]).toMatchObject({ delay: 31_000, parameter: { epoch: 1, sequence: 11 } })
 
     await object.tick(controllerContext, deferred.parameter)
-    expect(calls).toEqual([10, 11])
+    expect(calls).toEqual([10])
     expect(deliveries).toHaveLength(2)
   })
 
@@ -1047,6 +1305,7 @@ describe('native Restate execution controller', () => {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: 'f'.repeat(64),
             nextDelayMs: 30_000,
+            nextWakeAt: '2026-08-13T18:00:31.000Z',
           },
         }
       },
@@ -1103,7 +1362,14 @@ describe('native Restate execution controller', () => {
           key: controllerKey,
           parameter: { sourceRevision },
         })
-        return Promise.resolve({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) })
+        return Promise.resolve({
+          sourceRevision,
+          epoch: 1,
+          sequence: 1,
+          captureScheduled: false,
+          nextCaptureNotBeforeMs: 0,
+          lastSnapshotHash: 'a'.repeat(64),
+        })
       },
     } as unknown as ObjectSharedContext
     const request = {
@@ -1118,8 +1384,8 @@ describe('native Restate execution controller', () => {
       epoch: 5,
       planHash,
       sourceRevision,
-      lastCompletion: { sequence: 13, outcome: ExecutionControllerOutcome.Blocked },
-      nextSequence: 14,
+      lastCompletion: { sequence: 12, outcome: ExecutionControllerOutcome.Blocked },
+      nextSequence: 13,
     })
     expect(projectedStates).toHaveLength(1)
     expect(projectedStates[0]).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision, nextSequence: 12 })
@@ -1130,17 +1396,14 @@ describe('native Restate execution controller', () => {
       'advance-completed',
       'state-committed',
       'successor-scheduled',
-      'advance-completed',
-      'state-committed',
-      'successor-scheduled',
     ])
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
-      delay: 30_000,
-      idempotencyKey: executionControllerTickIdempotencyKey(5, 14, 0),
-      parameter: { epoch: 5, sequence: 14, attempt: 0 },
+      delay: 31_000,
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
+      parameter: { epoch: 5, sequence: 13, attempt: 0 },
     })
-    expect(sleeps).toBe(2)
+    expect(sleeps).toBe(1)
     expect(genericCalls).toBe(1)
 
     await object.tick(controllerContext, {
@@ -1149,10 +1412,10 @@ describe('native Restate execution controller', () => {
       sequence: 12,
       attempt: 0,
     })
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(1)
     expect(deliveries).toHaveLength(1)
     expect(calls).toEqual(
-      [12, 13].map((sequence) => ({
+      [12].map((sequence) => ({
         controllerKey,
         epoch: 5,
         sequence,
@@ -1163,15 +1426,15 @@ describe('native Restate execution controller', () => {
     expect(state).toMatchObject({
       active: true,
       epoch: 5,
-      nextSequence: 14,
-      lastCompletion: { sequence: 13, outcome: 'Blocked' },
+      nextSequence: 13,
+      lastCompletion: { sequence: 12, outcome: 'Blocked' },
       nextDueAt: '2026-08-13T18:00:31.000Z',
     })
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
-      delay: 30_000,
-      idempotencyKey: executionControllerTickIdempotencyKey(5, 14, 0),
-      parameter: { epoch: 5, sequence: 14, attempt: 0 },
+      delay: 31_000,
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
+      parameter: { epoch: 5, sequence: 13, attempt: 0 },
     })
     expect(events.at(-1)).toBe('successor-scheduled')
   })
@@ -1419,7 +1682,14 @@ describe('native Restate execution controller', () => {
           key: controllerKey,
           parameter: { sourceRevision },
         })
-        return Promise.resolve({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) })
+        return Promise.resolve({
+          sourceRevision,
+          epoch: 1,
+          sequence: 1,
+          captureScheduled: false,
+          nextCaptureNotBeforeMs: 0,
+          lastSnapshotHash: 'a'.repeat(64),
+        })
       },
       objectClient: () => ({
         prepareActivation: async () => {
@@ -1465,7 +1735,7 @@ describe('native Restate execution controller', () => {
       sourceRevision,
     })
 
-    expect(events).toEqual(['native-prepare', 'native-activate', 'native-sleep', 'native-status'])
+    expect(events).toEqual(['native-prepare', 'native-activate'])
     expect(forwarded).toMatchObject({ epoch: 1, firstSequence: 0, planHash, sourceRevision })
     expect(genericCalls).toBe(1)
   })
@@ -1497,7 +1767,14 @@ describe('native Restate execution controller', () => {
         headers: new Map([['authorization', `Bearer ${token}`]]),
         attemptCompletedSignal: new AbortController().signal,
       }),
-      genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) }),
+      genericCall: async () => ({
+        sourceRevision,
+        epoch: 1,
+        sequence: 1,
+        captureScheduled: false,
+        nextCaptureNotBeforeMs: 0,
+        lastSnapshotHash: 'a'.repeat(64),
+      }),
       objectClient: () => ({
         prepareActivation: async () => {
           statusReads += 1
@@ -1982,6 +2259,7 @@ describe('native Restate execution controller', () => {
                   _tag: ExecutionControllerOutcome.Completed,
                   receiptHash: 'e'.repeat(64),
                   nextDelayMs: 30_000,
+                  nextWakeAt: '2026-08-13T18:00:31.000Z',
                 },
               })
             : Promise.reject(failure)
@@ -2096,6 +2374,7 @@ describe('native Restate execution controller', () => {
                 _tag: ExecutionControllerOutcome.Blocked,
                 receiptHash: 'f'.repeat(64),
                 nextDelayMs: 30_000,
+                nextWakeAt: '2026-08-13T18:00:31.000Z',
               },
             }),
           log: () => Promise.resolve(),
@@ -2131,7 +2410,7 @@ describe('native Restate execution controller', () => {
     })
     expect(deliveries).toEqual([
       expect.objectContaining({
-        delay: 30_000,
+        delay: 31_000,
         parameter: expect.objectContaining({ sequence: 13, attempt: 0 }),
       }),
     ])
@@ -2180,6 +2459,7 @@ describe('native Restate execution controller', () => {
                     _tag: ExecutionControllerOutcome.Blocked,
                     receiptHash: 'f'.repeat(64),
                     nextDelayMs: 30_000,
+                    nextWakeAt: '2026-08-13T18:00:31.000Z',
                   },
                 })
           },
@@ -2216,7 +2496,7 @@ describe('native Restate execution controller', () => {
     })
     expect(deliveries).toEqual([
       expect.objectContaining({
-        delay: 30_000,
+        delay: 31_000,
         parameter: expect.objectContaining({ sequence: 13, attempt: 0 }),
       }),
     ])

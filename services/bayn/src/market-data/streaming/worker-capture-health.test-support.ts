@@ -19,6 +19,14 @@ await mock.module('../../db/postgres-client', () => ({
   PostgresClientLive: () => Layer.succeed(PgClient.PgClient, {} as PgClient.PgClient),
 }))
 await mock.module('../../db/native-arrival-postgres', () => ({ makeNativeArrivalStore: () => store }))
+await mock.module('../../db/market-ready-postgres', () => ({
+  makeMarketReadyStore: () => ({
+    retain: () => Effect.void,
+    bootstrap: () => Effect.void,
+    next: Effect.void,
+    acknowledge: () => Effect.void,
+  }),
+}))
 const kafka = await import('./kafka')
 await mock.module('./kafka', () => ({
   ...kafka,
@@ -34,7 +42,13 @@ await mock.module('./kafka', () => ({
       yield* failed.observe(observation(3))
       yield* capture(epoch.bootstrap, epoch.sources)
       const status = Effect.succeed({ epoch: 'fixture', sequence: 0, ready: true, bootstrapDeadlineAtMs: null })
-      return { status, check: Effect.void, read: Effect.never, readForLiquidation: Effect.never }
+      return {
+        status,
+        check: Effect.void,
+        read: Effect.never,
+        readForLiquidation: Effect.never,
+        startWakeups: () => Effect.void,
+      }
     }),
 }))
 const { projectionWorkerProgram } = await import('./market-projection-worker')
