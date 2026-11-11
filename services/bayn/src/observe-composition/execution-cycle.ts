@@ -53,6 +53,7 @@ import {
 import {
   executeMutationIntent,
   executeMutationIntentWithExecutor,
+  isUnresolvedMutationRecovery,
   mutationRunnerError,
   restrictMutationAuthority,
 } from './mutation-interpreter'
@@ -1131,22 +1132,26 @@ export const recoverExpiredEntryBeforeReconciliation = (
       policy.maxBrokerStateAgeMs,
       authority.version,
     )
-    if (step === undefined) return undefined
-    const outcome =
-      step._tag === 'Execute' ? yield* executePreparedMutationCycleStep(cycle, step, capability, false) : step
-    if (outcome._tag === 'PostMutationReconciliation') return outcome
-    if (outcome._tag !== 'Wait')
-      return yield* mutationRunnerError({
-        message: 'expired entry containment selected an action outside cancellation recovery',
-        failure: 'contract',
-      })
-    return {
-      outcome: 'RECOVERED',
-      action: 'WAITING',
-      observedAt: outcome.observedAt,
-      cycle,
-      ...(outcome.readiness === undefined ? { waitReason: outcome.waitReason } : { readiness: outcome.readiness }),
+    // Optional containment cannot replace ordinary reconciliation while a lookup is backed off.
+    if (step === undefined || step._tag === 'Wait') return undefined
+    const attempted = yield* executePreparedMutationCycleStep(cycle, step, capability, false).pipe(Effect.result)
+    if (Result.isFailure(attempted)) {
+      if (
+        (step.action === 'RECOVER_SUBMIT' || step.action === 'RECOVER_CANCEL') &&
+        isUnresolvedMutationRecovery(attempted.failure, step.intentId, step.action)
+      )
+        return undefined
+      return yield* attempted.failure
     }
+    const outcome = attempted.success
+    if (outcome._tag === 'PostMutationReconciliation') return outcome
+    // An unchanged recovery event makes no durable progress. Full account/order/fill reconciliation
+    // must remain reachable on its normal cadence, including while isolated lookup is unavailable.
+    if (outcome._tag === 'Wait') return undefined
+    return yield* mutationRunnerError({
+      message: 'expired entry containment selected an action outside cancellation recovery',
+      failure: 'contract',
+    })
   })
 
 export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({

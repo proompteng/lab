@@ -64,10 +64,14 @@ existing durable mutation identity and lookup recovery. No new entry, capital ac
 from this permission.
 
 Partial or filled parents, activated or filled exit legs, superseded generations, changed policy bindings, and
-unavailable or stale isolated lookup evidence return to ordinary reconciliation and protection recovery. An
-unrelated full-history failure may therefore leave these cases pending. An already bound generation with an
-incomplete reconciliation can construct its restricted driver, but settlement, rollover and restored PAPER
-authority still require their existing exact reconciliation gates.
+unavailable or stale isolated lookup evidence return to ordinary reconciliation and protection recovery.
+Unresolved, unchanged or backed-off optional lookup recovery also falls through to full reconciliation on its
+normal due cadence. Durable uncertainty remains recorded and blocks fresh submission; a failed isolated lookup
+cannot indefinitely suppress healthy account, order-list or fill-history reconciliation. Integrity, persistence
+and fresh-cancellation failures retain their existing failure handling. An unrelated full-history failure may
+therefore leave these cases pending. An already bound generation with an incomplete reconciliation can construct
+its restricted driver, but settlement, rollover and restored PAPER authority still require their existing exact
+reconciliation gates.
 
 Under [Alpaca's order contract](https://docs.alpaca.markets/us/docs/orders-at-alpaca), bracket cancellation can
 cancel the remaining group orders. A zero-fill observation is not atomic with

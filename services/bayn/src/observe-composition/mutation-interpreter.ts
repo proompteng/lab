@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Data, Effect } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
@@ -97,6 +97,25 @@ export interface ExecuteMutationIntentInput<E, R> {
   readonly now?: Effect.Effect<string, never, R>
 }
 
+class UnresolvedMutationIntentError extends Data.TaggedError('UnresolvedMutationIntentError')<{
+  readonly intentId: string
+  readonly action: ExecuteMutationIntentInput<never, never>['action']
+  readonly event: MutationEvent
+}> {}
+
+/** Only a returned durable recovery outcome may defer optional containment to full reconciliation. */
+export const isUnresolvedMutationRecovery = (
+  error: CycleRunnerError,
+  intentId: string,
+  action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL',
+): boolean =>
+  error.failure === 'operational' &&
+  error.cause instanceof UnresolvedMutationIntentError &&
+  error.cause.intentId === intentId &&
+  error.cause.action === action &&
+  error.cause.event.intentId === intentId &&
+  error.cause.event.operation === (action === 'RECOVER_CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit)
+
 export const executeMutationIntentWithExecutor = <E, R>(
   input: ExecuteMutationIntentInput<E, R>,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore | R> => {
@@ -177,7 +196,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
     if (settlement._tag === 'Unresolved') {
       return yield* mutationRunnerError({
         message: `guarded broker mutation remains unresolved at ${settlement.eventType}`,
-        cause: event,
+        cause: new UnresolvedMutationIntentError({ intentId, action, event }),
         failure: 'operational',
       })
     }
