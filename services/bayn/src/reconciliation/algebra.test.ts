@@ -525,10 +525,18 @@ describe('PostgreSQL reconciliation algebra', () => {
   test('verifies fill economics and the stored transaction once before receipt verification', () => {
     const source = { transaction: prepared.transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }
     expect(successOf(verifyAccountingHistory([source], tigerBeetle.ledger))).toEqual([prepared])
+    const { contentHash: _contentHash, ...changedMaterial } = { ...prepared.transaction, feeMicros: '1' }
     for (const changed of [
       { ...source, transaction: { ...prepared.transaction, contentHash: hash('invalid-transaction-content') } },
       { ...source, fill: { ...fill, quantityAtoms: '2000000000' } },
       { ...source, transaction: { ...prepared.transaction, ledgerPlanHash: hash('changed-ledger') } },
+      {
+        ...source,
+        transaction: {
+          ...changedMaterial,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
+        },
+      },
     ]) {
       const failure = failureOf(verifyAccountingHistory([changed], tigerBeetle.ledger))
       expect(failure).toEqual({

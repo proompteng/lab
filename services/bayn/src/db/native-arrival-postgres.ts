@@ -23,8 +23,12 @@ const PersistedChunk = Schema.Struct({
 })
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
+const CannotConnectNow = Schema.Struct({ code: Schema.Literal('57P03') })
 const retryableAppendFailure = (cause: unknown): cause is SqlError =>
-  isSqlError(cause) && (cause.reason._tag === 'ConnectionError' || cause.reason._tag === 'StatementTimeoutError')
+  isSqlError(cause) &&
+  (cause.reason._tag === 'ConnectionError' ||
+    cause.reason._tag === 'StatementTimeoutError' ||
+    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause)))
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
@@ -125,8 +129,9 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        times: 2,
-        schedule: Schedule.spaced('100 millis'),
+        // A managed PostgreSQL switchover can refuse connections for tens of seconds.
+        // Keep the immutable batch queued while reconnecting; the existing byte bound still backpressures ingestion.
+        schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ duration: '1 minute' })),
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),

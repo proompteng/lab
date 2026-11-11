@@ -18,6 +18,31 @@ test('binding inherits native cash and the used drawdown without pricing unknown
 })
 
 test.each([
+  { recorded: '0', declared: '0', admissible: true },
+  { recorded: '1', declared: '0', admissible: false },
+  { recorded: '0', declared: '1', admissible: false },
+  { recorded: '1', declared: '1', admissible: false },
+])(
+  'v2 opening turnover preserves recorded $recorded micros against declared $declared',
+  ({ recorded, declared, admissible }) => {
+    const { plan, opening, exported, source, receipt } = controlBindingFixture()
+    const current = {
+      ...opening,
+      dailyTradedNotionalMicros: declared,
+      inputs: {
+        ...opening.inputs,
+        schemaVersion: 'bayn.account-protection-inputs.v2',
+        dailyTradedNotionalMicros: recorded,
+      },
+    }
+    expect(Schema.is(ControlStudyOpeningSchema)(current)).toBeTrue()
+    const result = bindControlStudyInput(plan, current, exported, source, receipt)
+    expect(Result.isSuccess(result)).toBe(admissible)
+    if (Result.isFailure(result)) expect(String(result.failure.cause)).toContain('used daily turnover')
+  },
+)
+
+test.each([
   ['different physical build', ['opening', 'build', 'sourceRevision'], 'f'.repeat(40)],
   [
     'different account',

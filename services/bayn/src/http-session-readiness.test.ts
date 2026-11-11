@@ -353,7 +353,11 @@ test('a new intraday attempt gets its own bounded decision deadline', () => {
   })
 })
 
-const protectedAdmissionState = (): RuntimeState => {
+const protectedAdmissionState = (
+  reason:
+    | DecisionReadinessReason.AccountProtection
+    | DecisionReadinessReason.TurnoverBudgetExhausted = DecisionReadinessReason.AccountProtection,
+): RuntimeState => {
   const checkedAt = '2026-10-01T20:01:00.000Z'
   const state = sessionState(checkedAt)
   const current = state.cycle.current
@@ -377,7 +381,7 @@ const protectedAdmissionState = (): RuntimeState => {
         result: 'SUCCESS',
         outcome: 'ADMISSION_WAITING',
         observedAt: checkedAt,
-        readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+        readiness: { reason, message: 'Existing account capacity is exhausted' },
         admissionProtection: {
           authorityGenerationHash: 'b'.repeat(64),
           authorityUpdatedAt: checkedAt,
@@ -390,18 +394,21 @@ const protectedAdmissionState = (): RuntimeState => {
   }
 }
 
-test('current cycle-free account protection takes precedence over historical closed cycles and absent history', () => {
-  const state = protectedAdmissionState()
-  for (const candidate of [state, { ...state, cycle: { ...state.cycle, last: null } }]) {
-    expect(statusFacts(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
-      operational: { ready: true },
-      executionSession: { condition: 'BLOCKED', ready: false, cycleId: candidate.cycle.last?.cycleId ?? null },
-    })
-    const metrics = renderPrometheusMetrics(candidate, config, provenance, config.build.verification)
-    expect(metrics).toContain('bayn_execution_session_condition{condition="blocked"} 1\n')
-    expect(metrics).toContain('bayn_execution_session_ready 0\n')
-  }
-})
+test.each([DecisionReadinessReason.AccountProtection, DecisionReadinessReason.TurnoverBudgetExhausted])(
+  'current cycle-free %s takes precedence over historical closed cycles and absent history',
+  (reason) => {
+    const state = protectedAdmissionState(reason)
+    for (const candidate of [state, { ...state, cycle: { ...state.cycle, last: null } }]) {
+      expect(statusFacts(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+        operational: { ready: true },
+        executionSession: { condition: 'BLOCKED', ready: false, cycleId: candidate.cycle.last?.cycleId ?? null },
+      })
+      const metrics = renderPrometheusMetrics(candidate, config, provenance, config.build.verification)
+      expect(metrics).toContain('bayn_execution_session_condition{condition="blocked"} 1\n')
+      expect(metrics).toContain('bayn_execution_session_ready 0\n')
+    }
+  },
+)
 
 test('expired or superseded cycle-free protection cannot override current session facts', () => {
   const state = protectedAdmissionState()

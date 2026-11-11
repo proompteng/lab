@@ -263,13 +263,25 @@ describe('Restate broker observation owner', () => {
     expect(h.calls().polls).toBe(2)
     expect(h.deliveries).toHaveLength(2)
   })
-  test('same revision activation refreshes the cut without changing its epoch or tick identity', async () => {
+  test('same revision activation refreshes the cut and replaces a deferred poll without changing its epoch', async () => {
     const h = harness()
     await h.handlers.activate(h.context, { sourceRevision })
     await h.handlers.activate(h.context, { sourceRevision })
     expect(h.calls()).toEqual({ activations: 1, polls: 2 })
-    expect(h.deliveries[0]?.idempotencyKey).toBe(h.deliveries[1]?.idempotencyKey)
+    expect(h.deliveries[0]?.idempotencyKey).not.toBe(h.deliveries[1]?.idempotencyKey)
     expect(h.state()?.epoch).toBe(1)
+    expect(h.state()?.sequence).toBe(2)
+    const deferred = h.deliveries[0]
+    const successor = h.deliveries[1]
+    if (deferred === undefined || successor === undefined) throw new Error('missing durable poll delivery')
+    await h.handlers.poll(h.context, deferred.parameter)
+    expect(h.calls().polls).toBe(2)
+    await h.handlers.poll(h.context, successor.parameter)
+    expect(h.calls().polls).toBe(3)
+    expect(h.state()?.sequence).toBe(3)
+    await h.handlers.poll(h.context, successor.parameter)
+    expect(h.calls().polls).toBe(3)
+    expect(h.deliveries).toHaveLength(3)
   })
   test('rotation revokes old epochs and survives reconstruction from durable state', async () => {
     const h = harness({ state: { sourceRevision: 'd'.repeat(40), epoch: 7, sequence: 19 } })

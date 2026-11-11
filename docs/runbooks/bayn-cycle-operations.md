@@ -46,6 +46,45 @@ Check the deployed revision and the controller's `RECOVERED` pass, then verify `
 the active kill state and current reconciliation in `GET /v1/status`. Confirm an actual usable decision or an explicit
 waiting reason in the native pass. A restored authority alone does not prove a decision, order or fill.
 
+### Expired entry recovery during a reconciliation outage
+
+An accepted BUY may still be working when its original approval or submission deadline expires. On a scheduled
+recovery pass, the existing PAPER owner can attempt a narrowly scoped cancellation before rebuilding full account
+history. Its current generation must match the bound decision, with either clear PAPER authority or a recognized
+system restriction. The immutable decision, risk commit, intent, client order and acknowledged broker parent must
+match. A fresh isolated parent lookup must report zero filled quantity; every native bracket exit must also be
+unfilled and held. True OBSERVE `RecoveryOnly` remains lookup-only and cannot issue this cancellation.
+
+The cancellation carries the observed authority generation/version and exact account, intent, client and parent
+identities. The existing fenced admission transaction checks them again and samples the intent account's execution
+commit clock after acquiring its locks: current database wall time for live accounts, and the existing bound source
+clock plus measured elapsed work for isolated replay. Expired evidence, a changed authority version/generation, an operator hold or a protective
+SELL rejects fresh admission. `CANCEL_STARTED` commits before broker I/O; replay and unknown outcomes use the
+existing durable mutation identity and lookup recovery. No new entry, capital activation or kill clear follows
+from this permission.
+
+Partial or filled parents, activated or filled exit legs, superseded generations, changed policy bindings, and
+unavailable or stale isolated lookup evidence return to ordinary reconciliation and protection recovery.
+Unresolved, unchanged or backed-off optional lookup recovery also falls through to full reconciliation on its
+normal due cadence. Durable uncertainty remains recorded and blocks fresh submission; a failed isolated lookup
+cannot indefinitely suppress healthy account, order-list or fill-history reconciliation. Integrity, persistence
+and fresh-cancellation failures retain their existing failure handling. An unrelated full-history failure may
+therefore leave these cases pending. An already bound generation with an incomplete reconciliation can construct
+its restricted driver, but settlement, rollover and restored PAPER authority still require their existing exact
+reconciliation gates.
+
+Under [Alpaca's order contract](https://docs.alpaca.markets/us/docs/orders-at-alpaca), bracket cancellation can
+cancel the remaining group orders. A zero-fill observation is not atomic with
+the broker DELETE: a partial or complete fill can race cancellation, including a terminal canceled order with
+nonzero fills. Keep its original quantity and accounting history, confirm the cancellation outcome, and obtain
+fresh complete reconciliation before sizing protection or declaring settlement. The entry deadline prevents
+fresh submission; it does not guarantee that an accepted broker order cannot fill after that deadline.
+
+The Restate recovery-window counter saturates at seven while bounded recovery deliveries continue at the
+existing recovery cadence. Retries retain the original command issue time and ownership identity; a new
+delivery does not renew a trade deadline. Check continuing durable delivery, the cancellation event and its
+confirmation, and a later exact reconciliation separately when accepting a repair.
+
 ## Trace one lifecycle pass
 
 1. Query Tempo for `resource.service.name = "restate"`, `"bayn-execution-controller"`, and `"bayn"` over the same
@@ -242,7 +281,10 @@ Confirm the current Restate registration's label selector before comparing worke
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
-  Native recovery retries retain their durable attempt budget and retry every thirty seconds. A newly deployed
+  Native recovery retains a bounded attempt budget per delivery and schedules another recovery window after thirty
+  seconds when those attempts fail. Its diagnostic window counter saturates at seven; reaching that value keeps
+  recovery scheduled with a new invocation-bound idempotency key and the original issuance time. This never renews
+  a trade admission deadline. A newly deployed
   source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
   recovery timer into the new epoch.
 

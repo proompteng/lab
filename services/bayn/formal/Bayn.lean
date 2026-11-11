@@ -16,6 +16,7 @@ public import Bayn.InferenceResolution
 public import Bayn.InferenceExpense
 public import Bayn.InferenceHandoff
 public import Bayn.Mutations
+public import Bayn.ReconciliationRecovery
 public import Bayn.DecisionWork
 public import Bayn.ControllerTiming
 public import Bayn.OperationalSafety

@@ -118,6 +118,9 @@ const visual = (
                       ? 'REQUEST'
                       : failure.failure,
                 httpStatus: failure.status ?? null,
+                ...(failure.requestHash === request.requestHash && failure.providerDiagnostics !== undefined
+                  ? { providerDiagnostics: failure.providerDiagnostics }
+                  : {}),
                 responseHash: failure.requestHash === request.requestHash ? (failure.responseHash ?? null) : null,
                 usage:
                   failure.requestHash === request.requestHash && failure.rejectedResponse !== undefined
@@ -433,6 +436,11 @@ const evaluateHandedOffEntry = (
         httpStatus: failure instanceof EntryInferenceError ? null : (failure.status ?? null),
         responseHash: failure instanceof EntryInferenceError ? null : (failure.responseHash ?? null),
         usage: failure instanceof EntryInferenceError ? null : rejectedJevUsage(failure, disposition.jevRequestHash),
+        ...(failure instanceof EntryInferenceError ||
+        failure.requestHash !== disposition.jevRequestHash ||
+        failure.providerDiagnostics === undefined
+          ? {}
+          : { providerDiagnostics: failure.providerDiagnostics }),
       })
     }
     const received = inference.success

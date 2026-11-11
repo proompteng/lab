@@ -499,7 +499,9 @@ export const prepareOrRecoverResearchCapitalActivation = (
         'research capital build continuation requires the exact active generation',
       )
     }
-    if (buildContinuation !== null && currentReconciliationRecovery) {
+    // A bound PAPER generation already owns its accepted orders. Reconciliation failure must not prevent
+    // constructing its restricted recovery driver; that driver retains the kill and exact settlement gates.
+    if (currentReconciliationRecovery) {
       if (currentGeneration === undefined) {
         return yield* capitalActivationOperationalError('research capital reconciliation recovery lost durable history')
       }
