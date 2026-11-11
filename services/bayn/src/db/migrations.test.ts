@@ -15,6 +15,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [193, 'market_ready_outbox'],
     [194, 'broker_notification_receipts'],
     [195, 'jev_inference_work'],
+    [196, 'streaming_operational_controller'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
@@ -27,6 +28,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [193, 'market_ready_outbox'],
     [194, 'broker_notification_receipts'],
     [195, 'jev_inference_work'],
+    [196, 'streaming_operational_controller'],
   ])
 })
 

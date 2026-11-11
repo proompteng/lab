@@ -48,7 +48,8 @@ import { operationalError } from '../errors'
 import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeRebindingCycleDriver } from './generation-cycle'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
-import { completeExecutionControllerTick, executionControllerPlanHash } from '../execution/controller'
+import { completeExecutionControllerTick } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import {
   bindRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,

@@ -57,12 +57,20 @@
       "pattern": "^validation(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "broker-feed-validation",
+      "pattern": "^broker-feed-validation(?: \\(.*\\))?$"
+    },
+    {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "research-image",
       "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "broker-feed-image",
+      "pattern": "^broker-feed-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish-cohort",

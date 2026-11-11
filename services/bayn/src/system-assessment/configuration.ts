@@ -7,7 +7,7 @@ import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { SystemAssessmentError } from './economics'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 
 const qualificationRuntimeFields = {
   controllerPlanHash: Schema.NullOr(Sha256Schema),

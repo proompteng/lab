@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
-import { executionControllerPlanHash } from '../../../../../services/bayn/src/execution/controller'
+import { executionControllerPlanHash } from '../../../../../services/bayn/src/execution/controller-plan'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')

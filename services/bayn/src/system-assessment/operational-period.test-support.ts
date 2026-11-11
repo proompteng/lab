@@ -15,7 +15,7 @@ import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { qualificationDeadlines } from './configuration'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { sha256 } from '../hash'
 
 export const operationalRegistrationFixture = (base = registrationFixture()): OperationalRegistration => {

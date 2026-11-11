@@ -17,7 +17,7 @@ import { qualificationDeadlines } from './configuration'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema, scheduledEvaluationFields, validateRegisteredPolicyIdentity } from './policy'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 
 export const operationalReliabilityPolicy = {
   schemaVersion: 'bayn.operational-reliability-policy.v1',

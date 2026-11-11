@@ -17,7 +17,7 @@ import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './executi
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
 import { executionControllerConfig } from './composition/native-execution-runtime'
-import { executionControllerPlanHash } from './execution/controller'
+import { executionControllerPlanHash } from './execution/controller-plan'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
 import { captureQualificationRuntime, qualificationRuntime } from './system-assessment/configuration'
 import { canonicalHashV1Result } from './hash'

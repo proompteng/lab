@@ -39,10 +39,10 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  executionControllerPlanHash,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { type RecoveryFirstCycleAdvance, type RecoveryFirstRuntime } from '../observe-composition/model'
 import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
