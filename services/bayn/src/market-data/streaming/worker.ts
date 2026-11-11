@@ -2,6 +2,7 @@ import type { LoadedRuntimeConfig } from '../../config/model'
 import { Worker } from 'node:worker_threads'
 import { Deferred, Effect, Exit, Redacted } from 'effect'
 
+import { observeCaptureWorker, type CaptureHealth } from './capture-health'
 import type { NativeArrivalEpoch } from './native-arrival'
 import type { MarketSources } from './raw-events'
 import {
@@ -28,9 +29,12 @@ type ProjectionWorkerOperation =
   | { readonly operation: 'check' | 'status' | 'stop' }
   | { readonly operation: 'cancel' }
   | { readonly operation: 'read'; readonly query: IntradaySnapshotQuery }
-export type ProjectionWorkerRequest = ProjectionWorkerOperation & { readonly id: number }
+export type ProjectionWorkerRequest =
+  | (ProjectionWorkerOperation & { readonly id: number })
+  | { readonly operation: 'health-ack' }
 
 export type ProjectionWorkerResponse =
+  | { readonly _tag: 'CaptureHealth'; readonly health: CaptureHealth }
   | { readonly _tag: 'Ready'; readonly value: ProjectionStatus }
   | {
       readonly _tag: 'Read'
@@ -58,7 +62,7 @@ export type ProjectionWorkerResponse =
       readonly cause: string
     }
 
-type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' }>
+type Reply = Exclude<ProjectionWorkerResponse, { readonly _tag: 'Ready' | 'CaptureHealth' }>
 
 export const projectionWorkerOptions = (
   kafka: KafkaMarketConfig,
@@ -81,6 +85,7 @@ export const makeThreadedKafkaProjection = (
     }),
 ) =>
   Effect.gen(function* () {
+    const receiveHealth = yield* observeCaptureWorker
     const ready = yield* Deferred.make<void, KafkaMarketFailure>()
     const pending = new Map<number, (reply: Effect.Effect<Reply, KafkaMarketFailure>) => void>()
     let sequence = 0
@@ -100,6 +105,14 @@ export const makeThreadedKafkaProjection = (
       catch: (cause) => unavailable('Kafka projection thread could not start', cause),
     })
     const onMessage = (reply: ProjectionWorkerResponse) => {
+      if (reply._tag === 'CaptureHealth') {
+        receiveHealth(reply.health)
+        // Health acknowledgements never enter the request/deadline machinery.
+        try {
+          worker.postMessage({ operation: 'health-ack' } satisfies ProjectionWorkerRequest)
+        } catch {}
+        return
+      }
       if (reply._tag === 'Ready') {
         lastStatus = reply.value
         Deferred.doneUnsafe(ready, Exit.void)
