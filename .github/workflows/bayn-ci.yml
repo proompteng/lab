@@ -411,11 +411,7 @@ jobs:
           install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
-      - name: Prove dependency source boundary
-        run: |
-          bash nix/images/normalize-bayn-bun-deps.test.sh
-          bash nix/images/bun-workspace-deps-source.test.sh
-      - name: Verify replay execution capture against a disposable container and registry
+      - name: Verify dependency boundaries and replay image execution
         env:
           BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
           BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
@@ -423,6 +419,8 @@ jobs:
           BAYN_TEST_REPLAY_IMAGE: '1'
         run: |
           nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
+          bash nix/images/normalize-bayn-bun-deps.test.sh
+          bash nix/images/bun-workspace-deps-source.test.sh
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
           docker pull "${BAYN_TEST_REGISTRY_IMAGE}"
