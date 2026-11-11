@@ -47,6 +47,7 @@ export type EffectTool<I = any, O = any> = {
   inputJsonSchema?: Record<string, unknown>
   outputSchema?: Schema.Schema<O, any, never>
   auditResult?: boolean
+  auditArguments?: boolean
   annotations: ToolAnnotations
   scopes: string[]
   securitySchemes: OAuth2SecurityScheme[]
@@ -194,7 +195,7 @@ export const installEffectToolHandlers = (
         }
         const startedAuditErrors = runner.audit('tool_call_started', auth, {
           authorized,
-          ...(authorized && !requestError ? { arguments: input } : {}),
+          ...(authorized && !requestError && tool?.auditArguments !== false ? { arguments: input } : {}),
         })
         let result: CallToolResult
         try {

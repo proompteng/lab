@@ -111,10 +111,11 @@ the manifest. Missing, substituted or malformed sources fail verification. Exist
 and their receipt hashes remain reproducible. Financial qualification continues to require its full financial cut;
 an operational manifest cannot certify profit. Temporary spool files are private and removed when capture exits,
 including failure and interruption.
-The reporting API has a 4 GiB disk-backed temporary volume for the source snapshot. Its former 256 MiB volume cannot
-hold a complete native session's evidence. This storage bound is separate from trading deadlines and reliability
-targets; exhausted storage fails capture without dropping records or creating a successful assessment. Trading
-workers keep their existing resources.
+The trading API's private financial reporter has a 4 GiB disk-backed temporary volume. Its former 256 MiB volume
+cannot hold a complete native session's evidence. That allocation does not provision the separate qualification
+operator environment or the deployed research worker. Verify private spool capacity before starting qualification
+capture. Exhausted storage fails capture without dropping records or creating a successful assessment; trading
+deadlines, reliability targets and worker resources remain unchanged.
 
 ## Realism
 
@@ -166,8 +167,11 @@ reset the attempt history. These functions require verified audit and allocation
 ## Evidence and assessment
 
 Source cuts retain each complete batch once in `batches`; the provenance material does not copy those payloads.
-Earlier cuts retain their original bytes and hashes. The private reporting command runs on the API workload,
-with a 3 GiB Node heap inside its 4 GiB memory limit, separately from the native trading controller.
+Earlier cuts retain their original bytes and hashes. Run `bayn-system-assessment` from the research image with the
+existing explicit trading-target reporting configuration. The trading API retains `bayn-forward-performance`, not
+the qualification command; the deployed research worker's restricted identity is not a financial-report credential.
+Verify the authorized operator environment's memory and private spool capacity separately. The API financial reporter's
+3 GiB Node heap and 4 GiB memory limit are capacity context, not evidence that another workload is configured to report.
 Stream command output to a private file. A local capacity measurement using 540 copies of one retained
 514 KB batch exceeded Node's string limit with duplicate payloads. A single copy serialized 279 MB with a
 2.62 GiB process peak. This is reporting capacity evidence, not trading or reliability qualification.

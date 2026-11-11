@@ -27,6 +27,8 @@ import type { Statement } from 'effect/sql/Statement'
 import { CycleStore, type CycleStoreShape } from './cycle/store/model'
 import { CycleStoreLive, makeCycleStore, withWriterFenceCycleStore } from './cycle/store/postgres'
 import { makeCycleQueries } from './cycle/store/queries'
+import { makeCycleBindingPrograms } from './cycle/store/binding-program'
+import { makeCycleMutationPrimitives, type CycleMutationPrimitives } from './cycle/store/mutations'
 import { decodeDecisionInput } from './cycle/store/rows'
 import { DecisionEvidenceMismatch, cycleStoreError, runCycleStore } from './cycle/store/model'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from './execution/writer-fence'
@@ -583,6 +585,119 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
+  test.each(['success', 'commit-failure', 'interruption'] as const)(
+    'bound decision retention preserves the stored-row boundary after %s',
+    async (outcome) => {
+      const input = fixture()
+      const original = structuredClone(await Effect.runPromise(buildObserveShadowDecision(input)))
+      const persisted = JSON.parse(JSON.stringify(original))
+      const digest = sha256(JSON.stringify(persisted))
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* SqlClient.make({
+              acquirer: Effect.die('Binding retention tests never connect to PostgreSQL'),
+              compiler: PgClient.makeCompiler(undefined, false),
+              spanAttributes: [],
+            })
+            let stored: unknown = persisted
+            let missing = false
+            let completion = false
+            let superseded = false
+            const matchedReads: boolean[] = []
+            const sql = new Proxy(client, {
+              get(target, key, receiver) {
+                if (key === 'withTransaction')
+                  return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                    outcome === 'success'
+                      ? effect
+                      : effect.pipe(
+                          Effect.andThen(
+                            Effect.suspend(() => {
+                              missing = true
+                              return outcome === 'commit-failure'
+                                ? Effect.fail(new Error('commit failed'))
+                                : Effect.interrupt
+                            }),
+                          ),
+                        )
+                if (key === 'json') return (value: unknown) => client`${JSON.stringify(value)}`
+                return Reflect.get(target, key, receiver)
+              },
+              apply(target, receiver, args) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+                const [query, parameters] = statement.compile()
+                if (query === 'clock_timestamp()') return statement
+                if (query.includes('INSERT INTO autonomous_cycle_shadow_decisions'))
+                  return Effect.succeed([{ document_digest: digest }])
+                if (query.includes('UPDATE autonomous_cycles'))
+                  return Effect.succeed([{ cycle_id: input.cycle.identity.cycleId }])
+                if (missing) return Effect.succeed([])
+                const currentDigest = sha256(JSON.stringify(stored))
+                const matches = parameters[1] === currentDigest
+                matchedReads.push(matches)
+                return Effect.succeed([
+                  {
+                    document: matches ? null : JSON.parse(JSON.stringify(stored)),
+                    matches_retained_document: matches,
+                    document_digest: currentDigest,
+                    execution_completion_evidence_matches: completion,
+                    execution_generation_is_superseded: superseded,
+                  },
+                ])
+              },
+            }) as PgClient.PgClient
+            const queries = makeCycleQueries(sql)
+            const binding = makeCycleBindingPrograms(
+              sql,
+              {
+                ...queries,
+                decisionEvidenceMismatch: () => Effect.succeed(null),
+              },
+              {
+                readLocked: () => Effect.succeed(input.cycle),
+                requireApplied: () => Effect.void,
+              } as unknown as CycleMutationPrimitives,
+            )
+            const bound = yield* binding
+              .bindDecision(input.cycle.identity.cycleId, original, original.createdAt)
+              .pipe(Effect.exit)
+            const read = () => queries.selectDecisionDocuments(input.cycle.identity.cycleId)
+            if (outcome !== 'success') {
+              expect(Exit.isFailure(bound)).toBe(true)
+              expect(yield* read()).toEqual([])
+              expect(matchedReads).toEqual([])
+              return
+            }
+            expect(Exit.isSuccess(bound)).toBe(true)
+            Object.defineProperty(original.bindings, 'accountId', { value: 'caller-poison' })
+            const first = (yield* read())[0]
+            expect(first).toEqual(persisted)
+            expect(matchedReads).toEqual([true])
+            if (first === undefined) throw new Error('Expected the bound document')
+            expect(() => Object.defineProperty(first.bindings, 'accountId', { value: 'poison' })).toThrow()
+            completion = true
+            superseded = true
+            const second = (yield* read())[0]
+            if (second === undefined) throw new Error('Expected the repeated document')
+            expect(cycleDecisionStoreEvidence(second)).toEqual({
+              executionCompletionEvidenceMatches: true,
+              executionGenerationIsSuperseded: true,
+            })
+            // A rolled-back/missing row cannot be resurrected by the retained input.
+            missing = true
+            expect(yield* read()).toEqual([])
+            missing = false
+            // A rewritten row with the same claimed hash must cross full validation.
+            stored = { ...persisted, bindings: { ...persisted.bindings, accountId: 'corrupt-same-hash' } }
+            expect(Result.isFailure(yield* Effect.result(read()))).toBe(true)
+            expect(matchedReads).toEqual([true, true, false])
+          }),
+        ).pipe(Effect.provide(Reactivity.layer)),
+      )
+    },
+  )
+
   test.each([{}, { AAPL: 0.02 }])(
     'Jev decisions keep one copy of identical planning broker state: %j',
     async (premiums) => {
@@ -914,9 +1029,9 @@ describe('intraday shadow decision', () => {
     )
   })
 
-  test.each([true, false])(
-    'cold decision retention is byte bounded: retained=%s',
-    async (retained) => {
+  test.each([true, false].flatMap((retained) => [false, true].map((seeded) => ({ retained, seeded }))))(
+    'decision retention is byte bounded: %j',
+    async ({ retained, seeded }) => {
       const base = await Effect.runPromise(buildObserveShadowDecision(fixture()))
       const baseJson = JSON.stringify(base)
       const accountCopies = baseJson.split(accountId).length - 1
@@ -955,11 +1070,12 @@ describe('intraday shadow decision', () => {
               },
             }) as PgClient.PgClient
             const queries = makeCycleQueries(sql)
+            if (seeded) yield* queries.retainDecisionInput(document, sha256(JSON.stringify(document)))
             for (let read = 0; read < 2; read += 1) {
               const result = yield* queries.selectDecisionDocuments(document.bindings.cycleId)
               expect(result[0]?.contentHash).toBe(document.contentHash)
             }
-            expect(hasRetainedBody).toEqual([false, retained])
+            expect(hasRetainedBody).toEqual([seeded && retained, retained])
           }),
         ).pipe(Effect.provide(Reactivity.layer)),
       )
@@ -1335,16 +1451,37 @@ describe('intraday shadow decision', () => {
               input.cycle.createdAt,
             )
             yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
-            // Seed the decoded immutable document atomically through the real migrated tables and triggers.
-            // This isolates terminalization from external market-source and capital-activation setup.
-            yield* sql.withTransaction(
-              Effect.gen(function* () {
-                yield* sql`INSERT INTO autonomous_cycle_shadow_decisions (cycle_id, schema_version, document, created_at)
-            VALUES (${input.cycle.identity.cycleId}, ${document.schemaVersion}, ${sql.json(document)}, ${document.createdAt})`
-                yield* sql`UPDATE autonomous_cycles SET snapshot_id = ${document.bindings.snapshotId}, decision_hash = ${document.contentHash},
-            state_version = state_version + 1, updated_at = ${document.createdAt} WHERE cycle_id = ${input.cycle.identity.cycleId}`
-              }),
+            const boundReads: ReadonlyArray<Record<string, unknown>>[] = []
+            const bindingSql = new Proxy(sql, {
+              apply(target, receiver, args) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+                return statement.compile()[0].includes('WITH decision_read')
+                  ? statement.pipe(Effect.tap((rows) => Effect.sync(() => boundReads.push(rows))))
+                  : statement
+              },
+            })
+            const boundQueries = makeCycleQueries(bindingSql)
+            // Exercise the real binding SQL, migrated tables and triggers. As in
+            // the previous direct insertion, external source/capital facts are fixtures.
+            const binding = makeCycleBindingPrograms(
+              bindingSql,
+              {
+                ...boundQueries,
+                decisionEvidenceMismatch: () => Effect.succeed(null),
+              },
+              makeCycleMutationPrimitives(bindingSql, boundQueries),
             )
+            const bind = () => binding.bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+            const rolledBack = yield* sql
+              .withTransaction(bind().pipe(Effect.andThen(Effect.fail(new Error('test rollback after binding')))))
+              .pipe(Effect.result)
+            expect(Result.isFailure(rolledBack)).toBe(true)
+            expect(yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
+            expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId)).bindings).toEqual({})
+            yield* bind()
+            expect(yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([document])
+            expect(boundReads.at(-1)?.[0]?.['document']).toBeNull()
+            expect(boundReads.at(-1)?.[0]?.['matches_retained_document']).toBe(true)
             const projectedRows: ReadonlyArray<Record<string, unknown>>[] = []
             const observedSql = new Proxy(sql, {
               apply(target, receiver, args) {
@@ -1384,6 +1521,11 @@ describe('intraday shadow decision', () => {
                   .pipe(Effect.result)
                 expect(Result.isFailure(corrupted)).toBe(true)
                 expect(projectedRows.at(-1)?.[0]?.['matches_retained_document']).toBe(false)
+                expect(
+                  Result.isFailure(
+                    yield* boundQueries.selectDecisionDocuments(input.cycle.identity.cycleId).pipe(Effect.result),
+                  ),
+                ).toBe(true)
                 yield* sql`DELETE FROM autonomous_cycle_shadow_decisions WHERE cycle_id = ${input.cycle.identity.cycleId}`
                 expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
               }),

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from cosmosalpha.agents import FactorProposal
+from cosmosalpha.agents import FactorProposal, MetricValue
 from cosmosalpha.core import ObjectRef, create_config_snapshot
 from cosmosalpha.core.config import load_experiment_config
 from cosmosalpha.evaluation import (
@@ -64,23 +64,39 @@ class NativeContracts(unittest.TestCase):
                     operator_catalog=build_base_operator_catalog(),
                 )
 
+                valid_evidence = SimpleNamespace(
+                    factor=SimpleNamespace(expression="close", frequency="1d"),
+                    evaluation=SimpleNamespace(
+                        metrics=(
+                            MetricValue(
+                                "rank_ic_mean", 0.0, "higher_is_better", 1, "fixture"
+                            ),
+                        )
+                    ),
+                )
+                invalid_evidence = (
+                    ValueError("MCTS candidate requires a validated factor")
+                    if expression is None
+                    else SimpleNamespace(
+                        factor=valid_evidence.factor,
+                        evaluation=SimpleNamespace(metrics=()),
+                    )
+                )
+
                 def node(**kwargs):
+                    evidence = kwargs["evidence"]
                     return MCTSNode(
-                        factor_id=kwargs["factor_id"],
-                        expression=kwargs["expression"],
-                        rank_ic_mean=kwargs["rank_ic_mean"],
+                        factor_id="fixture",
+                        expression=evidence.factor.expression,
+                        rank_ic_mean=evidence.evaluation.metrics[0].value,
                         overall_score=0.0,
                         best_reward=0.0,
                     )
 
                 with (
                     patch(
-                        "cosmosalpha.pipeline.mcts.controller._extract_expression",
-                        side_effect=[expression, "close"],
-                    ),
-                    patch(
-                        "cosmosalpha.pipeline.mcts.controller._extract_eval_scores",
-                        side_effect=[{"rank_ic": rank_ic}, {"rank_ic": 0.0}],
+                        "cosmosalpha.pipeline.mcts.controller._select_candidate_evidence",
+                        side_effect=[invalid_evidence, valid_evidence],
                     ),
                     patch.object(controller, "_build_node", side_effect=node) as built,
                     patch.object(controller, "_expand", return_value=None) as expanded,
@@ -100,8 +116,9 @@ class NativeContracts(unittest.TestCase):
                     searched.call_args.kwargs["run_id"], "mcts-multi-tree002"
                 )
                 self.assertEqual(built.call_count, 1)
-                self.assertEqual(built.call_args.kwargs["rank_ic_mean"], 0.0)
-                self.assertEqual(built.call_args.kwargs["expression"], "close")
+                built_evidence = built.call_args.kwargs["evidence"]
+                self.assertEqual(built_evidence.evaluation.metrics[0].value, 0.0)
+                self.assertEqual(built_evidence.factor.expression, "close")
                 self.assertTrue(expanded.called)
                 self.assertTrue(
                     all(
@@ -120,24 +137,23 @@ class NativeContracts(unittest.TestCase):
         )
         with (
             patch.object(
-                controller, "_compute_turnover_from_result", return_value=None
+                controller, "_compute_turnover_from_evidence", return_value=None
             ),
             patch.object(
                 controller,
-                "_extract_factor_values_from_result",
+                "_extract_factor_values_from_evidence",
                 return_value=(None, None),
             ),
             patch.object(controller, "_compute_zoo_diversity", return_value=0.0),
             patch.object(controller, "_current_fzoo_entries", return_value=()),
         ):
             node = controller._build_node(
-                factor_id="missing-metric",
-                expression="close",
+                evidence=SimpleNamespace(
+                    factor=SimpleNamespace(expression="close", frequency="1d"),
+                    evaluation=SimpleNamespace(metrics=()),
+                ),
                 experiment_ref=None,
-                rank_ic_mean=None,
                 action_label="fixture",
-                loop_result=object(),
-                eval_scores={"rank_ic": None, "stability": 0.0, "diversity": 0.0},
             )
         self.assertIsNone(node.rank_ic_mean)
         self.assertEqual(controller._evaluated_factor_count, 1)

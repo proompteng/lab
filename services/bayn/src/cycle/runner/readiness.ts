@@ -11,6 +11,7 @@ import { ExpiredRiskClockEvidenceSchema } from '../../execution/risk-clock'
 
 export enum DecisionReadinessReason {
   AccountProtection = 'ACCOUNT_PROTECTION',
+  TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
   InferenceExpired = 'INFERENCE_EXPIRED',

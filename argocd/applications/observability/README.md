@@ -39,6 +39,17 @@ See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) f
 
 ## Sources of truth
 
+Torghut websocket scrape loss pages after five minutes, including a disappeared target. Failed or missing readiness
+pages after two minutes on a reachable target, including overnight crypto operation. Both alerts require an enabled
+deployment and aggregate by service so a failed old pod cannot override a healthy replacement. Kafka publication
+stalls retain the existing UTC market window and page only while readiness is healthy. All three use `notify: email`.
+Recent container restarts remain visible as warnings for ten minutes; availability alerts own sustained failures.
+
+`RegistryCleanupMissed` warns by email when the latest scheduled cleanup has no subsequent success after its two-hour
+Job deadline and five-minute alert delay. It uses the CronJob's native last-success timestamp, so an owned recovery
+clears it without deleting retained failed Jobs. [Native scenarios](tests/torghut-registry-alerts.yaml) cover outage,
+recovery, missing telemetry, pod replacement, scale-to-zero, restart expiry and cleanup deadlines.
+
 The cluster Alloy collector retains Bayn API, execution, activation, research, PostgreSQL, broker egress-proxy and
 TigerBeetle logs by an explicit container allowlist. Valkey logs use their existing failover-pod discovery. Current
 Loki readback must verify the actual container and pod labels; an `up` scrape establishes metric delivery only.

@@ -85,10 +85,10 @@ export const runNativeArrivalExportCommand = (args: readonly string[]) =>
     const command = yield* Effect.fromResult(parseNativeArrivalExportArgs(args))
     if (command._tag === 'Help') return yield* print(nativeArrivalExportUsage)
     const postgres = yield* Config.all({
-      url: Config.Redacted('BAYN_NATIVE_ARRIVAL_POSTGRES_URL'),
+      url: Config.Redacted('BAYN_POSTGRES_URL'),
       tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
-      caPath: Config.NonEmptyString('BAYN_NATIVE_ARRIVAL_POSTGRES_CA_PATH').pipe(
-        Config.withDefault('/var/run/secrets/bayn/native-arrival-postgres/ca.crt'),
+      caPath: Config.NonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
+        Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
       ),
     })
     const reader = PostgresClientLive(

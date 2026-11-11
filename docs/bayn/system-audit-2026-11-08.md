@@ -131,24 +131,61 @@ Skipped integrations still require their configured CI environments.
 
 This work starts from `45579965308e14c07afd3d8960bc7d089de1986e`. The
 [measurement record](evidence/2026-11-08-runtime-cleanup.json) separates current readback from the original inventory.
-The changes below are source changes until their reviewed image receipts and deployed behavior are verified.
+PR [#15801](https://github.com/proompteng/lab/pull/15801) merges these changes as
+`cdb8fadf7c694a43296928253d8b9b61a46e8cec`. All 92 PR checks complete and both actionable review findings are resolved.
+The cleanup is deployed in source `3c102b02a902a289700b137868c86563b052cfe4`. Successful main run
+`42621043003` publishes both role images with matching immutable source/run receipts. Freight
+`412a043e45cf37281dc43d7fc4d0934212534d63` automatically promotes through Bayn's existing Stage to
+`kargo/bayn` commit `4bbd5ae14d55f0be6a505d03c703156fc72c9656`; Argo reconciles that exact revision.
+The native activation hook succeeds, both native services select deployment `dp_11QCH160kWhe6rCtSgMpChj`,
+and both workers and matched completed ticks report the new source. This proves the release and waiting-pass
+behavior. A natural current Jev request later completes as `NO_TRADE`, and a new private compact decision passes
+the current decoder. Two subsequent natural entries also fill; their current request, submission and recovery
+records are joined below. Comparable full-request before/after latency remains unestablished.
+
+The owning-image follow-up, PR [#15811](https://github.com/proompteng/lab/pull/15811), merges as
+`784c39819435448a812989b9d3c0a0428a5835d9`. Its 71 terminal checks include 47 successes and 24 skips, with no failures.
+The pinned OpenCode qualification now runs in its independent image build; both Bayn role builds drop the duplicate
+check and unused CLI build dependency. CLI-only changes no longer schedule Bayn qualification or image publication.
+Both OpenCode architectures and all four Bayn role/platform archives pass at the reviewed PR head. These checks
+establish source and artifact qualification; the separate release readback above establishes rollout.
 
 - B2: Trading and research have separate artifact contents through the existing Nix builder. Financial reporting
   remains available in the API workload. Qualification and replay move to `bayn-system-assessment` in the research
   artifact; the old command rejects those flags. The two images require the same successful source/run receipts before
   Kargo discovers the cohort. Archive checks verify required commands and reject research tools in the trading image.
-  CI run `42577558311` verifies the actual trading and research archives on AMD64 and ARM64 at `4cc29d4350`.
+  CI run `42596127173` verifies the actual trading and research archives on AMD64 and ARM64 at PR head `66ee055c5b`.
   The trading image retains the two files required by physical candidate-image qualification, including its
   backtest bundle and dependency receipt. Python, GEPA, Git, Bun and registry tools remain research-only.
   Opening capture also remains in the trading image to preserve the frozen plan's physical candidate-build identity.
   It is removed from the research payload; no identity override or weakened capital check is introduced.
-  The original AMD64 image has 396,205,749 compressed layer bytes; replacement OCI size remains unmeasured locally.
+  The published ARM64 native artifact has 95,185,246 compressed layer bytes, compared with 392,756,535
+  in the preceding ARM64 artifact at `351b522baf`: a 75.765% reduction for that image. The separate research
+  artifact has 384,746,220 compressed layer bytes. Actual Linux containers pass the selected native entry-point,
+  wrapper and role-path checks, and all four selected research wrappers plus their role-path checks. These are
+  published artifacts, not measurements of total cohort storage or image-pull latency. All four platform configs
+  report the same source, and both indexes carry the exact successful main run's source/run receipts. PR
+  [#15812](https://github.com/proompteng/lab/pull/15812) fixes the shared workflow's deferred-tag validation;
+  the receipt validator remains strict. OpenCode proposals already run through
+  the independently published OpenCode gateway; its pinned binary qualification belongs to that image build.
 - B3: One ordered mutation-history aggregate replaces four lateral reads per intent. All 751 result rows match by
   bidirectional `EXCEPT ALL`, and the 40 PostgreSQL persistence cases pass. Five alternating warm samples after the
   first pair give medians of 24.382 ms before and 17.687 ms after. This is a 27.46% reduction for that query, not for a
   full reconciliation. A second ordered aggregate combines the quantity and cost inventory-debit reads in accounting
   reconstruction: its warm median falls from 121.191 to 72.337 ms with zero row differences. Full accounting
-  reconstruction, ledger verification and the writer fence remain mandatory.
+  reconstruction, ledger verification and the writer fence remain mandatory. Matched full-pass timing below shows
+  little overall improvement from this first release.
+  A subsequent change, merged in PR [#15814](https://github.com/proompteng/lab/pull/15814) as
+  `b3aa14bb383fb06bd5d95196e1aad63346f1a08c`, removes one repeated canonical hash per accounting transaction by reusing
+  the expected material hash already produced by reconstruction. It still hashes every stored body and verifies its
+  claimed hash, every receipt and the full ledger. The active account contains 1,133 transactions. In an isolated
+  1,000-record public fixture, seven alternating samples in the same published ARM64 Node runtime have wall medians
+  of 48.421/41.581 ms and CPU medians of 48.815/43.726 ms: 14.1% and 10.4% lower respectively. Complete prepared
+  output and four corruption failures agree. All 5,026 unit tests, 40 persistence and 49 native-Jev PostgreSQL tests,
+  both type checks, all linters and both production/research builds pass; the unit run skips 1,298 cases. This hash
+  change is now published and deployed through the existing Kargo Stage. Its isolated result does not establish
+  production latency; the separate production readback below retains the slower accounting median.
+  All 40 PR checks finish (37 successes, three skips), with completed automatic code/security review and no findings.
 - B4: Native startup requests two minutes of Webull M1 pricing bars instead of thirty minutes. Its consumer
   accepts only the latest completed bar with a 10-second availability limit. Markets disabled for new entries also
   request two minutes of pricing history, replacing the unconditional two-hour crypto rebuild. The existing entry
@@ -159,8 +196,13 @@ The changes below are source changes until their reviewed image receipts and dep
   pure entry-scope module, with 253 extra emitted bytes. The submission gate now lives in mutation-authority, and its formal
   conformance caller imports it there. This keeps financial authority contracts out of the projection. Kafka and
   independent-worker tests verify catch-up, cancellation and cleanup.
-  The earlier current workers incorporated 110,244 and
-  110,681 records in 14.407 and 33.591 seconds on Turin and Altra; replacement rollout timing remains unmeasured.
+  The latest pre-cleanup starts, still on source `351b522baf`, incorporate 214,850 records in 33.392 seconds on
+  Turin and 217,752 records in 87.309 seconds on Altra. Both cover 34 partitions with zero rejections. These natural
+  restarts followed independent infrastructure work; arrival volume and background load differ from earlier starts.
+  On source `3c102b02a9`, the corresponding natural starts incorporate 9,898 records in 5.065 seconds on Turin and
+  9,988 in 7.365 seconds on Altra: about 95.4% fewer records on each node. Both still cover 34 partitions with zero
+  rejections. These are one start per node, with different arrivals, background load and an independently changed
+  archive replica/retry configuration; the elapsed-time differences are observations, not controlled causal gains.
   Two additional old workers remain because `BaynExecutionBootstrap` is still latest on their old deployment.
   Restate has no remaining invocation for that stateless service, and both current services point to the new
   deployment. Its registration retirement remains a separate reviewed operation under the owning runbook.
@@ -175,6 +217,15 @@ The changes below are source changes until their reviewed image receipts and dep
   freezing and status readers use the complete state. All 90 targeted PostgreSQL cases pass. The eight latest sampled
   documents contain identical states: a read-only projection removes 3,834,137 of 38,759,681 JSONB text bytes, or 9.89%.
   This is representation size, not disk savings or a decode-time benchmark. Historical bytes remain unchanged.
+  A live sampled historical decision passes the retained Jev financial verifier. It does not satisfy the current
+  execution schema, so it cannot establish decode performance for the new representation.
+  A new compact decision created at 14:32:06.089 UTC on November 9 passes the current full execution decoder
+  inside the existing native API Pod. Independent SQL metadata agrees on its exact content hash and confirms that
+  planner input omits its duplicate broker state. The stored JSONB text is 768,254 bytes. Reconstructing equivalent
+  full/compact JSON in memory gives 1,183,892/728,580 bytes and wall verification medians of 76.785/64.371 ms
+  over three retained alternating pairs; CPU medians are 87.985/68.426 ms. The two JSON encodings are measured
+  separately from PostgreSQL's JSONB text rendering. This is one-record representation verification, not request
+  percentiles or disk savings. No historical bytes or private document contents are exported or rewritten.
   Cross-record references remain unimplemented; no new reference store or lookup protocol is introduced.
 - B6: Read-only metadata records 45,734,297,600 bytes of financial native-arrival chunks and 127,915,597,824 bytes in
   the dedicated archive. The 367 financial epochs were created through October 27; a later snapshot finds 440 dedicated
@@ -190,35 +241,163 @@ The changes below are source changes until their reviewed image receipts and dep
   risk and persistence implementation. The native bundle no longer emits the experimental evaluator module. All 208
   composition tests pass, including rejection of a research policy at the native entry boundary and its explicit
   replay evaluation. Immutable financial readers remain available.
+  After rollout, the retired public-information collectors have zero nonterminal invocations. Their two retained
+  Restate state rows have the same aggregate fingerprint as before rollout; neither registration nor state is deleted.
 - B9: Matched Restate schedule records resolve the current pre-attempt interval. Three ticks intentionally wait
   29.904–29.972 seconds, start 62–992 ms after their due time, and run for 1.023–1.163 seconds. For the first two,
   `bayn.execution.advance` takes 919.450/916.957 ms, reconciliation persistence 607.923/606.341 ms, and accounting
   verification 274.076/267.426 ms. Nested spans must not be added together. These are waiting passes, not entry
-  inference or order-submission waterfalls; a complete naturally eligible request and comparable release readback remain open.
-  Five retained filled entries now supply an additional historical waterfall through CHART, BASE_START, handoff,
-  evaluation receipt, intent, submission, acknowledgement, broker fill and recovery. They use v38 and Jev 1.13.
-  In the newest sample, intent creation precedes submission by 4.160 seconds, the submit acknowledgement takes
-  383 ms, and the recovery event is recorded 16.776 seconds after acknowledgement. These are differences between
-  retained timestamps, not isolated CPU, SQL or provider latency. Cross-process clock offset remains unmeasured.
-  A fresh pre-release baseline on source `cea96bc87f` binds 27 completed waiting passes to their exact Restate
-  invocation ancestry. Worker advance has a 951.300 ms median and a 9,074.354 ms maximum; persistence has a
-  644.526 ms median. The outlier spends 6,922.463 ms inserting a broker event and 1,094.850 ms committing.
-  The primary's logs independently record 6,921.870 and 1,093.963 ms for those operations on the same backend.
-  The underlying database wait reason remains unverified; the optimized history-read queries do not explain that
-  write stall. Three observed schedules also separate 29.907–29.934 seconds of requested delay from 25–705 ms of
-  start lateness. Comparable cleanup-release timing and the complete naturally eligible v40 request remain open.
-- B10: Remove superseded protocol activation recipes and completed cleanup narratives from the deployment README.
-  Keep current runtime procedures and link dated receipts through their immutable Git revision.
+  inference or order-submission waterfalls. The later natural entries below supply filled-path evidence, with
+  separate limits on before/after comparability.
+  Earlier v38 / Jev 1.13 filled-entry records remain in the measurement JSON and immutable historical figure.
+  Current v40 evidence below replaces that historical example in the active request walkthrough.
+  Earlier source-bound baselines and the financial-primary wait sample remain in the measurement record. One
+  `cea96bc87f` outlier spends 6,922.463 ms inserting a broker event and 1,094.850 ms committing; the same backend's
+  PostgreSQL logs independently confirm both durations. A later sample observes brief `WalSync` and `SyncRep` waits
+  without a blocking PID, but does not reproduce that stall or establish its underlying cause. Independent DNS/proxy
+  changes and archive rollouts also occur between those baselines; their mixed-node medians cannot isolate cleanup.
+  The comparable full-history selection contains 30 before and 27 after passes on Altra, all `Waiting`, with exactly
+  one reconciliation and accounting verification, matched to the same controller through exact Restate invocation
+  ancestry. Three after passes with another outcome are excluded explicitly. Advance medians are 2,179.880/2,159.550 ms,
+  persistence 1,651.818/1,574.174 ms, writer fence 1,416.744/1,320.600 ms, and accounting verification
+  642.084/616.620 ms. The 0.93% advance difference is small; concurrent archive retry/replica changes prevent attributing
+  it to this cleanup. The financial primary remains `bayn-db-2`. Cheap cached waits are not mixed into this comparison.
+  In the representative after pass, accounting takes 603.642 ms; about 488.816 ms lies outside its child spans.
+  This is untraced wall time, not a CPU measurement. Its 61 SQL client spans include a 109.191 ms cycle insert,
+  49.447 ms fee query and 47.837 ms inventory-debit aggregate. These observations motivate measuring the pure
+  verifier separately; they do not establish an unmeasured database or CPU cause.
+  Before the first usable regular-session input, both pre-release and after observations report
+  `SNAPSHOT_UNAVAILABLE` / `ALL_CANDIDATES_EXCLUDED` for 15 candidates. Matching-feature/completed-bar counts
+  change from 0/0 to 1/1. These are rejected-observation diagnostics, not proof of upstream producer health;
+  unused entry deadlines expire before and after release.
+  A natural request observed at 14:31:04.705 UTC then completes under v40 / Jev 1.14.0. Its exact persisted batch
+  identity and decision hash match native span attributes inside the source-bound Restate tick. CHART claim to
+  receipt is 1,158 ms, handoff is recorded 2,561 ms after observed input, the evaluation receipt interval is 3,329 ms,
+  and the batch completes at +4,735 ms. The protected decision is created at +6,741 ms. The native worker advance
+  takes 12,204.559 ms, including reconciliation 2,365.138 ms, admission 1,668.637 ms, batch completion 1,577.200 ms
+  and decision binding 1,367.110 ms. These inclusive spans are not additive. Durable record intervals can cross
+  process clocks and do not isolate model-provider latency. The cycle ends `NO_TRADE`, with no submit, acknowledgement
+  or fill in that sample; it establishes a completed strategy abstention.
+  Two later v40 / Jev 1.14 BUY entries naturally fill. Their intents match the protected document's
+  `bindings.strategyDecisionHash`, cycle, symbol and sealed batch; the document content hash is a distinct identity.
+  The 14:46:04.667 UTC request also matches the exact batch and document-hash attributes inside native trace
+  `c9d6fb6224290c673ec49ada7304b20c`, pinned to the same deployed source. Its CHART interval is 696 ms, evaluation
+  receipt interval 1,105 ms, intent-to-submit interval 3,847 ms and submit acknowledgement 479 ms. The native advance
+  takes 11,104.318 ms, including reconciliation 2,334.089 ms, admission 1,100.819 ms, decision/intent binding
+  1,201.884 ms, committed-decision read 780.582 ms and submit 571.727 ms. Parent durations include children.
+  Four BUY fills have four balanced posted accounting receipts. Their broker source timestamps span
+  14:46:18.073649–14:46:25.735427 UTC; broker observation is recorded at 14:46:43.311 and recovery at 14:46:51.268.
+  Protective SELL fills linked to the same intent are excluded from this entry timing. Broker and process clocks
+  remain separate. These are real filled-path records, not an isolated cause for the later recovery observation or
+  a comparable eligible-request before/after distribution. The second filled entry and its two BUY receipts are
+  also retained in the measurement record.
+  No trading authority, input validation, schedule or provider configuration is changed to obtain these traces.
+- B10: The deployment and service READMEs remove superseded activation recipes, the old crypto-entry procedure,
+  completed cleanup narratives and the historical WAL-canary table. Current entry scope, projection startup and
+  retained archive ownership match source. Unique historical procedures remain linked at immutable Git revisions.
+  README-only changes no longer select runtime qualification, native image builds or main image publication.
+  Actual source and manifest changes still select their checks; all 64 affected-input tests pass.
+
+### Accounting-hash release and final readback
+
+Successful main run [42638085275](https://github.com/proompteng/lab/actions/runs/42638085275) publishes the native
+and research images for `b3aa14bb383fb06bd5d95196e1aad63346f1a08c`. Both indexes and all four platform configs match
+the exact source/run cohort. Freight `3676ecc891b9dc7d99d05b7bab82a48b30464036` reaches Argo through Kargo commit
+`9f5a2983eb68752ed99a47eb9d0cf1ad70fcb739`. The native hook succeeds, both latest native services select
+`dp_14mc4VooMcjbcrwhvtXOQa5`, and both native workers and both status replicas run the selected native digest.
+At 16:16:29.910 UTC the active controller records a source-bound `SUCCESS` pass. The active account's transaction
+count is 1,175 at the later readback, rather than the 1,133 observed before this release.
+
+The first promotion fails at activation. Trace `1f8e0fdaf8eee6f10b1e6cc077ed7947` identifies the exact rejection:
+broker order quantities and fill activities have not converged. HTTP reads succeed, but the observation cannot
+publish; accounting verification has not run on that path. This proves the rejecting guard, not the underlying
+provider disagreement's cause. After coherent observations publish through the existing quota-accounted runtime,
+a retry of the same immutable Freight and unchanged reviewed Stage succeeds at 15:53:11 UTC. No consistency guard,
+quota, deadline, authority or credential is bypassed, and no workload or storage is changed by hand.
+
+The retained source-bound sample selects seven before and 21 after full-history passes on Altra. Both windows use
+the same controller key, `Waiting` outcome and exactly one reconciliation and accounting verification. One before
+`Completed` pass is excluded. After exclusions are two `Completed` passes and one `Waiting` pass with two full
+verifications. All 32 retained ticks, including exclusions, have successful advance, reconciliation and accounting
+span statuses with no exception events. The financial primary, archive primary, replica counts and claims are
+unchanged at the captured boundaries.
+
+| Inclusive stage median             | Before, ms | After, ms |
+| ---------------------------------- | ---------: | --------: |
+| Worker advance                     |  3,684.071 | 2,423.023 |
+| Reconciliation                     |  2,941.412 | 2,060.458 |
+| Persistence                        |  2,733.372 | 1,852.378 |
+| Maximum writer-fence span per pass |  1,533.408 | 1,469.930 |
+| Accounting verification            |    671.021 |   773.120 |
+
+Accounting verification is slower in this production sample. The lower overall median is an observation across
+different history, arrivals and load; it cannot be attributed to removal of a repeated hash. The isolated kernel
+and SQL comparisons establish less work for their measured inputs. These live samples do not establish a causal
+production improvement or an eligible-entry latency distribution. Nested durations must not be added together.
+
+A natural filled request on this release is observed at 16:06:02.329 UTC. Its batch and document hash match native
+trace `ae9a9acaf7f08fe416da593eb6812068`, pinned to the exact new deployment on Altra. It uses v40 / Jev 1.14.0 and
+the compact planner representation. CHART claim to receipt takes 637 ms, its evaluation receipt interval 1,146 ms,
+intent to submit-start 6,225 ms, and acknowledgement 655 ms. The advance takes 12,912.557 ms, including decision
+construction 2,528.305 ms, binding 1,806.172 ms, committed-decision reading 1,324.318 ms and submission 742.313 ms.
+This advance contains no full reconciliation span. The earlier filled request has two candidate requests and a full
+reconciliation; this one has three candidate requests. Their elapsed times therefore do not form a matched full-path
+benchmark. Two BUY fills have two balanced posted receipts; they are observed at 16:06:23.689 UTC, with recovery
+recorded at 16:06:28.676. The cycle remains active at this capture. A filled intent does not establish a completed cycle.
+The request's inference expiry and the protected decision's submission cutoff are distinct contracts.
+
+An additional before entry at 14:40:12.444 UTC matches the later entry's three-candidate batch, v40 protocol,
+Jev 1.14.0 model, input schema, Altra node and `Waiting` worker outcome. Trace
+`0e4ec6b69b5f2e65566f1533a0bd44ac` matches its persisted batch and document identities through the exact old
+Restate deployment. Both entries have two BUY fills and two balanced posted receipts. Their shared native entry
+stages have successful span status and no exception events:
+
+| Shared entry stage        | Before, ms | After, ms |
+| ------------------------- | ---------: | --------: |
+| Observation               |    255.062 |   643.686 |
+| Batch plan                |    342.461 |   634.309 |
+| Batch admission           |  2,419.035 | 1,243.359 |
+| Batch completion          |  1,394.233 |   796.500 |
+| Decision construction     |  1,331.522 | 2,528.305 |
+| Decision / intent binding |    775.256 | 1,806.172 |
+| Committed-decision read   |    762.565 | 1,324.318 |
+| Entry submission          |    576.905 |   742.313 |
+
+Within each worker's clock, observation start through submission-span end takes 9,820.380/12,183.575 ms.
+The protected documents contain 1,626,245/2,823,900 JSONB text bytes. This compares the same entry-stage shape,
+with different input material, document sizes, times and load. It is one pair, not a latency distribution or a causal
+benchmark. The complete advances take 12,577.188/12,912.557 ms, but only the before advance contains a full
+reconciliation; those parent durations are not equivalent work. The later shared entry pipeline is slower in this
+sample. Lower Waiting-pass medians do not establish faster trading requests.
+
+Public collectors still have zero nonterminal invocations and the same two retained state rows and fingerprint.
+The old stateless bootstrap registration still pins two workers despite zero nonterminal invocations. Its separately
+reviewed retirement remains pending under the owning runbook. No retained records, registrations or volumes are deleted.
 
 ![Matched scheduled delay and active worker timing, on separate clocks](evidence/2026-11-08-current-waiting.svg)
 
 The upper panel uses Restate's schedule records. The lower panel uses spans from the matched Bayn process, relative
 to its own worker advance. This preserves causal correlation without assuming synchronized clocks across services.
 
-![Historical v38 entry records from admission through fill recovery](evidence/2026-11-09-historical-entry.svg)
+![Measured complete reconciliation passes before and after the deployed cleanup](evidence/2026-11-09-cleanup-before-after.svg)
 
-The historical entry chart labels record boundaries and its missing current-release proof. The broker's fill
-timestamp uses its own clock. It is not subtracted from Bayn timestamps to claim execution latency.
+This comparison uses actual nested spans from one pass near each phase's advance median. Each panel has its own
+process clock. The labels distinguish representative stage durations from the separately computed sample medians;
+parent durations include their children. It does not contain an inference request or the subsequent hash candidate.
+
+![Current v40 request with durable boundaries and native worker spans](evidence/2026-11-09-current-v40-request.svg)
+
+The current request chart joins the actual batch and decision identities to a completed source-bound Restate tick.
+Its two panels keep durable record boundaries separate from worker-relative span timing. `NO_TRADE` is a completed
+strategy outcome; it supplies no evidence of a current order submission or broker fill.
+
+![Current v40 filled entry through submission and recovery](evidence/2026-11-09-current-v40-filled-entry.svg)
+
+This chart uses the deployed hash release. The [earlier cleanup-release filled chart](https://github.com/proompteng/lab/blob/55f1aad1e416e03ba4c3a7b9ce14ab2a20b7c4fc/docs/bayn/evidence/2026-11-09-current-v40-filled-entry.svg)
+and [v38 illustration](https://github.com/proompteng/lab/blob/b3aa14bb383fb06bd5d95196e1aad63346f1a08c/docs/bayn/evidence/2026-11-09-historical-entry.svg)
+remain available at immutable revisions.
+Its broker source timestamps use a separate clock. The submitted order's BUY fills are separated from later protective
+SELL fills that share its intent, and both document and strategy hashes retain their distinct correlation roles.
 
 The full audit remains open for the explicitly unverified items above. Smaller bundles, a faster SQL query and green
 tests do not establish a faster complete trading request or disposal authority for retained data.
