@@ -84,6 +84,13 @@ digests. The baseline values on `main` can reference images removed by registry 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
+Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
+replay and production metadata validation. Python checks run for GEPA inputs; ordinary service test edits skip
+the independent proof pipeline unless they change its PostgreSQL conformance cases. Replay image and execution
+acceptance share one hosted job and Nix environment, including dependency source boundary checks.
+The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
+Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
+the controller. Runtime compiler tools retain main-branch publication.
 Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
 GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 

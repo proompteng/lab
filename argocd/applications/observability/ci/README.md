@@ -48,7 +48,8 @@ cache class and fixed statistical windows. Run IDs, commit SHAs, job names and r
 not metric or Loki stream labels. Raw job logs, GitHub actor profiles and credentials are not stored or forwarded.
 Signed log download URLs receive no GitHub Authorization header.
 
-`workflows.json` enrolls image workflows and their reusable callers. The scripts CI check discovers build actions
+`workflows.json` enrolls image workflows, their reusable callers and Bayn's validation pipeline. Bayn remains
+observable after moving its images to main-only publication. The scripts CI check discovers build actions
 and reusable callers from workflow YAML and fails if a new image workflow is missing. Regenerate it with
 `bun run packages/scripts/src/ci/generate-observability-workflows.ts` when adding a workflow. Diagnostic image builds
 can be included; ordinary semantic checks are excluded.
