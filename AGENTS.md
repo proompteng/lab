@@ -15,7 +15,6 @@ Complete the requested change, prove it at the requested boundary, and stop.
 
 ## Scope and authority
 
-- Work directly. Do not spawn subagents.
 - Keep application-specific content in its owning repository. Shared infrastructure documentation must stay focused
   on the infrastructure without importing unrelated application details from other repositories.
 - Requests to build, change, fix, or ship authorize implementation, validation, commit, push, PR, CI and review fixes,
