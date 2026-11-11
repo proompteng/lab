@@ -1,6 +1,6 @@
 # memories
 
-This directory hosts Bun CLI helpers for saving and retrieving memories through the Agents memory note API.
+This directory hosts the repository-context CLI and memory-note administration helpers. They use the Agents API.
 
 Note: this service is intended for local/dev agents. Production deployments should use the Agents service directly (`services/agents`).
 
@@ -27,6 +27,17 @@ Override the base URL by setting `MEMORIES_AGENTS_URL` (or `AGENTS_SERVICE_BASE_
 For debugging Kubernetes auto-detection, you can set `MEMORIES_K8S_NAMESPACE`.
 
 ## Scripts
+
+### Retrieve repository context
+
+```sh
+bun run context:retrieve --query 'Agent Shell memory tools' --path services/agents/
+```
+
+Run this root script before substantial work. It retrieves bounded code excerpts and durable notes in one request.
+The CLI verifies the indexed code against the checkout commit automatically and reports each source's availability.
+Use `--expected-commit` for a different snapshot, `--tags` to scope notes, and `--json` for compact JSON output.
+Run `bun run context:evaluate` after fetching `origin/main` to verify real implementation, incident and stale-snapshot cases.
 
 ### Save a memory
 
