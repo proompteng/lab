@@ -109,3 +109,15 @@ the recovery Cluster has no backup stanza and only reads that archive.
 6. Remove the temporary manifest through GitOps only after the evidence is recorded. Deleting the recovery Cluster or
    its PVC requires explicit approval. Never alter or delete `bayn-db`, `cnpg-bayn-db`, or another service's storage as
    part of the drill.
+
+## Backup interruption during rollout
+
+An active plugin backup does not defer [CNPG 1.30.1 rolling replacement](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_upgrade.go).
+The [backup controller](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/backup_controller.go)
+can restart some interruptions, but a changed instance-manager session fails the running backup, and a `failed` record
+is terminal and does not automatically resume. If the backup actually reaches `failed`, retain its record. After the
+Cluster is 2/2 Ready, both injected sidecars have the configured 1 GiB limit, and fresh successful WAL archiving is
+observed, check that no backup is still running before requesting a uniquely named replacement with the
+`kubectl cnpg backup` command in step 2 above and a fresh UTC suffix. An ordinary retry needs only that backup command,
+not the restore-probe steps. Verify that the replacement starts and WAL archiving continues, then record its eventual
+`completed` status. A full backup can take hours; the 30-minute observer timeout alone does not mean that it failed.
