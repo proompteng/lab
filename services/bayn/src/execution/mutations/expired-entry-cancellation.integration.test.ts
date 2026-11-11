@@ -20,7 +20,7 @@ const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/ba
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const config = {
   ...fixtureConfig,
-  operationTimeoutMs: 5_000,
+  operationTimeoutMs: 10_000,
   postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
 }
 const accountId = 'expired-entry-admission-account'
@@ -31,11 +31,12 @@ const policyHash = 'd'.repeat(64)
 const clientOrderId = 'entry-parent-client'
 const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const cancelRequestHash = Result.getOrThrow(prepareCancel(brokerOrderId)).requestHash
-const makeRuntime = () =>
+const ownerApplicationName = 'bayn-expired-entry-admission-owner'
+const makeRuntime = (applicationName: string) =>
   ManagedRuntime.make(
     MutationStoreLive.pipe(
       Layer.provideMerge(WriterFenceLive),
-      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provideMerge(PostgresClientLive(config, { maxConnections: 8, applicationName })),
       Layer.provideMerge(NodeServices.layer),
     ),
   )
@@ -104,6 +105,39 @@ const seed = Effect.gen(function* () {
 })
 
 const ClockRows = Schema.Tuple([Schema.Struct({ observed_at: Schema.String, valid_until: Schema.String })])
+const BackendRows = Schema.Tuple([Schema.Struct({ pid: Schema.Int })])
+const WaitingAdmissionRows = Schema.Tuple([
+  Schema.Struct({ blocked_pid: Schema.NullOr(Schema.Int), observed_at: Schema.String }),
+])
+const ExpirationRows = Schema.Tuple([Schema.Struct({ expired: Schema.Boolean })])
+
+const awaitBlockedAdmission = (blockerPid: number, validUntil: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      // Each observation uses an autocommit connection, avoiding a cached activity snapshot in the blocker transaction.
+      const [waiting] = yield* sql`
+        SELECT (
+          SELECT min(activity.pid) FROM pg_stat_activity AS activity
+          WHERE activity.datname = current_database()
+            AND activity.application_name = ${ownerApplicationName}
+            AND ${blockerPid} = ANY(pg_blocking_pids(activity.pid))
+        ) AS blocked_pid,
+        to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(WaitingAdmissionRows)))
+      const remainingMs = Date.parse(validUntil) - Date.parse(waiting.observed_at)
+      if (remainingMs <= 0)
+        return yield* Effect.die(
+          new Error(
+            `Admission did not enter its row-lock wait while fresh: blocker=${blockerPid}, blocked=${waiting.blocked_pid}, observed=${waiting.observed_at}, expiry=${validUntil}`,
+          ),
+        )
+      if (waiting.blocked_pid !== null) return remainingMs
+      yield* Effect.sleep('20 millis')
+    }
+    return yield* Effect.die(new Error(`Admission backend was not observed blocked by PostgreSQL PID ${blockerPid}`))
+  }).pipe(Effect.timeout('3 seconds'))
+
 const observeAdmission = (validForMs = 30_000) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -155,8 +189,8 @@ describePostgres('PostgreSQL expired-entry cancellation admission', () => {
     const parsed = new URL(testUrl)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
       throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    owner = makeRuntime()
-    contender = makeRuntime()
+    owner = makeRuntime(ownerApplicationName)
+    contender = makeRuntime('bayn-expired-entry-admission-contender')
   })
   beforeEach(async () => {
     await owner.runPromise(seed)
@@ -253,11 +287,19 @@ describePostgres('PostgreSQL expired-entry cancellation admission', () => {
                 [],
                 undefined,
               )
-              const token = yield* Effect.promise(() => owner.runPromise(observeAdmission(500)))
+              const [{ pid: blockerPid }] = yield* connection
+                .executeUnprepared('SELECT pg_backend_pid() AS pid', [], undefined)
+                .pipe(Effect.flatMap(Schema.decodeUnknownEffect(BackendRows)))
+              const token = yield* Effect.promise(() => owner.runPromise(observeAdmission(2_000)))
               const pending = yield* Effect.promise((signal) =>
                 owner.runPromise(begin(token).pipe(Effect.result), { signal }),
               ).pipe(Effect.forkChild({ startImmediately: true }))
-              yield* Effect.sleep('650 millis')
+              const remainingMs = yield* awaitBlockedAdmission(blockerPid, token.validUntil)
+              yield* Effect.sleep(remainingMs + 50)
+              const [expiration] = yield* sql`
+                SELECT clock_timestamp() >= ${token.validUntil}::timestamptz AS expired
+              `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(ExpirationRows)))
+              expect(expiration.expired).toBe(true)
               expect(pending.pollUnsafe()).toBeUndefined()
               yield* connection.executeUnprepared('ROLLBACK', [], undefined)
               return yield* Fiber.join(pending)
