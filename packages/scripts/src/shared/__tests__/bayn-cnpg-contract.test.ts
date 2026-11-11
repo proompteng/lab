@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
+import { executionControllerPlanHash } from '../../../../../services/bayn/src/execution/controller'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
@@ -563,7 +564,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc',
+    executionControllerPlanHash,
   )
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   if (mandateIdentity !== undefined) expect(request).toBeString()

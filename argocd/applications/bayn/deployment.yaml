@@ -84,7 +84,7 @@ spec:
             # Kargo copies the reviewed source into kargo/bayn and updates this service,
             # the execution worker, and the activation Job to the same immutable image.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
-              value: "0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc"
+              value: "97e2dcb93e1a130ac27b6175be48eb937df0ea5dd6f3430bd249fead2f51807b"
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
