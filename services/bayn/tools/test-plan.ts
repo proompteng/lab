@@ -1,10 +1,12 @@
 import { appendFileSync, existsSync } from 'node:fs'
+import { postgresFiles } from './test-postgres'
 
 type TestPlan = { kind: 'unit'; files: string[]; shards: [1] } | { kind: 'full'; files: []; shards: [1, 2, 3, 4] }
 
 export const isUnitTest = (path: string): boolean =>
   /^services\/bayn\/(src|tools)\/[^\n\r]+\.test\.ts$/.test(path) &&
   !path.endsWith('.integration.test.ts') &&
+  !postgresFiles.includes(path.slice('services/bayn/'.length)) &&
   path !== 'services/bayn/src/shadow-decision.test.ts'
 
 export const planTests = (files: readonly string[], exactRevision: boolean): TestPlan =>

@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { planTests } from './test-plan'
+import { postgresFiles } from './test-postgres'
 
 test('unit-only changes execute the changed tests in one existing shard', () => {
   expect(
@@ -30,4 +31,8 @@ test('production, shared fixtures, integration, unknown and exact-revision input
   }
   expect(planTests([], false).kind).toBe('full')
   expect(planTests(['services/bayn/src/risk.test.ts'], true).kind).toBe('full')
+})
+
+test.each(postgresFiles)('the PostgreSQL owner retains its database job for %s', (file) => {
+  expect(planTests([`services/bayn/${file}`], false).kind).toBe('full')
 })
