@@ -50,7 +50,14 @@ bun run retrieve-memory --query "what did we build" --limit 5
 - `--query` or `--query-file` – the prompt used to search the memory store.
 - `--task-name` – optional namespace filter. If omitted, searches across all namespaces.
 - `--limit` – up to how many matches to return (defaults to `5`).
-- `--repository-ref`, `--source`, `--tags` are ignored by the Agents memory note endpoint and will emit a warning when supplied.
+- `--repository`, `--tags`, `--model`, `--after`, and `--before` filter candidates before retrieval.
+- `--latest` lists by creation time without a query or embedding request.
+- `--json` returns complete content, creation time and provenance.
+- `--include-retired` includes obsolete notes for historical inspection. Ordinary retrieval excludes them.
+- Unsupported retrieval flags fail instead of being ignored.
+
+See [engineering memory notes](../../docs/agents/memory-notes.md) for retirement, evaluation and the shared Agent Shell
+and Agent Shell Tunnel tools.
 
 ## Testing
 

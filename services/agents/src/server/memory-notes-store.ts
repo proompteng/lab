@@ -1,4 +1,4 @@
-import { sql } from 'kysely'
+import { type Selectable, sql } from 'kysely'
 
 import type {
   AgentsMemoryNoteRecord as MemoryRecord,
@@ -6,9 +6,11 @@ import type {
   AgentsMemoryNotesStatsInput as MemoriesStatsInput,
   AgentsPersistMemoryNoteInput as PersistMemoryInput,
   AgentsRetrieveMemoryNotesInput as RetrieveMemoryInput,
+  AgentsMemoryNoteFilters,
+  AgentsRetireMemoryNoteInput,
 } from '@proompteng/agent-contracts'
 
-import { resolveStoreDb, type Db } from './db'
+import { resolveStoreDb, type AgentsDatabase, type Db } from './db'
 import { requestEmbedding } from './embedding-client'
 import { ensureMigrations } from './kysely-migrations'
 import { resolveEmbeddingConfig, resolveMemoriesIvfflatProbes } from './memory-config'
@@ -18,6 +20,8 @@ export type { MemoriesStats, MemoriesStatsInput, MemoryRecord, PersistMemoryInpu
 export type MemoriesStore = {
   persist: (input: PersistMemoryInput) => Promise<MemoryRecord>
   retrieve: (input: RetrieveMemoryInput) => Promise<MemoryRecord[]>
+  list: (input: AgentsMemoryNoteFilters) => Promise<MemoryRecord[]>
+  retire: (input: AgentsRetireMemoryNoteInput) => Promise<MemoryRecord>
   count: (input?: { namespace?: string }) => Promise<number>
   stats: (input?: MemoriesStatsInput) => Promise<MemoriesStats>
   close: () => Promise<void>
@@ -43,10 +47,35 @@ const TABLE = 'entries'
 const DEFAULT_IVFFLAT_PROBES = 10
 const RETRIEVE_CANDIDATE_MULTIPLIER = 4
 const MAX_RETRIEVE_CANDIDATES = 200
-const MAX_RELEVANT_DISTANCE = 0.62
-const RELATIVE_RELEVANT_DISTANCE_WINDOW = 0.18
+const MAX_RELEVANT_DISTANCE = 0.32
 const MAX_LEXICAL_MATCH_DISTANCE = 0.72
 const MIN_QUERY_TERM_LENGTH = 3
+const QUERY_STOP_WORDS = new Set([
+  'the',
+  'and',
+  'but',
+  'are',
+  'was',
+  'were',
+  'has',
+  'have',
+  'can',
+  'for',
+  'with',
+  'from',
+  'that',
+  'this',
+  'what',
+  'why',
+  'how',
+  'does',
+  'when',
+  'into',
+  'must',
+  'should',
+  'another',
+  'gets',
+])
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
@@ -54,15 +83,16 @@ const normalizeQueryTerms = (query: string) => {
   const terms = query
     .toLowerCase()
     .split(/[^a-z0-9]+/g)
-    .filter((term) => term.length >= MIN_QUERY_TERM_LENGTH)
-  return Array.from(new Set(terms))
+    .filter((term) => term.length >= MIN_QUERY_TERM_LENGTH && !QUERY_STOP_WORDS.has(term))
+  return Array.from(new Set(terms)).slice(0, 64)
 }
 
 const countQueryTermHits = (terms: readonly string[], text: string) => {
   if (terms.length === 0) return 0
   let hits = 0
+  const words = new Set(text.toLowerCase().split(/[^a-z0-9]+/g))
   for (const term of terms) {
-    if (text.includes(term)) hits += 1
+    if (words.has(term)) hits += 1
   }
   return hits
 }
@@ -72,6 +102,68 @@ const normalizeMetadata = (value?: Record<string, unknown>) => {
     return {}
   }
   return value
+}
+
+const noteColumns = [
+  'id',
+  'task_name',
+  'content',
+  'summary',
+  'tags',
+  'metadata',
+  'created_at',
+  'retired_at',
+  'retirement_reason',
+  'replacement_id',
+] as const
+type NoteRow = Pick<Selectable<AgentsDatabase['memories.entries']>, (typeof noteColumns)[number]> & {
+  distance?: number
+}
+const timestamp = (value: Date | string | null) => (value instanceof Date ? value.toISOString() : value)
+
+const memoryRecord = (row: NoteRow): MemoryRecord => ({
+  id: row.id,
+  namespace: row.task_name,
+  content: row.content,
+  summary: row.summary,
+  tags: row.tags,
+  metadata: row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata) ? row.metadata : {},
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  retiredAt: timestamp(row.retired_at),
+  retirementReason: row.retirement_reason,
+  replacementId: row.replacement_id,
+  ...(row.distance === undefined ? {} : { distance: Number(row.distance) }),
+})
+
+const selectNotes = (db: Pick<Db, 'selectFrom'>, input: AgentsMemoryNoteFilters) => {
+  let query = db.selectFrom('memories.entries').select(noteColumns)
+  if (!input.includeRetired) query = query.where('retired_at', 'is', null)
+  if (input.namespace) query = query.where('task_name', '=', input.namespace)
+  if (input.repository) query = query.where(sql<string>`metadata->>'repository'`, '=', input.repository)
+  if (input.model) query = query.where(sql<string>`metadata->>'noteModel'`, '=', input.model)
+  if (input.createdAfter) query = query.where('created_at', '>=', new Date(input.createdAfter))
+  if (input.createdBefore) query = query.where('created_at', '<', new Date(input.createdBefore))
+  if (input.tags?.length) query = query.where(sql<boolean>`tags @> ${sql.value(input.tags)}::text[]`)
+  return query
+}
+
+export const rankMemoryNotes = (records: MemoryRecord[], query: string, limit: number) => {
+  const terms = normalizeQueryTerms(query)
+  return records
+    .flatMap((record) => {
+      const distance = record.distance ?? Number.POSITIVE_INFINITY
+      if (!Number.isFinite(distance)) return []
+      const hits = countQueryTermHits(terms, `${record.summary ?? ''}\n${record.content}\n${record.tags.join(' ')}`)
+      const coverage = terms.length ? hits / terms.length : 0
+      const relevant =
+        distance <= MAX_RELEVANT_DISTANCE ||
+        (distance <= MAX_LEXICAL_MATCH_DISTANCE &&
+          (coverage >= 0.6 || (distance <= 0.55 && hits >= Math.min(2, terms.length) && coverage >= 0.25)))
+      return relevant ? [{ record, score: (1 - distance + coverage) / 2 }] : []
+    })
+    .sort((left, right) => right.score - left.score || right.record.createdAt.localeCompare(left.record.createdAt))
+    .slice(0, limit)
+    .map(({ record }) => record)
 }
 
 const loadIvfflatProbes = (fallback = DEFAULT_IVFFLAT_PROBES) => resolveMemoriesIvfflatProbes(process.env, fallback)
@@ -190,33 +282,22 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
         embedding: sql`${vectorString}::vector`,
         encoder_model: encoderModel,
       })
-      .returning(['id', 'task_name', 'content', 'summary', 'tags', 'metadata', 'created_at'])
+      .returning(noteColumns)
       .executeTakeFirst()
 
     if (!row) throw new Error('insert failed')
 
-    return {
-      id: row.id,
-      namespace: row.task_name,
-      content: row.content,
-      summary: row.summary,
-      tags: Array.isArray(row.tags) ? row.tags : [],
-      metadata: (row.metadata as Record<string, unknown>) ?? resolvedMetadata,
-      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
-    }
+    return memoryRecord(row)
   }
 
-  const retrieve: MemoriesStore['retrieve'] = async ({ namespace, query, limit }) => {
+  const retrieve: MemoriesStore['retrieve'] = async (input) => {
     await ensureSchema()
-
-    const rawNamespace = typeof namespace === 'string' ? namespace.trim() : ''
-    const resolvedNamespace = rawNamespace.length > 0 ? rawNamespace.slice(0, 200) : null
-    const resolvedQuery = query.trim()
+    const resolvedQuery = input.query.trim()
     if (resolvedQuery.length === 0) {
       throw new Error('query is required')
     }
 
-    const resolvedLimit = Math.max(1, Math.min(50, limit ?? DEFAULT_LIMIT))
+    const resolvedLimit = Math.max(1, Math.min(50, input.limit ?? DEFAULT_LIMIT))
     const candidateLimit = Math.min(
       MAX_RETRIEVE_CANDIDATES,
       Math.max(resolvedLimit * RETRIEVE_CANDIDATE_MULTIPLIER, resolvedLimit),
@@ -233,36 +314,20 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       // results for some queries. Set a higher probes value for this retrieval call to improve recall.
       await sql`SET LOCAL ivfflat.probes = ${sql.raw(String(ivfflatProbes))}`.execute(trx)
 
-      const baseQuery = trx
-        .selectFrom('memories.entries')
-        .select([
-          'id',
-          'task_name',
-          'content',
-          'summary',
-          'tags',
-          'metadata',
-          'created_at',
-          distanceExpr.as('distance'),
-        ])
-      const scopedQuery = resolvedNamespace ? baseQuery.where('task_name', '=', resolvedNamespace) : baseQuery
-      return await scopedQuery.orderBy(distanceExpr).limit(candidateLimit).execute()
+      const candidates = selectNotes(trx, input).select(distanceExpr.as('distance'))
+      const semantic = await candidates.orderBy(distanceExpr).limit(candidateLimit).execute()
+      if (queryTerms.length === 0) return semantic
+      const vector = sql`to_tsvector('simple', coalesce(summary, '') || ' ' || content)`
+      const terms = sql`to_tsquery('simple', ${queryTerms.join(' | ')})`
+      const lexical = await candidates
+        .where(sql<boolean>`${vector} @@ ${terms}`)
+        .orderBy(sql`ts_rank_cd(${vector}, ${terms})`, 'desc')
+        .limit(candidateLimit)
+        .execute()
+      return Array.from(new Map([...semantic, ...lexical].map((row) => [row.id, row])).values())
     })
 
-    const bestDistance = rows[0] ? Number(rows[0].distance) : Number.POSITIVE_INFINITY
-    const semanticDistanceCeiling = Math.min(MAX_RELEVANT_DISTANCE, bestDistance + RELATIVE_RELEVANT_DISTANCE_WINDOW)
-    const relevantRows = rows
-      .filter((row) => {
-        const distance = Number(row.distance)
-        if (!Number.isFinite(distance)) return false
-        if (distance <= semanticDistanceCeiling) return true
-        if (distance > MAX_LEXICAL_MATCH_DISTANCE || queryTerms.length === 0) return false
-
-        const text =
-          `${row.summary ?? ''}\n${row.content}\n${Array.isArray(row.tags) ? row.tags.join(' ') : ''}`.toLowerCase()
-        return countQueryTermHits(queryTerms, text) > 0
-      })
-      .slice(0, resolvedLimit)
+    const relevantRows = rankMemoryNotes(rows.map(memoryRecord), resolvedQuery, resolvedLimit)
 
     const ids = relevantRows.map((row) => row.id)
     if (ids.length > 0) {
@@ -275,16 +340,58 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
         .execute()
     }
 
-    return relevantRows.map((row) => ({
-      id: row.id,
-      namespace: row.task_name,
-      content: row.content,
-      summary: row.summary,
-      tags: Array.isArray(row.tags) ? row.tags : [],
-      metadata: (row.metadata as Record<string, unknown>) ?? {},
-      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
-      distance: Number(row.distance),
-    }))
+    return relevantRows
+  }
+
+  const list: MemoriesStore['list'] = async (input) => {
+    await ensureSchema()
+    const rows = await selectNotes(db, input)
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(input.limit ?? DEFAULT_LIMIT)
+      .execute()
+    return rows.map(memoryRecord)
+  }
+
+  const retire: MemoriesStore['retire'] = async ({ id, reason, replacementId }) => {
+    await ensureSchema()
+    return db.transaction().execute(async (trx) => {
+      const rows = await trx
+        .selectFrom('memories.entries')
+        .select(noteColumns)
+        .where('id', 'in', replacementId ? [id, replacementId] : [id])
+        .orderBy('id')
+        .forUpdate()
+        .execute()
+      const note = rows.find((row) => row.id === id)
+      if (!note) throw new Error('Memory note not found.')
+      if (note.retired_at !== null) {
+        if (note.retirement_reason === reason && note.replacement_id === (replacementId ?? null))
+          return memoryRecord(note)
+        throw new Error('Memory note is already retired with a different reason or replacement.')
+      }
+      if (replacementId) {
+        const replacement = rows.find((row) => row.id === replacementId)
+        if (!replacement || replacement.retired_at !== null || replacementId === id) {
+          throw new Error('Replacement must be a different active memory note.')
+        }
+        if (memoryRecord(note).metadata.repository !== memoryRecord(replacement).metadata.repository) {
+          throw new Error('Replacement must belong to the same repository.')
+        }
+      }
+      const updated = await trx
+        .updateTable('memories.entries')
+        .set({
+          retired_at: sql`now()`,
+          updated_at: sql`now()`,
+          retirement_reason: reason,
+          replacement_id: replacementId ?? null,
+        })
+        .where('id', '=', id)
+        .returning(noteColumns)
+        .executeTakeFirstOrThrow()
+      return memoryRecord(updated)
+    })
   }
 
   const close: MemoriesStore['close'] = async () => {
@@ -382,5 +489,5 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     }
   }
 
-  return { persist, retrieve, count, stats, close }
+  return { persist, retrieve, list, retire, count, stats, close }
 }

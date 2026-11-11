@@ -2,6 +2,7 @@ import {
   buildAgentsServiceUrl,
   fetchAgentsJsonEffect,
   postAgentsJsonEffect,
+  requestAgentsJsonEffect,
   runAgentsJsonPromise,
   servicePath,
   type AgentsServiceJsonResult,
@@ -71,6 +72,9 @@ export type AgentsMemoryNoteRecord = {
   tags: string[]
   metadata: Record<string, unknown>
   createdAt: string
+  retiredAt: string | null
+  retirementReason: string | null
+  replacementId: string | null
   distance?: number
 }
 
@@ -82,11 +86,20 @@ export type AgentsPersistMemoryNoteInput = {
   metadata?: Record<string, unknown>
 }
 
-export type AgentsRetrieveMemoryNotesInput = {
+export type AgentsMemoryNoteFilters = {
   namespace?: string
-  query: string
+  repository?: string
+  tags?: string[]
+  model?: string
+  createdAfter?: string
+  createdBefore?: string
+  includeRetired?: boolean
   limit?: number
 }
+
+export type AgentsRetrieveMemoryNotesInput = AgentsMemoryNoteFilters & { query: string }
+export type AgentsListMemoryNotesInput = AgentsMemoryNoteFilters
+export type AgentsRetireMemoryNoteInput = { id: string; reason: string; replacementId?: string }
 
 export type AgentsMemoryNotesStatsInput = {
   namespace?: string
@@ -159,14 +172,93 @@ export const parseRetrieveMemoryNotesInput = (
     return { ok: false, message: `Query is too large (max ${MAX_MEMORY_NOTE_QUERY_CHARS} chars).` }
   }
 
+  const filters = parseMemoryNoteFilters(payload, fallbackLimit)
+  return filters.ok ? { ok: true, value: { ...filters.value, query } } : filters
+}
+
+export const parseMemoryNoteFilters = (
+  payload: Record<string, unknown>,
+  fallbackLimit = DEFAULT_MEMORY_NOTE_LIMIT,
+): ValidationResult<AgentsMemoryNoteFilters> => {
+  if (
+    payload.limit !== undefined &&
+    ((typeof payload.limit !== 'number' && typeof payload.limit !== 'string') ||
+      !/^\d+$/.test(String(payload.limit)) ||
+      Number(payload.limit) < 1)
+  ) {
+    return { ok: false, message: 'limit must be a positive integer.' }
+  }
+  const dates: { createdAfter?: string; createdBefore?: string } = {}
+  for (const key of ['createdAfter', 'createdBefore'] as const) {
+    const raw = payload[key]
+    if (raw == null || raw === '') continue
+    if (
+      typeof raw !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}(?:T.+(?:Z|[+-]\d{2}:\d{2}))?$/.test(raw) ||
+      !Number.isFinite(Date.parse(raw))
+    ) {
+      return { ok: false, message: `${key} must be an ISO date or timestamp.` }
+    }
+    const date = new Date(raw).toISOString()
+    if (date.slice(0, 10) !== raw.slice(0, 10) && raw.length === 10) {
+      return { ok: false, message: `${key} must be a valid date.` }
+    }
+    dates[key] = date
+  }
+  if (dates.createdAfter && dates.createdBefore && dates.createdAfter >= dates.createdBefore) {
+    return { ok: false, message: 'createdAfter must precede createdBefore.' }
+  }
+  const repository = typeof payload.repository === 'string' ? payload.repository.trim() : undefined
+  if (repository && !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    return { ok: false, message: 'repository must be owner/name.' }
+  }
+  const includeRetired = payload.includeRetired
+  if (
+    includeRetired != null &&
+    includeRetired !== true &&
+    includeRetired !== false &&
+    includeRetired !== 'true' &&
+    includeRetired !== 'false'
+  ) {
+    return { ok: false, message: 'includeRetired must be boolean.' }
+  }
   return {
     ok: true,
     value: {
       namespace: normalizeOptionalMemoryNoteNamespace(payload.namespace),
-      query,
+      repository: repository || undefined,
+      tags: normalizeMemoryNoteTags(payload.tags),
+      model: typeof payload.model === 'string' ? payload.model.trim() || undefined : undefined,
+      ...dates,
+      includeRetired: includeRetired === true || includeRetired === 'true',
       limit: clampMemoryNoteLimit(payload.limit, fallbackLimit),
     },
   }
+}
+
+export const parseRetireMemoryNoteInput = (
+  payload: Record<string, unknown>,
+): ValidationResult<AgentsRetireMemoryNoteInput> => {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const id = typeof payload.id === 'string' ? payload.id : ''
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim() : ''
+  const replacementId = typeof payload.replacementId === 'string' ? payload.replacementId : undefined
+  if (!uuid.test(id) || (replacementId !== undefined && !uuid.test(replacementId))) {
+    return { ok: false, message: 'id and replacementId must be UUIDs.' }
+  }
+  if (!reason || reason.length > 1_000) return { ok: false, message: 'reason must contain 1 to 1000 characters.' }
+  if (id === replacementId) return { ok: false, message: 'A note cannot replace itself.' }
+  return { ok: true, value: { id, reason, replacementId } }
+}
+
+export const appendMemoryNoteFilters = (url: URL, input: AgentsMemoryNoteFilters) => {
+  for (const key of ['namespace', 'repository', 'model', 'createdAfter', 'createdBefore'] as const) {
+    const value = input[key]?.trim()
+    if (value) url.searchParams.set(key, value)
+  }
+  for (const tag of input.tags ?? []) url.searchParams.append('tag', tag)
+  if (input.includeRetired) url.searchParams.set('includeRetired', 'true')
+  if (input.limit) url.searchParams.set('limit', String(input.limit))
 }
 
 const appendOptionalMemoryNoteNamespace = (targetUrl: URL, namespace: string | null | undefined) => {
@@ -180,6 +272,7 @@ export const persistMemoryNoteToAgentsServiceEffect = (
 ) =>
   postAgentsJsonEffect<AgentsPersistMemoryNoteResult>('/v1/memory-notes', input, {
     env,
+    signal: AbortSignal.timeout(30_000),
   })
 
 export const persistMemoryNoteToAgentsService = async (
@@ -194,9 +287,13 @@ export const retrieveMemoryNotesFromAgentsServiceEffect = (
 ) => {
   const targetUrl = buildAgentsServiceUrl('/v1/memory-notes', env)
   targetUrl.searchParams.set('query', input.query)
-  if (input.limit && input.limit > 0) targetUrl.searchParams.set('limit', String(Math.trunc(input.limit)))
-  appendOptionalMemoryNoteNamespace(targetUrl, input.namespace)
-  return fetchAgentsJsonEffect<AgentsRetrieveMemoryNotesResult>(servicePath(targetUrl), env)
+  appendMemoryNoteFilters(targetUrl, input)
+  return requestAgentsJsonEffect<AgentsRetrieveMemoryNotesResult>({
+    path: servicePath(targetUrl),
+    method: 'GET',
+    env,
+    signal: AbortSignal.timeout(30_000),
+  })
 }
 
 export const retrieveMemoryNotesFromAgentsService = async (
@@ -204,6 +301,34 @@ export const retrieveMemoryNotesFromAgentsService = async (
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsRetrieveMemoryNotesResult>> =>
   runAgentsJsonPromise(retrieveMemoryNotesFromAgentsServiceEffect(input, env))
+
+export const listMemoryNotesFromAgentsService = (
+  input: AgentsListMemoryNotesInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsRetrieveMemoryNotesResult>> => {
+  const url = buildAgentsServiceUrl('/v1/memory-notes', env)
+  url.searchParams.set('mode', 'latest')
+  appendMemoryNoteFilters(url, input)
+  return runAgentsJsonPromise(
+    requestAgentsJsonEffect<AgentsRetrieveMemoryNotesResult>({
+      path: servicePath(url),
+      method: 'GET',
+      env,
+      signal: AbortSignal.timeout(30_000),
+    }),
+  )
+}
+
+export const retireMemoryNoteInAgentsService = (
+  input: AgentsRetireMemoryNoteInput,
+  env: EnvSource = process.env,
+): Promise<AgentsServiceJsonResult<AgentsPersistMemoryNoteResult>> =>
+  runAgentsJsonPromise(
+    postAgentsJsonEffect<AgentsPersistMemoryNoteResult>('/v1/memory-notes/retire', input, {
+      env,
+      signal: AbortSignal.timeout(30_000),
+    }),
+  )
 
 export const countMemoryNotesFromAgentsServiceEffect = (
   input: { namespace?: string | null } = {},
