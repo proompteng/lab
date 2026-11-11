@@ -1156,7 +1156,7 @@ class Collector:
                     self.api.runs(day + "T00:00:00Z", day + "T23:59:59Z")
                 )
             while True:
-                if time.time() >= deadline:
+                if time.time() >= deadline or self.api.remaining < 2000:
                     return
                 try:
                     run = next(self.history_runs)

@@ -826,6 +826,68 @@ class CollectorTests(unittest.TestCase):
             self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 3
         )
 
+    def test_history_reserves_foreground_quota_and_resumes_its_existing_iterator(self):
+        api = FakeGitHub({}, {})
+        api.remaining = 1999
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        fetched = []
+
+        def runs(*_args):
+            for index in range(2):
+                fetched.append(index)
+                if index == 0:
+                    api.remaining = 1999
+                yield run() | {"id": 100 + index}
+
+        with (
+            patch.object(api, "runs", side_effect=runs, create=True) as discovery,
+            patch("time.time", return_value=self.now),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(fetched, [])
+            self.assertEqual(observer.last_history_progress, 0)
+            api.remaining = 2000
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(fetched, [0])
+            self.assertEqual(observer.history_day, 0)
+            api.remaining = 4999
+            observer.history(self.now, days=1, windows=1)
+        discovery.assert_called_once()
+        self.assertEqual(fetched, [0, 1])
+        self.assertEqual(observer.history_day, 1)
+        self.assertEqual(observer.last_history, self.now)
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 2
+        )
+
+    def test_foreground_poll_keeps_running_inside_the_history_quota_reserve(self):
+        api = GitHub("unused")
+        api.remaining, api.reset_at = 1500, self.now + 3600
+        observer = Collector(self.store, api, {}, "http://unused")
+
+        def response(*_args, **_kwargs):
+            value = io.BytesIO(
+                json.dumps({"total_count": 0, "workflow_runs": []}).encode()
+            )
+            value.headers = {
+                "X-RateLimit-Remaining": "1499",
+                "X-RateLimit-Reset": str(int(self.now + 3600)),
+            }
+            return value
+
+        with (
+            patch.object(api.opener, "open", side_effect=response) as request,
+            patch("time.time", return_value=self.now),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            request.assert_not_called()
+            observer.poll(self.now)
+        self.assertEqual(observer.last_poll, self.now)
+        self.assertEqual(request.call_count, 6)
+        self.assertEqual(api.remaining, 1499)
+
     def test_search_over_1000_results_is_split_without_silently_truncating(self):
         api = GitHub("unused")
         requests = []

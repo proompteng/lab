@@ -22,7 +22,9 @@ remain visible in metrics; stale collection never becomes a fabricated empty que
 The target is to collect a completed attempt within five minutes during healthy API operation. Newest completed
 attempts take priority over backfill. Completed jobs are collected while their workflow is still running, so one
 slow architecture cannot delay another job's telemetry. Backfill pauses below 2,000 remaining API requests, leaving
-headroom for current runs before the shared 1,000-request ARC reserve. The initial backfill covers attempts updated within 14 days. Detailed SQLite
+headroom for current runs before the shared 1,000-request ARC reserve. This applies to both historical index discovery
+and pending job collection; a paused index resumes its existing iterator after foreground polling observes renewed quota.
+The initial backfill covers attempts updated within 14 days. Detailed SQLite
 job records retain 90 days; collection-delay aggregates and deduplication keys survive Pod restarts on the 1 GiB retained
 Ceph claim. The single replica and `Recreate` rollout serialize SQLite writers. Do not scale this deployment.
 

@@ -53,6 +53,13 @@ since its job observations could no longer establish a currently running build. 
 do not lower them to clear either alert. The available evidence does not attribute shared-account consumption
 to a particular consumer.
 
+Historical index discovery did have a concrete budget defect. Pending historical job collection paused below
+2,000 remaining requests to preserve live polling headroom, but index discovery ignored that reserve.
+A regression test reproduced historical requests consuming the foreground allowance. Index discovery now observes
+the same 2,000-request reserve and resumes its existing iterator when foreground polling observes renewed quota.
+Live polling remains permitted between 1,000 and 2,000 requests. This protects the collector's own budget priority;
+it does not establish which consumer exhausted the shared allowance or prevent other consumers from doing so.
+
 ## Ceph HDD read pressure
 
 OSD 0's data is on a rotational Seagate ST24000NM000C HDD. Its BlueStore DB is on Kingston SNV3S1000G NVMe,
