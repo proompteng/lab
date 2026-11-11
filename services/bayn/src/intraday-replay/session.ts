@@ -70,6 +70,7 @@ export const driveReplaySession = <E>(
         readinessCounts[reason] = (readinessCounts[reason] ?? 0) + 1
         switch (reason) {
           case DecisionReadinessReason.AccountProtection:
+          case DecisionReadinessReason.TurnoverBudgetExhausted:
           case DecisionReadinessReason.LookbackWarmup:
           case DecisionReadinessReason.NoEligibleCandidate:
           case DecisionReadinessReason.SignalWindowObserved:

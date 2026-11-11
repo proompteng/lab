@@ -2,6 +2,8 @@ import {
   normalizeOptionalMemoryNoteNamespace,
   parsePersistMemoryNoteInput,
   parseRetrieveMemoryNotesInput,
+  parseMemoryNoteFilters,
+  parseRetireMemoryNoteInput,
 } from '@proompteng/agent-contracts'
 
 import { errorResponse, okResponse, parseJsonBody } from '../http'
@@ -28,20 +30,50 @@ const parsePositiveInt = (value: string | null, fallback: number, min: number, m
 
 export const getMemoryNotesHandler = async (request: Request, deps: MemoryNotesApiDependencies = {}) => {
   const url = new URL(request.url)
-  const parsed = parseRetrieveMemoryNotesInput({
-    namespace: url.searchParams.get('namespace'),
-    query: url.searchParams.get('query') ?? '',
-    limit: url.searchParams.get('limit') ?? undefined,
-  })
+  const input = { ...Object.fromEntries(url.searchParams), tags: url.searchParams.getAll('tag') }
+  const mode = url.searchParams.get('mode') ?? 'search'
+  if (mode !== 'search' && mode !== 'latest') return errorResponse('mode must be search or latest.', 400)
+  const parsed = mode === 'latest' ? parseMemoryNoteFilters(input) : parseRetrieveMemoryNotesInput(input)
   if (!parsed.ok) return errorResponse(parsed.message, 400)
 
   const store = getStore(deps)
   try {
-    const records = await store.retrieve(parsed.value)
+    const records =
+      mode === 'latest'
+        ? await store.list(parsed.value)
+        : await store.retrieve({ ...parsed.value, query: url.searchParams.get('query') ?? '' })
     return okResponse({ ok: true, memories: records })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, resolveServiceError(message))
+  } finally {
+    await closeStore(store)
+  }
+}
+
+export const postRetireMemoryNoteHandler = async (request: Request, deps: MemoryNotesApiDependencies = {}) => {
+  let payload: Record<string, unknown>
+  try {
+    payload = await parseJsonBody(request)
+  } catch {
+    return errorResponse('invalid JSON body', 400)
+  }
+  const parsed = parseRetireMemoryNoteInput(payload)
+  if (!parsed.ok) return errorResponse(parsed.message, 400)
+  const store = getStore(deps)
+  try {
+    return okResponse({ ok: true, memory: await store.retire(parsed.value) })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const status =
+      message === 'Memory note not found.'
+        ? 404
+        : message.includes('already retired')
+          ? 409
+          : message.startsWith('Replacement must')
+            ? 400
+            : resolveServiceError(message)
+    return errorResponse(message, status)
   } finally {
     await closeStore(store)
   }
