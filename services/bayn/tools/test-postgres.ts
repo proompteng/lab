@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import timings from './ci-postgres-timings.json'
 
 export const postgresFiles = [
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
@@ -47,6 +48,28 @@ export const postgresFiles = [
   'src/system-assessment/operational-source-cut.integration.test.ts',
   'src/db/risk-clock-rejection.integration.test.ts',
 ]
+
+// Bun 1.4.2 keeps contiguous path ranges together; database setup dominates these isolated suites.
+export const postgresShard = (shard: string, weights: Readonly<Record<string, number>>): string[] => {
+  const parts = /^([1-9]\d*)\/([1-9]\d*)$/.exec(shard)
+  if (parts === null) throw Error('Expected PostgreSQL shard index/count')
+  const index = Number(parts[1])
+  const count = Number(parts[2])
+  if (count > postgresFiles.length) throw Error('PostgreSQL shards must each own a test file')
+  const bins = Array.from({ length: count }, () => ({ files: [] as string[], milliseconds: 0 }))
+  const selected = bins[index - 1]
+  if (selected === undefined) throw Error('PostgreSQL shard index exceeds its count')
+  const measured = Object.values(weights).sort((a, b) => a - b)
+  const median = measured[Math.floor(measured.length / 2)] ?? 0
+  const cost = (file: string) => Math.max(1, weights[file] ?? median)
+  for (const file of [...postgresFiles].sort((a, b) => cost(b) - cost(a) || a.localeCompare(b))) {
+    const lightest = bins.reduce((a, b) => (b.milliseconds < a.milliseconds ? b : a))
+    lightest.files.push(file)
+    lightest.milliseconds += cost(file)
+  }
+  return selected.files
+}
+
 if (import.meta.main) {
   if (process.argv[2] === '--list') {
     console.log(JSON.stringify(postgresFiles))
@@ -69,12 +92,11 @@ if (import.meta.main) {
 
   run([
     '--isolate',
-    `--shard=${shard}`,
     '--timings=tools/ci-postgres-timings.json',
     '--update-timings',
     '--reporter=junit',
     '--reporter-outfile=postgres-results.xml',
-    ...postgresFiles,
+    ...postgresShard(shard, timings.files).map((file) => `./${file}`),
   ])
   if (shard.startsWith('1/'))
     run([
