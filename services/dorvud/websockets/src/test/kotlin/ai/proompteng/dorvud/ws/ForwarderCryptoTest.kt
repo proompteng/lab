@@ -1,5 +1,9 @@
 package ai.proompteng.dorvud.ws
 
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.plugin
+import io.ktor.http.encodedPath
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -10,6 +14,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -29,15 +34,23 @@ import java.io.File
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import io.ktor.client.engine.cio.CIO as ClientCIO
+import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 
 class ForwarderCryptoTest {
   @Test
-  fun `same account authenticates equity and crypto and publishes native events on Saturday`() =
+  fun `same account authenticates equity and crypto and publishes native events on Saturday`() = verifyCryptoSession()
+
+  @Test
+  fun `crypto session cancellation reconnects without stopping the equity feed`() = verifyCryptoSession(cancelFirstConnect = true)
+
+  private fun verifyCryptoSession(cancelFirstConnect: Boolean = false) =
     runBlocking {
       val payloads = Json.parseToJsonElement(File("../fixtures/alpaca-crypto-v1.json").readText()) as JsonArray
       val authentications = ConcurrentLinkedQueue<JsonObject>()
@@ -100,7 +113,19 @@ class ForwarderCryptoTest {
         )
       val now = Instant.parse("2026-10-10T02:04:01Z")
       val clock = AtomicLong(now.toEpochMilli())
-      val app = ForwarderApp(config, producerFactory = { producer }, nowMs = clock::get)
+      val cancelConnect = AtomicBoolean(cancelFirstConnect)
+      val client =
+        HttpClient(ClientCIO) {
+          install(ClientWebSockets)
+        }.apply {
+          plugin(HttpSend).intercept { request ->
+            if (request.url.encodedPath.endsWith("/crypto/us") && cancelConnect.compareAndSet(true, false)) {
+              throw CancellationException("Crypto session handshake canceled")
+            }
+            execute(request)
+          }
+        }
+      val app = ForwarderApp(config, producerFactory = { producer }, nowMs = clock::get, httpClient = client)
       val job = app.start()
       try {
         withTimeout(10_000) {
