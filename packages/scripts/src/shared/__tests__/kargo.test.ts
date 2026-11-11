@@ -238,134 +238,40 @@ const expected = {
     includePaths: [],
   },
   app: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('app')],
     apps: ['app'],
-    includePaths: [
-      'apps/app',
-      'packages/design',
-      'nix/images/app.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'argocd/applications/app',
-      'package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'nix/images/relativize-bun-cache.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'tsconfig.base.json',
-    ],
+    includePaths: [],
   },
   synthesis: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('synthesis')],
     apps: ['synthesis'],
-    includePaths: [
-      'apps/synthesis',
-      'packages/design',
-      'nix/images/synthesis.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'argocd/applications/synthesis',
-      'package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'tsconfig.base.json',
-      'nix/images/relativize-bun-cache.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-    ],
+    includePaths: [],
   },
   docs: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('docs')],
     apps: ['docs'],
-    includePaths: [
-      'apps/docs',
-      'packages/design',
-      'nix/images/docs.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'argocd/applications/docs',
-      'package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'tsconfig.base.json',
-      'nix/images/relativize-bun-cache.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-    ],
+    includePaths: [],
   },
   bumba: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('bumba')],
     apps: ['bumba'],
-    includePaths: [
-      'services/bumba',
-      'packages/temporal-bun-sdk',
-      'nix/images/bumba.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'argocd/applications/bumba',
-    ],
+    includePaths: [],
   },
   oirat: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('oirat')],
     apps: ['oirat'],
-    includePaths: [
-      'services/oirat',
-      'packages/discord',
-      'nix/images/oirat.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'argocd/applications/oirat',
-    ],
+    includePaths: [],
   },
   froussard: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('froussard')],
     apps: ['froussard'],
-    includePaths: [
-      'apps/froussard',
-      'packages/agent-contracts',
-      'packages/otel',
-      'nix/images/froussard.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'argocd/applications/froussard',
-    ],
+    includePaths: [],
   },
   'arc-runner': {
     creationCriteria: 'single',
@@ -555,77 +461,80 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
-  it('promotes one immutable Torghut source after a stack ends beyond the last path-filtered commit', () => {
-    const source = '21c7541cea499b753c4003bab998ac1e2818239b'
-    const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
-    const warehouse = byName(warehouses).get('torghut')
-    const expression = warehouse?.spec?.freightCreationCriteria?.expression
-    expect(typeof expression).toBe('string')
-    const images = Object.fromEntries(
-      expected.torghut.images.map((repo) => [
-        repo,
-        {
-          Tag: `kargo-sha-${source}`,
-          Annotations: {
-            'org.opencontainers.image.revision': source,
-            'org.opencontainers.image.source': imageSourceRepo,
-          },
-        },
-      ]),
-    )
-    const evaluate = (input: typeof images) =>
-      runInNewContext(
-        expression,
-        {
-          imageFrom: (repo: string) => input[repo],
-          commitFrom: () => ({ ID: filteredAncestor }),
-        },
-        { timeout: 100 },
-      )
-    expect(evaluate(images)).toBe(true)
-    for (const repo of expected.torghut.images) {
-      const image = images[repo]
-      if (image === undefined) throw new Error('Missing release fixture')
-      expect(evaluate({ ...images, [repo]: { ...image, Tag: `kargo-sha-${filteredAncestor}` } })).toBe(false)
-      expect(
-        evaluate({
-          ...images,
-          [repo]: {
-            ...image,
-            Annotations: { ...image.Annotations, 'org.opencontainers.image.revision': filteredAncestor },
-          },
-        }),
-      ).toBe(false)
-      expect(
-        evaluate({
-          ...images,
-          [repo]: {
-            ...image,
+  it.each(['torghut', 'app', 'synthesis', 'docs', 'bumba', 'oirat', 'froussard'] as const)(
+    'promotes the immutable %s source despite a different filtered Git commit',
+    (name) => {
+      const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+      const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
+      const warehouse = byName(warehouses).get(name)
+      const expression = warehouse?.spec?.freightCreationCriteria?.expression
+      expect(typeof expression).toBe('string')
+      const images = Object.fromEntries(
+        expected[name].images.map((repo) => [
+          repo,
+          {
+            Tag: `kargo-sha-${source}`,
             Annotations: {
-              ...image.Annotations,
-              'org.opencontainers.image.source': 'https://github.com/other/repository',
+              'org.opencontainers.image.revision': source,
+              'org.opencontainers.image.source': imageSourceRepo,
             },
           },
-        }),
-      ).toBe(false)
-    }
-    const stage = byName(stages).get('torghut')
-    const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
-      (step: Record<string, any>) => step.uses === 'git-clone',
-    )
-    const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
-    expect(
-      runInNewContext(
-        sourceExpression,
-        {
-          vars: { imageRepo: imageRepo('torghut'), gitRepo },
-          imageFrom: (repo: string) => images[repo],
-          commitFrom: () => ({ ID: filteredAncestor }),
-        },
-        { timeout: 100 },
-      ),
-    ).toBe(source)
-  })
+        ]),
+      )
+      const evaluate = (input: typeof images) =>
+        runInNewContext(
+          expression,
+          {
+            imageFrom: (repo: string) => input[repo],
+            commitFrom: () => ({ ID: filteredAncestor }),
+          },
+          { timeout: 100 },
+        )
+      expect(evaluate(images)).toBe(true)
+      for (const repo of expected[name].images) {
+        const image = images[repo]
+        if (image === undefined) throw new Error('Missing release fixture')
+        expect(evaluate({ ...images, [repo]: { ...image, Tag: `kargo-sha-${filteredAncestor}` } })).toBe(false)
+        expect(
+          evaluate({
+            ...images,
+            [repo]: {
+              ...image,
+              Annotations: { ...image.Annotations, 'org.opencontainers.image.revision': filteredAncestor },
+            },
+          }),
+        ).toBe(false)
+        expect(
+          evaluate({
+            ...images,
+            [repo]: {
+              ...image,
+              Annotations: {
+                ...image.Annotations,
+                'org.opencontainers.image.source': 'https://github.com/other/repository',
+              },
+            },
+          }),
+        ).toBe(false)
+      }
+      const stage = byName(stages).get(name)
+      const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
+        (step: Record<string, any>) => step.uses === 'git-clone',
+      )
+      const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
+      expect(
+        runInNewContext(
+          sourceExpression,
+          {
+            vars: { imageRepo: imageRepo(name), gitRepo },
+            imageFrom: (repo: string) => images[repo],
+            commitFrom: () => ({ ID: filteredAncestor }),
+          },
+          { timeout: 100 },
+        ),
+      ).toBe(source)
+    },
+  )
 
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
     expect(kargoHelmElement?.version).toBe('1.11.4')
@@ -821,27 +730,12 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns each product Warehouse source paths with its exact image build filter', () => {
+  it('preserves product publication concurrency while image annotations own the source', () => {
     expect(productNixWorkflow.concurrency).toEqual({
       group:
         "product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}",
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
-
-    const filtersSource = productNixWorkflow.jobs?.changes?.steps?.find(
-      (step: Record<string, any>) => step.id === 'filter',
-    )?.with?.filters
-    expect(typeof filtersSource).toBe('string')
-    const buildFilters = YAML.parse(filtersSource) as Record<string, string[]>
-    const warehouseMap = byName(warehouses)
-
-    for (const product of ['app', 'synthesis', 'docs']) {
-      const warehouse = warehouseMap.get(product)
-      const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
-      const warehousePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
-      const buildPaths = buildFilters[product]?.map((path) => path.replace(/\/\*\*$/, ''))
-      expect(warehousePaths).toEqual(buildPaths)
-    }
   })
 
   it('aligns Temporal worker publication with source discovery and limits PR builds to worker changes', () => {

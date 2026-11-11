@@ -105,6 +105,11 @@ Every application image follows this transaction:
    merge—is the deployed revision. `workflow_dispatch` may run the same verifier diagnostically; it is not a promotion
    or recovery fallback.
 
+App, Synthesis, Docs, Bumba, Oirat and Froussard also take their source revision from the immutable image.
+Their Warehouse verifies the revision-qualified tag and this repository's source annotation; their Stage checks out
+that exact annotation. They have no separate Git subscription or duplicated path list: an unrelated lockfile,
+root script alias or operating guide can advance filtered Git history without producing a new runtime image.
+
 Torghut's five-image release takes its source commit from the immutable images. Its Warehouse requires every image
 to share the same eligible tag, each tag to match its OCI revision annotation, and every source annotation to name
 this repository. The Stage checks out that exact revision. It has no separate path-filtered Git subscription:

@@ -10,32 +10,9 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/app').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/app').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - apps/app
-          - packages/design
-          - nix/images/app.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/packages.nix
-          - flake.nix
-          - flake.lock
-          - bun.lock
-          - argocd/applications/app
-          - package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - nix/images/relativize-bun-cache.sh
-          - nix/images/prune-bun-dependency-metadata.sh
-          - tsconfig.base.json
     - image:
         repoURL: registry.ide-newton.ts.net/lab/app
         imageSelectionStrategy: NewestBuild
@@ -58,32 +35,9 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - apps/synthesis
-          - packages/design
-          - nix/images/synthesis.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/packages.nix
-          - flake.nix
-          - flake.lock
-          - bun.lock
-          - argocd/applications/synthesis
-          - package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - tsconfig.base.json
-          - nix/images/relativize-bun-cache.sh
-          - nix/images/prune-bun-dependency-metadata.sh
     - image:
         repoURL: registry.ide-newton.ts.net/lab/synthesis
         imageSelectionStrategy: NewestBuild
@@ -106,32 +60,9 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/docs').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - apps/docs
-          - packages/design
-          - nix/images/docs.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/packages.nix
-          - flake.nix
-          - flake.lock
-          - bun.lock
-          - argocd/applications/docs
-          - package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - tsconfig.base.json
-          - nix/images/relativize-bun-cache.sh
-          - nix/images/prune-bun-dependency-metadata.sh
     - image:
         repoURL: registry.ide-newton.ts.net/lab/docs
         imageSelectionStrategy: NewestBuild
@@ -154,29 +85,9 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/bumba').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - services/bumba
-          - packages/temporal-bun-sdk
-          - nix/images/bumba.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/images/bun-workspace-deps-source.nix
-          - nix/images/bun-workspace-deps-source.test.sh
-          - nix/images/prune-bun-dependency-metadata.sh
-          - bun.lock
-          - glob:**/package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - argocd/applications/bumba
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bumba
         imageSelectionStrategy: NewestBuild
@@ -199,29 +110,9 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/oirat').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - services/oirat
-          - packages/discord
-          - nix/images/oirat.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/images/bun-workspace-deps-source.nix
-          - nix/images/bun-workspace-deps-source.test.sh
-          - nix/images/prune-bun-dependency-metadata.sh
-          - bun.lock
-          - glob:**/package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - argocd/applications/oirat
     - image:
         repoURL: registry.ide-newton.ts.net/lab/oirat
         imageSelectionStrategy: NewestBuild
@@ -244,30 +135,9 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/froussard').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - apps/froussard
-          - packages/agent-contracts
-          - packages/otel
-          - nix/images/froussard.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/images/bun-workspace-deps-source.nix
-          - nix/images/bun-workspace-deps-source.test.sh
-          - nix/images/prune-bun-dependency-metadata.sh
-          - bun.lock
-          - glob:**/package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - argocd/applications/froussard
     - image:
         repoURL: registry.ide-newton.ts.net/lab/froussard
         imageSelectionStrategy: NewestBuild
