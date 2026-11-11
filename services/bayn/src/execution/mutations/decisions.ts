@@ -6,7 +6,7 @@ import {
   type PartialMutationEvidence,
 } from '../../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../../hash'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
+import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion, legacyMutationIdentitySchemaVersion } from '../legacy-wire'
 import { strictParseOptions } from '../../schemas'
 import {
@@ -38,6 +38,8 @@ import {
 import { MutationStoreError as MutationStoreErrorValue } from './model'
 
 import type { SubmissionDenialReason } from '../submission-denial'
+import { isExecutionMandateRecoveryRestriction } from '../mandate'
+import type { ExpiredEntryCancellationAdmission, ExpiredEntryCancellationFacts } from './model'
 
 const decodeStartInputResult = Schema.decodeUnknownResult(StartInputSchema, strictParseOptions)
 const decodeOutcomeInputResult = Schema.decodeUnknownResult(OutcomeInputSchema, strictParseOptions)
@@ -215,6 +217,38 @@ export const decideMutationStartReplay = (
     _tag: 'ReplayMutation',
     receipt: { event: existing, started: false },
   })
+}
+
+/** Pure admission predicate shared by the PostgreSQL guard and formal conformance vectors. */
+export const expiredEntryCancellationAdmissionIsCurrent = (
+  admission: ExpiredEntryCancellationAdmission,
+  facts: ExpiredEntryCancellationFacts | undefined,
+): boolean => {
+  if (facts === undefined) return false
+  const observedAt = Date.parse(admission.observedAt)
+  const validUntil = Date.parse(admission.validUntil)
+  const admittedAt = Date.parse(facts.admittedAt)
+  return (
+    Number.isFinite(observedAt) &&
+    Number.isFinite(validUntil) &&
+    Number.isFinite(admittedAt) &&
+    observedAt <= admittedAt &&
+    admittedAt < validUntil &&
+    Number.isSafeInteger(facts.authorityVersion) &&
+    admission.authorityVersion === facts.authorityVersion &&
+    admission.authorityGenerationHash === facts.authorityGenerationHash &&
+    admission.authorityGenerationHash === facts.intentAuthorityGenerationHash &&
+    admission.accountId === facts.accountId &&
+    admission.intentId === facts.intentId &&
+    admission.clientOrderId === facts.clientOrderId &&
+    admission.brokerOrderId === facts.brokerOrderId &&
+    facts.side === OrderSide.Buy &&
+    facts.maximum === Authority.Execution &&
+    ((facts.effective === Authority.Execution && facts.killState === KillState.Clear) ||
+      (facts.effective === Authority.Observe &&
+        facts.killState === KillState.Active &&
+        isExecutionMandateRecoveryRestriction(facts.reason)))
+  )
 }
 
 export const decideMutationAuthority = (

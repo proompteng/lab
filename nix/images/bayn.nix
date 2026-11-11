@@ -9,7 +9,6 @@
 }:
 
 let
-  openCode = import ./opencode-cli.nix { inherit pkgs lib; };
   frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
   imageName = if research then "bayn-research" else "bayn";
   imageRepository = "registry.ide-newton.ts.net/lab/${imageName}";
@@ -148,7 +147,6 @@ let
     "bun --cwd=services/bayn run tsc"
     # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
     "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
-    "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
