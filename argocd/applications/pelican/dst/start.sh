@@ -18,7 +18,9 @@ fi
 runtime=$(mktemp -d /tmp/dst-console.XXXXXX)
 mkfifo "$runtime/master" "$runtime/caves"
 exec 3<>"$runtime/master" 4<>"$runtime/caves" 5<&0
-master_pid= caves_pid= console_pid=
+master_pid=''
+caves_pid=''
+console_pid=''
 cleanup() {
   trap - EXIT INT TERM
   [[ -z "$console_pid" ]] || kill "$console_pid" 2>/dev/null || true
@@ -39,7 +41,7 @@ cleanup() {
   exec 3>&- 4>&- 5<&-
   rm -rf -- "$runtime"
 }
-trap cleanup EXIT
+trap 'cleanup' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 cd "$root/bin64"
@@ -56,4 +58,5 @@ set +e
 wait -n "$master_pid" "$caves_pid"
 result=$?
 set -e
+cleanup
 exit "$result"
