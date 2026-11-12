@@ -9,7 +9,7 @@ import { jsonTextResult } from '../results'
 import { CliInputSchema, CommandResultSchema } from '../schemas'
 
 const InspectionInputSchema = Schema.Struct({
-  command: Schema.Literal('talosctl', 'omnictl'),
+  command: Schema.Literals(['talosctl', 'omnictl']),
   args: CliInputSchema.fields.args,
   timeoutSeconds: CliInputSchema.fields.timeoutSeconds,
   maxOutputBytes: CliInputSchema.fields.maxOutputBytes,

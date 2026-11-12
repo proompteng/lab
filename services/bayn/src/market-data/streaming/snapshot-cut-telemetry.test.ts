@@ -1,8 +1,8 @@
+import { makePostgresFixture } from '../../testing/postgres-fixture.test-support'
 import { expect, test } from 'bun:test'
 import { Effect, Layer, Logger, References, Result } from 'effect'
 import { PgClient } from '@effect/sql-pg'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { constructStreamingSnapshot } from './snapshot'
 import { SnapshotCutReason, snapshotCutMeasurement } from './telemetry'
@@ -81,7 +81,7 @@ test('the live rejection warning carries cut reasons while healthy snapshots emi
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const sql = yield* SqlClient.make({
+        const sql = yield* makePostgresFixture({
           acquirer: Effect.die('Diagnostics must not query PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -89,7 +89,7 @@ test('the live rejection warning carries cut reasons while healthy snapshots emi
         for (const complete of [true, false]) {
           const selected = complete ? cut : { ...cut, positions: [] }
           const live = StreamingIntradayMarketDataLive.pipe(
-            Layer.provide(Layer.succeed(PgClient.PgClient, sql as PgClient.PgClient)),
+            Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
             Layer.provide(
               Layer.succeed(KafkaMarketProjection, {
                 startWakeups: () => Effect.void,

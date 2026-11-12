@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
-import * as Schema from '@effect/schema/Schema'
-import { Context, Effect, Layer, Runtime } from 'effect'
+import * as Schema from 'effect/Schema'
+import { Context, Effect, Layer } from 'effect'
 import * as Deferred from 'effect/Deferred'
 import * as Fiber from 'effect/Fiber'
 import * as Ref from 'effect/Ref'
@@ -105,10 +105,9 @@ export interface CodexSessionServiceDefinition {
   ) => Effect.Effect<CodexSessionHandle, CodexProtocolError, Scope.Scope>
 }
 
-export class CodexSessionService extends Context.Tag('symphony/CodexSessionService')<
-  CodexSessionService,
-  CodexSessionServiceDefinition
->() {}
+export class CodexSessionService extends Context.Service<CodexSessionService, CodexSessionServiceDefinition>()(
+  'symphony/CodexSessionService',
+) {}
 
 const JsonRpcResponseSchema = Schema.Struct({
   id: Schema.Number,
@@ -243,8 +242,8 @@ const writeMessage = (
     catch: (error) => new CodexProtocolError('response_error', 'failed to write to codex app-server stdin', error),
   })
 
-const decodeResponse = Schema.decodeUnknownEither(JsonRpcResponseSchema)
-const decodeMethod = Schema.decodeUnknownEither(JsonRpcMethodSchema)
+const decodeResponse = Schema.decodeUnknownResult(JsonRpcResponseSchema)
+const decodeMethod = Schema.decodeUnknownResult(JsonRpcMethodSchema)
 
 export const decodeProtocolMessage = (rawLine: string): Record<string, unknown> | null => {
   const trimmed = rawLine.trim()
@@ -261,7 +260,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
     createSession: (options) =>
       Effect.gen(function* () {
         yield* Scope.Scope
-        const runtime = yield* Effect.runtime<never>()
+        const context = yield* Effect.context<never>()
         const sessionLogger = options.logger.child({
           component: 'codex-app-session',
           workspace_path: options.cwd,
@@ -293,8 +292,8 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             stdio: ['pipe', 'pipe', 'pipe'],
           }),
         )
-        const stdoutFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, CodexProtocolError> | null>(null)
-        const stderrFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, CodexProtocolError> | null>(null)
+        const stdoutFiberRef = yield* Ref.make<Fiber.Fiber<void, CodexProtocolError> | null>(null)
+        const stderrFiberRef = yield* Ref.make<Fiber.Fiber<void, CodexProtocolError> | null>(null)
 
         yield* Effect.sync(() => {
           child.once('exit', (code, signal) => {
@@ -302,7 +301,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               'port_exit',
               `codex app-server exited code=${code ?? 'unknown'} signal=${signal ?? 'unknown'}`,
             )
-            Runtime.runFork(runtime)(failAllPending(error))
+            Effect.runForkWith(context)(failAllPending(error))
           })
         })
 
@@ -363,19 +362,19 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             if (method === 'item/tool/requestUserInput') {
               yield* writeMessage(child, { id, error: { code: -32000, message: 'turn_input_required' } })
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
-              if (activeTurn) {
-                yield* Deferred.fail(
-                  activeTurn.deferred,
-                  new CodexProtocolError('turn_input_required', 'agent requested user input'),
-                )
-                yield* SynchronizedRef.set(activeTurnRef, null)
-              }
               yield* options.onEvent({
                 event: 'turn_input_required',
                 timestamp: new Date().toISOString(),
                 codexAppServerPid: String(child.pid ?? ''),
                 message: 'agent requested user input',
               })
+              if (activeTurn) {
+                yield* SynchronizedRef.set(activeTurnRef, null)
+                yield* Deferred.fail(
+                  activeTurn.deferred,
+                  new CodexProtocolError('turn_input_required', 'agent requested user input'),
+                )
+              }
               return
             }
 
@@ -406,7 +405,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               },
             })
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.sync(() => {
                 sessionLogger.log('warn', 'codex_request_handling_failed', {
                   method,
@@ -427,7 +426,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
             if (!activeTurn || activeTurn.turnId !== turnId) return
 
-            yield* Deferred.succeed(activeTurn.deferred, { status, turnId, threadId })
             yield* SynchronizedRef.set(activeTurnRef, null)
             yield* options.onEvent({
               event: `turn_${status}`,
@@ -439,6 +437,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               message: message ?? null,
               ...details,
             })
+            yield* Deferred.succeed(activeTurn.deferred, { status, turnId, threadId })
           })
 
         const failActiveTurn = (error: CodexProtocolError, eventName: string, details: Partial<CodexEvent> = {}) =>
@@ -456,7 +455,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               return
             }
 
-            yield* Deferred.fail(activeTurn.deferred, error)
             yield* SynchronizedRef.set(activeTurnRef, null)
             yield* options.onEvent({
               event: eventName,
@@ -468,6 +466,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               message: error.message,
               ...details,
             })
+            yield* Deferred.fail(activeTurn.deferred, error)
           })
 
         const enqueuePendingTurnResolution = (turnId: string, resolution: PendingTurnResolution) =>
@@ -632,8 +631,8 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             if (!message) return
 
             const responseDecoded = decodeResponse(message)
-            if (responseDecoded._tag === 'Right' && ('result' in message || 'error' in message)) {
-              const response = responseDecoded.right
+            if (responseDecoded._tag === 'Success' && ('result' in message || 'error' in message)) {
+              const response = responseDecoded.success
               const request = pending.get(response.id)
               if (!request) return
               pending.delete(response.id)
@@ -650,8 +649,8 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             }
 
             const methodDecoded = decodeMethod(message)
-            if (methodDecoded._tag === 'Right') {
-              const request = methodDecoded.right
+            if (methodDecoded._tag === 'Success') {
+              const request = methodDecoded.success
               if (typeof request.id === 'number') {
                 yield* handleServerRequest(request.id, request.method, request.params)
                 return
@@ -659,7 +658,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               yield* handleNotification(request.method, request.params)
             }
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.sync(() => {
                 sessionLogger.log('warn', 'codex_protocol_error', toLogError(error))
               }),
@@ -669,7 +668,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
         const stdoutFiber = yield* Stream.fromAsyncIterable(
           child.stdout,
           (error) => new CodexProtocolError('port_exit', 'codex stdout stream failed', error),
-        ).pipe(Stream.decodeText(), Stream.splitLines, Stream.runForEach(handleProtocolLine), Effect.fork)
+        ).pipe(Stream.decodeText(), Stream.splitLines, Stream.runForEach(handleProtocolLine), Effect.forkChild)
         yield* Ref.set(stdoutFiberRef, stdoutFiber)
 
         const stderrFiber = yield* Stream.fromAsyncIterable(
@@ -684,7 +683,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               sessionLogger.log('info', 'codex_stderr', { message: line.trim() })
             }),
           ),
-          Effect.fork,
+          Effect.forkChild,
         )
         yield* Ref.set(stderrFiberRef, stderrFiber)
 
@@ -698,12 +697,12 @@ export const makeCodexSessionLayer = (logger: Logger) =>
 
             const activeStdoutFiber = yield* Ref.get(stdoutFiberRef)
             if (activeStdoutFiber) {
-              yield* Fiber.interruptFork(activeStdoutFiber)
+              yield* Effect.forkDetach(Fiber.interrupt(activeStdoutFiber)).pipe(Effect.asVoid)
             }
 
             const activeStderrFiber = yield* Ref.get(stderrFiberRef)
             if (activeStderrFiber) {
-              yield* Fiber.interruptFork(activeStderrFiber)
+              yield* Effect.forkDetach(Fiber.interrupt(activeStderrFiber)).pipe(Effect.asVoid)
             }
           }),
         )
@@ -715,10 +714,12 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             pending.set(id, { method, deferred })
             yield* writeMessage(child, { id, method, params })
             return yield* Deferred.await(deferred).pipe(
-              Effect.timeoutFail({
+              Effect.timeoutOrElse({
                 duration: options.readTimeoutMs,
-                onTimeout: () =>
-                  new CodexProtocolError('response_timeout', `${method} timed out after ${options.readTimeoutMs}ms`),
+                orElse: () =>
+                  Effect.fail(
+                    new CodexProtocolError('response_timeout', `${method} timed out after ${options.readTimeoutMs}ms`),
+                  ),
               }),
               Effect.ensuring(Effect.sync(() => pending.delete(id))),
             )
@@ -738,9 +739,9 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                       requestAttestation: false,
                     },
                   }).pipe(
-                    Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
-                    Effect.zipRight(Ref.set(readyRef, true)),
-                    Effect.zipRight(
+                    Effect.andThen(writeMessage(child, { method: 'initialized', params: {} })),
+                    Effect.andThen(Ref.set(readyRef, true)),
+                    Effect.andThen(
                       options.onEvent({
                         event: 'session_started',
                         timestamp: new Date().toISOString(),
@@ -837,12 +838,14 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               const threadId = yield* startThread
               const { turnId, deferred } = yield* startTurn(threadId, prompt)
               return yield* Deferred.await(deferred).pipe(
-                Effect.timeoutFail({
+                Effect.timeoutOrElse({
                   duration: options.turnTimeoutMs,
-                  onTimeout: () =>
-                    new CodexProtocolError('turn_timeout', `turn ${turnId} exceeded ${options.turnTimeoutMs}ms`),
+                  orElse: () =>
+                    Effect.fail(
+                      new CodexProtocolError('turn_timeout', `turn ${turnId} exceeded ${options.turnTimeoutMs}ms`),
+                    ),
                 }),
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   error.code === 'turn_input_required'
                     ? Effect.fail(error)
                     : Effect.fail(

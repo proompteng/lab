@@ -1002,7 +1002,7 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Authority transition timestamps retain PostgreSQL microsecond precision as UTC strings through SQL comparisons and
   writes. Converting the transition cut through JavaScript `Date` can place it before a fresh reconciliation within the
   same millisecond and leave recovery restricted. Public authority observations keep their canonical millisecond format.
-- The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
+- The `effect@4.1.4` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
   with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
   transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
 - Bayn enables SQL span propagation. The pinned PostgreSQL adapter records `postgresql.pid` from the backend startup
@@ -1022,8 +1022,8 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   TLS. A dispatch start does not prove that the broker received the request. Mock clients without the interceptor
   report `unobserved`, not a fabricated phase. No request/response values, hostnames, credentials or account identifiers
   enter this diagnostic. Retry, total deadline, proxy ownership and all trading safeguards are unchanged.
-- Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
-  preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
+- Jev HTTP spans capture only known rate-limit and retry response headers. Authorization, cookie, Set-Cookie and
+  API-key header attributes stay absent. HTTP status and timing remain available. The inference client preserves caller-provided redaction.
 - Rejected positions responses emit one bounded schema diagnostic on the existing read span and a warning. The
   `broker.decode_field` path uses only authored position fields and `[]` in place of array indices; issue, expected type
   and actual type use fixed categories. Payload values, arbitrary keys, schema messages and account identifiers are
@@ -1031,7 +1031,7 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   the error. Successful reads, other endpoints, deadlines, retries, validation and freshness are unchanged.
 - Operation-duration histograms use Effect's canonical boundary constructor, including the unbounded overflow bucket.
   Prometheus and OTLP retain the same finite buckets through 60 seconds and count longer operations in overflow.
-  The pinned Effect Prometheus patch emits that overflow once as `+Inf`, rather than also exporting `Infinity`.
+  Effect 4.1.4 emits that overflow once as `+Inf`.
   Cross-service latency aggregation therefore combines matching buckets without changing alert thresholds or sample gates.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,

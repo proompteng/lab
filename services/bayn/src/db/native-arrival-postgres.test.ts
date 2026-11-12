@@ -1,8 +1,8 @@
+import { makePostgresFixture } from '../testing/postgres-fixture.test-support'
 import { expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Effect, Exit, Fiber, Result, Stream } from 'effect'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 import { TestClock } from 'effect/testing'
 
 import { canonicalJsonV1Result } from '../hash'
@@ -43,7 +43,7 @@ test.each([
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const client = yield* SqlClient.make({
+          const client = yield* makePostgresFixture({
             acquirer: Effect.die('The refusal fixture never connects to PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
@@ -69,7 +69,7 @@ test.each([
                           : Effect.fail(refused)
                 })
             },
-          }) as PgClient.PgClient
+          })
           const chunk = Result.getOrThrow(
             makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, observation(1))]),
           )
@@ -110,7 +110,7 @@ test('native pages decode only consumed chunks and reject corruption when reache
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* SqlClient.make({
+        const client = yield* makePostgresFixture({
           acquirer: Effect.die('Native page tests never connect to PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -125,7 +125,7 @@ test('native pages decode only consumed chunks and reject corruption when reache
               })),
             )
           },
-        }) as PgClient.PgClient
+        })
         const page = streamNativeArrivalChunkPage(sql, epoch, -1)
         const consumed = yield* page.pipe(Stream.take(1), Stream.runCollect)
         expect(consumed).toEqual([{ ...first, records: [nativeArrival(epoch, observation(1))] }])
