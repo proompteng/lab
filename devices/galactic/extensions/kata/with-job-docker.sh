@@ -11,7 +11,7 @@ for command in docker dockerd sudo timeout readlink stat awk python3; do
 done
 [[ -d "$RUNNER_TEMP" ]] || { echo 'RUNNER_TEMP must be an existing job directory' >&2; exit 1; }
 
-current_cgroup="$(cat /proc/self/cgroup | awk -F: '$1 == "0" && $2 == "" { print $3 }')"
+current_cgroup="$(awk -F: '$1 == "0" && $2 == "" { print $3 }' /proc/self/cgroup)"
 if [[ "$current_cgroup" != /* || "$current_cgroup" == / || "$current_cgroup" == *..* || "$current_cgroup" == *$'\n'* ]]; then
   echo 'Kata packaging requires an existing non-root cgroup-v2 parent' >&2
   exit 1
@@ -198,7 +198,7 @@ while ((SECONDS < startup_deadline)); do
     fi
     owned_pid="$daemon_pid"
     owned_starttime="$observed_starttime"
-    daemon_cgroup="$(cat "/proc/$daemon_pid/cgroup" | awk -F: '$1 == "0" && $2 == "" { print $3 }')"
+    daemon_cgroup="$(awk -F: '$1 == "0" && $2 == "" { print $3 }' "/proc/$daemon_pid/cgroup")"
     if [[ "$daemon_cgroup" != "$cgroup_parent" && "$daemon_cgroup" != "$cgroup_parent/"* ]] ||
       [[ "$(timeout 2 "$docker_cli" --host "$docker_host" --config "$docker_config" info --format '{{.CgroupDriver}}:{{.CgroupVersion}}')" != cgroupfs:2 ]]; then
       echo 'The private Kata Docker runtime escaped its bounded cgroup-v2 parent' >&2
