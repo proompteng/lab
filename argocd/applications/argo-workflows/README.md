@@ -2,6 +2,10 @@
 
 Argo Workflows uses a Rook `ObjectBucketClaim` backed by Ceph RGW for workflow artifacts.
 
+The application pins chart 2.0.18, which installs Workflows 4.1.6, including its controller, server, executor and
+CRD installer. Apply the CRD installation wave before the controller and server. Verify a workflow that produces
+and consumes an artifact through the configured Ceph object store after upgrading.
+
 ## Sources of truth
 
 1. `argocd/applications/argo-workflows/kustomization.yaml`
