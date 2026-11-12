@@ -14,7 +14,6 @@ resources:
   - postgres-cluster.yaml
   - postgres-monitoring.yaml
   - postgres-scheduled-backup.yaml
-  - native-arrival-postgres.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml
   - egress-proxy.yaml
@@ -29,7 +28,6 @@ resources:
   - status-pdb.yaml
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
-  - openai-externalsecret.yaml
   - bayn-research-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml

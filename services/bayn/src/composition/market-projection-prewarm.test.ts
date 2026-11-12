@@ -1,8 +1,10 @@
 import { expect, test } from 'bun:test'
 import { Context, Deferred, Effect, Fiber, Layer, ManagedRuntime, Result } from 'effect'
+import { TestClock } from 'effect/testing'
+import { provideTestLayer } from '../effect-test-support'
 
 import { KafkaMarketFailure, KafkaMarketProjection } from '../market-data/streaming/kafka'
-import { prewarmNativeMarketProjection } from './native-execution-runtime'
+import { awaitNativeMarketProjectionReady, prewarmNativeMarketProjection } from './native-execution-runtime'
 
 class TradingKernel extends Context.Service<TradingKernel, { readonly market: typeof KafkaMarketProjection.Service }>()(
   'test/prewarm/TradingKernel',
@@ -15,12 +17,12 @@ const fixture = () => {
     message: 'Kafka projection is rebuilding required history',
   })
   const market = {
-    read: Effect.suspend(() => {
+    check: Effect.suspend(() => {
       calls.read += 1
       return Effect.fail(unavailable)
     }),
-    readForLiquidation: Effect.die('Prewarm must not request liquidation evidence'),
-    status: Effect.succeed({ epoch: 'test-epoch', ready: false, sequence: 0 }),
+    read: () => Effect.die('Prewarm must not request snapshot evidence'),
+    status: Effect.succeed({ epoch: 'test-epoch', ready: false, sequence: 0, bootstrapDeadlineAtMs: null }),
   }
   const projection = Layer.effect(
     KafkaMarketProjection,
@@ -52,8 +54,7 @@ test('prewarm shares one read-only projection with concurrent lazy kernels and a
   const f = fixture()
   await Effect.runPromise(
     Effect.gen(function* () {
-      const prewarmed = yield* prewarmNativeMarketProjection(f.projection)
-      if (prewarmed === null) throw new Error('Expected read-only prewarm')
+      const { layer: prewarmed } = yield* prewarmNativeMarketProjection(f.projection)
       expect(f.calls).toEqual({ acquire: 1, close: 0, read: 0, driver: 0, broker: 0, model: 0, grant: 0 })
       const layer = f.kernel.pipe(Layer.provide(prewarmed))
       const first = ManagedRuntime.make(layer)
@@ -85,12 +86,16 @@ test('prewarm does not label rebuilding signal history as ready or read a signal
   const f = fixture()
   await Effect.runPromise(
     Effect.gen(function* () {
-      const prewarmed = yield* prewarmNativeMarketProjection(f.projection)
-      if (prewarmed === null) throw new Error('Expected read-only prewarm')
+      const { layer: prewarmed } = yield* prewarmNativeMarketProjection(f.projection)
       const market = yield* KafkaMarketProjection.pipe(Effect.provide(prewarmed))
-      expect(yield* market.status).toEqual({ epoch: 'test-epoch', ready: false, sequence: 0 })
+      expect(yield* market.status).toEqual({
+        epoch: 'test-epoch',
+        ready: false,
+        sequence: 0,
+        bootstrapDeadlineAtMs: null,
+      })
       expect(f.calls.read).toBe(0)
-      const cut = yield* market.read.pipe(Effect.result)
+      const cut = yield* market.check.pipe(Effect.result)
       expect(Result.isFailure(cut)).toBe(true)
       if (Result.isFailure(cut)) expect(cut.failure.message).toContain('rebuilding required history')
       expect(f.calls.driver).toBe(0)
@@ -163,4 +168,74 @@ test('interrupted projection acquisition releases resources without creating a t
       expect(f.calls).toEqual({ acquire: 1, close: 1, read: 0, driver: 0, broker: 0, model: 0, grant: 0 })
     }).pipe(Effect.scoped),
   )
+})
+
+test('handoff waits for the shared history without acquiring trading resources or restarting its clock', async () => {
+  const f = fixture()
+  let ready = false
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void>()
+      const market = {
+        ...f.market,
+        status: Effect.sync(() => ({ epoch: 'warmup', ready, sequence: 0, bootstrapDeadlineAtMs: 5000 })),
+      }
+      const waiting = yield* awaitNativeMarketProjectionReady(market).pipe(
+        Effect.andThen(Deferred.succeed(completed, undefined)),
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust(2000)
+      expect(yield* Deferred.isDone(completed)).toBe(false)
+      expect(f.calls).toEqual({ acquire: 0, close: 0, read: 0, driver: 0, broker: 0, model: 0, grant: 0 })
+      ready = true
+      yield* TestClock.adjust(1000)
+      yield* Fiber.join(waiting)
+      expect(yield* Deferred.isDone(completed)).toBe(true)
+    }).pipe((effect) => provideTestLayer(effect, TestClock.layer())),
+  )
+})
+
+test('a late handoff attempt retains the original bootstrap deadline and interruption cancels its wait', async () => {
+  const f = fixture()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.adjust(4000)
+      const market = {
+        ...f.market,
+        status: Effect.succeed({ epoch: 'warmup', ready: false, sequence: 0, bootstrapDeadlineAtMs: 5000 }),
+      }
+      const waiting = yield* awaitNativeMarketProjectionReady(market).pipe(Effect.result, Effect.forkChild)
+      yield* TestClock.adjust(1001)
+      const result = yield* Fiber.join(waiting)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result))
+        expect(result.failure.cause).toMatchObject({ readiness: 'EXPIRED', bootstrapDeadlineAtMs: 5000 })
+      const interrupted = yield* awaitNativeMarketProjectionReady({
+        ...f.market,
+        status: Effect.succeed({ epoch: 'next', ready: false, sequence: 0, bootstrapDeadlineAtMs: 10000 }),
+      }).pipe(Effect.forkChild)
+      yield* Fiber.interrupt(interrupted)
+      expect(f.calls.driver).toBe(0)
+    }).pipe((effect) => provideTestLayer(effect, TestClock.layer())),
+  )
+})
+
+test('a failed or invalidated history cannot hand off even if a previous ready flag was true', async () => {
+  const f = fixture()
+  const result = await Effect.runPromise(
+    awaitNativeMarketProjectionReady({
+      ...f.market,
+      status: Effect.succeed({
+        epoch: 'failed',
+        ready: true,
+        sequence: 1,
+        bootstrapDeadlineAtMs: null,
+        failure: 'assignment invalidated',
+      }),
+    }).pipe(Effect.result),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure.cause).toMatchObject({ readiness: 'FAILED', failure: 'assignment invalidated' })
+  expect(f.calls.driver).toBe(0)
 })

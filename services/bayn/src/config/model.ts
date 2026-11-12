@@ -21,7 +21,6 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 
 export interface RuntimeConfig {
   readonly jevKey?: Redacted.Redacted<string> | undefined
-  readonly openAiKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -51,7 +50,6 @@ export interface RuntimeConfig {
     readonly tls: boolean
     readonly caPath: string
   }
-  readonly nativeArrivalPostgres?: RuntimeConfig['postgres'] | undefined
   readonly tigerBeetle: {
     readonly clusterId: bigint
     readonly replicaAddresses: readonly string[]
@@ -78,7 +76,6 @@ export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelec
 
 export interface ParsedRuntimeConfig {
   readonly jevKey?: Redacted.Redacted<string> | undefined
-  readonly openAiKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -112,7 +109,6 @@ export interface ParsedRuntimeConfig {
   readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: RuntimeConfig['clickhouse']
   readonly postgres: RuntimeConfig['postgres']
-  readonly nativeArrivalPostgres?: RuntimeConfig['postgres'] | undefined
   readonly tigerBeetle: RuntimeConfig['tigerBeetle']
 }
 

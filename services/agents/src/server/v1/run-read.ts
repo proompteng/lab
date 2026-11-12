@@ -48,6 +48,8 @@ export type RunReadApiDependencies = {
   kubeClientFactory?: () => KubernetesClient
   defaultNamespace?: string
   requireLeaderForMutation?: () => Response | null
+  env?: NodeJS.ProcessEnv
+  fetch?: typeof fetch
 }
 
 type RunReadStorageOperation =
@@ -109,6 +111,11 @@ type RunReadStoreServiceDefinition = {
 }
 
 type RunReadKubernetesServiceDefinition = {
+  readonly readTelemetry: (
+    kube: KubernetesClient,
+    resource: Record<string, unknown>,
+    namespace: string,
+  ) => Effect.Effect<Record<string, unknown>, RunReadKubeError>
   readonly client: (namespace: string) => Effect.Effect<KubernetesClient, RunReadKubeError>
   readonly getResource: (
     kube: KubernetesClient,
@@ -124,15 +131,14 @@ type RunReadKubernetesServiceDefinition = {
   ) => Effect.Effect<Record<string, unknown> | null, RunReadKubeError>
 }
 
-export class RunReadStoreService extends Context.Tag('agents/RunReadStoreService')<
-  RunReadStoreService,
-  RunReadStoreServiceDefinition
->() {}
+export class RunReadStoreService extends Context.Service<RunReadStoreService, RunReadStoreServiceDefinition>()(
+  'agents/RunReadStoreService',
+) {}
 
-export class RunReadKubernetesService extends Context.Tag('agents/RunReadKubernetesService')<
+export class RunReadKubernetesService extends Context.Service<
   RunReadKubernetesService,
   RunReadKubernetesServiceDefinition
->() {}
+>()('agents/RunReadKubernetesService') {}
 
 export type RunReadServices = RunReadStoreService | RunReadKubernetesService
 
@@ -196,7 +202,7 @@ const closeStoreEffect = (store: RunReadApiStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 export const makeRunReadStoreService = (
   storeFactory: RunReadApiDependencies['storeFactory'],
@@ -218,6 +224,10 @@ export const makeRunReadLayer = (deps: RunReadApiDependencies) =>
   Layer.mergeAll(
     Layer.succeed(RunReadStoreService, makeRunReadStoreService(deps.storeFactory)),
     Layer.succeed(RunReadKubernetesService, {
+      readTelemetry: (kube, resource, namespace) =>
+        kubeEffect('read-telemetry', 'runner-telemetry', namespace, () =>
+          withRunnerTelemetry(kube, resource, namespace, { env: deps.env, fetch: deps.fetch }),
+        ),
       client: (namespace) =>
         Effect.try({
           try: () => getKubeClient(deps),
@@ -248,6 +258,13 @@ export const makeRunReadLayer = (deps: RunReadApiDependencies) =>
     }),
   )
 
+const validateAgentRunIdentity = (record: AgentRunRecord, resource: Record<string, unknown> | null) => {
+  const expectedUid = asString(readNested(record.payload, ['resource', 'metadata', 'uid']))
+  return resource && expectedUid && asString(readNested(resource, ['metadata', 'uid'])) !== expectedUid
+    ? Effect.fail(new RunReadConflictError({ message: 'AgentRun resource identity no longer matches its projection' }))
+    : Effect.void
+}
+
 const refreshAgentRecordFromResourceEffect = (
   stores: RunReadStoreServiceDefinition,
   store: RunReadApiStore,
@@ -255,12 +272,7 @@ const refreshAgentRecordFromResourceEffect = (
   resource: Record<string, unknown> | null,
 ): Effect.Effect<AgentRunRecord, RunReadError> =>
   Effect.gen(function* () {
-    const expectedUid = asString(readNested(record.payload, ['resource', 'metadata', 'uid']))
-    if (resource && expectedUid && asString(readNested(resource, ['metadata', 'uid'])) !== expectedUid) {
-      return yield* Effect.fail(
-        new RunReadConflictError({ message: 'AgentRun resource identity no longer matches its projection' }),
-      )
-    }
+    yield* validateAgentRunIdentity(record, resource)
     const cancelling = Boolean(record.payload.cancellation)
     const observedPhase = resource ? extractStatusPhase(resource) : null
     const terminal = observedPhase && ['succeeded', 'failed', 'cancelled'].includes(observedPhase.toLowerCase())
@@ -342,11 +354,8 @@ export const getAgentRunWithServicesEffect = (
           const resource = record.externalRunId
             ? yield* kubernetes.getResource(kube, 'AgentRun', record.externalRunId, resourceNamespace)
             : null
-          const observed = resource
-            ? yield* kubeEffect('read-telemetry', 'configmaps', resourceNamespace, () =>
-                withRunnerTelemetry(kube, resource, resourceNamespace),
-              )
-            : null
+          yield* validateAgentRunIdentity(record, resource)
+          const observed = resource ? yield* kubernetes.readTelemetry(kube, resource, resourceNamespace) : null
           const agentRun = yield* refreshAgentRecordFromResourceEffect(stores, activeStore, record, observed)
           return { agentRun, resource: observed }
         }),
@@ -469,28 +478,33 @@ export const cancelAgentRunHandler = async (id: string, request: Request, deps: 
   if (leaderResponse) return leaderResponse
   const namespace = normalizeNamespace(new URL(request.url).searchParams.get('namespace'), deps.defaultNamespace)
   const result = await Effect.runPromise(
-    cancelAgentRunWithServicesEffect(id, namespace).pipe(Effect.provide(makeRunReadLayer(deps)), Effect.either),
+    cancelAgentRunWithServicesEffect(id, namespace).pipe(Effect.provide(makeRunReadLayer(deps)), Effect.result),
   )
-  if (result._tag === 'Right')
-    return okResponse({ ok: true, ...result.right }, result.right.agentRun.status === 'Cancelling' ? 202 : 200)
-  return errorResponse(describeRunReadError(result.left), runReadStatus(result.left))
+  if (result._tag === 'Success')
+    return okResponse({ ok: true, ...result.success }, result.success.agentRun.status === 'Cancelling' ? 202 : 200)
+  return errorResponse(describeRunReadError(result.failure), runReadStatus(result.failure))
 }
 
 export const getAgentRunHandler = async (id: string, request: Request, deps: RunReadApiDependencies) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), deps.defaultNamespace)
-  const result = await Effect.runPromise(getAgentRunEffect(id, namespace, deps).pipe(Effect.either))
-  if (result._tag === 'Right')
-    return okResponse({ ok: true, agentRun: result.right.agentRun, resource: result.right.resource })
-  return errorResponse(describeRunReadError(result.left), runReadStatus(result.left))
+  const result = await Effect.runPromise(getAgentRunEffect(id, namespace, deps).pipe(Effect.result))
+  if (result._tag === 'Success')
+    return okResponse({ ok: true, agentRun: result.success.agentRun, resource: result.success.resource })
+  return errorResponse(describeRunReadError(result.failure), runReadStatus(result.failure))
 }
 
 export const getRunHandler = async (id: string, request: Request, deps: RunReadApiDependencies) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), deps.defaultNamespace)
-  const result = await Effect.runPromise(getRunEffect(id, namespace, deps).pipe(Effect.either))
-  if (result._tag === 'Right') {
-    return okResponse({ ok: true, kind: result.right.kind, run: result.right.run, resource: result.right.resource })
+  const result = await Effect.runPromise(getRunEffect(id, namespace, deps).pipe(Effect.result))
+  if (result._tag === 'Success') {
+    return okResponse({
+      ok: true,
+      kind: result.success.kind,
+      run: result.success.run,
+      resource: result.success.resource,
+    })
   }
-  return errorResponse(describeRunReadError(result.left), runReadStatus(result.left))
+  return errorResponse(describeRunReadError(result.failure), runReadStatus(result.failure))
 }

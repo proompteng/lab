@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
@@ -17,7 +18,12 @@ import {
   type ReadResult,
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
+import {
+  BrokerMutationError,
+  MutationFailure,
+  MutationOperation,
+  invalidRequest,
+} from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
 import { makeReplayInferenceTiming } from '../intraday-replay/inference-timing'
@@ -55,6 +61,8 @@ import {
 } from './broker-state-cache.fixture'
 import { makeBrokerStateCache } from './broker-state-cache'
 import { WriterFenceError } from './writer-fence'
+import { MutationEventType, MutationStoreError, type MutationEvent } from './mutations/model'
+import { mutationIdResult } from './mutations/decisions'
 
 const authorizeFinalBrokerSubmit = <A, E, R>(
   authority: Parameters<typeof makeExecutionProgram>[0] & { brokerAccess: BrokerAccess.Mutation },
@@ -336,6 +344,69 @@ describe('same-code execution program composition', () => {
     expect(liveProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.Granted)
   })
 
+  test('preserves the expired-entry admission token through the program and prevents rejected cancellation I/O', async () => {
+    const fixture = finalLiveFixture()
+    const stored: StoredIntent = { ...fixture.stored, intent: { ...fixture.intent, state: IntentState.Acknowledged } }
+    const parentId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'a'.repeat(64),
+      mutationId: Result.getOrThrow(mutationIdResult(stored.intent.intentId, MutationOperation.Submit)),
+      intentId: stored.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: 'b'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: parentId,
+      occurredAt: observedAt,
+    }
+    const admission = {
+      accountId,
+      authorityGenerationHash,
+      authorityVersion: 2,
+      intentId: stored.intent.intentId,
+      clientOrderId: stored.intent.clientOrderId,
+      brokerOrderId: parentId,
+      observedAt,
+      validUntil: '2026-07-28T08:00:30.000Z',
+    }
+    const rejected = new MutationStoreError({
+      operation: 'begin-cancel',
+      failure: 'authority',
+      message: 'expired-entry authority changed',
+    })
+    let deletions = 0
+    let admissions = 0
+    const defaults = dependencies('expired-entry-cancel')
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...defaults,
+        intentStore: { ...defaults.intentStore, read: () => Effect.succeed(Option.some(stored)) },
+        mutationStore: {
+          ...defaults.mutationStore,
+          latest: (_id, operation) => Effect.succeed(operation === MutationOperation.Submit ? accepted : undefined),
+          beginCancel: (id, _hash, brokerId, _delay, _at, token) => {
+            admissions += 1
+            expect([id, brokerId, token]).toEqual([stored.intent.intentId, parentId, admission])
+            return Effect.fail(rejected)
+          },
+        },
+        brokerMutation: {
+          ...defaults.brokerMutation,
+          cancel: () => {
+            deletions += 1
+            return Effect.die('rejected admission cannot reach broker I/O')
+          },
+        },
+      }),
+    )
+    expect(
+      await Effect.runPromise(program.cancel(stored.intent.intentId, 1_000, admission).pipe(Effect.result)),
+    ).toEqual(Result.fail(rejected))
+    expect([admissions, deletions]).toEqual([1, 0])
+  })
+
   test('cannot construct a mutation program from read-only authority', () => {
     const readOnly = Result.getOrThrow(
       makeExecutionAuthority({
@@ -353,6 +424,52 @@ describe('same-code execution program composition', () => {
         brokerAccess: BrokerAccess.ReadOnly,
       }),
     )
+  })
+
+  test('does not report a native cancellation as accepted without a durable receipt', async () => {
+    const fixture = finalLiveFixture()
+    const brokerOrderId = 'native-protection-child'
+    const command = {
+      intentId: fixture.intent.intentId,
+      accountId,
+      brokerOrderId,
+      requestedAt: observedAt,
+    } as const
+    const brokerReceipt = {
+      requestHash: Result.getOrThrow(canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId })),
+      brokerOrderId,
+      evidence: {
+        requestId: 'native-protection-cancel-test',
+        status: 204,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(null)),
+        observedAt,
+      },
+    } as const
+    let cancelCalls = 0
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...dependencies('native-cancel'),
+        brokerMutation: {
+          ...dependencies('native-cancel').brokerMutation,
+          cancel: () =>
+            Effect.sync(() => {
+              cancelCalls += 1
+              return brokerReceipt
+            }),
+        },
+        intentStore: {
+          beginProtectionCancel: () => Effect.succeed({ _tag: 'New', command } as const),
+          recordProtectionCancelAccepted: () => Effect.succeed({ _tag: 'PendingUnknown', command } as const),
+        } as unknown as ExecutionProgramDependencies['intentStore'],
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.cancelProtectionOrder(fixture.intent.intentId, brokerOrderId, undefined),
+    )
+
+    expect(result).toEqual({ _tag: 'PendingUnknown', command })
+    expect(cancelCalls).toBe(1)
   })
 
   test('produces the same final core safeguard decision for equal sandbox and live broker facts', async () => {
@@ -1140,6 +1257,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('final risk proof must not commit')),
         read: () =>
           Effect.sync(() => {
@@ -1220,6 +1338,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-lock position proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1286,6 +1405,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1381,6 +1501,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1548,8 +1669,10 @@ for (const phase of [
           measureDatabaseTime: (operation) => operation,
           providerClock,
           providers: {
-            jev: { evaluate: () => Effect.die('final authorization must not call Jev') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('final authorization must not call Jev') },
+              chartProviderFixture,
+            ),
           },
           advanceTo: (atMs) =>
             clockUnavailable
@@ -1633,6 +1756,55 @@ describe('execution with the native reconciliation cache', () => {
     }
     return { fixture, cache, deps }
   }
+  test.each(['rollback', 'defect', 'interruption'] as const)(
+    'preserves compound submit failure with %s before and after transmission',
+    async (cleanup) => {
+      for (const afterTransmission of [false, true]) {
+        const { fixture, cache, deps } = setup()
+        await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+        const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected submit denial' })
+        const rollback = new WriterFenceError({
+          operation: 'transaction',
+          failure: 'unavailable',
+          message: 'injected rollback failure',
+        })
+        const cleanupCause =
+          cleanup === 'rollback'
+            ? Cause.fail(rollback)
+            : cleanup === 'defect'
+              ? Cause.die(new Error('injected rollback defect'))
+              : Cause.interrupt()
+        let posts = 0
+        const exit = await Effect.runPromiseExit(
+          authorizeCachedFinalBrokerSubmit(
+            fixture.authority,
+            fixture.intent,
+            Effect.sync(() => {
+              posts += 1
+            }).pipe(Effect.andThen(Effect.fail(denied))),
+            {
+              ...deps,
+              currentUtcInstant: afterTransmission ? deps.currentUtcInstant : Effect.fail(denied),
+              writerFence: {
+                check: Effect.void,
+                transaction: (effect) =>
+                  effect.pipe(Effect.catchCause((cause) => Effect.failCause(Cause.combine(cause, cleanupCause)))),
+              },
+            },
+          ),
+        )
+        expect(posts).toBe(afterTransmission ? 1 : 0)
+        if (Exit.isSuccess(exit)) throw new Error('compound submit failure must propagate')
+        expect(exit.cause.reasons).toHaveLength(2)
+        expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+        if (cleanup === 'rollback' && afterTransmission) {
+          expect(exit.cause.reasons[1]).toMatchObject({ _tag: 'Fail', error: { failure: MutationFailure.Unknown } })
+        } else {
+          expect(exit.cause.reasons[1]).toEqual(cleanupCause.reasons[0])
+        }
+      }
+    },
+  )
   test.each([false, true])('checks the fee tier at the final transport clock: reset crossed %s', async (crossReset) => {
     const { fixture, cache, deps } = setup()
     const beforeReset = '2026-07-28T07:59:59.900Z'

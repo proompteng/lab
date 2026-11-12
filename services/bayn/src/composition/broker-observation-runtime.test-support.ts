@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
 import { ValkeyCache } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
@@ -83,7 +84,7 @@ await mock.module('../db/postgres-client', () => ({
           loggerInherited: (yield* Logger.CurrentLoggers) === loggers,
           tracerInherited: (yield* Tracer.Tracer) === tracer,
         }
-        return sql as unknown as PgClient.PgClient
+        return postgresQueryFixture(sql)
       }),
     ),
 }))
@@ -142,7 +143,7 @@ const result = await Effect.runPromise(
     Effect.gen(function* () {
       const { runtime } = yield* acquireBrokerObservationRuntime({
         config: {
-          operationTimeoutMs: mode === 'timeout' ? 25 : 5000,
+          operationTimeoutMs: mode === 'timeout' || mode === 'acquisition-deadline' ? 25 : 5000,
           alpaca: { expectedAccountId: 'test-account' },
           build: { sourceRevision: 'b'.repeat(40) },
         },

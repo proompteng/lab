@@ -10,10 +10,11 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { decodeJevBatchResult } from './batch'
 import { JevPurpose } from './portfolio'
-import { reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import { decodeJevStudyBatchResult, reproduceJevStudyBatchEvidence } from './study-evidence'
 import { JevStudyCycleSchema, verifyJevStudyInventory, type JevStudyInventory } from './study-inventory'
+import { describeJevStudyBatch, type JevStudyBatchDescription } from './study-opportunities'
+import { writeJevStudyOpportunities } from './study-opportunities-postgres'
 
 export class JevStudyExportFailure extends Data.TaggedError('JevStudyExportFailure')<{
   readonly message: string
@@ -34,9 +35,10 @@ export const verifyJevStudyExportRow = (input: unknown, sessionDate: string, acc
       RowSchema,
       strictParseOptions,
     )(input).pipe(Result.mapError(() => new JevStudyExportFailure({ message: 'Stored batch row is malformed' })))
-    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(row.observation, row.plan).pipe(
+    const source = yield* reproduceJevStudyBatchEvidence(row.observation, row.plan).pipe(
       Result.mapError(() => new JevStudyExportFailure({ message: `Batch ${row.batchId} does not reproduce` })),
     )
+    const { observation, plan } = source
     if (
       observation.schemaVersion !== 'bayn.jev-observation.v1' ||
       observation.cycleId !== row.cycleId ||
@@ -51,7 +53,7 @@ export const verifyJevStudyExportRow = (input: unknown, sessionDate: string, acc
     const result =
       row.result === null
         ? null
-        : yield* decodeJevBatchResult(plan, row.result).pipe(
+        : yield* decodeJevStudyBatchResult(source, row.result).pipe(
             Result.mapError(() => new JevStudyExportFailure({ message: `Batch ${row.batchId} result is invalid` })),
           )
     return { ...row, plan, result, purpose: observation.portfolio.purpose }
@@ -62,6 +64,7 @@ type StudyBatch = Result.Result.Success<ReturnType<typeof verifyJevStudyExportRo
 const maximumCycles = 10_000
 const maximumRecordBytes = 16 * 1024 * 1024
 const maximumExportBytes = 512 * 1024 * 1024
+const maximumOpportunityBytes = 1024 * 1024 * 1024
 
 /** Export every committed batch, including abstentions, exclusions and unfinished inference. */
 export const exportJevStudySession = (
@@ -80,9 +83,16 @@ export const exportJevStudySession = (
       const paths = yield* Path.Path
       yield* fs.makeDirectory(outputPath, { mode: 0o700 })
       const file = yield* fs.open(paths.join(outputPath, 'batches.ndjson'), { flag: 'wx', mode: 0o600 })
+      const opportunityFile = yield* fs.open(paths.join(outputPath, 'opportunities.ndjson'), {
+        flag: 'wx',
+        mode: 0o600,
+      })
       const digest = createHash('sha256')
+      const opportunityDigest = createHash('sha256')
       const batches: JevStudyInventory['batches'][number][] = []
+      const opportunityBatches: JevStudyBatchDescription[] = []
       let bytes = 0
+      let opportunityBytes = 0
       const write = (value: unknown) =>
         Effect.gen(function* () {
           const text = `${yield* Effect.fromResult(canonicalJsonV1Result(value))}\n`
@@ -92,6 +102,19 @@ export const exportJevStudySession = (
           yield* file.writeAll(encoded)
           digest.update(encoded)
           bytes += encoded.byteLength
+        })
+      const writeOpportunity = (value: unknown) =>
+        Effect.gen(function* () {
+          const text = `${yield* Effect.fromResult(canonicalJsonV1Result(value))}\n`
+          const encoded = new TextEncoder().encode(text)
+          if (
+            encoded.byteLength > maximumRecordBytes ||
+            opportunityBytes + encoded.byteLength > maximumOpportunityBytes
+          )
+            return yield* new JevStudyExportFailure({ message: 'Opportunity evidence exceeds the bounded export size' })
+          yield* opportunityFile.writeAll(encoded)
+          opportunityBytes += encoded.byteLength
+          opportunityDigest.update(encoded)
         })
       const exported = yield* sql.withTransaction(
         Effect.gen(function* () {
@@ -160,6 +183,7 @@ export const exportJevStudySession = (
             if (lastBatchId !== null && row.batchId <= lastBatchId)
               return yield* new JevStudyExportFailure({ message: 'Batch inventory did not advance' })
             yield* write(row)
+            opportunityBatches.push(yield* Effect.fromResult(describeJevStudyBatch(row)))
             batches.push({
               batchId: row.batchId,
               cycleId: row.cycleId,
@@ -174,6 +198,13 @@ export const exportJevStudySession = (
           }
           return {
             cycles,
+            opportunities: yield* writeJevStudyOpportunities(
+              sql,
+              { ...scope, asOf: cut.asOf },
+              cycles,
+              opportunityBatches,
+              writeOpportunity,
+            ),
             receipt: {
               schemaVersion: 'bayn.jev-study-export.v1',
               accountBindingHash,
@@ -192,6 +223,7 @@ export const exportJevStudySession = (
         }),
       )
       yield* file.sync
+      yield* opportunityFile.sync
       const material = { ...exported.receipt, bytes, dataSha256: digest.digest('hex') }
       const report = { ...material, receiptHash: yield* Effect.fromResult(canonicalHashV1Result(material)) }
       const inventory = yield* Effect.fromResult(
@@ -208,6 +240,28 @@ export const exportJevStudySession = (
       const inventoryFile = yield* fs.open(paths.join(outputPath, 'inventory.json'), { flag: 'wx', mode: 0o600 })
       yield* inventoryFile.writeAll(inventoryBytes)
       yield* inventoryFile.sync
+      const opportunityMaterial = {
+        schemaVersion: 'bayn.jev-study-opportunity-export.v2',
+        accountBindingHash: report.accountBindingHash,
+        sessionDate: report.sessionDate,
+        asOf: report.asOf,
+        batchReceiptHash: report.receiptHash,
+        ...exported.opportunities,
+        bytes: opportunityBytes,
+        dataSha256: opportunityDigest.digest('hex'),
+      }
+      const opportunityReceipt = {
+        ...opportunityMaterial,
+        receiptHash: yield* Effect.fromResult(canonicalHashV1Result(opportunityMaterial)),
+      }
+      const opportunityReceiptFile = yield* fs.open(paths.join(outputPath, 'opportunities.receipt.json'), {
+        flag: 'wx',
+        mode: 0o600,
+      })
+      yield* opportunityReceiptFile.writeAll(
+        new TextEncoder().encode(`${yield* Effect.fromResult(canonicalJsonV1Result(opportunityReceipt))}\n`),
+      )
+      yield* opportunityReceiptFile.sync
       const receiptFile = yield* fs.open(paths.join(outputPath, 'receipt.json'), { flag: 'wx', mode: 0o600 })
       yield* receiptFile.writeAll(new TextEncoder().encode(`${JSON.stringify(report, null, 2)}\n`))
       yield* receiptFile.sync

@@ -21,7 +21,7 @@ import {
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { ReconciliationStoreError } from './reconciliation'
 import { readOpeningCash } from './account-baseline'
-import { readFeeAccruals, postFeeAccruals } from './fee-accruals'
+import { readFeeAccruals, postFeeAccruals, type FeeAccrualRecords } from './fee-accruals'
 
 const invariant = (message: string, cause?: unknown) =>
   new ReconciliationStoreError({
@@ -34,6 +34,7 @@ const fromResult = <A, E>(result: Result.Result<A, E>) =>
   Effect.fromResult(result).pipe(Effect.mapError((cause) => invariant('broker fee evidence is invalid', cause)))
 
 export interface BrokerFeeAccounting {
+  readonly accruals: FeeAccrualRecords
   readonly fees: readonly FeeActivity[]
   readonly plans: readonly LedgerPlan[]
   readonly cashDeltaMicros: string
@@ -316,9 +317,10 @@ export const postBrokerFeePlans = (
   journal: JournalService,
   accountId: string,
   identity: { readonly clusterId: bigint; readonly ledger: number },
+  mode: 'post' | 'verify-only' = 'post',
 ): Effect.Effect<BrokerFeeAccounting, ReconciliationStoreError> =>
   Effect.gen(function* () {
-    yield* postFeeAccruals(sql, journal, accountId, identity)
+    const accruals = yield* postFeeAccruals(sql, journal, accountId, identity, mode)
     const rows = yield* fromResult(
       Schema.decodeUnknownResult(
         Schema.Array(StoredFeeSchema),
@@ -340,6 +342,8 @@ export const postBrokerFeePlans = (
       const verified = yield* fromResult(verifyBrokerFeeRecord(row, accountId, identity))
       const plan = verified.originalPlan
       if (!row.posted || !acknowledged.has(row.data.activityId)) {
+        if (mode === 'verify-only')
+          return yield* invariant('Broker fee posting requires an independently committed preparation')
         if (plan.transfers.length > 0)
           yield* journal.post(plan).pipe(
             Effect.mapError(
@@ -358,6 +362,8 @@ export const postBrokerFeePlans = (
       }
       for (const correction of verified.corrections) {
         if (!correction.record.posted) {
+          if (mode === 'verify-only')
+            return yield* invariant('Fee correction posting requires an independently committed preparation')
           yield* journal.post(correction.plan).pipe(
             Effect.mapError(
               (cause) =>
@@ -377,7 +383,7 @@ export const postBrokerFeePlans = (
       plans.push(plan)
       cashDelta += BigInt(verified.cashDeltaMicros)
     }
-    return { fees, plans, cashDeltaMicros: cashDelta.toString() }
+    return { accruals, fees, plans, cashDeltaMicros: cashDelta.toString() }
   }).pipe(
     Effect.mapError((cause) =>
       cause instanceof ReconciliationStoreError

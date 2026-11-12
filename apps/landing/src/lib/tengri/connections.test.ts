@@ -145,7 +145,7 @@ describe('saved platform connections', () => {
     expect(scope.resources[0]).toMatchObject({ id: 'galactic/namespace-uid', target: 'production' })
     expect(scope.actions).toEqual(['kubernetes.status.read'])
   })
-  test('cannot replace a recreated namespace, duplicate targets, or install unregistered and writable operations', () => {
+  test('cannot replace a recreated namespace, duplicate targets, or install unregistered operations', () => {
     const recreated = operation('galactic/recreated-uid')
     expect(() => selectConnectionScope([recreated], request)).toThrow('target changed')
     expect(() =>
@@ -154,7 +154,7 @@ describe('saved platform connections', () => {
     expect(() => selectConnectionScope([op], { ...request, operations: ['arbitrary'] })).toThrow('registered')
     const writable = operation()
     writable.readOnly = false
-    expect(() => selectConnectionScope([writable], request)).toThrow('read-only')
+    expect(selectConnectionScope([writable], request).operations[0].readOnly).toBe(false)
   })
   test('renewal retains exact saved authority and rejects a changed catalog or workspace', () => {
     expect(savedConnectionOperations([op], saved(), workspace).operations).toEqual([op])

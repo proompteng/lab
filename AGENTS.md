@@ -15,7 +15,8 @@ Complete the requested change, prove it at the requested boundary, and stop.
 
 ## Scope and authority
 
-- Work directly. Do not spawn subagents.
+- Keep application-specific content in its owning repository. Shared infrastructure documentation must stay focused
+  on the infrastructure without importing unrelated application details from other repositories.
 - Requests to build, change, fix, or ship authorize implementation, validation, commit, push, PR, CI and review fixes,
   and merge after required gates pass. Respect narrower limits such as local-only, draft-only, or do-not-deploy.
   Investigation, review, explanation, and planning requests authorize findings unless the user also requests changes.
@@ -56,10 +57,12 @@ conflict remains, link and quote the exact instruction and explain its effect.
 Before substantial investigation or implementation, retrieve focused context:
 
 ```sh
-bun run --filter memories retrieve-memory --query "<task and identifiers>" --limit 10
+bun run context:retrieve --query "<task and identifiers>" --repository proompteng/lab --limit 3
 ```
 
-Verify important claims against current evidence. Unavailable memory is non-blocking. Save durable context only when
+This combines bounded code excerpts and durable notes. The CLI checks Atlas against the checkout commit; use Git and
+`rg` when the code snapshot is stale or unavailable. Verify note claims against current source or live behavior.
+Unavailable sources are non-blocking. Save durable context only when
 explicitly requested; never save secrets, personal data, raw logs, or transient status.
 
 For indexed production `main`, use:

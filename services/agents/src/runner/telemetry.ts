@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { putS3Object, resolveArtifactUploadConfig } from '../artifact-storage'
 
-import { runnerQuotaSchema, runnerUsageSchema, type RunnerTelemetry } from '../runner-telemetry'
+import { runnerQuotaSchema, runnerUsageSchema, runnerTelemetryKey, type RunnerTelemetry } from '../runner-telemetry'
 
 import { isRecord } from './spec'
 
@@ -197,53 +197,20 @@ export const createRunnerTelemetry = (options: Options) => {
   }
 }
 
-export const createTelemetryPublisher = (env: NodeJS.ProcessEnv = process.env) => {
-  const name = env.AGENT_RUN_TELEMETRY_CONFIGMAP
+export const createTelemetryPublisher = (env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch) => {
   const namespace = env.AGENT_RUN_NAMESPACE
-  const runUid = env.AGENT_RUN_UID
-  if (!name || !namespace || !runUid) return undefined
-  let identity: Promise<{ ca: string; uid: string }> | undefined
-  const host = env.KUBERNETES_SERVICE_HOST
-  const port = env.KUBERNETES_SERVICE_PORT ?? '443'
-  const url = `https://${host}:${port}/api/v1/namespaces/${encodeURIComponent(namespace)}/configmaps/${encodeURIComponent(name)}`
+  const uid = env.AGENT_RUN_UID
+  if (!namespace || !uid) return undefined
   return async (snapshot: RunnerTelemetry) => {
-    identity ??= (async () => {
-      const directory = '/var/run/secrets/kubernetes.io/serviceaccount'
-      const [token, ca] = await Promise.all([
-        readFile(`${directory}/token`, 'utf8'),
-        readFile(`${directory}/ca.crt`, 'utf8'),
-      ])
-      const options = {
-        headers: { Authorization: `Bearer ${token.trim()}` },
-        signal: AbortSignal.timeout(5000),
-        tls: { ca },
-      }
-      const response = await fetch(url, options)
-      if (!response.ok) throw new Error(`read progress ConfigMap failed: HTTP ${response.status}`)
-      const resource = record(await response.json())
-      const metadata = record(resource.metadata)
-      const owners = Array.isArray(metadata.ownerReferences) ? metadata.ownerReferences : []
-      const uid = text(metadata.uid)
-      if (!uid || !owners.some((owner) => record(owner).uid === runUid))
-        throw new Error('progress ConfigMap identity mismatch')
-      return { ca, uid }
-    })().catch((error: unknown) => {
-      identity = undefined
-      throw error
+    const config = resolveArtifactUploadConfig(env)
+    if (!config) return
+    await putS3Object({
+      config,
+      key: runnerTelemetryKey(namespace, uid),
+      body: Buffer.from(JSON.stringify(snapshot)),
+      fetch: fetchImpl,
+      now: new Date(),
+      timeoutMs: 5000,
     })
-    const { ca, uid } = await identity
-    const token = (await readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8')).trim()
-    const options = {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json-patch+json' },
-      body: JSON.stringify([
-        { op: 'test', path: '/metadata/uid', value: uid },
-        { op: 'replace', path: '/data/telemetry.json', value: JSON.stringify(snapshot) },
-      ]),
-      signal: AbortSignal.timeout(5000),
-      tls: { ca },
-    }
-    const response = await fetch(url, options)
-    if (!response.ok) throw new Error(`publish progress failed: HTTP ${response.status}`)
   }
 }

@@ -190,6 +190,9 @@ bun --cwd services/jangar run start:worker
 
 ## Temporal worker notes
 
+Jangar and Bumba use the workspace Temporal SDK and one Effect 4.1.4 runtime. Follow Bumba's
+[major-version cutover contract](../bumba/README.md#worker-deployment-routing) before replacing an Effect 3 worker.
+
 - API enqueue path: `JANGAR_BUMBA_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `bumba`).
 - Worker consume path: `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `jangar`).
 - Production GitOps no longer deploys a separate `jangar-worker` Kubernetes Deployment or workspace PVC. Keep post-deploy checks scoped to `deployment/jangar`.
@@ -652,7 +655,7 @@ build through the Temporal SDK; the pinned legacy CLI is used only for workflow 
 - `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and experimental; it only requests `delta.jangar_event` frames when OpenWebUI rich rendering is already enabled on the server.
 - Authentication and rate limiting are intentionally disabled because this endpoint is for internal use only; place it behind your own network guardrails when exposing it.
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
-- Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
+- Server-side Effect services follow `Context.Service + Layer` patterns; see `src/server/effect-services.md`.
 
 ## agentctl
 
@@ -789,8 +792,15 @@ To use Flamingo for completions and the self-hosted embeddings model on `saigak`
 
 ```bash
 export OPENAI_API_BASE_URL='http://flamingo.flamingo.svc.cluster.local/v1'
+export JANGAR_FLAMINGO_MODEL='qwen38-flamingo'
+export JANGAR_FLAMINGO_REASONING_EFFORT='xhigh'
 export OPENAI_EMBEDDING_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:8b'
 export OPENAI_EMBEDDING_DIMENSION='4096'
 # OPENAI_API_KEY is optional for these in-cluster OpenAI-compatible endpoints
 ```
+
+Jangar selects the `flamingo` Codex provider only for `JANGAR_FLAMINGO_MODEL`, using the configured Responses
+endpoint without OpenAI authentication. Flamingo accepts `low`, `medium` or `xhigh` reasoning. Hosted web search and
+ChatGPT Apps are disabled for this provider; the configured MCP servers remain available. Other advertised models,
+including explicit Astra requests, retain the OpenAI provider.

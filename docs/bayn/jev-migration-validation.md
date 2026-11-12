@@ -44,101 +44,105 @@ the native decision binding remain unfinished.
 
 ## Economic acceptance
 
-The active policy is `bayn.jev-acceptance-policy.v4` in
-[`acceptance.ts`](../../services/bayn/src/jev/acceptance.ts). It evaluates the exact nonempty calendar registered
-before its first open, with the candidate and at least one prospectively selected matched control.
+The active policy is `bayn.jev-acceptance-policy.v5`, paired with system policy v5 and
+`bayn.system-registration.v4`. The pure [economic evaluator](../../services/bayn/src/system-assessment/economic-qualification.ts)
+uses actual fully attributed economics and the exact conditional bounds below. Register the complete policy,
+candidate, selected controls, allocation, cost attribution, calendar and statistical support before the first open.
 
-Current numerical acceptance requires positive fully costed net profit, a strictly positive lower bound for mean
-net profit, strictly positive paired net-edge lower bounds against every selected control, and compliance with the
-source-approved risk policy. There is no fixed session count, trade quota, turnover quota, dollar profit target,
-control-profit multiple, or dollar edge hurdle. Removing the best session, adding ten basis points per filled leg,
-and replaying p95 latency are diagnostics rather than admission requirements. Unknown diagnostic results stay null.
-Actual execution costs and observed failures remain in the base economics.
+Qualification requires positive actual net profit, a strictly positive lower bound for average registered expected
+net profit, strictly positive paired net-edge bounds against every selected control, and the existing approved loss
+and drawdown limits. Reliability remains 999/1000 per required class, with zero safety violations. There is no fixed
+session count, trade quota, turnover quota, dollar profit target, control multiple, dollar edge hurdle, bootstrap block
+requirement or resampling work budget. All sessions remain included, including failures, abstention and zero-trade costs.
 
-[Acceptance v1](jev-migration-acceptance.json), [v2](jev-migration-acceptance-v2.json), and the
-[retained v3 policy](../../services/bayn/src/jev/retained-acceptance-policy.ts) preserve their historical terms.
-Their records and content hashes remain intact. Stored assessments are verified under their recorded policy;
-new registrations use the current policy and continue the existing attempt index. No numerical result grants
-trading authority or establishes future returns.
+Best-session removal, additional ten-basis-point cost and p95 replay remain diagnostics. They cannot replace actual
+costs or failures. An assessment never grants trading authority. Conditional PAPER evidence does not establish live
+execution, a stationary return distribution or future profitability.
 
-## Run the numerical checker
+## Reporting commands
 
-From `services/bayn`:
+Use `bayn-system-assessment` from the research image with the existing explicit trading-target configuration; see the
+[system assessment guide](../../services/bayn/src/system-assessment/README.md#private-reporting-command):
+
+1. `--system-history <packet.json>` retains the audited attempt origin.
+2. `--system-register <packet.json>` prospectively binds the v4 registration and verified support-source artifacts.
+3. `--system-capture <registration-sha256>` persists the immutable evidence cut.
+4. `--system-assess <packet.json>` reproduces the complete financial, execution, reliability and statistical evidence.
+
+A statistical plan has method `CONDITIONAL_HOEFFDING_V1`. It explicitly binds `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS`. Its `supports` array contains one entry per selected
+policy: `policy`, `lowerMicros`, `upperMicros`, `sourceHash`, and `assumption`. Bounds apply to fully costed session net
+profit, including execution and operating failures. Source artifacts must be verified before registration. There are
+no default production support values. Do not use observed sample extrema or a daily loss stop as a guaranteed support
+bound: gaps, execution uncertainty and costs may violate either claim.
+
+The registration's complete policy definitions and append-only hash bind these assumptions to source, account,
+strategy, prompts, parameters, execution and costs. Bounds cannot be retuned under an existing attempt. Missing costs,
+marks, sources or sessions prevent qualification. An observation outside its registered support rejects the model;
+the evaluator never clips it, drops it or substitutes zero. A new attempt preserves every earlier attempt.
+
+The old numerical checker is for retained bootstrap research only:
 
 ```sh
 bun tools/jev-acceptance.ts --protocol
-bun tools/jev-acceptance.ts --input /absolute/path/to/session-summaries.json
+bun tools/jev-acceptance.ts --retained-input /absolute/path/to/session-summaries.json
 ```
 
-The first command returns the active policy and its canonical hash. The second reads
-`bayn.jev-acceptance-input.v1` and emits one JSON report. It exits successfully only for
-`NUMERICAL_TARGETS_PASSED`; complete failures return `TARGETS_MISSED`, missing evidence or an uninformative
-whole-window bootstrap block returns `INCONCLUSIVE`. Malformed or mismatched input fails before a report is issued.
-
-The input contract requires a prospective lock, an ordered calendar, registered analysis terms, and distinct series
-for `JEV` plus one or more selected controls: `DEPLOYED_BAYN`, `REPEATED_MOMENTUM`, or `JEV_ABLATION`. Selecting the
-deployed control still binds its original lifecycle and six frozen commitments. Source, policy, prompt, continuation,
-execution, cost, account, and calendar identities are verified by the system assessment, not by summary arithmetic.
-
-Analysis terms bind the allocation, approved loss and drawdown limits, mark cadence, bootstrap block length,
-replicate budget, and seed. Production derives these terms from the registered allocation, source-approved risk
-material, decision interval, and bootstrap plan. Registration cannot expand execution authority. The actual market
-calendar evidence must cover the claim. The implemented broker calendar remains US regular sessions;
-continuous-market evidence is a separate requirement, not supplied by this cleanup.
-
-Every policy series retains every registered session in order, including blocked, losing, and zero-trade sessions.
-Complete sessions record actual episodes, filled buy-plus-sell notional, net P&L, continuous opening/closing equity,
-marked extrema, drawdown, and mark coverage. Missing base economics or required marks prevents a pass. The optional
-p95 stress has a separate status; supplied replay evidence must still reproduce its provenance and terms.
-
-Money fields accept finite JSON numbers between -$1 billion and $1 billion. Nonnegative fields retain their domain
-constraints. Arithmetic interprets each decoded number's canonical decimal spelling exactly, using shared integer
-coefficients for sums, comparisons, stress deductions, and bootstrap sums. Only displayed values convert back to
-JavaScript numbers. JSON decoding has already discarded precision beyond the decoded number. The one-micro-dollar
-equity-consistency tolerance does not relax acceptance comparisons.
-
-The checker consumes summaries. Independently reproduce them from complete fills, fees, cost basis, cash movements,
-settlement, valuations, and operating expenses. Spread and slippage in actual fill prices are deducted once. Additional
-ten-basis-point charges appear only in the diagnostic counterfactual. Current qualification uses actual invoiced
-consumption; the retained greater-of-tariff-or-invoice premium is reported separately and does not replace actual
-profit. Unknown required costs remain unknown, including during zero-trade and failed-operation sessions.
+It prints the retained v5 research identity and `bayn.jev-acceptance-input.v1` diagnostics. Its numerical success
+cannot establish current statistical edge or qualification. Retained v2/v3/v4/v5 registrations and assessment receipts
+are reproduced under their original policy hashes; their bytes, financial history, attempt indices and results are
+never upgraded. The frozen [v2 acceptance contract](jev-migration-acceptance-v2.json) remains unchanged.
 
 ## Statistical comparison
 
-The registered circular-block bootstrap is a research diagnostic. It does not establish coverage for every
-permitted finite sample. Current assessments retain the calculations but report
-`STATISTICAL_COVERAGE_NOT_ESTABLISHED`, withhold established edge and qualification, and preserve measured profit.
-Retained policies reproduce their original results and hashes; they cannot admit a new registration.
+The [conditional bound](../../services/bayn/src/system-assessment/conditional-confidence.ts) estimates the average
+registered expected session net profit over the fixed calendar under the mean model below. For each policy, let the prospectively
+registered support be `[l,u]`, let `n` be the complete calendar size, and let `S` be the sum of actual microdollar profit.
+The causal information set includes prior attempts, market inputs, latency, liquidity, failed operation and costs.
+The plan explicitly declares `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS`: for every selected policy and
+session, expected net profit given all prior information equals its expected net profit given registration
+information. The session means may differ across the fixed calendar; conditional higher moments and outcomes may
+remain dependent. This assumption is required for the population expected-profit estimand. A bound for random,
+path-dependent conditional means does not establish that same claim. For example, a common positive/negative shock
+can produce a persistent favorable path while population mean profit is zero.
 
-A concrete counterexample has independent net session payoffs +$1 or -$3 with equal probability and a control
-return of -$1. True mean profit is -$1 and true mean paired edge is zero. Two wins occur with probability 25%,
-yet every resample has positive profit and edge. The permitted two-session, one-session-block, first-attempt,
-one-control configuration with 80 replicates therefore fails its nominal 2.5% first-attempt family allowance.
-More replicates do not add market evidence. A new fixed session or trade quota does not supply a coverage argument.
+Conditional almost-sure support gives a centered MGF bound with parameter `(u-l)^2/4` under this mean model. The
+registered sources must justify both support and the mean model. Neither assumption nor provider authenticity
+follows from a finite observed sample. All are printed in the result. No full independence or stationary return
+distribution is asserted, and this is not a guarantee that Bayn satisfies those assumptions.
 
-Before the first open, register circular block length `L`, replicate count `R`, and a nonzero UInt32 xorshift seed.
-Each resample has exactly `N` registered sessions, truncating only its final block when necessary. Candidate and
-controls share sampled indices. The block start is the exact integer floor of unsigned PRNG state times `N`, divided
-by `2^32`. Blocks longer than the calendar are invalid. A whole-window block gives no resampling variation and
-cannot establish edge; this is reported as inconclusive rather than a fictitious precise estimate.
-
-Let `m` be the number of selected controls and `k` the immutable attempt index. The one-sided tail allowance for
-each of the `m + 1` claims (absolute mean net profit and each paired mean net edge) is:
+For original attempt `k` and `m = 1 + selected control count`, use:
 
 ```text
-alpha = 0.05 / ((m + 1) * k * (k + 1))
+D = 20 * k * (k + 1) * m
+alpha = 1 / D
+L = ceil(log2(D))
+V = n * (u - l)^2
+radius = ceil(sqrt(ceil(V * L / 2)))
+mean lower bound in microdollars = (S - radius) / n
 ```
 
-This nominal allocation sums to at most 5% across claims and attempts only if each constituent bound is valid. Registration requires
-`R >= 20 * (m + 1) * k * (k + 1)`. The percentile rank is computed with exact integer division as
-`floor((R - 1) / (20 * (m + 1) * k * (k + 1)))`. The lower bound is the selected sorted resampled total divided by
-`N`. These positivity checks remain numerical diagnostics. A losing control cannot replace absolute observed profit.
+The factor 20 is the reciprocal of the frozen 0.05 familywise error budget; it is not a session requirement.
+All gate arithmetic uses integers. The report retains the exact rational lower bound and outward-rounded radius;
+only diagnostic currency summaries use floating-point display fields. For a candidate-minus-control comparison, use the paired differences on
+the same registered sessions and support `[l_candidate-u_control, u_candidate-l_control]`. Each policy bears its own
+fully attributed operating costs. A losing control cannot substitute for positive absolute profit and its lower bound.
 
-There is no fixed twelve-attempt ceiling: later attempts must prospectively reserve adequate finite work. Preserve
-all failed and inconclusive attempts; do not reset the index or increase the bootstrap budget after seeing results.
-The method assumes the selected block length adequately captures dependence and the prospective sample supports
-the claimed distribution. These assumptions remain explicit in the assessment. A passing research estimate does not establish calibrated finite-sample inference,
-future returns, or authentic source evidence.
+The conditional Hoeffding tail is bounded by `exp(-2 * radius^2 / V) <= exp(-L) <= 1/D`. The union budget covers every
+selected claim and every immutable attempt: the attempt allocations telescope to at most 0.05. This holds conditional
+on prior selection only under the recorded causal filtration and MGF assumptions. Zero-width support represents a
+claimed deterministic process; it is not a mechanism for estimating support from constant observations.
+
+`Bayn.ConditionalConfidence` proves integer outward rounding and current qualification gates.
+`BaynProbability` proves the conditional tail bound, paired support without independence, the rounding-to-alpha
+connection and the program-wide allocation using pinned Mathlib. Both libraries are mandatory proof-export roots.
+The probability proof library stays outside the executable conformance model and the trading runtime. Reachable
+synthetic success, missing evidence, the negative-expectancy counterexample, exact finite-sample enumeration and
+PostgreSQL admission/history tests exercise the production path.
+
+This procedure follows the conditional-MGF framework and its distinction between changing conditional means and population means in
+[Howard et al., time-uniform confidence sequences](https://arxiv.org/abs/1810.08240) and the bounded-variable inequalities in
+[pinned Mathlib's SubGaussian module](https://github.com/leanprover-community/mathlib4/blob/56a005855ea17e0b0958f73ec801ae140b0a1679/Mathlib/Probability/Moments/SubGaussian.lean).
+It proves a conditional statistical statement, not the market assumptions themselves.
 
 ## Score response consistency
 

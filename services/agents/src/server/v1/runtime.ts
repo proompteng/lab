@@ -85,7 +85,7 @@ export type AgentsV1RuntimeService = {
   ) => Effect.Effect<RunReadApiDependencies, AgentsV1RuntimeConfigurationError>
 }
 
-export class AgentsV1Runtime extends Context.Tag('AgentsV1Runtime')<AgentsV1Runtime, AgentsV1RuntimeService>() {}
+export class AgentsV1Runtime extends Context.Service<AgentsV1Runtime, AgentsV1RuntimeService>()('AgentsV1Runtime') {}
 
 type RequiredStoreFactoryDependency = {
   storeFactory?: unknown

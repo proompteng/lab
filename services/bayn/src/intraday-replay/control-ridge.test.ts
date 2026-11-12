@@ -1,3 +1,4 @@
+import { BrokerEnvironment } from '../broker/identity'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
@@ -546,7 +547,9 @@ test.each(['cash', 'filled'] as const)(
         })
         const receipt = yield* Effect.fromResult(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
         const input = {
-          schemaVersion: 'bayn.control-study-input.v9',
+          schemaVersion: 'bayn.control-study-input.v10',
+          riskEnvironment: BrokerEnvironment.Live,
+          openingPeakEquityMicros: '100000000000',
           costObjective: 'ALL_COSTS',
           entry: 'DETERMINISTIC',
           repeatedTargetWeightPpm: 100000,
@@ -555,7 +558,7 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v10',
+            schemaVersion: 'bayn.backtest.v11',
             policy: 'JEV' as const,
             latencyStress: null,
             jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -565,8 +568,8 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-providers',
               maximumCalls: 1000,
-              models: { jev: jevModel, chart: 'gpt-6-luna' },
-              inputDefinition: 'bayn.jev-entry-state.v23',
+              models: { jev: jevModel },
+              inputDefinition: 'bayn.jev-entry-state.v24',
               costs: replayRateCardFixture({
                 jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
                 chart: {

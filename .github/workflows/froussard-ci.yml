@@ -7,13 +7,7 @@ on:
     paths:
       - 'apps/froussard/**'
       - 'packages/agent-contracts/**'
-      - 'packages/codex/**'
-      - 'packages/discord/**'
-      - 'packages/otel/**'
       - 'nix/images/froussard.nix'
-      - '.github/workflows/froussard-ci.yml'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/check-bun-dependency-closure.sh'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/bun-workspace-deps-source.nix'
       - 'nix/images/bun-workspace-deps-source.test.sh'
@@ -23,9 +17,6 @@ on:
       - 'bunfig.toml'
       - '.npmrc'
       - 'patches/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/froussard/**'
   pull_request:
     paths:
@@ -34,9 +25,7 @@ on:
       - 'apps/froussard/**'
       - 'packages/agent-contracts/**'
       - 'nix/images/froussard.nix'
-      - '.github/workflows/froussard-ci.yml'
       - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/check-bun-dependency-closure.sh'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/bun-workspace-deps-source.nix'
       - 'nix/images/bun-workspace-deps-source.test.sh'
@@ -46,9 +35,6 @@ on:
       - 'bunfig.toml'
       - '.npmrc'
       - 'patches/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/froussard/**'
   workflow_dispatch:
 
@@ -77,11 +63,11 @@ jobs:
     if: needs.changes.outputs.changed == 'true'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard --filter @proompteng/codex --filter @proompteng/discord --filter @proompteng/otel && bun run --filter @proompteng/agent-contracts build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard && bun run --filter @proompteng/agent-contracts build
       lint-command: bunx oxfmt --check apps/froussard
       oxlint-command: bun run --cwd apps/froussard lint:oxlint
       oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type
-      test-command: bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
+      test-command: bun run --filter froussard test -- --coverage && bun run --filter froussard test:restate && node scripts/report-coverage.mjs
     secrets: inherit
 
   dependency-closure:
@@ -93,7 +79,7 @@ jobs:
     secrets: inherit
 
   nix-image:
-    needs: dependency-closure
+    needs: [dependency-closure, test]
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:

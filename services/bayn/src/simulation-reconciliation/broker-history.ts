@@ -14,7 +14,6 @@ import { canonicalHashV1Result } from '../hash'
 import {
   fillsPageSize,
   historyHashFailure,
-  maximumRows,
   normalizeTimestamp,
   ordersPageSize,
   paginationFailure,
@@ -24,6 +23,8 @@ import {
   type Observed,
   type OrderRead,
   ReconciliationError,
+  FillActivityRelation,
+  FillMismatchOrderRole,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
 
@@ -131,11 +132,6 @@ export const decideOrderPage = (
         return Result.fail(paginationFailure('DuplicateOrder', `duplicate Alpaca order ${order.brokerOrderId}`))
       }
       const rows = Chunk.append(result.success.rows, { value: order, evidence: page.evidence })
-      if (state.rows.length + Chunk.size(rows) > maximumRows) {
-        return Result.fail(
-          paginationFailure('OrderHistoryTooLarge', `Alpaca order history exceeds ${maximumRows} rows`),
-        )
-      }
       return Result.succeed({
         rows,
         ids: HashSet.add(result.success.ids, order.brokerOrderId),
@@ -203,9 +199,6 @@ export const decideFillPage = (
         return Result.fail(paginationFailure('DuplicateFill', `duplicate Alpaca fill ${fill.activityId}`))
       }
       const rows = Chunk.append(result.success.rows, { value: fill, evidence: page.evidence })
-      if (state.rows.length + Chunk.size(rows) > maximumRows) {
-        return Result.fail(paginationFailure('FillHistoryTooLarge', `Alpaca fill history exceeds ${maximumRows} rows`))
-      }
       return Result.succeed({ rows, ids: HashSet.add(result.success.ids, fill.activityId) })
     },
     Result.succeed({ rows: Chunk.empty(), ids: state.ids }),
@@ -229,7 +222,7 @@ const readOrderPages = (
   until: string,
   state: OrderPaginationState,
 ): Effect.Effect<OrderRead, BrokerReadError | ReconciliationError> => {
-  const limit = Math.min(ordersPageSize, maximumRows + 1 - state.rows.length)
+  const limit = ordersPageSize
   return Effect.suspend(() =>
     read.orders({
       status: OrderCollection.All,
@@ -250,7 +243,7 @@ const readFillPages = (
   until: string,
   state: FillPaginationState,
 ): Effect.Effect<readonly Observed<FillActivity>[], BrokerReadError | ReconciliationError> => {
-  const pageSize = Math.min(fillsPageSize, maximumRows + 1 - state.rows.length)
+  const pageSize = fillsPageSize
   return Effect.suspend(() =>
     read.fillActivities({
       direction: SortDirection.Ascending,
@@ -279,8 +272,8 @@ const readFeePages = (
         pageSize: fillsPageSize,
         ...(cursor === undefined ? {} : { pageToken: cursor }),
       })
-      if (page.value.items.length > fillsPageSize || rows.length + page.value.items.length > maximumRows)
-        return yield* paginationFailure('InvalidFeeHistory', 'fee history exceeded its bounded row budget')
+      if (page.value.items.length > fillsPageSize)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history page exceeded its requested size')
       for (const fee of page.value.items) {
         if (fee.date > page.evidence.observedAt.slice(0, 10))
           return yield* paginationFailure('InvalidFeeHistory', 'fee history contains a date after its UTC capture cut')
@@ -361,18 +354,50 @@ export const decideStableHistory = (
     for (const { value: fill } of after.fills) {
       filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
-    if (
-      after.orders.rows.some(({ value: order }) =>
-        [order, ...(order.legs ?? [])].some(
-          (member) => BigInt(member.filledQuantityAtoms) !== (filledByOrder.get(member.brokerOrderId) ?? 0n),
-        ),
-      )
-    ) {
-      return yield* Result.fail(
-        snapshotFailure('FillActivitiesPending', 'broker order quantities and fill activities have not converged'),
-      )
+    for (const { value: order } of after.orders.rows) {
+      for (const [index, member] of [order, ...(order.legs ?? [])].entries()) {
+        const orderQuantity = BigInt(member.filledQuantityAtoms)
+        const fillQuantity = filledByOrder.get(member.brokerOrderId) ?? 0n
+        if (orderQuantity !== fillQuantity) {
+          return yield* Result.fail(
+            new ReconciliationError({
+              operation: 'snapshot',
+              message: 'broker order quantities and fill activities have not converged',
+              failure: {
+                _tag: 'Snapshot',
+                reason: 'FillActivitiesPending',
+                fillMismatch: {
+                  activityRelation: !filledByOrder.has(member.brokerOrderId)
+                    ? FillActivityRelation.NoMatchingFills
+                    : fillQuantity < orderQuantity
+                      ? FillActivityRelation.BelowOrder
+                      : FillActivityRelation.AboveOrder,
+                  orderRole: index === 0 ? FillMismatchOrderRole.Order : FillMismatchOrderRole.Leg,
+                  orderStatus: member.status,
+                },
+              },
+            }),
+          )
+        }
+      }
     }
     return after
+  })
+
+export const readBrokerSnapshotOnce = (
+  read: BrokerReadShape,
+  now: Effect.Effect<string, ReconciliationError>,
+  previous: BrokerHistory | undefined,
+): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  read.projection?.snapshot ??
+  Effect.gen(function* () {
+    const beforeUntil = yield* now
+    const before = previous ?? (yield* readHistory(read, beforeUntil))
+    const [account, positions] = yield* Effect.all([read.account, read.positions], { concurrency: 2 })
+    const afterUntil = yield* now
+    const after = yield* readHistory(read, afterUntil)
+    const history = yield* Effect.fromResult(decideStableHistory(before, after))
+    return { account, positions, history }
   })
 
 export const readStableBrokerSnapshot = (
@@ -380,16 +405,7 @@ export const readStableBrokerSnapshot = (
   now: Effect.Effect<string, ReconciliationError>,
   waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
-  read.projection?.snapshot ??
-  Effect.gen(function* () {
-    const beforeUntil = yield* now
-    const before = yield* readHistory(read, beforeUntil)
-    const [account, positions] = yield* Effect.all([read.account, read.positions], { concurrency: 2 })
-    const afterUntil = yield* now
-    const after = yield* readHistory(read, afterUntil)
-    const history = yield* Effect.fromResult(decideStableHistory(before, after))
-    return { account, positions, history }
-  }).pipe(
+  readBrokerSnapshotOnce(read, now, undefined).pipe(
     Effect.retry(
       Schedule.recurs(2).pipe(
         Schedule.while(({ input: cause }) =>

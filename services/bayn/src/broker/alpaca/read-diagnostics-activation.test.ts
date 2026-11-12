@@ -14,7 +14,7 @@ import {
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { make } from './http'
-import { captureBrokerObservation } from './snapshot-cache'
+import { makeBrokerObservationCapture } from './snapshot-cache'
 import { diagnosticLogPrefix } from './read-diagnostics'
 
 test('normal broker polling emits diagnostics while native deployment activation remains blocked, without order mutations', async () => {
@@ -100,7 +100,12 @@ test('normal broker polling emits diagnostics while native deployment activation
           poll: (signal) =>
             execute(
               Effect.gen(function* () {
-                const snapshot = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000)
+                const captureBrokerObservation = yield* makeBrokerObservationCapture
+                const snapshot = yield* captureBrokerObservation(
+                  read,
+                  { generation: 1, startedAt: yield* currentUtcInstant },
+                  30_000,
+                )
                 return {
                   poll: {
                     _tag: 'Published',
@@ -159,6 +164,7 @@ test('normal broker polling emits diagnostics while native deployment activation
             return Promise.reject(new Error('execution must remain blocked'))
           },
           log: async () => undefined,
+          prepareActivation: () => Promise.resolve(),
           projectState: async () => undefined,
         },
       )
@@ -181,6 +187,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       }
       const context = {
         key: controllerKey,
+        date: { now: async () => Date.parse('2026-11-09T18:00:00.000Z') },
         request: () => ({
           id: 'blocked-activation',
           headers: new Map([['authorization', `Bearer ${token}`]]),

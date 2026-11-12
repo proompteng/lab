@@ -122,6 +122,7 @@ const transport = {
     clearImmediate(immediate)
     pending?.({ done: true, value: undefined })
     transportClosed.resolve()
+    return { _tag: 'Closed' }
   },
 }
 const exit = await Effect.runPromiseExit(

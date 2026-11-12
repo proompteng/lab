@@ -5,6 +5,7 @@ import { HttpClient, type HttpClientError } from 'effect/http'
 import { operationCurrentTimeMillis } from './operation-timeout'
 import { embeddedBuildMetadata } from './build'
 import { currentUtcInstant, nativeWallClock } from './time'
+import { observeSchedulerDelay } from './telemetry-scheduler'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -62,7 +63,10 @@ export const ActiveExecutionStages = Context.Reference<Map<symbol, ActiveExecuti
 
 const operationDuration = Metric.histogram('bayn_operation_duration_seconds', {
   description: 'Inclusive wall time of a named operation, including failures and interruptions.',
-  boundaries: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+  // The native OTLP exporter expects the final bucket to be the unbounded overflow bucket.
+  boundaries: Metric.boundariesFromIterable([
+    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
+  ]),
 })
 export const telemetryHeartbeat = Metric.gauge('bayn_telemetry_heartbeat_timestamp_seconds')
 
@@ -186,6 +190,14 @@ const metricsLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
     }).pipe(Layer.provide(Layer.mergeAll(exporterHttpClient(options, 'metrics'), OtlpSerialization.layerProtobuf))),
     Layer.effectDiscard(
       Effect.gen(function* () {
+        yield* observeSchedulerDelay.pipe(
+          Effect.provideService(Metric.CurrentMetricAttributes, {
+            namespace: options.namespace ?? 'bayn',
+            service: options.serviceName,
+            source_revision: options.serviceVersion ?? 'development',
+          }),
+          Effect.forkScoped,
+        )
         const record = Clock.currentTimeMillis.pipe(
           Effect.flatMap((now) =>
             Metric.update(
@@ -306,7 +318,8 @@ export const withObservedStage =
     options: {
       readonly dependency?: string
       readonly operation?: string
-      readonly slowAfterMs?: number
+      /** Enclosing stages use null when the operation already reports its slow duration. Failures still log. */
+      readonly slowAfterMs?: number | null
       readonly recordCompletion?: boolean
       /** Isolate diagnostic finalizer defects from the wrapped operation's exit. */
       readonly diagnosticOnly?: boolean
@@ -366,7 +379,7 @@ export const withObservedStage =
                     interruptions: (previous?.interruptions ?? 0) + (outcome === 'interrupted' ? 1 : 0),
                   })
                 }
-                const slow = elapsedMs >= (options.slowAfterMs ?? 1_000)
+                const slow = options.slowAfterMs !== null && elapsedMs >= (options.slowAfterMs ?? 1_000)
                 if (Exit.isSuccess(exit) && !slow && options.recordCompletion !== true) return
                 const log = Exit.isFailure(exit)
                   ? Effect.logWarning('Bayn execution stage did not complete')

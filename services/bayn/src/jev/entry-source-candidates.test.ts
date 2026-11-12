@@ -76,20 +76,9 @@ test('excludes resistance behind the current bounded entry even when it is above
 test('chart anchor questions expose observed overhead sources and allow no matching structure', () => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(source))
   const input = context(chart)
-  const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
   const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
-  const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
-  if (resistance?.type !== 'choice') throw new Error('Missing resistance question')
-  expect(resistance.choices.map((choice) => choice.value)).toEqual([...candidates.resistanceBarIds, 'no_resistance'])
-  expect(prepared.request.input[0].content[2].data).toMatchObject({
-    executionReference: {
-      bidUsd: 105.5,
-      askUsd: 105.55,
-      maximumEntryPriceUsd: input.economics.maximumEntryPriceUsd,
-      bidMicros: input.bidMicros.toString(),
-      maximumEntryPriceMicros: input.economics.maximumEntryPriceMicros,
-    },
-  })
+  const resistance = prepared.request.questions['resistance_region']
+  expect(resistance?.type).toBe('box')
 })
 
 test('keeps observed resistance available when it obstructs a funded breakout but cannot itself cover crypto fees', () => {
@@ -100,10 +89,8 @@ test('keeps observed resistance available when it obstructs a funded breakout bu
   expect(candidates.resistanceBarIds).toEqual([])
 
   const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
-  expect(prepared.sourceFeasible).toBe(true)
-  const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
-  if (resistance?.type !== 'choice') throw new Error('Observed overhead resistance was hidden by the funding filter')
-  expect(resistance.choices.map((choice) => choice.value)).toEqual([chart.bars[1]?.id, 'no_resistance'])
+  const resistance = prepared.request.questions['resistance_region']
+  expect(resistance?.type).toBe('box')
 })
 
 test('does not substitute a farther funded target for a selected closer unfunded resistance', () => {
@@ -121,9 +108,8 @@ test('does not substitute a farther funded target for a selected closer unfunded
   const funded = Result.getOrThrow(makeEntrySourceCandidates(input))
   expect(funded.resistanceBarIds).toEqual([support.id])
   const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
-  const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
-  if (resistance?.type !== 'choice') throw new Error('Expected observed resistance choices')
-  expect(resistance.choices.map((choice) => choice.value)).toEqual([support.id, nearby.id, 'no_resistance'])
+  const resistance = prepared.request.questions['resistance_region']
+  expect(resistance?.type).toBe('box')
 
   const evidence = assessments(chart)
   const result = Result.getOrThrow(

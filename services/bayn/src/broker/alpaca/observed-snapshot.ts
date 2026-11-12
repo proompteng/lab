@@ -2,7 +2,7 @@ import { ObservedFeeActivitySchema } from '../fee-activity'
 import { Context, Effect, Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
-import { BrokerReadError, BrokerReadErrorKind } from './failures'
+import { BrokerReadError, BrokerReadErrorKind, type BrokerPollFailureReason } from './failures'
 import { CashReportingQuantumSchema } from './cash-reporting'
 import { CryptoFeeTierSchema } from '../crypto-fees'
 import {
@@ -191,12 +191,17 @@ export const observedBrokerState = (value: ObservedBrokerSnapshot): ObservedBrok
 
 export const decodeObservedBrokerSnapshot = Schema.decodeUnknownResult(ObservedBrokerSnapshotSchema, strictParseOptions)
 
-export const observationUnavailable = (message: string, cause?: unknown): BrokerReadError =>
+export const observationUnavailable = (
+  message: string,
+  cause?: unknown,
+  pollFailureReason?: BrokerPollFailureReason,
+): BrokerReadError =>
   new BrokerReadError({
     operation: 'preflight',
     kind: BrokerReadErrorKind.Timeout,
     retryable: true,
     message,
+    ...(pollFailureReason === undefined ? {} : { pollFailureReason }),
     ...(cause === undefined ? {} : { cause }),
   })
 

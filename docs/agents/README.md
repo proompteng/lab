@@ -9,12 +9,14 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 
 - Source-read implementation map: `current-source-state.md`
 - Safe AgentRun creation: `agentrun-creation-guide.md`
+- Runner tools and browser/platform acceptance: `runner-environment.md`
 - CRD contract and YAML examples: `crd-yaml-spec.md`
 - Helm implementation contract: `agents-helm-chart-implementation.md`
 - Installation, upgrade, and incident operations: `runbooks.md`
 - Control-plane UI: `control-plane-ui.md`
 - Shell tool and command activity: `agents-shell-activity.md`
-- Talos and Omni shell inspection: `agents-shell-infrastructure.md`
+- Engineering memory and shell tools: `memory-notes.md`
+- Talos, Omni and BMC shell inspection: `agents-shell-infrastructure.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
 - Codex MCP integration: `codex-mcp-agents.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`

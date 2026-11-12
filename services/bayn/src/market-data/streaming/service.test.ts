@@ -1,15 +1,56 @@
+import { makePostgresFixture } from '../../testing/postgres-fixture.test-support'
 import { expect, spyOn, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Exit, Layer, Result } from 'effect'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { IntradayMarketData } from '../intraday/model'
 import { persistIntradayRecordRows } from '../intraday/verification'
-import { KafkaMarketProjection } from './kafka'
+import { KafkaMarketFailure, KafkaMarketProjection } from './kafka'
 import * as replay from './replay'
 import { StreamingIntradayMarketDataLive } from './service'
+
+test('readiness validates the owner without transferring a retained cut and preserves its failure', async () => {
+  const unavailable = new KafkaMarketFailure({ operation: 'bootstrap', message: 'Source history is incomplete' })
+  let checks = 0
+  let fail = false
+  const live = StreamingIntradayMarketDataLive.pipe(
+    Layer.provide(
+      Layer.effect(
+        PgClient.PgClient,
+        makePostgresFixture({
+          acquirer: Effect.die('Readiness must not query PostgreSQL'),
+          compiler: PgClient.makeCompiler(undefined, false),
+          spanAttributes: [],
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(KafkaMarketProjection, {
+        check: Effect.suspend(() => {
+          checks++
+          return fail ? Effect.fail(unavailable) : Effect.void
+        }),
+        read: () => Effect.die('Readiness must not transfer the retained projection'),
+        status: Effect.succeed({ epoch: 'source-epoch', ready: false, sequence: 0, bootstrapDeadlineAtMs: null }),
+      }),
+    ),
+  )
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const market = yield* IntradayMarketData
+        yield* market.check
+        fail = true
+        const result = yield* market.check.pipe(Effect.result)
+        expect(checks).toBe(2)
+        if (Result.isSuccess(result)) throw new Error('Incomplete source history must fail readiness')
+        expect(result.failure).toMatchObject({ component: 'market-data', operation: 'check', cause: unavailable })
+      }).pipe(Effect.provide(live), Effect.provide(Reactivity.layer)),
+    ),
+  )
+})
 
 test('reuses an exact captured cut without reconstructing it again and still rejects changed source rows', async () => {
   const fixture = streamingFixture()
@@ -18,20 +59,21 @@ test('reuses an exact captured cut without reconstructing it again and still rej
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const sql = yield* SqlClient.make({
+          const sql = yield* makePostgresFixture({
             acquirer: Effect.die('Captured market evidence must not query PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
           })
           const live = StreamingIntradayMarketDataLive.pipe(
-            Layer.provide(Layer.succeed(PgClient.PgClient, sql as PgClient.PgClient)),
+            Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
             Layer.provide(
               Layer.succeed(KafkaMarketProjection, {
-                read: Effect.succeed(fixture.cut),
-                readForLiquidation: Effect.succeed(fixture.cut),
+                check: Effect.void,
+                read: () => Effect.succeed(fixture.cut),
                 status: Effect.succeed({
                   epoch: 'fixture-epoch',
                   ready: true,
+                  bootstrapDeadlineAtMs: null,
                   sequence: fixture.cut.projection.sequence,
                 }),
               }),

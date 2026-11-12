@@ -42,10 +42,9 @@ export type AgentsControllerRuntimeService = {
   stop: Effect.Effect<void, never>
 }
 
-export class AgentsControllerRuntime extends Context.Tag('AgentsControllerRuntime')<
-  AgentsControllerRuntime,
-  AgentsControllerRuntimeService
->() {}
+export class AgentsControllerRuntime extends Context.Service<AgentsControllerRuntime, AgentsControllerRuntimeService>()(
+  'AgentsControllerRuntime',
+) {}
 
 const agentsControllerStartup = createControllerStartupRetry({
   name: 'agents-controller',
@@ -135,7 +134,7 @@ export const createAgentsControllerRuntimeService = (
   stop: stopRuntime,
 })
 
-export const AgentsControllerRuntimeLive = Layer.scoped(
+export const AgentsControllerRuntimeLive = Layer.effect(
   AgentsControllerRuntime,
   Effect.gen(function* () {
     const leaderElection = yield* LeaderElection

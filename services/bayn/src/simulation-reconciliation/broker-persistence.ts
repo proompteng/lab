@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect'
 
-import type { ReconciliationPersistence } from '../db/execution-store'
+import type { ReconciliationPersistence } from '../db/execution-store/contract'
 import type { BrokerSnapshot, ReconciliationReport, ReconciliationWriteResult } from '../db/reconciliation'
 import {
   compareText,
@@ -35,22 +35,23 @@ const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: Normal
     })
     const positionsReceipt = yield* store.events.ingestPositions(normalized.positions)
     const complete = yield* store.events.completeHistory([...normalized.orderEvents, ...normalized.fillEvents])
-    yield* store.accounting.verifyCompleted(normalized.fillEvents.filter((event) => complete.has(event.sourceEventId)))
     yield* Effect.forEach(
       normalized.orderEvents.filter((event) => !complete.has(event.sourceEventId)),
       store.events.ingest,
       { discard: true },
     )
-    yield* Effect.forEach(
-      normalized.fillEvents.filter((event) => !complete.has(event.sourceEventId)),
-      store.accounting.account,
-      { discard: true },
-    )
+    const incompleteFills = normalized.fillEvents.filter((event) => !complete.has(event.sourceEventId))
+    yield* Effect.forEach(incompleteFills, store.accounting.account, { discard: true })
     const valuation = yield* store.valuation.value({
       accountEventId: accountReceipt.eventId,
       positionSnapshotId: positionsReceipt.snapshotId,
     })
-    return { valuation, positionSnapshotId: positionsReceipt.snapshotId, accountEventId: accountReceipt.eventId }
+    return {
+      valuation,
+      positionSnapshotId: positionsReceipt.snapshotId,
+      accountEventId: accountReceipt.eventId,
+      ledgerPostingRequired: incompleteFills.length > 0,
+    }
   })
 
 const makeReconciliationDecision = (
@@ -139,7 +140,10 @@ const writeReconciliation = (
     const { snapshot, persisted } = yield* store.reconciliation.reconcile(
       normalized.account.accountId,
       Effect.gen(function* () {
-        const { valuation, positionSnapshotId, accountEventId } = yield* ingestBrokerEvents(store, normalized)
+        const { valuation, positionSnapshotId, accountEventId, ledgerPostingRequired } = yield* ingestBrokerEvents(
+          store,
+          normalized,
+        )
         const decision = makeReconciliationDecision(
           normalized,
           ordersObservedAt,
@@ -149,7 +153,7 @@ const writeReconciliation = (
           accountEventId,
         )
         yield* Effect.fromResult(requireSnapshotTradingDate(decision.snapshot, decision.snapshot.reconciledAt))
-        return decision.snapshot
+        return { ...decision.snapshot, ledgerPostingRequired }
       }),
     )
     yield* Effect.fromResult(requireSnapshotTradingDate(snapshot, yield* now))

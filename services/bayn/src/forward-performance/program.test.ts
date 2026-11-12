@@ -117,7 +117,8 @@ interface SqlFixture {
 }
 
 const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}): PgClient.PgClient => {
-  const query = ((strings: TemplateStringsArray) => {
+  const query = ((strings: TemplateStringsArray | string) => {
+    if (typeof strings === 'string') return strings
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
     if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {
@@ -772,7 +773,7 @@ describe('forward performance read program', () => {
           ),
         ),
       )
-      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v7')
       expect(postgresGeneration).toBe(authorityGenerationHash)
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(

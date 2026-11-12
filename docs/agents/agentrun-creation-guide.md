@@ -449,3 +449,11 @@ Do not use system prompt customization to compensate for an incorrect user promp
 - A secret referenced in `spec.secrets` does not exist in the run namespace (`CreateContainerConfigError`).
 - The repo is not in the allowlist configured for the controllers deployment.
 - You expected “followers not-ready” behavior without having implemented leader election in code and chart.
+
+## Submitting through Relay
+
+Tengri and standalone OpenCode can submit to an approved Agents target through the existing Relay connector.
+Use `start_run` with task text; namespace, agent, repository, credential bindings and runtime deadline are set by
+the target profile. The returned `runId` is also the Relay operation ID. If a reply is lost, call `get_run` with
+that same ID; never start another run to recover it. `read_logs`, `get_result` and `cancel_run` use that ID.
+See [Relay's connector contract](../../services/relay/README.md#agentrun-connector) for policies and rollout.

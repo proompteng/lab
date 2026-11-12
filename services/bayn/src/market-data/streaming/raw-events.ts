@@ -38,6 +38,7 @@ export const MarketSourceSchema = Schema.Struct({
     trades: StrictNonEmptyStringSchema,
     features: StrictNonEmptyStringSchema,
     technicalFeatures: Schema.optionalKey(StrictNonEmptyStringSchema),
+    webullBars: Schema.optionalKey(StrictNonEmptyStringSchema),
   }),
 })
 export type MarketSource = typeof MarketSourceSchema.Type

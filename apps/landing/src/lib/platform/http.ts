@@ -83,7 +83,7 @@ export function platformRouteError(error: unknown) {
   if (status >= 500) reportServerError(error, 'platform.request', status)
   if (error instanceof OfzError) {
     return Response.json(
-      { error: error.message, auditReceiptId: error.auditReceiptId },
+      { error: error.message, auditReceiptId: error.auditReceiptId, commandRejected: error.commandRejected },
       { status: error.status, headers: noStoreHeaders() },
     )
   }

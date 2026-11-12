@@ -1,9 +1,12 @@
 # Platform connections and workspace administration
 
 Status: gateway isolation, workspace policy, the independent admin portal, access requests, one-action Kubernetes
-Connect, and HTTP/CLI/upstream MCP drivers are deployed. Shared provider OAuth2 and its product/admin return flows
-are implemented and locally qualified; their release and remaining native chat acceptance are pending. Provider
-registration defaults to empty: qualification uses a controlled TLS provider without onboarding an external account.
+Connect, HTTP/CLI/upstream MCP drivers, and shared provider OAuth2 with product/admin return flows are deployed.
+The deployed source passed native identity and platform qualification. Signed-in Tengri and standalone OpenCode
+returned real Kubernetes status, logs and events on 2026-11-03. Portal SSO, all eight administration pages, phone
+layouts and passkey verification during a running Tengri turn passed. See the
+[administration acceptance boundary](admin-portal-acceptance.md#delivery-and-live-acceptance-gate).
+Provider registration defaults to empty: qualification uses a controlled TLS provider without onboarding an external account.
 
 Research date: 2026-11-01, America/Los_Angeles. Source findings were checked against `origin/main` at
 `64a848f4b91e73070f836f5a36b4ae2bf04f79e1`. Source and runtime evidence take precedence over this proposal.

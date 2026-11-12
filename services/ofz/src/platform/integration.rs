@@ -18,6 +18,47 @@ const OPENCODE: &str = "spiffe://proompteng.ai/ns/opencode/sa/opencode";
 const FIXTURE_FIRST: &str = "spiffe://proompteng.ai/ns/fixture/sa/first";
 const FIXTURE_SECOND: &str = "spiffe://proompteng.ai/ns/fixture/sa/second";
 
+struct UncertainMutation {
+    operation: relay::registered::RegisteredOperation,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+#[tonic::async_trait]
+impl relay::connector::Connector for UncertainMutation {
+    fn id(&self) -> &str {
+        "fixture-mutation"
+    }
+    fn provider(&self) -> Option<relay::credentials::Provider<'_>> {
+        None
+    }
+    fn operations(
+        &self,
+        access: Option<&[sdk::PlatformConnectionScope]>,
+    ) -> Vec<wire::ConnectorOperation> {
+        self.operation
+            .discovery(self.id(), access)
+            .into_iter()
+            .collect()
+    }
+    fn normalize(
+        &self,
+        _name: &str,
+        arguments: &[u8],
+    ) -> Result<relay::connector::Normalized, tonic::Status> {
+        self.operation.normalize(arguments)
+    }
+    async fn execute(
+        &self,
+        request: &relay::connector::Normalized,
+        _bearer: Option<&str>,
+    ) -> Result<relay::connector::Output, relay::connector::Failure> {
+        let invocation = request.invocation.as_ref().expect("authorized context");
+        assert_eq!(invocation.client_service, "fixture-client");
+        assert!(!invocation.authorization_receipt_id.is_empty());
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(tonic::Status::unavailable("response lost after side effect").into())
+    }
+}
+
 fn workload_lookup(
     body: &[u8],
     client: &str,
@@ -224,6 +265,7 @@ async fn access_requests(
     let list = p::ListPlatformAccessRequestsRequest {
         administrator: Some(administrator.clone()),
         workspace_id: workspace.clone(),
+        ..Default::default()
     };
     assert_eq!(
         requests::list(database, native, ADMIN, list.clone())
@@ -360,6 +402,100 @@ async fn access_requests(
             .requests
             .is_empty()
     );
+    let history_request = p::ListPlatformAccessRequestsRequest {
+        history: true,
+        ..list.clone()
+    };
+    let history = requests::list(database, native, ADMIN, history_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(history.requests.len(), 1);
+    assert_eq!(
+        history.requests[0].state,
+        p::PlatformAccessRequestState::Approved as i32
+    );
+    assert_eq!(history.requests[0].decision_reason, review.reason);
+    let direct = requests::list(
+        database,
+        native,
+        ADMIN,
+        p::ListPlatformAccessRequestsRequest {
+            request_id: create.operation_id.clone(),
+            ..list.clone()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(direct.requests.len(), 1);
+    assert_eq!(direct.requests[0].id, create.operation_id);
+    assert_eq!(
+        direct.requests[0].state,
+        p::PlatformAccessRequestState::Approved as i32
+    );
+    assert!(
+        requests::list(
+            database,
+            native,
+            ADMIN,
+            p::ListPlatformAccessRequestsRequest {
+                request_id: Uuid::new_v4().to_string(),
+                ..list.clone()
+            }
+        )
+        .await
+        .unwrap()
+        .requests
+        .is_empty()
+    );
+
+    // Equal timestamps exercise the UUID tie breaker rather than relying on clock precision.
+    connection.execute("INSERT INTO ofz.platform_access_requests(id,issuer_id,client_service,workspace_id,resource,actions,scope_hash,reason,state,decision_reason,created_at_ms,updated_at_ms) SELECT gen_random_uuid(),issuer_id,client_service,workspace_id,resource,actions,scope_hash,'fixture history page',state,decision_reason,created_at_ms,updated_at_ms FROM ofz.platform_access_requests CROSS JOIN generate_series(1,129) WHERE id=$1", &[&Uuid::parse_str(&create.operation_id).unwrap()]).await.unwrap();
+    let first = requests::list(database, native, ADMIN, history_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.requests.len(), 128);
+    assert!(!first.cursor.is_empty());
+    let second = requests::list(
+        database,
+        native,
+        ADMIN,
+        p::ListPlatformAccessRequestsRequest {
+            cursor: first.cursor.clone(),
+            ..history_request.clone()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(second.requests.len(), 2);
+    assert!(second.cursor.is_empty());
+    assert!(
+        second
+            .requests
+            .iter()
+            .all(|item| !first.requests.iter().any(|previous| previous.id == item.id))
+    );
+    assert_eq!(
+        requests::list(
+            database,
+            native,
+            ADMIN,
+            p::ListPlatformAccessRequestsRequest {
+                cursor: "invalid".into(),
+                ..history_request
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::InvalidArgument
+    );
+    connection
+        .execute(
+            "DELETE FROM ofz.platform_access_requests WHERE reason='fixture history page'",
+            &[],
+        )
+        .await
+        .unwrap();
     let cancel = p::CancelPlatformAccessRequestRequest {
         operation_id: Uuid::new_v4().to_string(),
         requester: Some(requester.clone()),
@@ -645,6 +781,22 @@ async fn workspace_administration(
             enabled: true,
         }],
     };
+    let mut inadmissible = grant.clone();
+    inadmissible.operation_id = Uuid::new_v4().to_string();
+    inadmissible.relationships[0].subject_id = "d".repeat(64);
+    let rejected = mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::Relationships(inadmissible),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(rejected.code(), Code::PermissionDenied);
+    assert_eq!(
+        rejected.metadata().get("x-ofz-command-outcome").unwrap(),
+        "rejected"
+    );
     mutations::execute(
         database,
         native,
@@ -711,12 +863,13 @@ async fn workspace_administration(
         })
         .collect();
     grant.operation_id = Uuid::new_v4().to_string();
+    let rejected = mutations::execute(database, native, ADMIN, Command::Relationships(grant))
+        .await
+        .unwrap_err();
+    assert_eq!(rejected.code(), Code::FailedPrecondition);
     assert_eq!(
-        mutations::execute(database, native, ADMIN, Command::Relationships(grant))
-            .await
-            .unwrap_err()
-            .code(),
-        Code::FailedPrecondition
+        rejected.metadata().get("x-ofz-command-outcome").unwrap(),
+        "rejected"
     );
     let activity = workspaces::activity(
         database,
@@ -726,11 +879,49 @@ async fn workspace_administration(
             administrator: Some(sessions[2].clone()),
             workspace_id: workspace.clone(),
             cursor: String::new(),
+            ..Default::default()
         },
     )
     .await
     .unwrap();
     assert!(!activity.receipts.is_empty());
+    let filtered = workspaces::activity(
+        database,
+        native,
+        ADMIN,
+        p::ReadWorkspaceActivityRequest {
+            administrator: Some(sessions[2].clone()),
+            workspace_id: workspace.clone(),
+            action: "ofz.relationships.write".into(),
+            outcome: "allowed".into(),
+            actor_id: sessions[0].human_id.clone(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!filtered.receipts.is_empty());
+    assert!(filtered.receipts.iter().all(|receipt| receipt.allowed
+        && receipt.platform_action == "ofz.relationships.write"
+        && receipt.actor.as_ref().unwrap().identity
+            == Some(p::actor::Identity::HumanId(sessions[0].human_id.clone()))));
+    assert_eq!(
+        workspaces::activity(
+            database,
+            native,
+            ADMIN,
+            p::ReadWorkspaceActivityRequest {
+                administrator: Some(sessions[2].clone()),
+                workspace_id: workspace.clone(),
+                outcome: "invalid".into(),
+                ..Default::default()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::InvalidArgument
+    );
     for receipt in &activity.receipts {
         let stored = connection
             .query_one(
@@ -760,7 +951,8 @@ async fn workspace_administration(
             p::ReadWorkspaceActivityRequest {
                 administrator: Some(sessions[2].clone()),
                 workspace_id: other.into(),
-                cursor: String::new()
+                cursor: String::new(),
+                ..Default::default()
             }
         )
         .await
@@ -2093,6 +2285,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             kind: "kubernetes.namespace".into(),
             id: resource_id.clone(),
         },
+        read_only: true,
         input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
     };
     let python = std::process::Command::new("python3")
@@ -2133,6 +2326,15 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         }],
     )
     .unwrap();
+    let mutation_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let uncertain_mutation = UncertainMutation {
+        operation: relay::registered::RegisteredOperation::new(relay::registered::Operation {
+            read_only: false,
+            ..operation.clone()
+        })
+        .unwrap(),
+        calls: mutation_calls.clone(),
+    };
     let mcp_script = config_dir.join("upstream-mcp.py");
     std::fs::write(
         &mcp_script,
@@ -2163,6 +2365,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             },
         },
         vec![relay::mcp::McpOperation {
+            relay_context: false,
             operation,
             tool: "fixture_read".into(),
         }],
@@ -2175,6 +2378,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             Box::new(cli),
             Box::new(http),
             Box::new(mcp),
+            Box::new(uncertain_mutation),
         ],
         channel,
     )
@@ -2363,6 +2567,47 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             before + usize::from(connector == "fixture-http")
         );
     }
+    let uncertain_body = serde_json::to_vec(&ExecutionPayload {
+        operation_id: Uuid::new_v4().to_string(),
+        client_service: "fixture-client".into(),
+        connector_id: "fixture-mutation".into(),
+        operation: "read".into(),
+        arguments: serde_json::json!({}),
+        binding: None,
+        delegation_id: None,
+    })
+    .unwrap();
+    for _ in 0..2 {
+        let mut request = platform_client::request(wire::ExecuteRequest {
+            subject: Some(sdk::PlatformSubject {
+                client_service: "fixture-client".into(),
+                identity: Some(sdk::platform_subject::Identity::WorkloadId(
+                    FIXTURE_FIRST.into(),
+                )),
+            }),
+            body: uncertain_body.clone(),
+        });
+        request
+            .extensions_mut()
+            .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
+        assert!(relay.execute(request).await.is_err());
+    }
+    assert_eq!(mutation_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        relay
+            .get_execution(workload_lookup(
+                &uncertain_body,
+                "fixture-client",
+                FIXTURE_FIRST
+            ))
+            .await
+            .unwrap()
+            .into_inner()
+            .execution
+            .unwrap()
+            .outcome,
+        "started"
+    );
     let mut payload = ExecutionPayload {
         operation_id: Uuid::new_v4().to_string(),
         client_service: "tengri-web".into(),

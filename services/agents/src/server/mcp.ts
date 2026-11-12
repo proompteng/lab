@@ -73,8 +73,8 @@ export type AgentRunsMcpService = {
   rerun: (input: AgentsAgentRunRerunSubmitInput) => Effect.Effect<unknown, Error>
 }
 
-export class MemoryNotesMcp extends Context.Tag('agents/MemoryNotesMcp')<MemoryNotesMcp, MemoryNotesMcpService>() {}
-export class AgentRunsMcp extends Context.Tag('agents/AgentRunsMcp')<AgentRunsMcp, AgentRunsMcpService>() {}
+export class MemoryNotesMcp extends Context.Service<MemoryNotesMcp, MemoryNotesMcpService>()('agents/MemoryNotesMcp') {}
+export class AgentRunsMcp extends Context.Service<AgentRunsMcp, AgentRunsMcpService>()('agents/AgentRunsMcp') {}
 
 const MCP_SESSION_HEADER = 'Mcp-Session-Id'
 const MCP_PROTOCOL_VERSION = '2024-11-05'
@@ -697,14 +697,14 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
       const parsed = parsePersistMemoryNoteInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
 
-      const recordResult = yield* Effect.either(memories.persist(parsed.value))
-      if (recordResult._tag === 'Left') return toolError(id, recordResult.left.message, { tool: toolName })
+      const recordResult = yield* Effect.result(memories.persist(parsed.value))
+      if (recordResult._tag === 'Failure') return toolError(id, recordResult.failure.message, { tool: toolName })
 
       return asJsonRpcResponse(
         id,
         toTextToolResult(
           JSON.stringify(
-            { ok: true, memory: recordResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+            { ok: true, memory: recordResult.success, mcp: { server: baseUrl.origin, tool: toolName } },
             null,
             2,
           ),
@@ -716,14 +716,14 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
       const parsed = parseRetrieveMemoryNotesInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
 
-      const recordsResult = yield* Effect.either(memories.retrieve(parsed.value))
-      if (recordsResult._tag === 'Left') return toolError(id, recordsResult.left.message, { tool: toolName })
+      const recordsResult = yield* Effect.result(memories.retrieve(parsed.value))
+      if (recordsResult._tag === 'Failure') return toolError(id, recordsResult.failure.message, { tool: toolName })
 
       return asJsonRpcResponse(
         id,
         toTextToolResult(
           JSON.stringify(
-            { ok: true, memories: recordsResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+            { ok: true, memories: recordsResult.success, mcp: { server: baseUrl.origin, tool: toolName } },
             null,
             2,
           ),
@@ -734,73 +734,73 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
     if (toolName === 'create_agent_run') {
       const parsed = parseCreateAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.create(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.create(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'list_agent_runs') {
       const parsed = parseListAgentRunsInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.list(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.list(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'get_agent_run') {
       const parsed = parseGetAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.get(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.get(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'cancel_agent_run') {
       const parsed = parseGetAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.cancel(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.cancel(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'list_agent_run_resources') {
       const parsed = parseListAgentRunResourcesInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.listResources(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.listResources(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'get_agent_run_logs') {
       const parsed = parseGetAgentRunLogsInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.getLogs(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.getLogs(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'list_agent_run_terminal_events') {
       const parsed = parseListTerminalEventsInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.listTerminalEvents(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.listTerminalEvents(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'ack_agent_run_terminal_event') {
       const parsed = parseAckTerminalEventInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.ackTerminalEvent(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.ackTerminalEvent(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'rerun_agent_run') {
       const parsed = parseRerunAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.rerun(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.rerun(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     return asJsonRpcError(id, { code: -32601, message: `Unknown tool: ${toolName}` })

@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
 import { MutationEventSchema } from '../execution/mutations/model'
-import { bindSystemSourceCut, mutationObligations } from './bind-source'
+import { bindSystemSourceCut } from './bind-source'
+import { mutationObligations } from './operational-obligations'
 import { testHash } from './fixtures.test-support'
 import { evaluateSystemAssessment, ProfitabilityStatus, QualificationVerdict } from './assessment'
 import { ObligationClass } from './reliability'
@@ -143,7 +144,7 @@ describe('immutable source binding', () => {
         stageClaimHash: claim.claimHash,
         stageTerminalHash: terminal?.terminalHash ?? null,
         usageStatus: terminal === null ? InferenceUsageStatus.Unknown : InferenceUsageStatus.Received,
-        estimatedCostPicoUsd: terminal === null ? null : '100',
+        estimatedCostPicoUsd: terminal === null ? null : '4200000',
       })
       const assessment = Result.getOrThrow(
         assessSession(session, input.registration, definition, input.asOf, bound.verifiedSources),

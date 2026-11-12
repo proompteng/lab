@@ -38,25 +38,22 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | `src/facteur/deploy-service.ts`                       | Local/isolated-development helper for building and applying Facteur. It is not the production promotion path; production images go through Kargo.                                                                                                                                                                  | `kubectl`, `kn`, `docker`/`podman` | `bun run build:facteur` (or direct `bun run …/deploy-service.ts`)                                                                 |
 | `src/facteur/reseal-secrets.ts`                       | Reseals Facteur SealedSecrets with the current cluster certs.                                                                                                                                                                                                                                                      | `kubectl`, `openssl`, `kubeseal`   | `bun run packages/scripts/src/facteur/reseal-secrets.ts`                                                                          |
 | `src/facteur/run-consumer.ts`                         | Launches the Facteur Kafka consumer locally for manual verification.                                                                                                                                                                                                                                               | `docker`/`podman` (for build)      | `bun run packages/scripts/src/facteur/run-consumer.ts`                                                                            |
+| `src/kafka/verify-nvme-migration.ts`                  | Captures and compares a read-only Kafka same-cluster NVMe migration baseline: all topics and offsets, group commits, KRaft identities/quorum, PVC-to-NVMe evidence, record range hashes, and copied-phase receipt manifests.                                                                                       | `kubectl`                          | `bun run packages/scripts/src/kafka/verify-nvme-migration.ts --mode capture --context galactic-tailscale --output baseline.json`  |
 | `src/torghut/deploy-agentruns.ts`                     | Applies the Torghut AgentRun rollout manifests (`argocd/applications/agents/torghut-agentruns.yaml`) to the `agents` namespace.                                                                                                                                                                                    | `kubectl`                          | `bun run packages/scripts/src/torghut/deploy-agentruns.ts [--dry-run] [--no-apply]`                                               |
 | `src/torghut/storage-stability-gate.ts`               | Collects a read-only 30-minute clean observation window from Talos, Ceph/current SMART health, Kafka, Torghut and Jangar PostgreSQL, Argo CD, and contained Torghut write workloads; exits non-zero unless current storage, quorum, durability, WAL budgets, and runtime evidence prove staged activation is safe. | `kubectl`, `talosctl`              | `bun run gate:torghut-storage-stability --observation-start 2026-07-15T11:00:00Z --output json`                                   |
 | `src/torghut/generate-whitepaper-replay-workflows.ts` | Fetches closed whitepaper issues from GitHub, deduplicates them by source PDF, writes one direct-intake payload per unique paper under `docs/whitepapers/replay-workflows/`, and can optionally POST them to Torghut.                                                                                              | `gh`                               | `bun run whitepapers:replay --post --base-url http://localhost:8181`                                                              |
 
 ## Registry maintenance
 
-The registry cleanup CLI is Python 3.14. Follow the [cleanup runbook](../../docs/registry/manual-garbage-collection.md).
-`src/registry/protected_references.py` snapshots built-in workloads and all served custom resources,
-including idle providers and retained Kargo references across all namespaces; failed discovery or listing aborts cleanup.
-`prepare.py` builds a read-only retention and blob plan on the existing claim.
-`collect.py` renames eligible tags and verified old blobs into quarantine under a bounded read-only hold and restores uploads.
-`purge.py` deletes quarantined data through the registry Pod's maintenance container,
-whose sole writable claim mount is quarantine. Preparation and purge create no separate RWO attachment.
-`scheduled.py` runs these phases daily through the GitOps-managed `registry-cleanup` CronJob,
-resumes receipted purges and skips the read-only phase for an empty plan.
-The former `prune-images.ts` CLI is removed.
+The Python 3.14 controller `src/registry/run.py` runs one cleanup worker inside the existing registry Pod.
+It refreshes the explicit workload and retained Kargo protections before the worker closes HAProxy's write gate.
+Reads stay available. The worker drains accepted uploads, validates and quarantines eligible data within four minutes,
+then reopens uploads before physical deletion. Cleanup creates no helper Pods, patches no workloads or Argo resources,
+and preserves the existing claim. Persistent version 3 receipts allow an interrupted purge to resume.
 
-Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph,
-quarantine, reupload protection and timeout/restoration regressions.
+Follow the [cleanup runbook](../../docs/registry/manual-garbage-collection.md).
+Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph, protection and worker-stop
+regressions. The scoped `registry-cleanup` CI workflow also runs the real HAProxy upload-budget, fencing and failure tests.
 
 ## Production image delivery
 
@@ -87,11 +84,26 @@ digests. The baseline values on `main` can reference images removed by registry 
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
+Bayn also publishes images only from `main`. Its PRs retain source builds, type checks, PostgreSQL, archive, ledger,
+replay and production metadata validation. Python checks run for GEPA inputs; ordinary service test edits skip
+the independent proof pipeline unless they change its PostgreSQL conformance cases. Replay image and execution
+acceptance share one hosted job and Nix environment, including dependency source boundary checks.
+The inference ledger group owns its three PostgreSQL suites, so the PostgreSQL matrix does not repeat them.
+Changes to CI runners, timing inputs, metadata checks and Bayn validation scripts do not publish images or reactivate
+the controller. Runtime compiler tools retain main-branch publication.
 Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
 GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
+
+Agents' existing Kind smoke job forces a rebuild of its shared dependency closure only when its Nix dependency
+inputs, installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache;
+test-only edits retain the unit tier. All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
+semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
+A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
+The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services
+retain their native checks for dependency changes without repeating the same shared-script validation.
 
 The root-scripts job uses the same impact router with `.github/ci/root-script-map.yml` to select owned suites.
 Changes to the router or its configuration run all six suites; a Tengri NetworkPolicy change runs kube-router only.

@@ -1,20 +1,20 @@
 import { expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { BrokerEnvironment } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
 import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
-import { loadStrategyExecutionRiskPolicy } from './startup'
-import { accountEntryProtectionReasons, accountLossMicros, Reason } from '../risk'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
+import { accountEntryProtectionReasons, accountLossMicros, PolicySchema, Reason } from '../risk'
 
-test('raises sandbox turnover and cumulative drawdown budgets while preserving the complete live policy', async () => {
-  const [legacy, live, paper] = await Effect.runPromise(
-    Effect.all([
-      Effect.fromResult(makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe)),
-      Effect.fromResult(makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe, BrokerEnvironment.Live)),
-      Effect.fromResult(makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe, BrokerEnvironment.Sandbox)),
+test('removes sandbox turnover cap while preserving the complete live policy and other sandbox limits', () => {
+  const [legacy, live, paper] = Result.getOrThrow(
+    Result.all([
+      makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe),
+      makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe, BrokerEnvironment.Live),
+      makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
     ]),
   )
   expect(live).toEqual(legacy)
@@ -22,12 +22,25 @@ test('raises sandbox turnover and cumulative drawdown budgets while preserving t
     '75f41cdcde135541b3f65ae243d5b550e974e2074112e39f250b16e780591108',
   )
   expect(live.maxDailyTradedNotionalMicros).toBe('200000000000')
-  expect(paper).toEqual({ ...live, maxDailyTradedNotionalMicros: '1000000000000', maxDrawdownMicros: '10000000000' })
+  expect(paper).toEqual({
+    ...live,
+    schemaVersion: 'bayn.execution-risk-policy.v5',
+    maxDailyTradedNotionalMicros: null,
+    maxDrawdownMicros: '10000000000',
+  })
+  expect(
+    Result.isFailure(Schema.decodeUnknownResult(PolicySchema)({ ...paper, schemaVersion: live.schemaVersion })),
+  ).toBe(true)
+  expect(
+    Result.isFailure(Schema.decodeUnknownResult(PolicySchema)({ ...paper, maxDailyTradedNotionalMicros: '0' })),
+  ).toBe(true)
+  const { maxDailyTradedNotionalMicros: _, ...missingLimit } = paper
+  expect(Result.isFailure(Schema.decodeUnknownResult(PolicySchema)(missingLimit))).toBe(true)
 })
 
-test('PAPER rebinding retains historical losses and enforces its new drawdown and unchanged daily cap', async () => {
-  const policy = await Effect.runPromise(
-    Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox)),
+test('PAPER rebinding retains historical losses and enforces its new drawdown and unchanged daily cap', () => {
+  const policy = Result.getOrThrow(
+    makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
   )
   const facts = {
     accountEquityMicros: 94_900_000_000n,
@@ -47,17 +60,15 @@ test('PAPER rebinding retains historical losses and enforces its new drawdown an
   expect(accountLossMicros(facts).drawdownMicros).toBe(5_100_000_000n)
 })
 
-test('strategy startup and quote-bound loaders select the same environment-specific policy', async () => {
+test('strategy startup and quote-bound loaders select the same environment-specific policy', () => {
   for (const environment of [BrokerEnvironment.Live, BrokerEnvironment.Sandbox]) {
-    const approved = await Effect.runPromise(
-      Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment)),
-    )
+    const approved = Result.getOrThrow(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment))
     const policyHash = Result.getOrThrow(canonicalHashV1Result(approved))
-    const [strategy, quote, execution] = await Effect.runPromise(
-      Effect.all([
-        loadStrategyExecutionRiskPolicy('test-account', fixtureRuntime, environment, policyHash),
-        Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment)),
-        Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment)),
+    const [strategy, quote, execution] = Result.getOrThrow(
+      Result.all([
+        strategyExecutionRiskPolicy('test-account', fixtureRuntime, environment, policyHash),
+        makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment),
+        makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment),
       ]),
     )
     expect(strategy).toEqual(quote)
@@ -65,13 +76,13 @@ test('strategy startup and quote-bound loaders select the same environment-speci
   }
 })
 
-test('retained sandbox mandates keep the exact original policy until explicitly rebound', async () => {
-  const original = await Effect.runPromise(loadStrategyExecutionRiskPolicy('test-account', fixtureRuntime))
+test('retained sandbox mandates keep the exact original policy until explicitly rebound', () => {
+  const original = Result.getOrThrow(strategyExecutionRiskPolicy('test-account', fixtureRuntime))
   const hash = Result.getOrThrow(canonicalHashV1Result(original))
-  const [retained, unbound] = await Effect.runPromise(
-    Effect.all([
-      loadStrategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Sandbox, hash),
-      loadStrategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Sandbox),
+  const [retained, unbound] = Result.getOrThrow(
+    Result.all([
+      strategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Sandbox, hash),
+      strategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Sandbox),
     ]),
   )
   expect(retained).toEqual(original)
@@ -79,9 +90,26 @@ test('retained sandbox mandates keep the exact original policy until explicitly 
   expect(retained.maxDailyTradedNotionalMicros).toBe('200000000000')
 })
 
-test('unknown, foreign-account and live increased-policy hashes fail closed', async () => {
-  const paper = await Effect.runPromise(
-    Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox)),
+test('retained million-dollar sandbox mandates remain bounded until explicitly rebound', () => {
+  const live = Result.getOrThrow(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe))
+  const historical = {
+    ...live,
+    schemaVersion: 'bayn.execution-risk-policy.v4' as const,
+    maxDailyTradedNotionalMicros: '1000000000000',
+    maxDrawdownMicros: '10000000000',
+  }
+  const hash = Result.getOrThrow(canonicalHashV1Result(historical))
+  expect(
+    Result.getOrThrow(strategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Sandbox, hash)),
+  ).toEqual(historical)
+  expect(
+    Result.isFailure(strategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Live, hash)),
+  ).toBe(true)
+})
+
+test('unknown, foreign-account and live increased-policy hashes fail closed', () => {
+  const paper = Result.getOrThrow(
+    makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
   )
   const paperHash = Result.getOrThrow(canonicalHashV1Result(paper))
   for (const [accountId, environment, hash] of [
@@ -89,34 +117,19 @@ test('unknown, foreign-account and live increased-policy hashes fail closed', as
     ['foreign-account', BrokerEnvironment.Sandbox, paperHash],
     ['test-account', BrokerEnvironment.Live, paperHash],
   ] as const) {
-    const result = await Effect.runPromise(
-      loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime, environment, hash).pipe(Effect.result),
-    )
+    const result = strategyExecutionRiskPolicy(accountId, fixtureRuntime, environment, hash)
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result))
       expect(result.failure.message).toBe('bound execution risk policy is not approved for this broker environment')
   }
 })
 
-test('pipeable policy loaders preserve explicit sandbox selection', async () => {
-  const [quote, execution] = await Effect.runPromise(
-    Effect.all([
-      Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox)),
-      Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox)),
-    ]),
-  )
-  expect(quote.maxDailyTradedNotionalMicros).toBe('1000000000000')
-  expect(execution).toEqual(quote)
-})
-
-test('rebinding a sandbox mandate preserves accumulated turnover while enabling the new budget', async () => {
-  const dailyTradedNotionalMicros = 250_000_000_000n
+test('rebinding a sandbox mandate preserves turnover above the former million-dollar cap without shrinking allocation', () => {
+  const dailyTradedNotionalMicros = 1_018_000_000_000n
   for (const environment of [BrokerEnvironment.Live, BrokerEnvironment.Sandbox]) {
-    const candidate = await Effect.runPromise(
-      Effect.fromResult(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment)),
-    )
-    const policy = await Effect.runPromise(
-      loadStrategyExecutionRiskPolicy(
+    const candidate = Result.getOrThrow(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment))
+    const policy = Result.getOrThrow(
+      strategyExecutionRiskPolicy(
         'test-account',
         fixtureRuntime,
         BrokerEnvironment.Sandbox,
@@ -129,7 +142,8 @@ test('rebinding a sandbox mandate preserves accumulated turnover while enabling 
         dailyTradedNotionalMicros,
         maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
         maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
-        maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+        maxDailyTradedNotionalMicros:
+          policy.maxDailyTradedNotionalMicros === null ? null : BigInt(policy.maxDailyTradedNotionalMicros),
         maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
         targetWeights: { NVDA: 0.2 },
         positions: [],

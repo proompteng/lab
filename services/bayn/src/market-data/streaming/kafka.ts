@@ -1,4 +1,5 @@
 import { MarketKind } from '../../instruments'
+import { currentEntryMarketEnabled } from '../../execution/trading-scope'
 import { marketHistoryMinutes } from '../history'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
@@ -12,14 +13,16 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import {
+  Base,
   Consumer,
+  findErrorBy,
   MessagesStreamFallbackModes,
   MessagesStreamModes,
   stringDeserializers,
   type MessagesStream,
   type Offsets,
 } from '@platformatic/kafka'
-import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
+import { Cause, Clock, Context, Data, Duration, Effect, Redacted, Result, Schedule, Stream } from 'effect'
 import { makeKafkaArrivalEnvelope } from './arrival-envelope'
 import type { NativeArrivalCaptureFactory } from './native-arrival-journal'
 import {
@@ -36,8 +39,10 @@ import {
   type StreamingProjection,
 } from './projection'
 import { marketSourceForTopic, marketSourceKind, type KafkaMarketRecord, type MarketSources } from './raw-events'
+import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
 
 export interface KafkaMarketConfig {
+  readonly webullBarsTopic?: string | undefined
   readonly technicalFeaturesTopic?: string | undefined
   readonly brokers: readonly string[]
   readonly username: string
@@ -99,8 +104,11 @@ export interface KafkaProjectionTransport {
     positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
   ) => Promise<KafkaProjectionStream>
-  readonly close: () => Promise<void>
+  readonly close: () => Promise<KafkaProjectionClosed>
 }
+export type KafkaProjectionClosed =
+  | { readonly _tag: 'Closed' }
+  | { readonly _tag: 'ClosedAfterCoordinatorFailure'; readonly cause: unknown }
 export type KafkaProjectionTransportFactory = (
   config: KafkaMarketConfig,
   epoch: string,
@@ -132,13 +140,18 @@ export const decodeKafkaTransportValue = (
 }
 
 export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
-  if (next.rejections !== previous.rejections || next.technicalRejections !== previous.technicalRejections)
+  if (
+    next.rejections !== previous.rejections ||
+    next.technicalRejections !== previous.technicalRejections ||
+    next.webull.rejections !== previous.webull.rejections
+  )
     return CaptureDisposition.Rejected
   return next.bars !== previous.bars ||
     next.quotes !== previous.quotes ||
     next.trades !== previous.trades ||
     next.features !== previous.features ||
-    next.technicalFeatures !== previous.technicalFeatures
+    next.technicalFeatures !== previous.technicalFeatures ||
+    next.webull.bars !== previous.webull.bars
     ? CaptureDisposition.Accepted
     : CaptureDisposition.Ignored
 }
@@ -167,13 +180,31 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     retries: 2,
     retryDelay: 250,
   })
-  let closePromise: Promise<void> | undefined
+  let closePromise: Promise<KafkaProjectionClosed> | undefined
   let active: MessagesStream<string, Buffer, string, string> | undefined
-  const close = (): Promise<void> => {
+  const close = (): Promise<KafkaProjectionClosed> => {
     if (closePromise === undefined) {
       active?.destroy()
-      closePromise = new Promise<void>((resolve, reject) => {
-        consumer.close(true, (error) => (error !== null && error !== undefined ? reject(error) : resolve()))
+      closePromise = new Promise<KafkaProjectionClosed>((resolve, reject) => {
+        consumer.close(true, (error) => {
+          if (error === null || error === undefined) {
+            resolve({ _tag: 'Closed' })
+            return
+          }
+          // The SDK returns before closing its connection pool when LeaveGroup fails.
+          // A lost coordinator acknowledgement cannot keep this offset-free reader alive.
+          Base.prototype.close.call(consumer).then(
+            () => {
+              if (
+                findErrorBy(error, 'apiId', 'COORDINATOR_NOT_AVAILABLE') !== null &&
+                findErrorBy(error, 'canRetry', false) === null
+              )
+                resolve({ _tag: 'ClosedAfterCoordinatorFailure', cause: error })
+              else reject(error)
+            },
+            (closeError) => reject(new AggregateError([error, closeError], 'Kafka consumer teardown failed')),
+          )
+        })
       })
     }
     return closePromise
@@ -295,12 +326,15 @@ export interface KafkaProjectionRead extends KafkaProjectionCut {
 export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
   {
-    readonly read: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
-    readonly readForLiquidation: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
+    readonly check: Effect.Effect<void, KafkaMarketFailure>
+    readonly read: (
+      query: IntradaySnapshotQuery,
+    ) => Effect.Effect<KafkaProjectionRead, KafkaMarketFailure | IntradaySnapshotFailure>
     readonly status: Effect.Effect<{
       readonly epoch: string
       readonly ready: boolean
       readonly sequence: number
+      readonly bootstrapDeadlineAtMs: number | null
       readonly failure?: string
     }>
   }
@@ -319,12 +353,14 @@ export const makeKafkaMarketProjection = (
     let projection = emptyStreamingProjection(
       'starting',
       universe.find((source) => source.topics.technicalFeatures !== undefined)?.topics.technicalFeatures,
+      universe.find((source) => source.topics.webullBars !== undefined)?.topics.webullBars,
     )
     let projectionConsumerSequence = 0
     let deliveredPositions = new Map<string, KafkaPartitionPosition>()
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
+    let bootstrapDeadlineAtMs: number | null = null
     let lastFailure: KafkaMarketFailure | undefined
     let closeFailure: KafkaMarketFailure | undefined
     let recovery:
@@ -348,6 +384,7 @@ export const makeKafkaMarketProjection = (
         projection = emptyStreamingProjection(
           epoch,
           universe.find((source) => source.topics.technicalFeatures !== undefined)?.topics.technicalFeatures,
+          universe.find((source) => source.topics.webullBars !== undefined)?.topics.webullBars,
         )
         projectionConsumerSequence = 0
         deliveredPositions = new Map()
@@ -367,6 +404,14 @@ export const makeKafkaMarketProjection = (
               try: () => resource.close(),
               catch: (cause) => failure('close', 'Kafka client close failed', cause),
             }).pipe(
+              Effect.tap((closed) =>
+                closed._tag === 'ClosedAfterCoordinatorFailure'
+                  ? Effect.logWarning('Kafka reader closed locally after coordinator acknowledgement failed', {
+                      epoch,
+                      failureCodes: safeKafkaFailureCodes(closed.cause),
+                    })
+                  : Effect.void,
+              ),
               Effect.tapError((cause) =>
                 Effect.sync(() => {
                   closeFailure = cause
@@ -384,13 +429,18 @@ export const makeKafkaMarketProjection = (
             }),
           )
         const observedAtMs = yield* Clock.currentTimeMillis
-        const timestampForSource = (source: MarketSources[number]) =>
+        bootstrapDeadlineAtMs = observedAtMs + config.bootstrapTimeoutMs
+        const timestampForTopic = (source: MarketSources[number], topic: string) =>
           diagnosticStartMs ??
           Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
-            marketHistoryMinutes[marketSourceKind(source)] * 60_000 -
+            // Pricing uses a completed minute and fresh quotes. Full charts belong to enabled entry markets.
+            (topic === source.topics.webullBars || !currentEntryMarketEnabled(marketSourceKind(source))
+              ? 2
+              : marketHistoryMinutes[marketSourceKind(source)]) *
+              60_000 -
             5000
-        const lowerTimestampMs = Math.min(...universe.map(timestampForSource))
         const owners = new Map<string, string>()
+        const seekGroups = new Map<number, string[]>()
         for (const source of universe) {
           const raw = [source.topics.bars, source.topics.quotes, source.topics.trades]
           const sourceTopics = Object.values(source.topics).filter((topic) => topic !== undefined)
@@ -403,20 +453,20 @@ export const makeKafkaMarketProjection = (
           for (const topic of unique) {
             if (owners.has(topic)) return yield* failure('bootstrap', 'Market sources cannot share topics')
             owners.set(topic, source.universeId)
+            const timestamp = timestampForTopic(source, topic)
+            const group = seekGroups.get(timestamp)
+            if (group === undefined) seekGroups.set(timestamp, [topic])
+            else group.push(topic)
           }
         }
+        const lowerTimestampMs = Math.min(...seekGroups.keys())
         const topics = [...owners.keys()]
         const starts = yield* operation('bootstrap', () => transport.offsets(topics, -2n))
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
           config.timestampPolicy === KafkaBootstrapTimestampPolicy.ProducerClock
-            ? (yield* Effect.forEach(universe, (source) =>
-                operation('bootstrap', () =>
-                  transport.offsets(
-                    [...new Set(Object.values(source.topics).filter((topic) => topic !== undefined))],
-                    BigInt(timestampForSource(source)),
-                  ),
-                ),
+            ? (yield* Effect.forEach([...seekGroups], ([timestamp, topics]) =>
+                operation('bootstrap', () => transport.offsets(topics, BigInt(timestamp))),
               )).flat()
             : starts
         // Separate tick streams supply current prices, not chart history. Await new verified ticks instead of
@@ -549,6 +599,40 @@ export const makeKafkaMarketProjection = (
                 partition: record.partition,
                 offset: record.offset,
               })
+              if (projection.webull.rejections !== previousProjection.webull.rejections)
+                yield* Effect.logWarning('Kafka Webull context withheld', {
+                  epoch,
+                  topic: record.topic,
+                  partition: record.partition,
+                  offset: record.offset,
+                  rejection: projection.webull.rejections.at(-1),
+                })
+              if (projection.webull.bars !== previousProjection.webull.bars) {
+                const arrivals = [...projection.webull.bars.values()].flatMap((bars) => {
+                  const bar = bars[0]
+                  return bar === undefined || bar.delivery.sequence !== projection.sequence
+                    ? []
+                    : [
+                        {
+                          symbol: bar.value.symbol,
+                          minuteStartMs: bar.value.startMs,
+                          captureId: bar.captureId,
+                          receivedAt: bar.receivedAt,
+                          availableAtMs: bar.delivery.availableAtMs,
+                          availabilityLagMs: bar.delivery.availableAtMs - bar.value.startMs - 60_000,
+                        },
+                      ]
+                })
+                if (arrivals.length > 0)
+                  yield* Effect.logInfo('Kafka Webull minute bars incorporated', {
+                    epoch,
+                    topic: record.topic,
+                    partition: record.partition,
+                    offset: record.offset,
+                    consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
+                    arrivals,
+                  })
+              }
               if (projection.technicalFeatureArrival !== null && projection.sequence !== previousSequence)
                 yield* Effect.logInfo('Kafka technical feature incorporated', {
                   ...featureAvailabilityMeasurement(
@@ -604,13 +688,14 @@ export const makeKafkaMarketProjection = (
                 })
             }
             positions = canonicalPositions([...incorporated.values()])
-            ready = kafkaBootstrapComplete(evidence, positions)
-            if (!ready && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
+            const caughtUp = kafkaBootstrapComplete(evidence, positions)
+            if (!announced && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
               return yield* failure(
                 'bootstrap',
                 'Kafka bootstrap deadline exceeded',
                 new KafkaBootstrapDeadlineExceeded(),
               )
+            ready = caughtUp
             if (ready && !announced) {
               announced = true
 
@@ -762,19 +847,15 @@ export const makeKafkaMarketProjection = (
           : Effect.fail(lastFailure ?? failure('read', 'Kafka projection is rebuilding required history'))
       })
     return {
+      check: readCut(true).pipe(Effect.asVoid),
       read: readCut(true),
       readForLiquidation: readCut(false),
       status: Effect.sync(() => ({
         epoch: projection.epoch,
         ready: ready && lastFailure === undefined,
         sequence: projection.sequence,
+        bootstrapDeadlineAtMs,
         ...(lastFailure === undefined ? {} : { failure: lastFailure.message }),
       })),
     }
   })
-export const KafkaMarketProjectionLive = (
-  config: KafkaMarketConfig,
-  universe: MarketSources,
-  captureFactory: NativeArrivalCaptureFactory,
-) =>
-  Layer.effect(KafkaMarketProjection, makeKafkaMarketProjection(config, universe, undefined, undefined, captureFactory))
