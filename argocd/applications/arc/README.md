@@ -16,9 +16,14 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   service or persistent cache that a pull request can poison for a later release. Existing registry and GitHub cache
   scopes retain their policies.
 - The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
-  the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
+  the existing rootful build capability out of DinD without adding a sidecar, Podman, host runtime
   socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The
   `analysis-arm64` set uses the same private-process model through its workflow in `gregkonush/analysis`.
+- Kata's upstream component packager still requires Docker pull/build/run. Its command wrapper starts a private,
+  pinned Docker Engine with data, containerd/runc execution state, socket, temporary files and client configuration
+  beneath `RUNNER_TEMP`, then stops that daemon when the command exits. Both native build sets place those paths
+  on Ceph. Bridge and iptables management are disabled, and container/build networking uses the
+  existing runner Pod namespace. The wrapper adds no Pod privilege, host socket, service or permanent daemon.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
@@ -29,7 +34,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - `analysis-arm64` keeps its 20Gi disposable workspace and one worker. Its single runner container reserves two CPUs,
   4Gi memory and 20Gi ephemeral storage, with limits of ten CPUs, 18Gi memory and 72Gi storage. These preserve the
   former runner-plus-DinD resource budget. Its workflow starts a private BuildKit OCI worker with build parallelism
-  capped at one. It has no Docker daemon, socket volume, Docker startup wait or Kubernetes container hook.
+  capped at one. Its Kubernetes Pod has no daemon sidecar, socket volume, startup wait or container hook.
 - `arc-amd64-publish` serves up to two publication runners on Ryzen and Turin, with the same host allowlist and
   soft spreading. Each single-container runner
   requests one CPU, 2Gi memory and 2Gi ephemeral storage, with limits of four CPUs, 8Gi memory and 32Gi storage. Its
@@ -50,10 +55,19 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   normal temporary directory without writing to the runner overlay. Both native build sets expose `CARGO_HOME`
   and `RUSTUP_HOME` beneath the Ceph-backed cache. The init creates these directories after verifying the seed
   copy, assigns them to UID 1001 with mode `00700`, and checks the 45Gi free-space reserve afterward.
+  Ordinary image inspection/push passes Skopeo `--tmpdir` explicitly, and Kata creates private Rust state under
+  `RUNNER_TEMP` before installing Rust. These workflow paths also protect jobs accepted by runners that predate
+  the new mount/environment settings. Preserve the archive, provenance, publication and checksum checks.
 - A 130Gi RBD claim has a real filesystem capacity ceiling, unlike the former unbounded local-path directory.
   The init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
   filesystem overhead. The claim size is separate from the runner's unchanged ephemeral-storage resource limit.
   A failed bootstrap remains an admission failure; do not weaken the free-space or complete-copy checks.
+- The init sets scratch `/tmp` with explicit `01777` so GNU chmod clears inherited `fsGroup` setgid bits.
+  For the existing ARC image marker, the shared Nix setup action also creates a private `00700` build directory
+  beneath `RUNNER_TEMP` and passes it through `NIX_CONFIG`'s `build-dir`, including the existing sudo launcher.
+  Hosted Nix configuration stays unchanged. On both native build sets this directory stays on the same Ceph
+  volume. Nix's sandbox and syscall filter remain enabled; inherited setgid directories otherwise make readonly
+  source unpacking fail with `Operation not permitted`. Job temporary storage is removed with the runner.
 - New AMD64 scratch claims never use `local-path-ci-amd64`. Existing busy runners keep their old local claims until
   their normal Pod lifecycle ends; no data migration or active-job deletion is required. Retain the old local-path
   mappings for that cleanup. Ceph RBD data uses the existing HDD OSDs and dedicated BlueStore DB NVMe devices,
@@ -98,9 +112,8 @@ the native build queues and retain its validation, signatures and discovery gate
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. The manual
 `ARC placement acceptance` workflow verifies ten distinct Turin build runners on ten different ext4 RBD devices
 and two distinct publication runners, with at least 45 seconds of shared occupancy and exact BuildKit output
-checksums. The current workflow checks the four original scratch mounts, `RUNNER_TEMP` and the private BuildKit
-cache. Also verify `/var/tmp` and both Rust cache homes on each new native runner's same RBD filesystem after
-storage promotion. Run acceptance after the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot
+checksums. All five scratch mounts, both Rust state directories, `RUNNER_TEMP` and the private BuildKit cache
+must share each runner's RBD filesystem. Run it after the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot
 start. This proves slots, placement and tooling. Sustained throughput also requires the representative-build
 observation below. The [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
 checks with the Actions service before deleting a runner. Do not delete runner Pods manually.
@@ -139,7 +152,6 @@ When heavy native CI reproduces system-disk contention, deliver the independentl
 through its normal CI, runner-image and Kargo path first. Verify the new mounts and a clean control-plane baseline
 before resuming the affected native gates. A cancelled or incomplete run remains unqualified; storage admission
 and a successful runner rollout do not replace native build or sustained-throughput acceptance.
-
 Verify the promoted Kargo revision, ten-runner configuration, Turin placement and `rook-ceph-block` claims first.
 After the slot/output acceptance succeeds, record a continuous 30-minute representative native-image-build window
 at the intended concurrency with healthy API/etcd readiness, no new slow WAL-sync warnings or recurring

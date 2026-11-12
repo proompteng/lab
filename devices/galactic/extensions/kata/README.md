@@ -78,6 +78,19 @@ three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtime
 running node. Galactic's Talos 1.14 Image Factory catalog must select the verified immutable extension before a
 scoped node rollout and runtime acceptance. The legacy 1.13.9 installers are not upgrade targets for Talos 1.14 nodes.
 
+The upstream component builders require Docker pull/build/run operations with a shared source mount. CI supplies a
+private Docker Engine from the pinned Nix shell for that command only. `with-job-docker.sh` validates the daemon
+before compilation, places its socket, data, managed containerd/runc state, temporary files and client configuration
+under a private `RUNNER_TEMP` directory, and stops only that daemon on exit while preserving the command status.
+The existing ARC Pod privilege and sudo contract is unchanged. Bridge, iptables and forwarding configuration are
+disabled; build/run use the runner Pod's network namespace, with `hostNetwork: false`. No host runtime socket or
+service is used. Daemon logs remain in job storage and failure output; the ephemeral runner/PVC lifecycle reclaims
+runtime data after the processes stop. Source pins, native tests, builder images and archive checks remain unchanged.
+The wrapper requires the existing immediate Pod cgroup to have finite CPU and memory limits no looser than the
+runner leaf, enabled CPU/memory controllers and no direct processes. Docker containers and BuildKit RUN steps use
+that exact parent. A missing or unbounded parent, system containerd socket, foreign daemon PID, or non-private
+managed containerd configuration fails before compilation; the wrapper never creates or changes the Pod limits.
+
 Installer generation runs through `buildctl` and exports the archive directly from BuildKit. Set `BUILDKIT_HOST` to
 the native worker endpoint and provide Python 3. CI configures both through the shared BuildKit action and runner toolchain.
 The registry auth file, when present, is passed as a BuildKit secret.

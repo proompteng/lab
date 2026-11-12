@@ -938,7 +938,9 @@ describe('native OCI build workflows', () => {
   it('gives Skopeo an explicit containers policy on ARC runners', () => {
     expect(ociPushScript).toContain('policy_json="$(mktemp)"')
     expect(ociPushScript).toContain('"type": "insecureAcceptAnything"')
-    expect(ociPushScript).toContain('skopeo --policy "${policy_json}" copy')
+    expect(ociPushScript).toContain(
+      'skopeo --tmpdir "${RUNNER_TEMP:-${TMPDIR:-/var/tmp}}" --policy "${policy_json}" copy',
+    )
   })
 
   it('only lets the manual mirror write non-reserved tags', () => {
@@ -957,7 +959,7 @@ describe('native OCI build workflows', () => {
   it('tags platform latest refs without re-copying image layers', () => {
     expect(ociPushScript).toContain('crane tag "${reference}" "${latest_tag}"')
     expect(ociPushScript).not.toContain(
-      'skopeo --policy "${policy_json}" copy --dest-precompute-digests --image-parallel-copies 1 --format oci "docker://${reference}"',
+      'skopeo --tmpdir "${RUNNER_TEMP:-${TMPDIR:-/var/tmp}}" --policy "${policy_json}" copy --dest-precompute-digests --image-parallel-copies 1 --format oci "docker://${reference}"',
     )
   })
 
