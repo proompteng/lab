@@ -45,6 +45,11 @@ once. Stable update IDs deduplicate transport retries; the financial stores reta
 `/readyz` becomes ready only after the verified session notification has been acknowledged by Kafka, and resets on
 disconnect. `/metrics` exposes `dorvud_broker_feed_ready`, publications and session failures without account labels.
 
+Market-data and trade-update sessions allow up to five seconds for a graceful WebSocket close, then cancel that
+session and close both channels. This bounds Ktor's otherwise unbounded close/flush path after a network failure,
+so the existing reconnect loop can authenticate and acknowledge a new session. Application cancellation still
+propagates immediately; readiness, establishment deadlines, publication acknowledgements and deduplication remain required.
+
 Configuration requires `BAYN_ALPACA_ACCOUNT_ID`, `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`,
 `BAYN_ALPACA_BASE_URL=https://paper-api.alpaca.markets`,
 `BAYN_ALPACA_PROXY_URL=http://bayn-egress-proxy:3128`, the 40-character `DORVUD_SOURCE_REVISION`,

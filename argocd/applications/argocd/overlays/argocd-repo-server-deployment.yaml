@@ -21,7 +21,16 @@ spec:
           resources:
             requests:
               cpu: "500m"
-              memory: "1Gi"
+              memory: "12Gi"
             limits:
               cpu: "2"
-              memory: "4Gi"
+              memory: "12Gi"
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: helm-working-dir
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi

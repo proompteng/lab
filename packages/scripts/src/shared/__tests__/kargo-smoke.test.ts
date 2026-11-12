@@ -25,6 +25,7 @@ describe('Kargo release smoke verification', () => {
       const template = templates.find((t) => t.metadata.name === verification.analysisTemplates[0].name)
       expect(template, stage.metadata.name).toBeDefined()
       expect(verification.analysisTemplates[0].kind).toBe('ClusterAnalysisTemplate')
+      for (const arg of verification.args) expect(arg.value, `${stage.metadata.name}/${arg.name}`).not.toBe('')
       expect(verification.args.map((a: any) => a.name).sort()).toEqual(
         template!.spec.args.map((a: any) => a.name).sort(),
       )
@@ -54,7 +55,7 @@ describe('Kargo release smoke verification', () => {
     }
   })
 
-  it('rejects bad HTTP responses and accepts a valid empty 204', async () => {
+  it('waits for connectivity, rejects bad HTTP responses, and accepts a valid empty 204', async () => {
     const container = templates.find((t) => t.metadata.name === 'kargo-http-smoke')!.spec.metrics[0].provider.job.spec
       .template.spec.containers[0]
     const server = Bun.serve({
@@ -84,10 +85,28 @@ describe('Kargo release smoke verification', () => {
       expect(await run('/ready', '^ready$')).toBe(0)
       expect(await run('/wrong', '^ready$')).not.toBe(0)
       expect(await run('/failed', '^ready$')).not.toBe(0)
-      expect(await run('/empty', '')).toBe(0)
+      expect(await run('/empty', 'HTTP_STATUS_ONLY')).toBe(0)
       expect(await run('/empty', '^ready$')).not.toBe(0)
+      const reservation = Bun.serve({ port: 0, fetch: () => new Response('ready') })
+      const delayedPort = reservation.port
+      reservation.stop(true)
+      let delayed: ReturnType<typeof Bun.serve> | undefined
+      const timer = setTimeout(() => {
+        delayed = Bun.serve({ port: delayedPort, fetch: () => new Response('ready') })
+      }, 250)
+      try {
+        const child = Bun.spawn(container.command, {
+          env: { ...process.env, SMOKE_URL: `http://127.0.0.1:${delayedPort}/`, SMOKE_PATTERN: '^ready$' },
+          stdout: 'ignore',
+          stderr: 'ignore',
+        })
+        expect(await child.exited).toBe(0)
+      } finally {
+        clearTimeout(timer)
+        delayed?.stop(true)
+      }
     } finally {
       server.stop(true)
     }
-  })
+  }, 30_000)
 })
