@@ -991,6 +991,9 @@ describePostgres('Durable per-account broker observations', () => {
                 },
               })
               const reader = makeBrokerObservationStore(monitored, accountId, revision, 60_000, cacheFixture.cache)
+              // Store construction also builds the lazy invalidate statement;
+              // it is not executed by readState and is not part of this read path.
+              reads.length = 0
               expect((yield* Effect.flip(reader.readState)).kind).toBe(BrokerReadErrorKind.ObservationPending)
               expect(reads).toHaveLength(2)
               const pending = reads[1]
