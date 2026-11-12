@@ -79,7 +79,7 @@ type RunningRuntimeEntry = {
   session: LiveSession
   lastError: string | null
   recentEvents: RecentEvent[]
-  workerFiber: Fiber.RuntimeFiber<void, never> | null
+  workerFiber: Fiber.Fiber<void, never> | null
   stopReason: WorkerStopReason
   terminalCleanupRequested: boolean
 }
@@ -90,7 +90,7 @@ type RetryRuntimeEntry = {
   attempt: number
   dueAtMs: number
   error: string | null
-  fiber: Fiber.RuntimeFiber<void, never> | null
+  fiber: Fiber.Fiber<void, never> | null
 }
 
 type OrchestratorState = {
@@ -511,8 +511,8 @@ const applyTokenUsage = (state: OrchestratorState, running: RunningRuntimeEntry,
   recordCodexTokenUsage(deltaInput, deltaOutput, deltaTotal)
 }
 
-const interruptWorkerFiber = (fiber: Fiber.RuntimeFiber<void, never> | null) =>
-  fiber ? Fiber.interruptFork(fiber) : Effect.void
+const interruptWorkerFiber = (fiber: Fiber.Fiber<void, never> | null) =>
+  fiber ? Effect.forkDetach(Fiber.interrupt(fiber)).pipe(Effect.asVoid) : Effect.void
 
 export interface OrchestratorServiceDefinition {
   readonly start: Effect.Effect<void, WorkflowError | ConfigError | TrackerError | WorkspaceError | OrchestratorError>
@@ -523,13 +523,12 @@ export interface OrchestratorServiceDefinition {
   readonly getCurrentConfig: Effect.Effect<SymphonyConfig, WorkflowError | ConfigError | OrchestratorError>
 }
 
-export class OrchestratorService extends Context.Tag('symphony/OrchestratorService')<
-  OrchestratorService,
-  OrchestratorServiceDefinition
->() {}
+export class OrchestratorService extends Context.Service<OrchestratorService, OrchestratorServiceDefinition>()(
+  'symphony/OrchestratorService',
+) {}
 
 export const makeOrchestratorLayer = (logger: Logger) =>
-  Layer.scoped(
+  Layer.effect(
     OrchestratorService,
     Effect.gen(function* () {
       const workflow = yield* WorkflowService
@@ -557,14 +556,14 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         DEFAULT_POLL_TICK_TIMEOUT_MS,
       )
       const seenLeaderStateRef = yield* Ref.make<boolean | null>(null)
-      const processorFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
-      const pollFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
-      const stallFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
-      const leaderStreamFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
+      const processorFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null)
+      const pollFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null)
+      const stallFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null)
+      const leaderStreamFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null)
 
       const persistStateBestEffort = SynchronizedRef.get(stateRef).pipe(
         Effect.flatMap((state) => stateStore.save(toPersistedState(state))),
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             orchestratorLogger.log('warn', 'durable_state_persist_failed', toLogError(error))
           }),
@@ -581,7 +580,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
       const createRetryFiber = (issueId: string, dueAtMs: number) =>
         Effect.sleep(Duration.millis(Math.max(0, dueAtMs - Date.now()))).pipe(
-          Effect.zipRight(Queue.offer(queue, { _tag: 'RetryDue', issueId })),
+          Effect.andThen(Queue.offer(queue, { _tag: 'RetryDue', issueId })),
           Effect.asVoid,
           Effect.forkIn(serviceScope),
         )
@@ -613,7 +612,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         Effect.flatMap((config) =>
           tracker.fetchIssuesByStates(config.tracker.terminalStates).pipe(
             Effect.flatMap((issues) => Effect.forEach(issues, (issue) => workspace.removeWorkspace(issue.identifier))),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.sync(() => {
                 orchestratorLogger.log('warn', 'startup_terminal_cleanup_failed', toLogError(error))
               }),
@@ -659,7 +658,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               return Effect.succeed([undefined, state] as const)
             }),
           ),
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.sync(() => {
               orchestratorLogger.log('warn', 'issue_handoff_failed', {
                 issue_id: issue.id,
@@ -669,7 +668,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 ...toLogError(error),
               })
             }).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 SynchronizedRef.modifyEffect(stateRef, (state) => {
                   addRecentError(state, {
                     at: new Date().toISOString(),
@@ -703,7 +702,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             Effect.succeed([state.retryAttempts.get(issueId) ?? null, state] as const),
           )
           if (existing?.fiber) {
-            yield* Fiber.interruptFork(existing.fiber)
+            yield* Effect.forkDetach(Fiber.interrupt(existing.fiber)).pipe(Effect.asVoid)
           }
 
           const fiber = leader.isLeader ? yield* createRetryFiber(issueId, dueAtMs) : null
@@ -783,7 +782,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           })
           syncStateMetrics(state)
           return Effect.succeed([undefined, state] as const)
-        }).pipe(Effect.zipRight(persistStateBestEffort))
+        }).pipe(Effect.andThen(persistStateBestEffort))
 
       const handleCodexEvent = (issueId: string, event: CodexEvent) =>
         SynchronizedRef.modifyEffect(stateRef, (state) => {
@@ -912,7 +911,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           })
 
           if (existingRetry?.fiber) {
-            yield* Fiber.interruptFork(existingRetry.fiber)
+            yield* Effect.forkDetach(Fiber.interrupt(existingRetry.fiber)).pipe(Effect.asVoid)
           }
 
           const workerEffect = issueRunner
@@ -953,10 +952,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               if (runningEntries.length === 0) return
 
               const refreshed = yield* tracker.fetchIssueStatesByIds(runningEntries.map((entry) => entry.issueId)).pipe(
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   Effect.sync(() => {
                     orchestratorLogger.log('warn', 'running_state_refresh_failed', toLogError(error))
-                  }).pipe(Effect.zipRight(Effect.succeed<Issue[]>([]))),
+                  }).pipe(Effect.andThen(Effect.succeed<Issue[]>([]))),
                 ),
               )
               if (refreshed.length === 0) return
@@ -1075,35 +1074,26 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS,
           DEFAULT_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS,
         )
-        const retrySchedule = Schedule.whileInput<unknown>(
-          (error) => error instanceof TrackerError && error.code === 'linear_api_request',
-        )(
-          Schedule.map(
-            Schedule.intersect(Schedule.recurs(Math.max(0, attempts)))(
-              Schedule.jitteredWith({ min: 0.8, max: 1.2 })(
-                Schedule.delayed(Schedule.exponential(Duration.millis(initialDelayMs), 2), (delay) =>
-                  Duration.min(delay, Duration.millis(maxDelayMs)),
-                ),
-              ),
-            ),
-            ([delay]) => delay,
+        const retrySchedule = Schedule.exponential(Duration.millis(initialDelayMs), 2).pipe(
+          Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.millis(maxDelayMs)))),
+          Schedule.jittered,
+          Schedule.tap(({ input: error }) =>
+            Effect.sync(() => {
+              orchestratorLogger.log('warn', 'candidate_fetch_retrying', {
+                context,
+                ...toLogError(error),
+              })
+            }),
           ),
         )
 
         return tracker.fetchCandidateIssues.pipe(
           Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
-          Effect.retry(
-            retrySchedule.pipe(
-              Schedule.tapInput((error) =>
-                Effect.sync(() => {
-                  orchestratorLogger.log('warn', 'candidate_fetch_retrying', {
-                    context,
-                    ...toLogError(error),
-                  })
-                }),
-              ),
-            ),
-          ),
+          Effect.retry({
+            times: Math.max(0, attempts),
+            while: (error) => error instanceof TrackerError && error.code === 'linear_api_request',
+            schedule: retrySchedule,
+          }),
         )
       }
 
@@ -1191,7 +1181,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           }
           for (const retry of interrupted.retries) {
             if (retry.fiber) {
-              yield* Fiber.interruptFork(retry.fiber)
+              yield* Effect.forkDetach(Fiber.interrupt(retry.fiber)).pipe(Effect.asVoid)
             }
           }
           yield* persistStateBestEffort
@@ -1253,17 +1243,17 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             },
           )
 
-          const validation = yield* Effect.either(validateDispatchConfigEffect(config))
-          if (validation._tag === 'Left') {
+          const validation = yield* Effect.result(validateDispatchConfigEffect(config))
+          if (validation._tag === 'Failure') {
             pollResult = 'config_invalid'
             yield* Effect.sync(() => {
-              orchestratorLogger.log('error', 'dispatch_validation_failed', toLogError(validation.left))
+              orchestratorLogger.log('error', 'dispatch_validation_failed', toLogError(validation.failure))
             })
             yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
               addRecentError(state, {
                 at: new Date().toISOString(),
-                code: validation.left.code,
-                message: validation.left.message,
+                code: validation.failure.code,
+                message: validation.failure.message,
                 issueId: null,
                 issueIdentifier: null,
                 context: 'dispatch_validation',
@@ -1271,7 +1261,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               addRecentEvent(state, {
                 at: new Date().toISOString(),
                 event: 'dispatch_skipped',
-                message: validation.left.message,
+                message: validation.failure.message,
                 level: 'error',
                 reason: 'config_invalid',
               })
@@ -1313,12 +1303,12 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               'symphony.poll_tick.candidate_fetch_handoff',
               {},
               fetchCandidateIssuesWithRetry('candidate_fetch_handoff').pipe(
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   Effect.sync(() => {
                     recordCandidateFetch('error')
                     orchestratorLogger.log('error', 'candidate_fetch_failed_for_handoff', toLogError(error))
                   }).pipe(
-                    Effect.zipRight(
+                    Effect.andThen(
                       SynchronizedRef.modifyEffect(stateRef, (state) => {
                         addRecentError(state, {
                           at: new Date().toISOString(),
@@ -1331,7 +1321,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                         return Effect.succeed([undefined, state] as const)
                       }),
                     ),
-                    Effect.zipRight(Effect.succeed<Issue[]>([])),
+                    Effect.andThen(Effect.succeed<Issue[]>([])),
                   ),
                 ),
               ),
@@ -1355,12 +1345,12 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             'symphony.poll_tick.candidate_fetch',
             {},
             fetchCandidateIssuesWithRetry('dispatch').pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.sync(() => {
                   recordCandidateFetch('error')
                   orchestratorLogger.log('error', 'candidate_fetch_failed', toLogError(error))
                 }).pipe(
-                  Effect.zipRight(
+                  Effect.andThen(
                     SynchronizedRef.modifyEffect(stateRef, (state) => {
                       addRecentError(state, {
                         at: new Date().toISOString(),
@@ -1373,7 +1363,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                       return Effect.succeed([undefined, state] as const)
                     }),
                   ),
-                  Effect.zipRight(Effect.succeed<Issue[]>([])),
+                  Effect.andThen(Effect.succeed<Issue[]>([])),
                 ),
               ),
             ),
@@ -1496,10 +1486,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             })
             if (!retryEntry) return
 
-            const candidatesResult = yield* fetchCandidateIssuesWithRetry('retry_dispatch').pipe(Effect.either)
+            const candidatesResult = yield* fetchCandidateIssuesWithRetry('retry_dispatch').pipe(Effect.result)
 
-            if (candidatesResult._tag === 'Left') {
-              const error = candidatesResult.left
+            if (candidatesResult._tag === 'Failure') {
+              const error = candidatesResult.failure
               recordCandidateFetch('error')
               yield* Effect.sync(() => {
                 orchestratorLogger.log('warn', 'retry_poll_failed', {
@@ -1518,7 +1508,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               return
             }
 
-            const candidates = candidatesResult.right
+            const candidates = candidatesResult.success
 
             const preDispatchHealth = yield* withSymphonyEffectSpan(
               'symphony.retry_due.target_health',
@@ -1629,7 +1619,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             })
             if (running.terminalCleanupRequested) {
               yield* workspace.removeWorkspace(running.identifier).pipe(
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   Effect.sync(() => {
                     orchestratorLogger.log('warn', 'terminal_workspace_cleanup_failed', {
                       issue_id: issueId,
@@ -1715,7 +1705,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             return processPollTick()
           case 'StallSweep':
             return Ref.set(stallQueuedRef, false).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 leaderElection.status.pipe(
                   Effect.flatMap((leader) =>
                     leader.isLeader
@@ -1755,7 +1745,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 })
               }
               return Effect.succeed([undefined, state] as const)
-            }).pipe(Effect.zipRight(persistStateBestEffort))
+            }).pipe(Effect.andThen(persistStateBestEffort))
           case 'CodexEventReceived':
             return handleCodexEvent(command.issueId, command.event)
           case 'WorkerExited':
@@ -1765,16 +1755,18 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
       const handleCommand = (command: OrchestratorCommand) =>
         buildCommandEffect(command).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: Duration.millis(getCommandTimeoutMs(command)),
-            onTimeout: () =>
-              new OrchestratorError(
-                'runtime_unavailable',
-                `orchestrator command ${command._tag} timed out after ${getCommandTimeoutMs(command)}ms`,
+            orElse: () =>
+              Effect.fail(
+                new OrchestratorError(
+                  'runtime_unavailable',
+                  `orchestrator command ${command._tag} timed out after ${getCommandTimeoutMs(command)}ms`,
+                ),
               ),
           }),
-          Effect.catchAllCause((cause) => {
-            if (Cause.isInterruptedOnly(cause)) {
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
               return Effect.void
             }
             return Effect.sync(() => {
@@ -1791,13 +1783,13 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       )
 
       const startSchedulers = Effect.gen(function* () {
-        const pollSchedule = Schedule.addDelayEffect(Schedule.forever, () =>
+        const pollSchedule = Schedule.addDelay(Schedule.forever, () =>
           workflow.config.pipe(
             Effect.map((config) => Duration.millis(config.pollingIntervalMs)),
-            Effect.catchAll(() => Effect.succeed(Duration.millis(30_000))),
+            Effect.catch(() => Effect.succeed(Duration.millis(30_000))),
           ),
         )
-        const stallSchedule = Schedule.addDelayEffect(Schedule.forever, () =>
+        const stallSchedule = Schedule.addDelay(Schedule.forever, () =>
           workflow.config.pipe(
             Effect.map((config) =>
               Duration.millis(
@@ -1806,7 +1798,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   : Math.max(5_000, config.pollingIntervalMs),
               ),
             ),
-            Effect.catchAll(() => Effect.succeed(Duration.millis(30_000))),
+            Effect.catch(() => Effect.succeed(Duration.millis(30_000))),
           ),
         )
 
@@ -1832,10 +1824,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   yield* validateDispatchConfigEffect(loaded.config)
 
                   const persisted = yield* stateStore.load.pipe(
-                    Effect.catchAll((error) =>
+                    Effect.catch((error) =>
                       Effect.sync(() => {
                         orchestratorLogger.log('warn', 'durable_state_restore_failed', toLogError(error))
-                      }).pipe(Effect.zipRight(Effect.succeed(emptyPersistedSchedulerState()))),
+                      }).pipe(Effect.andThen(Effect.succeed(emptyPersistedSchedulerState()))),
                     ),
                   )
                   const restoredState = hydrateStateFromPersisted(persisted, loaded.config)
@@ -1876,28 +1868,28 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
           const processorFiber = yield* Ref.get(processorFiberRef)
           if (processorFiber) {
-            yield* Fiber.interruptFork(processorFiber)
+            yield* Effect.forkDetach(Fiber.interrupt(processorFiber)).pipe(Effect.asVoid)
           }
 
           const pollFiber = yield* Ref.get(pollFiberRef)
           if (pollFiber) {
-            yield* Fiber.interruptFork(pollFiber)
+            yield* Effect.forkDetach(Fiber.interrupt(pollFiber)).pipe(Effect.asVoid)
           }
 
           const stallFiber = yield* Ref.get(stallFiberRef)
           if (stallFiber) {
-            yield* Fiber.interruptFork(stallFiber)
+            yield* Effect.forkDetach(Fiber.interrupt(stallFiber)).pipe(Effect.asVoid)
           }
 
           const leaderFiber = yield* Ref.get(leaderStreamFiberRef)
           if (leaderFiber) {
-            yield* Fiber.interruptFork(leaderFiber)
+            yield* Effect.forkDetach(Fiber.interrupt(leaderFiber)).pipe(Effect.asVoid)
           }
 
           const state = yield* SynchronizedRef.get(stateRef)
           for (const retry of state.retryAttempts.values()) {
             if (retry.fiber) {
-              yield* Fiber.interruptFork(retry.fiber)
+              yield* Effect.forkDetach(Fiber.interrupt(retry.fiber)).pipe(Effect.asVoid)
             }
           }
           for (const running of state.running.values()) {
@@ -1910,7 +1902,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         getSnapshot: Effect.gen(function* () {
           const state = yield* SynchronizedRef.get(stateRef)
           const leader = yield* leaderElection.status
-          const workflowResult = yield* Effect.either(workflow.current)
+          const workflowResult = yield* Effect.result(workflow.current)
           const generatedAt = new Date().toISOString()
           const nowMs = Date.now()
           const running = Array.from(state.running.values())
@@ -1921,8 +1913,8 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           )
 
           const config =
-            workflowResult._tag === 'Right'
-              ? workflowResult.right.config
+            workflowResult._tag === 'Success'
+              ? workflowResult.success.config
               : ({
                   workflowPath: '',
                   tracker: {
@@ -2041,8 +2033,8 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             policy: buildPolicySummary(config),
             workflow: buildWorkflowSummary(
               config.workflowPath,
-              workflowResult._tag === 'Right'
-                ? workflowResult.right.definition.promptTemplate.trim().length === 0
+              workflowResult._tag === 'Success'
+                ? workflowResult.success.definition.promptTemplate.trim().length === 0
                 : true,
               config,
             ),

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Layer, Redacted, Schema, Stream, Tracer } from 'effect'
+import { Cause, Effect, Exit, Layer, Redacted, Schedule, Schema, Stream, Tracer } from 'effect'
 import { Statement } from 'effect/sql'
 import { SqlError } from 'effect/sql/SqlError'
 
@@ -73,10 +73,16 @@ postgresTest(
           current_setting('application_name') AS application_name
       `.pipe(Effect.flatMap(decode))
         expect(ordinary).toEqual([{ statement_timeout: '25s', application_name: 'bayn' }])
-        const [remaining] = yield* sql`
-        SELECT count(*)::integer AS count FROM pg_stat_activity
-        WHERE datname = current_database() AND application_name = 'bayn-migrations'
-      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ count: Schema.Int })]))))
+        // Connection release sends Terminate without waiting for the server to remove its backend.
+        const migrationSessions = sql`
+          SELECT count(*)::integer AS count FROM pg_stat_activity
+          WHERE datname = current_database() AND application_name = 'bayn-migrations'
+        `.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ count: Schema.Int })]))),
+          Effect.repeat({ while: ([row]) => row.count !== 0, schedule: Schedule.spaced('10 millis') }),
+          Effect.timeout('2 seconds'),
+        )
+        const [remaining] = yield* migrationSessions
         expect(remaining.count).toBe(0)
         yield* sql`UPDATE schema_migrations SET name = 'legacy_fixture' WHERE migration_id = 1`
         const rejected = yield* Effect.exit(Effect.scoped(Layer.build(PostgresMigrationsLive(config))))
@@ -86,10 +92,7 @@ postgresTest(
             operation: 'migrate',
             message: 'legacy migration history is unsupported after the hard cut',
           })
-        const [afterFailure] = yield* sql`
-          SELECT count(*)::integer AS count FROM pg_stat_activity
-          WHERE datname = current_database() AND application_name = 'bayn-migrations'
-        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ count: Schema.Int })]))))
+        const [afterFailure] = yield* migrationSessions
         expect(afterFailure.count).toBe(0)
         yield* sql`UPDATE schema_migrations SET name = 'initial_schema' WHERE migration_id = 1`
         yield* sql`DROP FUNCTION delay_first_fixture_index()`
@@ -126,7 +129,7 @@ postgresTest(
         const [streamed] = yield* Stream.runCollect(query.stream).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Rows)))
         expect(streamed.pid).toBe(pid)
         expect(Exit.isFailure(yield* Effect.exit(sql`SELECT 1 / 0`))).toBe(true)
-        const statements = spans.slice(start).filter((span) => span.name === 'sql.execute')
+        const statements = spans.slice(start).filter((span) => span.attributes.has('db.query.text'))
         expect(statements).toHaveLength(8)
         for (const span of statements) expect(span.attributes.get('postgresql.pid')).toBe(pid)
 
@@ -176,7 +179,7 @@ postgresTest('pooled queries and separately acquired streams report the connecti
               const parent = spans.find((span) => span.name === `fixture.pooled.${index}`)
               const query = spans.find(
                 (span) =>
-                  span.name === 'sql.execute' &&
+                  span.attributes.has('db.query.text') &&
                   span.parent._tag === 'Some' &&
                   span.parent.value.spanId === parent?.spanId,
               )
@@ -204,7 +207,7 @@ postgresTest('pooled queries and separately acquired streams report the connecti
         Effect.flatMap(Schema.decodeUnknownEffect(Rows)),
       )
       expect(streamed.pid).not.toBe(base.pid)
-      const [query] = spans.slice(start).filter((span) => span.name === 'sql.execute')
+      const [query] = spans.slice(start).filter((span) => span.attributes.has('db.query.text'))
       expect(query?.attributes.get('postgresql.pid')).toBe(streamed.pid)
     }).pipe(
       Effect.scoped,
@@ -236,7 +239,18 @@ postgresTest(
     )
     const transactions = spans.filter((span) => span.name === 'sql.transaction')
     expect(transactions).toHaveLength(2)
-    for (const span of transactions) expect(span.attributes.get('postgresql.pid')).toBeGreaterThan(0)
+    for (const span of transactions) {
+      const controls = spans.filter(
+        (child) =>
+          child.parent._tag === 'Some' &&
+          child.parent.value.spanId === span.spanId &&
+          child.attributes.has('db.operation.name'),
+      )
+      expect(controls).toHaveLength(2)
+      const pid = controls[0]?.attributes.get('postgresql.pid')
+      expect(pid).toBeGreaterThan(0)
+      for (const control of controls) expect(control.attributes.get('postgresql.pid')).toBe(pid)
+    }
     const parent = spans.find((span) => span.name === 'fixture.concurrent-transactions')
     expect(parent?.attributes.has('postgresql.pid')).toBe(false)
   },
@@ -290,20 +304,19 @@ postgresTest(
         for (const [index, [phase, outcome]] of phases.entries()) {
           const span = transactions[index]
           if (span === undefined) throw new Error('Native transaction trace is missing')
-          expect(span.attributes.get('postgresql.pid')).toBe(committed.pid)
-          expect(span.events.map(([name, , attributes]) => ({ name, attributes }))).toEqual([
-            { name: `db.transaction.${phase}`, attributes: {} },
-            { name: `db.transaction.${phase}.completed`, attributes: { 'db.transaction.outcome': outcome } },
-            { name: 'db.transaction.connection.release.started', attributes: {} },
-            {
-              name: 'db.transaction.connection.release.completed',
-              attributes: { 'db.transaction.outcome': 'succeeded' },
-            },
-          ])
-          const times = span.events.map(([, time]) => time)
-          for (const [eventIndex, time] of times.entries()) {
-            if (eventIndex > 0) expect(time).toBeGreaterThanOrEqual(times[eventIndex - 1])
-          }
+          const controls = spans.filter(
+            (child) =>
+              child.parent._tag === 'Some' &&
+              child.parent.value.spanId === span.spanId &&
+              child.attributes.has('db.operation.name'),
+          )
+          const completed = controls.find((child) => child.attributes.get('db.operation.name') === phase.toUpperCase())
+          if (completed === undefined || completed.status._tag !== 'Ended' || span.status._tag !== 'Ended')
+            throw new Error('Native transaction control span is missing')
+          expect(completed.attributes.get('postgresql.pid')).toBe(committed.pid)
+          expect(Exit.isSuccess(completed.status.exit)).toBe(outcome === 'succeeded')
+          expect(completed.parent._tag === 'Some' && completed.parent.value.spanId).toBe(span.spanId)
+          expect(span.status.endTime).toBeGreaterThanOrEqual(completed.status.endTime)
         }
       }).pipe(
         Effect.scoped,

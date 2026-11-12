@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+
 import { buildKubectlArgs, KubectlError, type KubectlOptions, runKubectl, runKubectlJson } from './kubectl'
 
 export type KubeResourceSpec = {
@@ -87,11 +89,13 @@ export const createKubectlBackend = (options: KubectlOptions): KubeBackend => ({
     const args = ['logs', podName]
     if (container) args.push('-c', container)
     if (follow) args.push('-f')
-    const proc = Bun.spawn(['kubectl', ...buildKubectlArgs(withNamespace(options, namespace)), ...args], {
-      stdout: 'inherit',
-      stderr: 'inherit',
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const proc = spawn('kubectl', [...buildKubectlArgs(withNamespace(options, namespace)), ...args], {
+        stdio: 'inherit',
+      })
+      proc.once('error', reject)
+      proc.once('close', (code) => resolve(code ?? 1))
     })
-    const exitCode = await proc.exited
     if (exitCode !== 0) {
       throw new KubectlError(`kubectl logs failed with exit code ${exitCode}`, undefined, exitCode)
     }

@@ -270,6 +270,21 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: pelican
+                path: argocd/applications/pelican
+                namespace: pelican
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    # KubeVirt launcher only; the Panel has a restricted pod security context.
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
