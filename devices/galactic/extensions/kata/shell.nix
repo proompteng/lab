@@ -15,6 +15,7 @@ pkgs.mkShell {
     pkgs.gnutar
     pkgs.git
     pkgs.docker
+    pkgs.python3
     pkgs.yq-go
   ];
   buildInputs = [

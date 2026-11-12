@@ -86,6 +86,10 @@ The existing ARC Pod privilege and sudo contract is unchanged. Bridge, iptables 
 disabled; build/run use the runner Pod's network namespace, with `hostNetwork: false`. No host runtime socket or
 service is used. Daemon logs remain in job storage and failure output; the ephemeral runner/PVC lifecycle reclaims
 runtime data after the processes stop. Source pins, native tests, builder images and archive checks remain unchanged.
+The wrapper requires the existing immediate Pod cgroup to have finite CPU and memory limits no looser than the
+runner leaf, enabled CPU/memory controllers and no direct processes. Docker containers and BuildKit RUN steps use
+that exact parent. A missing or unbounded parent, system containerd socket, foreign daemon PID, or non-private
+managed containerd configuration fails before compilation; the wrapper never creates or changes the Pod limits.
 
 Installer generation runs through `buildctl` and exports the archive directly from BuildKit. Set `BUILDKIT_HOST` to
 the native worker endpoint and provide Python 3. CI configures both through the shared BuildKit action and runner toolchain.
