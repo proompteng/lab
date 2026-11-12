@@ -241,11 +241,7 @@ let
       archiveRoot = "shellcheck-v${shellcheckVersion}";
       src = fetchurl {
         name = "shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
-        url = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056942";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/koalaman/shellcheck/releases/download/v${shellcheckVersion}/shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
         hash = "sha256-jDvhKwXVwXegTCnjx4zomshvFZVoHKsUm2W5fE4icZg=";
       };
     };

@@ -17,6 +17,7 @@ import {
 } from './restate-execution-controller'
 import {
   awaitRestateInvocation,
+  InternalHttpOriginSchema,
   restateInvocationAcceptTimeoutMs,
   restateInvocationCompletionMaximumAttempts,
   restateInvocationCompletionPollIntervalMs,
@@ -26,27 +27,6 @@ import {
 } from './restate-invocation-client'
 import { Sha256Schema } from '../schemas'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from '../telemetry'
-
-export const InternalHttpOriginSchema = Schema.Trim.check(
-  Schema.makeFilter(
-    (candidate: string) => {
-      try {
-        const url = new URL(candidate)
-        return (
-          url.protocol === 'http:' &&
-          url.username === '' &&
-          url.password === '' &&
-          url.pathname === '/' &&
-          url.search === '' &&
-          url.hash === ''
-        )
-      } catch {
-        return false
-      }
-    },
-    { expected: 'an uncredentialed internal HTTP origin' },
-  ),
-)
 
 export class RestateExecutionActivationError extends Data.TaggedError('RestateExecutionActivationError')<{
   readonly operation: 'configuration' | 'invoke' | 'verify'

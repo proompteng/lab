@@ -19,7 +19,7 @@ import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { initialState, type RuntimeState } from '../runtime-state'
 import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
-import { InternalHttpOriginSchema } from '../restate/restate-execution-activate'
+import { InternalHttpOriginSchema } from '../restate/restate-invocation-client'
 import {
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
