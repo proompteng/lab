@@ -138,8 +138,18 @@ agentsShell:
       enabled: false
 ```
 
-This block is a later change, not part of staging. Keep image, UID/GID, security,
-placement, probes and service routing unchanged. Rendering with `existingClaim`
+This block is a later change, not part of staging. Preserve runtime functionality,
+toolchain, UID/GID, security, placement, probes and service routing. Editing the
+Agents values triggers the normal four-image delivery cohort and can automatically
+replace the Pod after Kargo promotion. Complete the owner hold, verified copy,
+recovery proof and review of that automatic rollout boundary **before merging the
+cutover**, not merely before a later manual sync. Require the normal successful
+immutable image cohort, selected Freight and Stage-generated Kargo revision;
+review the exact image digests and resulting live diff. Do not manually retain an
+old image pin or sync the Agents Application to arbitrary `main` to bypass that
+delivery contract.
+
+Rendering with `existingClaim`
 suppresses the chart-created old PVC, so explicitly retain/protect that old claim
 in the reviewed cutover rather than allowing it to be pruned. Disable bootstrap
 because its dirty-check fallback can move the shared checkout and reclone it,
