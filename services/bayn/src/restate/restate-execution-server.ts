@@ -28,7 +28,7 @@ import { initializeErrorTracking, reportTerminalFailure } from '../error-trackin
 import { makeBaynEntryInference, type EntryInferenceRuntime } from './restate-entry-inference'
 import type { MarketChangedWakeup } from '../execution/events'
 import { KafkaMarketFailure } from '../market-data/streaming/kafka'
-import { InternalHttpOriginSchema } from './restate-execution-activate'
+import { InternalHttpOriginSchema } from './restate-invocation-client'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
   readonly message: string
