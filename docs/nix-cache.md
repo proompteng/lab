@@ -22,12 +22,18 @@ Backends:
 - object storage: `ObjectBucketClaim/attic-cache`
 - signing key: `ExternalSecret/attic-secrets`
 - image: `registry.ide-newton.ts.net/lab/attic@sha256:...`, pinned by the
-  Attic release workflow after a Nix-built OCI image passes platform checks
+  Attic Kargo Stage after the reviewed main workflow publishes a verified Nix-built OCI index
 
 The Attic config uses an explicit allowed-host list:
 
 - `attic.attic.svc.cluster.local`
 - `attic.ide-newton.ts.net`
+
+Attic streams both single-chunk and assembled NAR downloads. Its S3 endpoint is private to the cluster;
+redirecting a hosted runner to that endpoint makes a valid cache entry unreachable. The image applies a small
+patch to the pinned upstream server to select its existing streaming path, keeping signing, object storage,
+cache contents and public pull permissions unchanged. Verify an actual small NAR download, not only
+`nix-cache-info`, after rollout.
 
 The API deployment runs database migrations in an init container, then starts
 `atticd --mode api-server`. Garbage collection runs separately through

@@ -319,7 +319,7 @@ export const withSymphonyEffectSpan = <A, E, R>(
         onFailure: (error) =>
           Effect.sync(() => {
             finishSymphonySpan(span, error)
-          }).pipe(Effect.zipRight(Effect.fail(error))),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         onSuccess: (result) =>
           Effect.sync(() => {
             finishSymphonySpan(span)

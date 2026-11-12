@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
 import { fitMemoryNotesPage, readMemoryNote, summarizeMemoryNote } from './memory-views'
 import { parseListMemoryNotesInput, type AgentsMemoryNoteRecord } from './memory-client'
 
@@ -46,6 +47,27 @@ describe('memory reading and browsing', () => {
     expect(result.memory.retirementReasonTruncated).toBe(true)
     expect(result.content.length).toBeGreaterThan(0)
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(4096)
+  })
+
+  it('finishes a short retired note when the final chunk reaches the byte limit', () => {
+    const original = {
+      ...note('x'),
+      summary: 'x',
+      retiredAt: '2026-11-12T00:00:00Z',
+      retirementReason: 'Verified obsolete evidence.',
+    }
+    const budget = Buffer.byteLength(JSON.stringify(readMemoryNote(original))) - 1
+    const source = `import { readMemoryNote } from ${JSON.stringify(new URL('./memory-views.ts', import.meta.url).href)};
+      console.log(JSON.stringify(readMemoryNote(${JSON.stringify(original)}, 0, ${budget})));`
+    // A synchronous loop must be bounded outside its process so the regression cannot hang the suite.
+    const result = spawnSync('bun', ['-e', source], { encoding: 'utf8', timeout: 3000 })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(0)
+    const page = JSON.parse(result.stdout)
+    expect(page.content).toBe('x')
+    expect(page.nextOffset).toBeNull()
+    expect(page.memory.retirementReasonTruncated).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(budget)
   })
 
   it('resumes a budget-limited list after its last visible note', () => {

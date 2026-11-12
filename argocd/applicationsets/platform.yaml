@@ -270,6 +270,20 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: paperless
+                path: argocd/applications/paperless
+                namespace: paperless
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: pelican
                 path: argocd/applications/pelican
                 namespace: pelican
@@ -660,6 +674,8 @@ spec:
                 namespace: argo-workflows
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                  # The CRD installer uses Force/Replace for its immutable Job template.
+                  argocd.argoproj.io/compare-options: ServerSideDiff=false
                 automation: manual
                 enabled: "true"
               - name: attic

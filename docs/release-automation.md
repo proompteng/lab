@@ -114,9 +114,11 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn's trading workloads consume `lab/bayn`; its research worker consumes `lab/bayn-research`.
-Both images use the existing `lab-delivery/bayn` Warehouse and Stage. Publication withholds both
-discovery aliases until both images pass validation with the same source revision and successful build-run receipt.
+Bayn's trading workloads consume `lab/bayn`; its research worker consumes `lab/bayn-research`;
+its verified account feed consumes `lab/bayn-broker-feed`, built from Dorvud's WebSocket module with the dedicated
+`BrokerFeedMain` entrypoint. All three images use the existing `lab-delivery/bayn` Warehouse and Stage. Publication
+withholds every discovery alias until all three images pass validation with the same source revision and successful
+build-run receipt.
 The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains independent,
 with its pinned serving identity verified by research receipts.
 
@@ -144,7 +146,8 @@ Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Wa
 main-published cohort with matching source and run receipts. The trading image owns the exact source revision used
 for checkout, runtime bindings and activation lineage, so a newer unpublished main commit cannot hold a completed release.
 Its Stage updates the public service, execution worker, and activation hook to the trading digest, updates research
-workloads to the research digest, and carries the existing authored research request into the new build lineage.
+workloads to the research digest, updates the broker feed digest and verified source revision, and carries the
+existing authored research request into the new build lineage.
 The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 Bayn resolves environment positions by name and converts each `findIndex` result to a string in `yaml-parse`.

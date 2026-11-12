@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../../testing/postgres-fixture.test-support'
 import { mock, spyOn } from 'bun:test'
 import { MessageChannel } from 'node:worker_threads'
 import * as Sentry from '@sentry/node'
@@ -43,7 +44,7 @@ const store: NativeArrivalStore = {
     }),
 }
 mock.module('../../db/postgres-client', () => ({
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, {} as PgClient.PgClient),
+  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture()),
 }))
 mock.module('../../db/native-arrival-postgres', () => ({ makeNativeArrivalStore: () => store }))
 const kafka = await import('./kafka')
@@ -68,6 +69,7 @@ mock.module('./kafka', () => ({
 }))
 const { projectionWorkerProgram } = await import('./market-projection-worker')
 const options: ProjectionWorkerOptions = {
+  controllerKey: 'a'.repeat(64),
   kafka: {
     brokers: ['unused:9092'],
     username: 'fixture',

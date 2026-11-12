@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../../testing/postgres-fixture.test-support'
 import { mock } from 'bun:test'
 import { parentPort, workerData } from 'node:worker_threads'
 import { NodeRuntime } from '@effect/platform-node'
@@ -16,7 +17,7 @@ const store: NativeArrivalStore = {
   end: () => Effect.void,
 }
 await mock.module('../../db/postgres-client', () => ({
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, {} as PgClient.PgClient),
+  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture()),
 }))
 await mock.module('../../db/native-arrival-postgres', () => ({ makeNativeArrivalStore: () => store }))
 const kafka = await import('./kafka')
@@ -34,7 +35,13 @@ await mock.module('./kafka', () => ({
       yield* failed.observe(observation(3))
       yield* capture(epoch.bootstrap, epoch.sources)
       const status = Effect.succeed({ epoch: 'fixture', sequence: 0, ready: true, bootstrapDeadlineAtMs: null })
-      return { status, check: Effect.void, read: Effect.never, readForLiquidation: Effect.never }
+      return {
+        status,
+        check: Effect.void,
+        read: Effect.never,
+        readForLiquidation: Effect.never,
+        startWakeups: () => Effect.void,
+      }
     }),
 }))
 const { projectionWorkerProgram } = await import('./market-projection-worker')

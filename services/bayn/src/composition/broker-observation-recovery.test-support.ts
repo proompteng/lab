@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
 import { mock } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Clock, Effect, Exit, Fiber, Layer, Logger, References } from 'effect'
@@ -36,7 +37,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
     if (query.includes('RETURNING broker_observations.generation')) {
       generation++
       startedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-      return [{ status: 'RESERVED', generation, startedAt, nextPollNotBeforeMs: Number(values[3]) }]
+      return [{ status: 'RESERVED', generation, startedAt, nextPollNotBeforeMs: Number(values[4]) }]
     }
     if (query.includes('WITH failed AS')) settlements++
     if (query.includes('WITH published AS')) {
@@ -48,7 +49,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
 
 await mock.module('../db/postgres-client', () => ({
   ...actualPostgres,
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, sql as unknown as PgClient.PgClient),
+  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture(sql)),
 }))
 await mock.module('../broker/alpaca/http', () => ({
   ...actualHttp,

@@ -227,7 +227,7 @@ const expected = {
     requiresBuildReceipt: true,
     verifyCohortSource: true,
     tagRegex: runQualifiedTagRegex,
-    images: [imageRepo('bayn'), imageRepo('bayn-research')],
+    images: [imageRepo('bayn'), imageRepo('bayn-research'), imageRepo('bayn-broker-feed')],
     apps: ['bayn'],
     includePaths: [],
   },
@@ -392,6 +392,7 @@ const expected = {
     apps: ['attic'],
     includePaths: [
       'nix/images/attic.nix',
+      'nix/images/attic-stream-nars.patch',
       'docs/nix-cache.md',
       'docs/nix-oci-real-image-build-adoption-plan.md',
       'argocd/applications/attic',
@@ -435,6 +436,10 @@ const expected = {
     includePaths: [
       'services/jangar',
       'services/bumba',
+      'packages/temporal-bun-sdk/src',
+      'packages/temporal-bun-sdk/package.json',
+      'packages/temporal-bun-sdk/tsconfig.json',
+      'patches/effect@4.1.4.patch',
       'nix/images/jangar.nix',
       'nix/images/openai-codex-cli.nix',
       'argocd/applications/jangar',
@@ -447,6 +452,7 @@ const expected = {
     apps: ['symphony', 'symphony-jangar'],
     includePaths: [
       'services/symphony',
+      'patches/effect@4.1.4.patch',
       'nix/images/symphony.nix',
       'nix/images/openai-codex-cli.nix',
       'argocd/applications/symphony',
@@ -502,6 +508,7 @@ const expected = {
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
+      'patches/effect@4.1.4.patch',
       'nix/images/openai-codex-cli.nix',
       'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
@@ -628,7 +635,11 @@ describe('Kargo direct-push GitOps contract', () => {
   })
 
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
-    expect(kargoHelmElement?.version).toBe('1.11.4')
+    expect(kargoHelmElement?.version).toBe('1.12.5')
+    expect(kargoHelmValues.global.systemResources).toEqual({ namespace: 'kargo', createNamespace: false })
+    expect(kargoHelmValues.global.sharedResources).toEqual({ namespace: 'kargo', createNamespace: false })
+    expect(kargoHelmValues.global).not.toHaveProperty('clusterSecretsNamespace')
+    expect(kargoHelmValues.global).not.toHaveProperty('createClusterSecretsNamespace')
     expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
     expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
       metadata: {

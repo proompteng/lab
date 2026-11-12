@@ -345,6 +345,7 @@ spec:
         strictSemvers: true
         includePaths:
           - nix/images/attic.nix
+          - nix/images/attic-stream-nars.patch
           - docs/nix-cache.md
           - docs/nix-oci-real-image-build-adoption-plan.md
           - argocd/applications/attic
@@ -459,6 +460,10 @@ spec:
         includePaths:
           - services/jangar
           - services/bumba
+          - packages/temporal-bun-sdk/src
+          - packages/temporal-bun-sdk/package.json
+          - packages/temporal-bun-sdk/tsconfig.json
+          - patches/effect@4.1.4.patch
           - nix/images/jangar.nix
           - nix/images/openai-codex-cli.nix
           - argocd/applications/jangar
@@ -496,6 +501,7 @@ spec:
         strictSemvers: true
         includePaths:
           - services/symphony
+          - patches/effect@4.1.4.patch
           - nix/images/symphony.nix
           - nix/images/openai-codex-cli.nix
           - argocd/applications/symphony
@@ -690,6 +696,7 @@ spec:
           - services/agents
           - charts/agents/crds
           - nix/images/agents.nix
+          - patches/effect@4.1.4.patch
           - nix/images/openai-codex-cli.nix
           - nix/images/agentrun-tools.nix
           - argocd/applications/agents
@@ -833,10 +840,15 @@ spec:
       imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['ai.proompteng.github-actions-run-id'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['ai.proompteng.github-actions-run-id'] &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['ai.proompteng.github-actions-run-id'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['ai.proompteng.github-actions-run-id'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['ai.proompteng.github-actions-run-id'] &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Tag &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Tag == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Tag &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source']
+      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['org.opencontainers.image.source'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bayn
@@ -849,6 +861,15 @@ spec:
         cacheByTag: true
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bayn-research
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/bayn-broker-feed
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
         strictSemvers: true

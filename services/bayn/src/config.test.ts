@@ -17,7 +17,7 @@ import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './executi
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
 import { executionControllerConfig } from './composition/native-execution-runtime'
-import { executionControllerPlanHash } from './execution/controller'
+import { executionControllerPlanHash } from './execution/controller-plan'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
 import { captureQualificationRuntime, qualificationRuntime } from './system-assessment/configuration'
 import { canonicalHashV1Result } from './hash'
@@ -60,7 +60,6 @@ const baseParsedConfig: ParsedRuntimeConfig = {
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
   unknownMutationThresholdMs: 300_000,
-  cyclePollIntervalMs: 30_000,
   authorityGenerationHash,
   configuredAlpaca: {
     provider: BrokerProvider.Alpaca,
@@ -370,15 +369,7 @@ describe('pure runtime configuration resolution', () => {
     }
   })
 
-  test('validates provenance, PostgreSQL TLS and cycle timing before runtime startup', () => {
-    expectFailure(
-      { cyclePollIntervalMs: 300_000 },
-      {
-        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
-        cyclePollIntervalMs: 300_000,
-        cycleStallThresholdMs: 300_000,
-      },
-    )
+  test('validates provenance and PostgreSQL TLS before runtime startup', () => {
     expectFailure(
       { postgres: { ...baseParsedConfig.postgres, tls: false } },
       { _tag: 'ProductionPostgresRequiresTls', postgresTls: false },
