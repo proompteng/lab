@@ -1,8 +1,8 @@
 """Render and validate the embedded cloud-init and cross-component wiring."""
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def yaml_documents(content: str) -> list[dict]:
@@ -62,8 +62,12 @@ def main() -> None:
         ["sh", "-n"], input=pod["initContainers"][0]["args"][0], text=True, check=True
     )
     assert all(item["name"] != "ADMIN_PASSWORD" for item in pod["containers"][0]["env"])
-    assert resource("Service", "pelican-games")["spec"]["loadBalancerClass"] == "tailscale"
-    print(f"PASS: {len(resources)} resources; cloud-init/shell, credential parity, persistence and isolation.")
+    assert (
+        resource("Service", "pelican-games")["spec"]["loadBalancerClass"] == "tailscale"
+    )
+    print(
+        f"PASS: {len(resources)} resources; cloud-init/shell, credential parity, persistence and isolation."
+    )
 
 
 if __name__ == "__main__":
