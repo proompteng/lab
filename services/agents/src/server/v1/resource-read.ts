@@ -105,20 +105,19 @@ type MemoryReadStoreServiceDefinition = {
   readonly close: (store: MemoryReadStore) => Effect.Effect<void>
 }
 
-export class ResourceReadKubernetesService extends Context.Tag('agents/ResourceReadKubernetesService')<
+export class ResourceReadKubernetesService extends Context.Service<
   ResourceReadKubernetesService,
   ResourceReadKubernetesServiceDefinition
->() {}
+>()('agents/ResourceReadKubernetesService') {}
 
-export class OrchestrationRunReadStoreService extends Context.Tag('agents/OrchestrationRunReadStoreService')<
+export class OrchestrationRunReadStoreService extends Context.Service<
   OrchestrationRunReadStoreService,
   OrchestrationRunReadStoreServiceDefinition
->() {}
+>()('agents/OrchestrationRunReadStoreService') {}
 
-export class MemoryReadStoreService extends Context.Tag('agents/MemoryReadStoreService')<
-  MemoryReadStoreService,
-  MemoryReadStoreServiceDefinition
->() {}
+export class MemoryReadStoreService extends Context.Service<MemoryReadStoreService, MemoryReadStoreServiceDefinition>()(
+  'agents/MemoryReadStoreService',
+) {}
 
 export type ResourceReadError = ResourceReadKubeError | ResourceReadStorageError | ResourceReadNotFoundError
 
@@ -172,13 +171,13 @@ const closeOrchestrationStoreEffect = (store: OrchestrationRunReadStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 const closeMemoryStoreEffect = (store: MemoryReadStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 export const makeResourceReadKubernetesLayer = (deps: ResourceReadDependencies = {}) =>
   Layer.succeed(ResourceReadKubernetesService, {
@@ -235,11 +234,11 @@ export const getAgentHandler = async (id: string, request: Request, deps: Resour
   const result = await Effect.runPromise(
     getResourceWithServicesEffect('Agent', RESOURCE_MAP.Agent, id, namespace).pipe(
       Effect.provide(makeResourceReadKubernetesLayer(deps)),
-      Effect.either,
+      Effect.result,
     ),
   )
-  if (result._tag === 'Right') return okResponse({ ok: true, agent: result.right })
-  return errorResponse(describeResourceReadError(result.left), resourceReadStatus(result.left), {
+  if (result._tag === 'Success') return okResponse({ ok: true, agent: result.success })
+  return errorResponse(describeResourceReadError(result.failure), resourceReadStatus(result.failure), {
     namespace,
     id: asString(id),
   })
@@ -250,11 +249,11 @@ export const getOrchestrationHandler = async (id: string, request: Request, deps
   const result = await Effect.runPromise(
     getResourceWithServicesEffect('Orchestration', RESOURCE_MAP.Orchestration, id, namespace).pipe(
       Effect.provide(makeResourceReadKubernetesLayer(deps)),
-      Effect.either,
+      Effect.result,
     ),
   )
-  if (result._tag === 'Right') return okResponse({ ok: true, orchestration: result.right })
-  return errorResponse(describeResourceReadError(result.left), resourceReadStatus(result.left), {
+  if (result._tag === 'Success') return okResponse({ ok: true, orchestration: result.success })
+  return errorResponse(describeResourceReadError(result.failure), resourceReadStatus(result.failure), {
     namespace,
     id: asString(id),
   })
@@ -270,13 +269,17 @@ export const getOrchestrationRunHandler = async (
     getOrchestrationRunWithServicesEffect(id, namespace).pipe(
       Effect.provide(makeResourceReadKubernetesLayer(deps)),
       Effect.provide(makeOrchestrationRunReadStoreLayer(deps.storeFactory)),
-      Effect.either,
+      Effect.result,
     ),
   )
-  if (result._tag === 'Right') {
-    return okResponse({ ok: true, orchestrationRun: result.right.orchestrationRun, resource: result.right.resource })
+  if (result._tag === 'Success') {
+    return okResponse({
+      ok: true,
+      orchestrationRun: result.success.orchestrationRun,
+      resource: result.success.resource,
+    })
   }
-  return errorResponse(describeResourceReadError(result.left), resourceReadStatus(result.left))
+  return errorResponse(describeResourceReadError(result.failure), resourceReadStatus(result.failure))
 }
 
 export const getMemoryHandler = async (id: string, request: Request, deps: MemoryReadDependencies) => {
@@ -285,11 +288,12 @@ export const getMemoryHandler = async (id: string, request: Request, deps: Memor
     getMemoryWithServicesEffect(id, namespace).pipe(
       Effect.provide(makeResourceReadKubernetesLayer(deps)),
       Effect.provide(makeMemoryReadStoreLayer(deps.storeFactory)),
-      Effect.either,
+      Effect.result,
     ),
   )
-  if (result._tag === 'Right') return okResponse({ ok: true, memory: result.right.memory, record: result.right.record })
-  return errorResponse(describeResourceReadError(result.left), resourceReadStatus(result.left))
+  if (result._tag === 'Success')
+    return okResponse({ ok: true, memory: result.success.memory, record: result.success.record })
+  return errorResponse(describeResourceReadError(result.failure), resourceReadStatus(result.failure))
 }
 
 export const getResourceWithServicesEffect = (

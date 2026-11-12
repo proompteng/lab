@@ -156,6 +156,7 @@ describe('strategy decision work evidence', () => {
       )?.correct,
     ).toBe(false)
     if (inputs.schemaVersion !== 'bayn.account-protection-inputs.v2') throw new Error('Expected current inputs')
+    if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
     const turnoverInputs = {
       ...inputs,
       peakEquityMicros: inputs.portfolio.brokerState.account.equityMicros,

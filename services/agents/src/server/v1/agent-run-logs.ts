@@ -80,10 +80,10 @@ type AgentRunLogsKubeServiceDefinition = {
   ) => Effect.Effect<string, AgentRunLogsKubeError>
 }
 
-export class AgentRunLogsKubeService extends Context.Tag('agents/AgentRunLogsKubeService')<
+export class AgentRunLogsKubeService extends Context.Service<
   AgentRunLogsKubeService,
   AgentRunLogsKubeServiceDefinition
->() {}
+>()('agents/AgentRunLogsKubeService') {}
 
 const parseTailLines = (value: string | null) => {
   if (!value) return null
@@ -305,17 +305,17 @@ const errorMessage = (error: AgentRunLogsError) => {
 
 export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLogsDependencies = {}) => {
   const result = await Effect.runPromise(
-    getAgentRunLogsEffect(request).pipe(Effect.provide(makeAgentRunLogsKubeLayer(deps)), Effect.either),
+    getAgentRunLogsEffect(request).pipe(Effect.provide(makeAgentRunLogsKubeLayer(deps)), Effect.result),
   )
-  if (result._tag === 'Right' && result.right.pods.length > 0) {
+  if (result._tag === 'Success' && result.success.pods.length > 0) {
     return okResponse({
-      ...result.right,
+      ...result.success,
       source: 'pod',
-      truncated: deps.maxBytes ? Buffer.byteLength(result.right.logs) >= deps.maxBytes : false,
+      truncated: deps.maxBytes ? Buffer.byteLength(result.success.logs) >= deps.maxBytes : false,
       artifact: null,
     })
   }
-  if (result._tag === 'Right') {
+  if (result._tag === 'Success') {
     const parsed = await Effect.runPromise(parseRequest(request))
     let store: ReturnType<NonNullable<AgentRunLogsDependencies['storeFactory']>> | undefined
     try {
@@ -335,7 +335,7 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
         pod: parsed.pod,
         container: parsed.container,
       })
-      return okResponse({ ...result.right, ...retained, container: 'agent-runner', source: 'artifact' })
+      return okResponse({ ...result.success, ...retained, container: 'agent-runner', source: 'artifact' })
     } catch (error) {
       return errorResponse(
         error instanceof Error ? error.message : 'retained log read failed',
@@ -345,5 +345,5 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
       await store?.close()
     }
   }
-  return errorResponse(errorMessage(result.left), errorStatus(result.left), errorDetails(result.left))
+  return errorResponse(errorMessage(result.failure), errorStatus(result.failure), errorDetails(result.failure))
 }

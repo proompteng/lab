@@ -239,7 +239,14 @@ export const ExecutionRiskPolicySchema = Schema.Struct({
   ),
 })
 
-export const PolicySchema = ExecutionRiskPolicySchema
+/** An explicit unlimited turnover contract; retained v4 policies keep their original finite limits and hashes. */
+export const UncappedTurnoverRiskPolicySchema = Schema.Struct({
+  ...ExecutionRiskPolicySchema.fields,
+  schemaVersion: Schema.Literal('bayn.execution-risk-policy.v5'),
+  maxDailyTradedNotionalMicros: Schema.Null,
+})
+
+export const PolicySchema = Schema.Union([ExecutionRiskPolicySchema, UncappedTurnoverRiskPolicySchema])
 export type Policy = typeof PolicySchema.Type
 
 export const EntryQuoteFreshnessSchema = Schema.Struct({
@@ -681,7 +688,7 @@ interface RiskFacts {
   readonly maxSymbolExposureMicros: bigint
   readonly maxGrossExposureMicros: bigint
   readonly maxNetExposureMicros: bigint
-  readonly maxDailyTradedNotionalMicros: bigint
+  readonly maxDailyTradedNotionalMicros: bigint | null
   readonly maxDailyLossMicros: bigint
   readonly maxDrawdownMicros: bigint
   readonly maxAdverseSlippageBps: bigint
@@ -744,7 +751,8 @@ const parseRiskFacts = (
   maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
   maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
   maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
-  maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+  maxDailyTradedNotionalMicros:
+    policy.maxDailyTradedNotionalMicros === null ? null : BigInt(policy.maxDailyTradedNotionalMicros),
   maxDailyLossMicros: BigInt(policy.maxDailyLossMicros),
   maxDrawdownMicros: BigInt(policy.maxDrawdownMicros),
   maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
@@ -1074,11 +1082,15 @@ const buildCumulativeRiskGates = (facts: RiskFacts, metrics: DerivedRiskMetrics)
   return [
     makeGate(
       Gate.DailyTradedNotional,
-      exposureReducingClose || metrics.dailyTradedNotionalMicros <= facts.maxDailyTradedNotionalMicros,
+      exposureReducingClose ||
+        facts.maxDailyTradedNotionalMicros === null ||
+        metrics.dailyTradedNotionalMicros <= facts.maxDailyTradedNotionalMicros,
       metrics.dailyTradedNotionalMicros,
-      facts.state.closeOnly === true
-        ? `<=${policy.maxDailyTradedNotionalMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
-        : `<=${policy.maxDailyTradedNotionalMicros}`,
+      facts.maxDailyTradedNotionalMicros === null
+        ? 'UNLIMITED'
+        : facts.state.closeOnly === true
+          ? `<=${policy.maxDailyTradedNotionalMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+          : `<=${policy.maxDailyTradedNotionalMicros}`,
     ),
     makeGate(
       Gate.DailyLoss,
