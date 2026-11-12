@@ -34,10 +34,10 @@ type OrchestrationRunListStoreServiceDefinition = {
   readonly close: (store: OrchestrationRunsApiStore) => Effect.Effect<void>
 }
 
-export class OrchestrationRunListStoreService extends Context.Tag('agents/OrchestrationRunListStoreService')<
+export class OrchestrationRunListStoreService extends Context.Service<
   OrchestrationRunListStoreService,
   OrchestrationRunListStoreServiceDefinition
->() {}
+>()('agents/OrchestrationRunListStoreService') {}
 
 export class OrchestrationRunRequestError extends Data.TaggedError('OrchestrationRunRequestError')<{
   readonly message: string
@@ -87,7 +87,7 @@ const closeListStoreEffect = (store: OrchestrationRunsApiStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 export const makeOrchestrationRunListStoreLayer = (storeFactory: () => OrchestrationRunsApiStore) =>
   Layer.succeed(OrchestrationRunListStoreService, {
@@ -105,7 +105,7 @@ export const listOrchestrationRunsWithServicesEffect = (
     const stores = yield* OrchestrationRunListStoreService
     return yield* Effect.acquireUseRelease(
       stores.open,
-      (store) => stores.ready(store).pipe(Effect.zipRight(stores.listByName(store, orchestrationName))),
+      (store) => stores.ready(store).pipe(Effect.andThen(stores.listByName(store, orchestrationName))),
       stores.close,
     )
   })
@@ -124,9 +124,9 @@ export const getOrchestrationRunsHandler = async (request: Request, deps: Orches
     asString(url.searchParams.get('orchestrationId')) ?? asString(url.searchParams.get('orchestrationName'))
   if (!orchestrationName) return errorResponse('orchestrationId is required', 400)
 
-  const result = await Effect.runPromise(listOrchestrationRunsEffect(deps, orchestrationName).pipe(Effect.either))
-  if (result._tag === 'Right') return okResponse({ ok: true, runs: result.right })
-  return errorResponse(describeOrchestrationSubmitError(result.left), 503)
+  const result = await Effect.runPromise(listOrchestrationRunsEffect(deps, orchestrationName).pipe(Effect.result))
+  if (result._tag === 'Success') return okResponse({ ok: true, runs: result.success })
+  return errorResponse(describeOrchestrationSubmitError(result.failure), 503)
 }
 
 const parseOrchestrationJsonBodyEffect = (request: Request) =>
@@ -219,7 +219,7 @@ export const postOrchestrationRunsEffect = (
 export const postOrchestrationRunsHandler = async (request: Request, deps: OrchestrationRunsApiDependencies) => {
   return Effect.runPromise(
     postOrchestrationRunsEffect(request, deps).pipe(
-      Effect.catchAll((error) => Effect.succeed(orchestrationPostErrorResponse(error))),
+      Effect.catch((error) => Effect.succeed(orchestrationPostErrorResponse(error))),
     ),
   )
 }

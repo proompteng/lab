@@ -348,6 +348,7 @@ describe('agents-shell MCP tools', () => {
         'apply_patch',
         'agent_guide',
         'retrieve_context',
+        'memory_get',
         'memory_list',
         'memory_save',
         'memory_retire',

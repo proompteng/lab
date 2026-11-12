@@ -1,3 +1,4 @@
+import { makePostgresFixture } from './testing/postgres-fixture.test-support'
 import { isProtectedEntryTarget } from './strategy/runtime-decision'
 import {
   decodeIntradayMomentumProtocol,
@@ -22,7 +23,6 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Re
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { CycleStore, type CycleStoreShape } from './cycle/store/model'
 import { CycleStoreLive, makeCycleStore, withWriterFenceCycleStore } from './cycle/store/postgres'
@@ -82,8 +82,8 @@ import {
   type ExecutionStageTiming,
 } from './telemetry'
 import {
-  buildExecutionDecision,
-  buildObserveShadowDecision,
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
   type ExecutionDecisionInput,
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
@@ -595,7 +595,7 @@ describe('intraday shadow decision', () => {
       await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* SqlClient.make({
+            const client = yield* makePostgresFixture({
               acquirer: Effect.die('Binding retention tests never connect to PostgreSQL'),
               compiler: PgClient.makeCompiler(undefined, false),
               spanAttributes: [],
@@ -646,7 +646,7 @@ describe('intraday shadow decision', () => {
                   },
                 ])
               },
-            }) as PgClient.PgClient
+            })
             const queries = makeCycleQueries(sql)
             const binding = makeCycleBindingPrograms(
               sql,
@@ -923,7 +923,7 @@ describe('intraday shadow decision', () => {
           const started = yield* Deferred.make<void>()
           const released = yield* Deferred.make<void>()
           let pauseNext = false
-          const client = yield* SqlClient.make({
+          const client = yield* makePostgresFixture({
             acquirer: Effect.die('Decision query contract tests never connect to PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
@@ -967,7 +967,7 @@ describe('intraday shadow decision', () => {
                 Effect.andThen(result),
               )
             },
-          }) as PgClient.PgClient
+          })
           const store = makeCycleQueries(sql)
           const read = () => store.selectDecisionDocuments(original.bindings.cycleId)
           const cold = (yield* read())[0]
@@ -1045,7 +1045,7 @@ describe('intraday shadow decision', () => {
       await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* SqlClient.make({
+            const client = yield* makePostgresFixture({
               acquirer: Effect.die('Decision retention contract tests never connect to PostgreSQL'),
               compiler: PgClient.makeCompiler(undefined, false),
               spanAttributes: [],
@@ -1068,7 +1068,7 @@ describe('intraday shadow decision', () => {
                   },
                 ])
               },
-            }) as PgClient.PgClient
+            })
             const queries = makeCycleQueries(sql)
             if (seeded) yield* queries.retainDecisionInput(document, sha256(JSON.stringify(document)))
             for (let read = 0; read < 2; read += 1) {
@@ -1098,7 +1098,7 @@ describe('intraday shadow decision', () => {
           })
           const defect = new Error('test query defect')
           let mode: 'success' | 'failure' | 'defect' | 'wait' | 'duplicate' = 'success'
-          const client = yield* SqlClient.make({
+          const client = yield* makePostgresFixture({
             acquirer: Effect.die('Decision failure contract tests never connect to PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
@@ -1120,7 +1120,7 @@ describe('intraday shadow decision', () => {
               }
               return Effect.succeed(mode === 'duplicate' ? [row, row] : [row])
             },
-          }) as PgClient.PgClient
+          })
           const queries = makeCycleQueries(sql)
           const read = () => queries.selectDecisionDocuments(document.bindings.cycleId)
           expect(yield* read()).toEqual([document])

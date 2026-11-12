@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { BrokerEnvironment } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
@@ -7,9 +7,9 @@ import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
-import { accountEntryProtectionReasons, accountLossMicros, Reason } from '../risk'
+import { accountEntryProtectionReasons, accountLossMicros, PolicySchema, Reason } from '../risk'
 
-test('raises sandbox turnover and cumulative drawdown budgets while preserving the complete live policy', () => {
+test('removes sandbox turnover cap while preserving the complete live policy and other sandbox limits', () => {
   const [legacy, live, paper] = Result.getOrThrow(
     Result.all([
       makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe),
@@ -22,7 +22,20 @@ test('raises sandbox turnover and cumulative drawdown budgets while preserving t
     '75f41cdcde135541b3f65ae243d5b550e974e2074112e39f250b16e780591108',
   )
   expect(live.maxDailyTradedNotionalMicros).toBe('200000000000')
-  expect(paper).toEqual({ ...live, maxDailyTradedNotionalMicros: '1000000000000', maxDrawdownMicros: '10000000000' })
+  expect(paper).toEqual({
+    ...live,
+    schemaVersion: 'bayn.execution-risk-policy.v5',
+    maxDailyTradedNotionalMicros: null,
+    maxDrawdownMicros: '10000000000',
+  })
+  expect(
+    Result.isFailure(Schema.decodeUnknownResult(PolicySchema)({ ...paper, schemaVersion: live.schemaVersion })),
+  ).toBe(true)
+  expect(
+    Result.isFailure(Schema.decodeUnknownResult(PolicySchema)({ ...paper, maxDailyTradedNotionalMicros: '0' })),
+  ).toBe(true)
+  const { maxDailyTradedNotionalMicros: _, ...missingLimit } = paper
+  expect(Result.isFailure(Schema.decodeUnknownResult(PolicySchema)(missingLimit))).toBe(true)
 })
 
 test('PAPER rebinding retains historical losses and enforces its new drawdown and unchanged daily cap', () => {
@@ -77,6 +90,23 @@ test('retained sandbox mandates keep the exact original policy until explicitly 
   expect(retained.maxDailyTradedNotionalMicros).toBe('200000000000')
 })
 
+test('retained million-dollar sandbox mandates remain bounded until explicitly rebound', () => {
+  const live = Result.getOrThrow(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe))
+  const historical = {
+    ...live,
+    schemaVersion: 'bayn.execution-risk-policy.v4' as const,
+    maxDailyTradedNotionalMicros: '1000000000000',
+    maxDrawdownMicros: '10000000000',
+  }
+  const hash = Result.getOrThrow(canonicalHashV1Result(historical))
+  expect(
+    Result.getOrThrow(strategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Sandbox, hash)),
+  ).toEqual(historical)
+  expect(
+    Result.isFailure(strategyExecutionRiskPolicy('test-account', fixtureRuntime, BrokerEnvironment.Live, hash)),
+  ).toBe(true)
+})
+
 test('unknown, foreign-account and live increased-policy hashes fail closed', () => {
   const paper = Result.getOrThrow(
     makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
@@ -94,8 +124,8 @@ test('unknown, foreign-account and live increased-policy hashes fail closed', ()
   }
 })
 
-test('rebinding a sandbox mandate preserves accumulated turnover while enabling the new budget', () => {
-  const dailyTradedNotionalMicros = 250_000_000_000n
+test('rebinding a sandbox mandate preserves turnover above the former million-dollar cap without shrinking allocation', () => {
+  const dailyTradedNotionalMicros = 1_018_000_000_000n
   for (const environment of [BrokerEnvironment.Live, BrokerEnvironment.Sandbox]) {
     const candidate = Result.getOrThrow(makeExecutionRiskPolicy('test-account', fixtureProtocol.universe, environment))
     const policy = Result.getOrThrow(
@@ -112,7 +142,8 @@ test('rebinding a sandbox mandate preserves accumulated turnover while enabling 
         dailyTradedNotionalMicros,
         maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
         maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
-        maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+        maxDailyTradedNotionalMicros:
+          policy.maxDailyTradedNotionalMicros === null ? null : BigInt(policy.maxDailyTradedNotionalMicros),
         maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
         targetWeights: { NVDA: 0.2 },
         positions: [],

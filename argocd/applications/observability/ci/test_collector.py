@@ -649,6 +649,79 @@ class CollectorTests(unittest.TestCase):
             running["status"] = "completed"
             observer.poll(self.now)
             self.assertNotIn("ci_job_oldest_execution_seconds", observer.active_metrics)
+            self.assertNotIn(
+                "ci_job_current_phase_age_seconds", observer.active_metrics
+            )
+
+    def test_active_phase_distinguishes_artifact_upload_from_github_finalization(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None)
+        upload = {
+            "name": "Upload Nix OCI log artifact",
+            "status": "in_progress",
+            "started_at": "2026-10-25T12:29:00Z",
+            "completed_at": None,
+        }
+        running["steps"] = [upload]
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+        ):
+            for expected_phase, age in [("artifacts", 360), ("finalizing", 240)]:
+                with self.subTest(phase=expected_phase):
+                    observer.poll(self.now)
+                    line = next(
+                        x
+                        for x in observer.active_metrics.splitlines()
+                        if x.startswith("ci_job_current_phase_age_seconds")
+                    )
+                    self.assertIn(f'phase="{expected_phase}"', line)
+                    self.assertEqual(float(line.rsplit(" ", 1)[1]), age)
+                    self.assertNotIn(upload["name"], line)
+                    self.assertIn(
+                        "ci_job_oldest_execution_seconds", observer.active_metrics
+                    )
+                upload.update(status="completed", completed_at="2026-10-25T12:31:00Z")
+
+    def test_missing_steps_keep_whole_job_and_unattributed_phase_visible(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None, steps=[])
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+        ):
+            observer.poll(self.now)
+        age = self.now - timestamp(running["started_at"])
+        lines = observer.active_metrics.splitlines()
+        for metric in (
+            "ci_job_oldest_execution_seconds",
+            "ci_job_current_phase_age_seconds",
+        ):
+            line = next(x for x in lines if x.startswith(metric))
+            self.assertTrue(line.endswith(f" {age}"), line)
+        self.assertIn('phase="unattributed"', observer.active_metrics)
 
     def test_finished_job_is_collected_before_its_workflow_finishes(self):
         active_run = run()
@@ -752,6 +825,68 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 3
         )
+
+    def test_history_reserves_foreground_quota_and_resumes_its_existing_iterator(self):
+        api = FakeGitHub({}, {})
+        api.remaining = 1999
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        fetched = []
+
+        def runs(*_args):
+            for index in range(2):
+                fetched.append(index)
+                if index == 0:
+                    api.remaining = 1999
+                yield run() | {"id": 100 + index}
+
+        with (
+            patch.object(api, "runs", side_effect=runs, create=True) as discovery,
+            patch("time.time", return_value=self.now),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(fetched, [])
+            self.assertEqual(observer.last_history_progress, 0)
+            api.remaining = 2000
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(fetched, [0])
+            self.assertEqual(observer.history_day, 0)
+            api.remaining = 4999
+            observer.history(self.now, days=1, windows=1)
+        discovery.assert_called_once()
+        self.assertEqual(fetched, [0, 1])
+        self.assertEqual(observer.history_day, 1)
+        self.assertEqual(observer.last_history, self.now)
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 2
+        )
+
+    def test_foreground_poll_keeps_running_inside_the_history_quota_reserve(self):
+        api = GitHub("unused")
+        api.remaining, api.reset_at = 1500, self.now + 3600
+        observer = Collector(self.store, api, {}, "http://unused")
+
+        def response(*_args, **_kwargs):
+            value = io.BytesIO(
+                json.dumps({"total_count": 0, "workflow_runs": []}).encode()
+            )
+            value.headers = {
+                "X-RateLimit-Remaining": "1499",
+                "X-RateLimit-Reset": str(int(self.now + 3600)),
+            }
+            return value
+
+        with (
+            patch.object(api.opener, "open", side_effect=response) as request,
+            patch("time.time", return_value=self.now),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            request.assert_not_called()
+            observer.poll(self.now)
+        self.assertEqual(observer.last_poll, self.now)
+        self.assertEqual(request.call_count, 6)
+        self.assertEqual(api.remaining, 1499)
 
     def test_search_over_1000_results_is_split_without_silently_truncating(self):
         api = GitHub("unused")

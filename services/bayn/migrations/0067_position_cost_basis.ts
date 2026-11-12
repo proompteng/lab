@@ -1,8 +1,8 @@
-import { PgClient } from '@effect/sql-pg'
+import { SqlClient } from 'effect/sql'
 import { Effect } from 'effect'
 
 export default Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
+  const sql = yield* SqlClient.SqlClient
   yield* sql`ALTER TABLE positions DROP CONSTRAINT positions_schema_version_check`
   yield* sql`ALTER TABLE positions ADD COLUMN cost_basis_micros numeric(39, 0)`
   yield* sql`

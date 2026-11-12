@@ -26,7 +26,7 @@ export interface ExecutionMandateAllocationFacts {
   readonly dailyTradedNotionalMicros: bigint
   readonly maxGrossExposureMicros: bigint
   readonly maxNetExposureMicros: bigint
-  readonly maxDailyTradedNotionalMicros: bigint
+  readonly maxDailyTradedNotionalMicros: bigint | null
   readonly maxAdverseSlippageBps: bigint
   readonly targetWeights: Readonly<Record<string, number>>
   readonly positions: readonly {
@@ -85,11 +85,13 @@ const currentReferenceGrossExposureMicros = (
 export const executionMandateAllocationCapitalMicros = (
   facts: ExecutionMandateAllocationFacts,
 ): Result.Result<bigint, ExecutionMandateAllocationFailure> => {
-  const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
-  const remainingReferenceTurnover = referenceNotionalWithinSlippage(
-    remainingDailyTurnover,
-    facts.maxAdverseSlippageBps,
-  )
+  const remainingReferenceTurnover =
+    facts.maxDailyTradedNotionalMicros === null
+      ? null
+      : referenceNotionalWithinSlippage(
+          nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros),
+          facts.maxAdverseSlippageBps,
+        )
   const grossTargetWeight = Result.all(
     Object.entries(facts.targetWeights).map(([symbol, weight]) =>
       Result.mapError(
@@ -101,7 +103,7 @@ export const executionMandateAllocationCapitalMicros = (
   return Result.flatMap(
     Result.all({ currentReferenceGrossExposure: currentReferenceGrossExposureMicros(facts), grossTargetWeight }),
     ({ currentReferenceGrossExposure, grossTargetWeight }) => {
-      if (currentReferenceGrossExposure > remainingReferenceTurnover) {
+      if (remainingReferenceTurnover !== null && currentReferenceGrossExposure > remainingReferenceTurnover) {
         return Result.fail({
           _tag: 'CurrentExposureExceedsRemainingTurnover',
           currentReferenceGrossExposureMicros: currentReferenceGrossExposure,
@@ -116,7 +118,9 @@ export const executionMandateAllocationCapitalMicros = (
           facts.accountEquityMicros,
           capitalForNotional(facts.maxGrossExposureMicros),
           capitalForNotional(facts.maxNetExposureMicros),
-          capitalForNotional(remainingReferenceTurnover - currentReferenceGrossExposure),
+          ...(remainingReferenceTurnover === null
+            ? []
+            : [capitalForNotional(remainingReferenceTurnover - currentReferenceGrossExposure)]),
         ]
           .map(nonNegative)
           .reduce((minimum, value) => (value < minimum ? value : minimum)),
