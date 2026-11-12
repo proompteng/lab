@@ -134,3 +134,8 @@ and missing-status fixtures:
 ```bash
 bun test packages/scripts/src/argocd/__tests__/cnpg-cluster-health.test.ts
 ```
+
+Dex uses memory storage, matching the behavior enforced by the Argo CD wrapper before 3.6. Argo CD 3.6 honors an
+explicit storage override; the formerly ignored Kubernetes override cannot work without Dex CRDs and storage RBAC.
+Keep the native memory configuration. The Dex readiness probe checks its listener so a failed child process cannot
+leave the deployment falsely ready.
