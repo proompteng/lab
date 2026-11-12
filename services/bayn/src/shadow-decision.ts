@@ -900,7 +900,7 @@ const reduceObserveShadowDecision = (
     ),
   )
 
-export const buildObserveShadowDecision = (
+export const constructObserveShadowDecision = (
   input: unknown,
 ): Effect.Effect<ObserveShadowDecisionDocument, ShadowDecisionError> =>
   Effect.suspend(() => Effect.fromResult(reduceObserveShadowDecision(input))).pipe(
@@ -989,7 +989,7 @@ const assembleExecutionDecisionDocument = (
   )
 }
 
-export const buildExecutionDecision = (
+export const constructExecutionDecision = (
   input: ExecutionDecisionInput,
 ): Effect.Effect<ExecutionDecisionDocument, ShadowDecisionError> =>
   Effect.suspend(() =>

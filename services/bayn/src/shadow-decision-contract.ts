@@ -2224,10 +2224,10 @@ export const decisionSourceRows = (document: CycleDecisionDocument | RecordedExe
       ? document.decisionMarketDataRows
       : undefined
 
-// Only owned, deeply frozen graphs receive this receipt. Copies and stored JSON
-// still cross the full schema boundary; a claimed contentHash never earns reuse.
+// The bundled constructor worker transfers a validated graph into this owner's heap.
+// Other copies and stored JSON still require full validation; a claimed hash earns no reuse.
 const verifiedCycleDocuments = new WeakMap<object, CycleDecisionDocument>()
-const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
+export const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
   const freeze = (value: unknown): void => {
     if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
     for (const child of Object.values(value)) freeze(child)
