@@ -3,7 +3,7 @@ import { Config, Effect, Ref, Result, Schedule } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import { makeApplicationPlan, type ApplicationPlan } from '../app'
-import { BrokerSession } from '../broker/alpaca/session'
+import { BrokerRead } from '../broker/alpaca/model'
 import type { LoadedRuntimeConfig } from '../config/model'
 import { CycleObservability } from '../cycle/store/observability'
 import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store/contract'
@@ -208,7 +208,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
     const journal = yield* Journal
     const cycleObservability = yield* CycleObservability
     const controllerStatus = yield* ExecutionControllerStatusStore
-    const brokerSession = yield* BrokerSession
+    const brokerRead = yield* BrokerRead
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(
       plan.config.capitalActivationRequestJson,
@@ -260,7 +260,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
               state,
               dependencies,
               {
-                read: brokerSession.read,
+                read: brokerRead,
                 expectedAccountId: observePlan.config.alpaca.expectedAccountId,
                 executionEligible: current.capitalActivation?._tag === 'Realized',
                 executionDisabledReason:

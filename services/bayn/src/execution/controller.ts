@@ -316,7 +316,9 @@ export const completeExecutionControllerTick = (
     ? decodedNextDueAt.success
     : result.observation?.result !== 'SUCCESS'
       ? undefined
-      : result.observation.outcome === 'WINDOW_CLOSED'
+      : result.observation.outcome === 'WINDOW_CLOSED' ||
+          result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
         ? result.outcome.nextWakeAt
         : result.observation.readiness?.availableAt
   return Result.succeed({

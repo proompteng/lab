@@ -10,7 +10,8 @@ import io.ktor.websocket.readBytes
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -82,7 +83,8 @@ internal suspend fun HttpClient.streamAlpacaTradeUpdates(
             ),
           )
           var state: TradeUpdateSessionState = TradeUpdateSessionState.Authenticating
-          while (isActive) {
+          while (true) {
+            currentCoroutineContext().ensureActive()
             val frame = incoming.receive()
             val receivedAt = now()
             require(frame.data.size <= ALPACA_TRADE_UPDATE_MAX_FRAME_BYTES) { "broker frame exceeds the source limit" }
