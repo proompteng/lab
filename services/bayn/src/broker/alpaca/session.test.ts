@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
+import { Clock, Deferred, Effect, Exit, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
-import { BrokerObservations } from './observed-snapshot'
+import { BrokerObservations, observationUnavailable } from './observed-snapshot'
+import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
 import { makeBrokerObservationCapture } from './snapshot-cache'
 import { makeBrokerObservationBudget } from './poll-budget'
 import { make as makeBrokerRead } from './http'
@@ -24,6 +25,7 @@ import {
   layer,
   mapHttpAcquisitionError,
   retryRecoverableBrokerSessionAcquisition,
+  projectedReadLayer,
 } from './session'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -110,6 +112,49 @@ const completePreflightResponse = (
 }
 
 describe('Alpaca broker session acquisition retry', () => {
+  test('starts the status read surface without broker HTTP and rechecks canonical availability on every read', async () => {
+    let requests = 0
+    let available = false
+    const unavailable = observationUnavailable('Canonical broker observation is unavailable')
+    const snapshot = observedBrokerSnapshotFixture(accountId, '2026-11-12T15:00:00.000Z')
+    const observed = Effect.suspend(() => (available ? Effect.succeed(snapshot) : Effect.fail(unavailable)))
+    const resources = projectedReadLayer(connection(0)).pipe(
+      Layer.provide(
+        Layer.succeed(BrokerObservations, {
+          read: observed,
+          readState: observed,
+          readForSubmit: () => observed,
+          invalidate: Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests++
+            return Effect.succeed(jsonResponse(request, { code: 50010000, message: 'broker unavailable' }, 'cold', 503))
+          }),
+        ),
+      ),
+    )
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const read = yield* BrokerRead
+        expect(requests).toBe(0)
+        expect(yield* Effect.flip(read.account)).toBe(unavailable)
+        available = true
+        expect((yield* read.account).value.id).toBe(accountId)
+        const healthSnapshot = read.projection?.healthSnapshot
+        if (healthSnapshot === undefined) throw new Error('Status broker read has no canonical health projection')
+        expect((yield* healthSnapshot).snapshot.account.value.id).toBe(accountId)
+        available = false
+        expect(yield* Effect.flip(read.positions)).toBe(unavailable)
+        expect(requests).toBe(0)
+      }).pipe(Effect.provide(resources), Effect.provide(Logger.layer([]))),
+    )
+    expect(Exit.isSuccess(exit)).toBeTrue()
+    expect(requests).toBe(0)
+  })
   test('publishes complete history with 52 cold requests and 29 retained-history requests', async () => {
     const fills = Array.from({ length: 2_002 }, (_, index) => ({
       activity_type: 'FILL',
