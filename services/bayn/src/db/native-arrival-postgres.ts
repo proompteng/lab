@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schedule, Schema, Stream } from 'effect'
+import { Array as Arr, Effect, Schedule, Schema, Stream } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
@@ -97,7 +97,10 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
           let batch: typeof additions = []
           let bytes = 0
           for (const addition of additions) {
-            if (batch.length > 0 && (batch.length >= 16 || bytes + addition.compressed.byteLength > 1024 * 1024)) {
+            if (
+              Arr.isArrayNonEmpty(batch) &&
+              (batch.length >= 16 || bytes + addition.compressed.byteLength > 1024 * 1024)
+            ) {
               yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
               batch = []
               bytes = 0
@@ -105,7 +108,7 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
             batch.push(addition)
             bytes += addition.compressed.byteLength
           }
-          if (batch.length > 0) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
+          if (Arr.isArrayNonEmpty(batch)) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
           if (additions.length === 0) {
             // A visible prior COMMIT may still be waiting for its synchronous standby. Transactional WAL
             // makes this acknowledgement wait for the configured durability even when no rows are new.

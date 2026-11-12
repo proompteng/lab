@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../../testing/postgres-fixture.test-support'
 import { mock } from 'bun:test'
 import { parentPort, workerData } from 'node:worker_threads'
 import { NodeRuntime } from '@effect/platform-node'
@@ -16,7 +17,7 @@ const store: NativeArrivalStore = {
   end: () => Effect.void,
 }
 await mock.module('../../db/postgres-client', () => ({
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, {} as PgClient.PgClient),
+  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture()),
 }))
 await mock.module('../../db/native-arrival-postgres', () => ({ makeNativeArrivalStore: () => store }))
 const kafka = await import('./kafka')

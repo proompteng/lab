@@ -69,7 +69,7 @@ export const readMemoryNote = (
     memory: { ...summarizeMemoryNote(note), retirementReason: note.retirementReason, retirementReasonTruncated: false },
     content: characters[offset] ?? '',
     offset,
-    nextOffset: offset < characters.length ? offset + 1 : null,
+    nextOffset: offset + 1 < characters.length ? offset + 1 : null,
   }
   while (measure(result) > maxBytes) {
     if (result.memory.retirementReason) {

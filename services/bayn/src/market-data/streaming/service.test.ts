@@ -1,8 +1,8 @@
+import { makePostgresFixture } from '../../testing/postgres-fixture.test-support'
 import { expect, spyOn, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Exit, Layer, Result } from 'effect'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { IntradayMarketData } from '../intraday/model'
@@ -19,11 +19,11 @@ test('readiness validates the owner without transferring a retained cut and pres
     Layer.provide(
       Layer.effect(
         PgClient.PgClient,
-        SqlClient.make({
+        makePostgresFixture({
           acquirer: Effect.die('Readiness must not query PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
-        }).pipe(Effect.map((sql) => sql as PgClient.PgClient)),
+        }),
       ),
     ),
     Layer.provide(
@@ -59,13 +59,13 @@ test('reuses an exact captured cut without reconstructing it again and still rej
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const sql = yield* SqlClient.make({
+          const sql = yield* makePostgresFixture({
             acquirer: Effect.die('Captured market evidence must not query PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
           })
           const live = StreamingIntradayMarketDataLive.pipe(
-            Layer.provide(Layer.succeed(PgClient.PgClient, sql as PgClient.PgClient)),
+            Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
             Layer.provide(
               Layer.succeed(KafkaMarketProjection, {
                 check: Effect.void,
