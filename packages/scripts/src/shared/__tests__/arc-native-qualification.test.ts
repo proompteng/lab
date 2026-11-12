@@ -16,7 +16,7 @@ const image = { digest: `sha256:${'b'.repeat(64)}`, os: 'linux', architecture: '
 const gateScript = workflow.jobs['verify-placement'].steps.find(
   (step: { name?: string }) => step.name === 'Require thirty minutes of common native work on ten builders',
 ).run as string
-const predicate = gateScript.match(/jq -s -e --arg source "\$EXPECTED_SOURCE" '([\s\S]*?)' native-proof/)[1]
+const predicate = readFileSync(join(repoRoot, 'nix/ci-arc-native-qualification.jq'), 'utf8')
 
 const receipts = () =>
   Array.from({ length: 10 }, (_, index) => ({
@@ -47,6 +47,7 @@ describe('ARC native image qualification', () => {
     expect(nativeSteps.at(-1).if).toContain('always()')
     expect(nativeSteps.at(-1).with.path).toContain('arc-native/*.tsv')
     expect(workflow.permissions).toEqual({ contents: 'read', actions: 'read' })
+    expect(gateScript).toContain('-f nix/ci-arc-native-qualification.jq')
     expect(readFileSync(script, 'utf8')).not.toMatch(/oci-push|cache-push|ATTIC_TOKEN|kubectl|kargo-sha/)
   })
 
@@ -142,7 +143,98 @@ describe('ARC native image qualification', () => {
       input: data.map((receipt) => JSON.stringify(receipt)).join('\n'),
       encoding: 'utf8',
     })
-    expect(result.status, result.stderr).toBe(accepted ? 0 : 1)
+    expect(result.status, result.stderr).toBe(accepted ? 0 : 5)
+  })
+
+  const withIntervals = (data: ReturnType<typeof receipts>, index: number, intervals: [number, number][]) => {
+    data[index].iterations = intervals.map(([start, end], ordinal) => ({
+      iteration: ordinal + 1,
+      start,
+      end,
+      rebuild: true,
+      exitCode: 0,
+      image,
+    }))
+  }
+
+  it.each([
+    [
+      'rejects sparse work hidden by a long wall window',
+      (data: ReturnType<typeof receipts>) => {
+        for (let index = 0; index < 10; index += 1)
+          withIntervals(data, index, [
+            [1000, 1001],
+            [3099, 3100],
+          ])
+      },
+    ],
+    [
+      'rejects overlapping intervals',
+      (data: ReturnType<typeof receipts>) => {
+        withIntervals(data, 0, [
+          [1000, 2000],
+          [1900, 3100],
+        ])
+      },
+    ],
+    [
+      'rejects reversed middle intervals',
+      (data: ReturnType<typeof receipts>) => {
+        withIntervals(data, 0, [
+          [1000, 1200],
+          [1700, 1800],
+          [1300, 1500],
+          [2000, 3100],
+        ])
+      },
+    ],
+    [
+      'rejects individually long windows with insufficient shared work',
+      (data: ReturnType<typeof receipts>) => {
+        withIntervals(data, 0, [
+          [1000, 1500],
+          [1700, 3100],
+        ])
+        withIntervals(data, 1, [
+          [1000, 2000],
+          [2200, 3100],
+        ])
+      },
+    ],
+  ] as const)('%s', (_name, mutate) => {
+    const data = receipts()
+    mutate(data)
+    const result = spawnSync('jq', ['-s', '-e', '--arg', 'source', source, predicate], {
+      input: data.map((receipt) => JSON.stringify(receipt)).join('\n'),
+      encoding: 'utf8',
+    })
+    expect(result.status, result.stderr).toBe(5)
+  })
+
+  it('reports the exact shared work after subtracting the union of runner gaps', () => {
+    const data = receipts()
+    withIntervals(data, 0, [
+      [1000, 1600],
+      [1700, 3100],
+    ])
+    withIntervals(data, 1, [
+      [1000, 1650],
+      [1750, 3100],
+    ])
+    withIntervals(data, 2, [
+      [1000, 2000],
+      [2000, 3100],
+    ])
+    const result = spawnSync('jq', ['-s', '-e', '--arg', 'source', source, predicate], {
+      input: data.map((receipt) => JSON.stringify(receipt)).join('\n'),
+      encoding: 'utf8',
+    })
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      commonStart: 1000,
+      commonEnd: 3100,
+      commonNativeWorkSeconds: 1950,
+    })
   })
 
   it.each([

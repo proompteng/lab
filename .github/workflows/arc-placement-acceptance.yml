@@ -4,8 +4,9 @@ name: ARC placement acceptance
 # native_qualification=true adds ten nonpublishing Bayn image rebuild/inspection
 # loops after realization and a prepared-output rendezvous. Dependencies may be
 # cached; this is sustained native image work, not ten cold compilation workloads.
-# The measured ten-way overlap must be >=1,800 seconds; preparation and slot-check
-# sleeps do not count. Inspect arc-native-proof-* for per-command timings/errors
+# The ten-way intersection of completed work intervals must be >=1,800 seconds;
+# preparation, slot-check sleeps and gaps between iterations do not count.
+# Inspect arc-native-proof-* for per-command timings/errors
 # and arc-native-qualified-* for commonStart/commonEnd. Match that interval to the
 # API/etcd, system-device and Ceph observations required by the ARC runbook before
 # claiming throughput or storage stability. No image/alias or cache is published.
@@ -278,31 +279,8 @@ jobs:
           EXPECTED_SOURCE: ${{ github.sha }}
         run: |
           set -euo pipefail
-          jq -s -e --arg source "$EXPECTED_SOURCE" '
-            length == 10 and
-            ([.[].slot] | sort) == [1,2,3,4,5,6,7,8,9,10] and
-            ([.[].pod] | unique | length) == 10 and
-            ([.[].scratchDevice] | unique | length) == 10 and
-            all(.[];
-              .schemaVersion == "arc.native-image-qualification.v1" and
-              .status == "passed" and .exitCode == 0 and
-              .sourceRevision == $source and .packageAttr == "bayn-image" and .role == "build" and
-              .node == "turin" and .scratchFilesystem == "ext4" and
-              (.scratchDevice | test("^/dev/rbd[0-9]+$")) and
-              (.iterations | length) > 0 and
-              .nativeStart == .iterations[0].start and
-              .nativeEnd == .iterations[-1].end and
-              .nativeEnd - .nativeStart >= 2100 and
-              all(.iterations[];
-                .end > .start and .rebuild == true and .exitCode == 0 and
-                .image.os == "linux" and .image.architecture == "amd64" and
-                (.image.digest | test("^sha256:[0-9a-f]{64}$")))) and
-            ([.[].nativeEnd] | min) - ([.[].nativeStart] | max) >= 1800
-          ' native-proof/*/receipt.json
-          jq -s '{sourceRevision:.[0].sourceRevision,builders:length,
-            commonStart:([.[].nativeStart]|max),commonEnd:([.[].nativeEnd]|min),
-            commonNativeWorkSeconds:(([.[].nativeEnd]|min)-([.[].nativeStart]|max)),
-            completedRebuilds:([.[].iterations|length]|add)}' native-proof/*/receipt.json \
+          jq -s -e --arg source "$EXPECTED_SOURCE" -f nix/ci-arc-native-qualification.jq \
+            native-proof/*/receipt.json \
             | tee native-qualification.json
           {
             echo '### Native image rebuild and inspection qualification'
