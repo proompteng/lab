@@ -95,9 +95,9 @@ jobs:
           test "${#applications[@]}" -gt 0
           for application in "${applications[@]}"; do
             rendered="${RUNNER_TEMP}/${application}.yaml"
-            nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "argocd/applications/${application}/generated"
             nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
-            nix develop -c scripts/kubeconform.sh "${rendered}"
+            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
           done
           if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
             echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2
