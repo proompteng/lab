@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import { SQL } from 'bun'
 import { Effect } from 'effect'
-import * as TSemaphore from 'effect/TSemaphore'
+import * as Semaphore from 'effect/Semaphore'
 import { Language, Parser, type Tree } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
@@ -226,7 +226,7 @@ const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:8b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 4096
 const DEFAULT_ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION = 1024
 const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-6-astra'
-const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen36-flamingo'
+const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen38-flamingo'
 const DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE = 0.7
 const DEFAULT_SELF_HOSTED_COMPLETION_TOP_P = 0.8
 const DEFAULT_SELF_HOSTED_COMPLETION_REASONING_EFFORT = 'none'
@@ -1189,14 +1189,11 @@ const embeddingConcurrency = clampNumber(
   Number.parseInt(process.env.BUMBA_EMBEDDING_CONCURRENCY ?? '', 10),
   clampNumber(Number.parseInt(process.env.BUMBA_MODEL_CONCURRENCY ?? '', 10), DEFAULT_MODEL_CONCURRENCY),
 )
-const completionSemaphore = TSemaphore.unsafeMake(completionConcurrency)
-const embeddingSemaphore = TSemaphore.unsafeMake(embeddingConcurrency)
+const completionSemaphore = Semaphore.makeUnsafe(completionConcurrency)
+const embeddingSemaphore = Semaphore.makeUnsafe(embeddingConcurrency)
 const withCompletionConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   await Effect.runPromise(
-    TSemaphore.withPermits(
-      completionSemaphore,
-      1,
-    )(
+    completionSemaphore.withPermits(1)(
       Effect.tryPromise({
         try: fn,
         catch: (error) => toError(error),
@@ -1205,10 +1202,7 @@ const withCompletionConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   )
 const withEmbeddingConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   await Effect.runPromise(
-    TSemaphore.withPermits(
-      embeddingSemaphore,
-      1,
-    )(
+    embeddingSemaphore.withPermits(1)(
       Effect.tryPromise({
         try: fn,
         catch: (error) => toError(error),

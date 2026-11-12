@@ -1,12 +1,17 @@
-import { Effect } from 'effect'
+import { Data, Effect } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { CycleRunnerError } from '../cycle/runner/model'
 import { CycleStoreError } from '../cycle/store/model'
-import { AuthorityRestrictionStore } from '../db/execution-store'
+import { AuthorityRestrictionStore } from '../db/execution-store/contract'
 import { OperationalError } from '../errors'
-import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations/model'
+import {
+  MutationEventType,
+  MutationStore,
+  type ExpiredEntryCancellationAdmission,
+  type MutationEvent,
+} from '../execution/mutations/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
@@ -92,6 +97,25 @@ export interface ExecuteMutationIntentInput<E, R> {
   readonly now?: Effect.Effect<string, never, R>
 }
 
+class UnresolvedMutationIntentError extends Data.TaggedError('UnresolvedMutationIntentError')<{
+  readonly intentId: string
+  readonly action: ExecuteMutationIntentInput<never, never>['action']
+  readonly event: MutationEvent
+}> {}
+
+/** Only a returned durable recovery outcome may defer optional containment to full reconciliation. */
+export const isUnresolvedMutationRecovery = (
+  error: CycleRunnerError,
+  intentId: string,
+  action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL',
+): boolean =>
+  error.failure === 'operational' &&
+  error.cause instanceof UnresolvedMutationIntentError &&
+  error.cause.intentId === intentId &&
+  error.cause.action === action &&
+  error.cause.event.intentId === intentId &&
+  error.cause.event.operation === (action === 'RECOVER_CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit)
+
 export const executeMutationIntentWithExecutor = <E, R>(
   input: ExecuteMutationIntentInput<E, R>,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore | R> => {
@@ -172,7 +196,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
     if (settlement._tag === 'Unresolved') {
       return yield* mutationRunnerError({
         message: `guarded broker mutation remains unresolved at ${settlement.eventType}`,
-        cause: event,
+        cause: new UnresolvedMutationIntentError({ intentId, action, event }),
         failure: 'operational',
       })
     }
@@ -190,15 +214,47 @@ export const executeMutationIntent = (
   intentId: string,
   action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
   submitExpiresAt?: string,
+  cancellationAdmission?: ExpiredEntryCancellationAdmission,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
   executeMutationIntentWithExecutor({
     executor: {
       submit: executionProgram.submit,
-      cancel: executionProgram.cancel,
+      cancel:
+        cancellationAdmission === undefined
+          ? executionProgram.cancel
+          : (id, delayMs) => executionProgram.cancel(id, delayMs, cancellationAdmission),
       recover: executionProgram.recover,
     },
     intentId,
     action,
     submitExpiresAt,
     now: currentUtcInstant,
+  })
+
+/** A local continuation may confirm an accepted cancel; it cannot issue another broker mutation. */
+export const confirmAcceptedCancellation = <E, R>(
+  intentId: string,
+  executor: Pick<ExecutionMutationExecutor<E, R>, 'recover'>,
+  now: Effect.Effect<string, never, R> = currentUtcInstant,
+): Effect.Effect<{ readonly delayMs: number }, CycleRunnerError, MutationStore | R> =>
+  Effect.gen(function* () {
+    const store = yield* MutationStore
+    const latest = yield* store
+      .latest(intentId, MutationOperation.Cancel)
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'cancellation continuation evidence read failed', cause, failure: 'store' }),
+        ),
+      )
+    if (latest === undefined || latest.intentId !== intentId || latest.operation !== MutationOperation.Cancel)
+      return yield* mutationRunnerError({
+        message: 'cancellation continuation lost its durable identity',
+        failure: 'contract',
+      })
+    // A changed outcome returns to normal reconciliation and recovery, without treating it as settled.
+    if (latest.eventType !== MutationEventType.CancelAccepted) return { delayMs: 0 }
+    const delayMs = Date.parse(latest.occurredAt) + latest.consistencyDelayMs - Date.parse(yield* now)
+    if (delayMs > 0) return { delayMs }
+    yield* executeMutationIntentWithExecutor({ executor, intentId, action: 'RECOVER_CANCEL', now })
+    return { delayMs: 0 }
   })

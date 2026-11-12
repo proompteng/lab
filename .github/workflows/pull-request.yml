@@ -153,6 +153,7 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
           node .github/scripts/install-tengri-chromium.mjs
           bun run --cwd apps/landing test
+          PLATFORM_UI_SCREENSHOT_DIR=/tmp/admin-portal-screenshots bun run --cwd apps/landing test:admin
           bun run --filter landing build
           bun run --cwd apps/landing test:e2e
           bun run --cwd apps/landing format:check
@@ -166,6 +167,7 @@ jobs:
         with:
           name: landing-browser-${{ github.run_attempt }}
           path: |
+            /tmp/admin-portal-screenshots
             apps/landing/playwright-report
             apps/landing/test-results
             /tmp/tengri-vscode.*/guest.log
@@ -323,9 +325,9 @@ jobs:
               fi
               mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
               if [ "${#changed_manifests[@]}" -gt 0 ]; then
-                nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"
               else
-                nix develop -c scripts/kubeconform.sh argocd
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
               fi
               if jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
@@ -335,7 +337,7 @@ jobs:
               if jq -e 'any(.[]; startswith("argocd/applications/rook-ceph/") or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 rendered="${RUNNER_TEMP}/rook-ceph-render.yaml"
                 nix develop -c kustomize build --enable-helm argocd/applications/rook-ceph >"${rendered}"
-                nix develop -c scripts/kubeconform.sh "${rendered}"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
                 nix develop -c yq eval-all -o=json -I=0 '[.]' "${rendered}" | jq -e '
                   any(.[]; .kind == "ObjectBucketClaim" and .metadata.name == "bayn-research-captures"
                     and .spec == {generateBucketName: "bayn-research-captures", storageClassName: "rook-ceph-bucket"})
@@ -363,9 +365,9 @@ jobs:
               test "${#applications[@]}" -gt 0
               for application in "${applications[@]}"; do
                 rendered="${RUNNER_TEMP}/${application}.yaml"
-                nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "argocd/applications/${application}/generated"
                 nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
-                nix develop -c scripts/kubeconform.sh "${rendered}"
+                nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${rendered}"
               done
               if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
                 echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2

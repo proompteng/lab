@@ -10,12 +10,12 @@ on:
     paths:
       - 'services/jangar/**'
       - 'services/bumba/**'
+      - 'packages/temporal-bun-sdk/src/**'
+      - 'packages/temporal-bun-sdk/package.json'
+      - 'packages/temporal-bun-sdk/tsconfig.json'
+      - 'patches/effect@4.1.4.patch'
       - 'nix/images/jangar.nix'
       - 'nix/images/openai-codex-cli.nix'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - '.github/workflows/jangar-post-deploy-verify.yml'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/jangar/**'
       - 'argocd/bootstrap/jangar/**'
   workflow_dispatch:

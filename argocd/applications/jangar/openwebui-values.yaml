@@ -17,7 +17,7 @@ websocket:
     enabled: false
 
 image:
-  tag: v0.11.3
+  tag: v0.13.3
 
 openaiApiKey: ""
 
@@ -52,7 +52,7 @@ extraEnvVars:
   - name: OPENAI_API_KEYS
     value: ";"
   - name: DEFAULT_MODELS
-    value: qwen36-flamingo
+    value: qwen38-flamingo
   - name: WEBUI_AUTH
     value: "false"
   - name: ENABLE_SIGNUP

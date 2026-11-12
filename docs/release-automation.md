@@ -5,7 +5,7 @@ source, workload configuration, and Kargo resources are reviewed in Git. Kargo o
 has been published; it directly manages a deployment branch and does not open a second pull request to rewrite a SHA or
 digest in the source repository.
 
-The cluster installation is pinned to the Kargo v1.11 API and chart contract. Keep Warehouse, Freight, Stage, and
+The cluster installation is pinned to Kargo v1.12.5. Keep Warehouse, Freight, Stage, and
 promotion-step fields aligned with that pinned version when enrolling an application.
 
 ## Operator UI
@@ -50,6 +50,29 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+Automatic image publication follows runtime source, dependency and image-definition inputs. Changes confined to CI
+orchestration, image publishing, cache uploads, timing reports or Kargo control resources run workflow and script
+validation on pull requests and main without rebuilding service images or starting unrelated service test matrices.
+ARC runner and OpenCode still rebuild when their embedded CI tools change. Existing manual workflow dispatch remains
+available for publication diagnostics.
+
+Restate publication watches its Docker build context and application manifests. Its runtime has no Bun dependency,
+so the root lockfile, script helpers and shared ApplicationSet do not create a new Restate image or roll its retained
+members. The Warehouse watches the same owned paths as the publisher.
+
+App dependency-closure checks recompute both native fixed-output hashes when dependency inputs change. App UI source
+edits reuse the qualified dependency closure. A failed or cancelled closure check blocks publication; an unnecessary
+closure check can be skipped without blocking the image build.
+
+Native Nix image jobs retry transient cache downloads up to three times and fail if substitution still fails.
+Cache failures do not trigger compiler or toolchain builds from source. Each image has one 45-minute build deadline;
+compile failures and timeouts are not retried as a second full build. Build timings and logs retain the failing phase.
+
+After a successful main-branch image publication, CI uploads the image derivation's existing build outputs and dependency
+paths to Attic with `cache-push --build`. This includes build-time dependencies that are absent from the compressed image's
+runtime references. Derivation files are excluded. Final image revisions retain their provenance while unchanged compiled
+outputs remain reusable across commits. Upload failures are recorded and alerted through CI observability.
+
 `product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
 Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
 They do not create unused product image archives or PR registry caches.
@@ -91,9 +114,13 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn's research worker and CPU-only OpenCode proposer consume the same immutable Bayn image through
-`lab-delivery/bayn`. The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains
-independent, with its pinned serving identity verified by research receipts.
+Bayn's trading workloads consume `lab/bayn`; its research worker consumes `lab/bayn-research`;
+its verified account feed consumes `lab/bayn-broker-feed`, built from Dorvud's WebSocket module with the dedicated
+`BrokerFeedMain` entrypoint. All three images use the existing `bayn-release/bayn` Warehouse and Stage. Publication
+withholds every discovery alias until all three images pass validation with the same source revision and successful
+build-run receipt.
+The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains independent,
+with its pinned serving identity verified by research receipts.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
@@ -106,7 +133,7 @@ There is no Image Updater, SHA-manifest bump, release branch, deployment PR, rel
 deployment in this path. A failed build, Warehouse, Freight, Stage, Argo, or rollout gate blocks the transaction at
 that gate; an Argo sync must not bypass it.
 
-Kargo's `lab-delivery` Project, Warehouses, Freight records, Stages, promotion policies, and `kargo/<stage>` branches
+Kargo's per-application `<project>-release` Projects, Warehouses, Freight records, Stages, promotion policies, and `kargo/<stage>` branches
 are the promotion record. The ApplicationSet points each Kargo-managed Application at its Kargo branch and must not
 overwrite that branch or its managed deployment metadata. If an Application is recreated, re-promote its current
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
@@ -115,11 +142,13 @@ authorized break-glass direct deployment is an incident action, not a normal rel
 Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
 image from `main`. This avoids execution-controller reactivation when production code is unchanged.
 
-Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
-main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
-and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
-public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
-request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
+Bayn follows this same path through `bayn-release/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
+main-published cohort with matching source and run receipts. The trading image owns the exact source revision used
+for checkout, runtime bindings and activation lineage, so a newer unpublished main commit cannot hold a completed release.
+Its Stage updates the public service, execution worker, and activation hook to the trading digest, updates research
+workloads to the research digest, updates the broker feed digest and verified source revision, and carries the
+existing authored research request into the new build lineage.
+The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 Bayn resolves environment positions by name and converts each `findIndex` result to a string in `yaml-parse`.
 Kargo v1.11.4 returns a Go `int` for a bare index, which its promotion-state deep copy rejects before persistence.
@@ -135,7 +164,7 @@ For a new image-backed application:
 2. Add one Kargo Warehouse for the image and one Stage with the exact Git branch, digest, and build/provenance update
    contract. Add an exact automatic policy for that Stage; do not use a broad selector that can promote unrelated
    artifacts.
-3. Add `kargo.akuity.io/authorized-stage: lab-delivery:<stage>` to the target Argo Application. If one Application
+3. Add `kargo.akuity.io/authorized-stage: <project>-release:<stage>` to the target Argo Application. If one Application
    consumes several images, authorize each corresponding Stage.
 4. Configure Kargo to update the source files consumed by the Application's configured renderer (Kustomize, Helm,
    Lovely, or another approved renderer). Validate the rendered output against the promoted digest; the renderer is an
@@ -158,10 +187,10 @@ always provide an explicit namespace:
 set -euo pipefail
 
 # Kargo promotion record
-kubectl -n lab-delivery get project,warehouse,freight,stage
-kubectl -n lab-delivery get warehouse/<warehouse> -o yaml
-kubectl -n lab-delivery get freight/<freight> -o yaml
-kubectl -n lab-delivery get stage/<stage> -o yaml
+kubectl -n <project>-release get project,warehouse,freight,stage
+kubectl -n <project>-release get warehouse/<warehouse> -o yaml
+kubectl -n <project>-release get freight/<freight> -o yaml
+kubectl -n <project>-release get stage/<stage> -o yaml
 
 # Argo result, Kargo branch, and the image selected by the Application
 kubectl -n argocd get application/<application> -o jsonpath='{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
@@ -180,6 +209,33 @@ Distinguish these states in incident notes and delivery records: merged, built, 
 Argo synced/healthy, rollout ready, and live application verified. “Merged” or “built” is not “deployed.”
 
 ## Recovery
+
+Open the app's `${project}-release` Project in [Kargo](https://kargo.ide-newton.ts.net), then open the Stage details
+using the details icon on its card. Select **Freight History**, choose a previously proven Freight, and click
+**Promote**. Check the confirmation's image digests and source revision, then confirm **Promote**. Wait for the
+Promotion, Argo reconciliation, and smoke verification to succeed before accepting the rollback.
+
+A successful manual promotion of older Freight creates an origin-scoped automatic-promotion hold. The Stage's
+**Resume** action releases that hold and restores automatic selection; it can immediately select newer eligible
+Freight. Inspect the candidate first. A failed rollback does not establish a successful hold. The OSS installation
+does not perform automatic rollback; that feature requires Kargo Enterprise.
+
+Projects use dedicated release namespaces; application workload namespaces do not move. Ofz, Tengri and Proompteng
+share `ofz-release` because their ordered Stages consume one four-image Freight. Torghut and its Webull feed share
+`torghut-release`. Symphony and Symphony-Jangar remain one `symphony-release` Stage. Other apps have independent
+Projects, credentials, automatic policies and Freight histories. Stage names and `kargo/<stage>` branches stay stable.
+
+Every Stage runs an Argo Rollouts AnalysisRun after promotion. HTTP checks make read-only requests to the app's
+existing endpoint; the native gRPC services and Temporal worker check the selected image and workload readiness.
+The runner checks its published toolchain, and Oirat checks its Discord-ready signal. These smoke checks supplement
+existing application verifiers. A failed check leaves Freight unverified and blocks downstream cohort Stages.
+
+During the namespace migration, promotion reconciliation is briefly disabled through the Kargo chart's
+`controller.enabled` setting. Copy Freight, terminal Promotion records and Stage histories while it is disabled;
+never import historical Promotions into a running controller. Verify the copied data before pruning `lab-delivery`,
+then restore the controller after the new Git-owned resources and credentials reconcile. Retain the migration
+snapshot outside Git. Kubernetes creation timestamps change when records move; original timestamps are retained in
+`delivery.proompteng.ai/original-created-at`, and Promotion start/finish times remain intact.
 
 For a failed promotion, inspect the Kargo Stage, Freight, Kargo branch, and Argo Application in the namespaces above and
 fix the source-owned failure. Re-promote a previously proven Freight through Kargo for a targeted rollback; Kargo will

@@ -181,13 +181,43 @@ impl Native {
         subject_kind: &str,
         subject_id: &str,
     ) -> Result<Vec<String>, Status> {
-        let bytes = self.post_bytes("/v1/relationships/read", json!({
-            "consistency": {"fullyConsistent": true},
-            "relationshipFilter": {"resourceType": kind, "optionalResourceId": id,
-                "optionalSubjectFilter": {"subjectType": subject_kind, "optionalSubjectId": subject_id}},
-            "optionalLimit": 129
-        })).await?;
-        let mut relations = Vec::new();
+        Ok(self
+            .read_relationships(kind, id, Some((subject_kind, subject_id)), 128)
+            .await?
+            .into_iter()
+            .map(|relationship| relationship.relation)
+            .collect())
+    }
+
+    pub(crate) async fn workspace_relationships(
+        &self,
+        id: &str,
+    ) -> Result<Vec<Relationship>, Status> {
+        self.read_relationships("platform_workspace", id, None, 512)
+            .await
+    }
+
+    async fn read_relationships(
+        &self,
+        kind: &str,
+        id: &str,
+        subject: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<Vec<Relationship>, Status> {
+        let mut filter = json!({"resourceType": kind, "optionalResourceId": id});
+        if let Some((kind, id)) = subject {
+            filter["optionalSubjectFilter"] = json!({"subjectType": kind, "optionalSubjectId": id});
+        }
+        let bytes = self
+            .post_bytes(
+                "/v1/relationships/read",
+                json!({
+                    "consistency": {"fullyConsistent": true}, "relationshipFilter": filter,
+                    "optionalLimit": limit + 1,
+                }),
+            )
+            .await?;
+        let mut relationships = Vec::new();
         for line in bytes
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty())
@@ -209,17 +239,18 @@ impl Native {
             let relationship: Relationship = serde_json::from_value(value.clone())
                 .map_err(|_| Status::unavailable("invalid native relationship"))?;
             if relationship.resource != Object::new(kind, id)
-                || relationship.subject.object != Object::new(subject_kind, subject_id)
+                || subject
+                    .is_some_and(|(kind, id)| relationship.subject.object != Object::new(kind, id))
                 || relationship.optional_expires_at.is_some()
-                || relations.len() >= 128
+                || relationships.len() >= limit
             {
                 return Err(Status::failed_precondition(
                     "policy relationship is outside the editable scope",
                 ));
             }
-            relations.push(relationship.relation);
+            relationships.push(relationship);
         }
-        Ok(relations)
+        Ok(relationships)
     }
 
     pub(crate) async fn platform_matches(&self, expected: &[Relationship]) -> Result<bool, Status> {
@@ -366,8 +397,19 @@ impl Native {
         Ok(bytes)
     }
 
-    #[tracing::instrument(name = "spicedb.check", skip_all)]
     pub async fn check(&self, checks: &[Check]) -> Result<(bool, String), Status> {
+        let mut distinct = Vec::with_capacity(checks.len());
+        for check in checks {
+            if !distinct.contains(check) {
+                distinct.push(check.clone());
+            }
+        }
+        let (allowed, revision) = self.check_each(&distinct).await?;
+        Ok((allowed.into_iter().all(|value| value), revision))
+    }
+
+    #[tracing::instrument(name = "spicedb.check", skip_all)]
+    pub async fn check_each(&self, checks: &[Check]) -> Result<(Vec<bool>, String), Status> {
         if checks.is_empty() || checks.len() > 64 {
             return Err(Status::invalid_argument("invalid permission check batch"));
         }
@@ -381,7 +423,7 @@ impl Native {
             .as_array()
             .filter(|pairs| pairs.len() == checks.len())
             .ok_or_else(|| Status::unavailable("incomplete authorization datastore decision"))?;
-        let mut allowed = true;
+        let mut allowed = Vec::with_capacity(checks.len());
         for (pair, expected) in pairs.iter().zip(checks) {
             let echoed: Check = serde_json::from_value(pair["request"].clone())
                 .map_err(|_| Status::unavailable("invalid authorization decision binding"))?;
@@ -391,8 +433,8 @@ impl Native {
                 ));
             }
             match pair["item"]["permissionship"].as_str() {
-                Some("PERMISSIONSHIP_HAS_PERMISSION") => {}
-                Some("PERMISSIONSHIP_NO_PERMISSION") => allowed = false,
+                Some("PERMISSIONSHIP_HAS_PERMISSION") => allowed.push(true),
+                Some("PERMISSIONSHIP_NO_PERMISSION") => allowed.push(false),
                 _ => {
                     return Err(Status::unavailable(
                         "indeterminate authorization datastore decision",

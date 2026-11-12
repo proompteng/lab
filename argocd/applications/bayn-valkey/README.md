@@ -9,7 +9,7 @@ their existing authority.
 
 `valkey.yaml` selects `arch: replica`, one shard and two data pods. Required
 anti-affinity places one pod on each eligible 100G host. Each requests 1Gi of
-memory, caps the dataset at 512Mi and retains its existing 10Gi Ceph RBD volume.
+memory, caps the dataset at 512Mi and uses a 10Gi local NVMe volume.
 `noeviction` rejects writes at capacity. AOF and scheduled RDB snapshots are
 disabled for these expiring, disposable materializations. Diskless primary
 replication also prevents the operator from injecting default snapshot schedules.
@@ -17,6 +17,11 @@ The two memory copies still require application replica acknowledgement before
 PostgreSQL publishes their hashes. A complete cache restart requires a fresh
 broker poll; there is no database payload fallback. Existing volumes and files
 are retained.
+
+During the NVMe cutover, replace the replica volume first and verify live replication before promoting it and
+replacing the former primary volume. Preserve absolute expirations and compare the live dataset; old RDB files
+are not the current dataset when automatic persistence is disabled. Keep the original volumes until both new
+NVMe copies and the existing application acceptance checks pass.
 
 There is no Sentinel or automatic promotion. A failed primary makes the cache
 unavailable until recovery or an operator-managed manual promotion. Bayn bounds

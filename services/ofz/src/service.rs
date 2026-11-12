@@ -7,7 +7,6 @@ use crate::{
     native::Native,
     policy,
     proto::{self, Action, tengri_authorization_service_server::TengriAuthorizationService},
-    sessions::{self, Issuer},
     store::{self, Database, sql_error},
     transport,
 };
@@ -16,7 +15,6 @@ use crate::{
 pub struct Service {
     database: Database,
     native: Native,
-    issuer: Issuer,
     capacity: Arc<Semaphore>,
     #[cfg(test)]
     read_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
@@ -35,11 +33,10 @@ struct WorkspaceAuthority {
 }
 
 impl Service {
-    pub fn new(database: Database, native: Native, issuer: Issuer) -> Self {
+    pub fn new(database: Database, native: Native) -> Self {
         Self {
             database,
             native,
-            issuer,
             capacity: Arc::new(Semaphore::new(128)),
             #[cfg(test)]
             read_barrier: None,
@@ -572,48 +569,6 @@ impl TengriAuthorizationService for Service {
         let response =
             commands::get(&self.database, &self.native, &peer, request.into_inner()).await?;
         Ok(Response::new(response))
-    }
-    async fn establish_session(
-        &self,
-        request: Request<proto::EstablishSessionRequest>,
-    ) -> Result<Response<proto::EstablishSessionResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        let session = sessions::establish(
-            &self.database,
-            &self.native,
-            &self.issuer,
-            &peer,
-            request.into_inner(),
-        )
-        .await?;
-        Ok(Response::new(proto::EstablishSessionResponse {
-            session: Some(session),
-        }))
-    }
-    async fn inspect_session(
-        &self,
-        request: Request<proto::InspectSessionRequest>,
-    ) -> Result<Response<proto::InspectSessionResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        let session =
-            sessions::inspect(&self.database, &self.native, &peer, request.into_inner()).await?;
-        Ok(Response::new(proto::InspectSessionResponse {
-            session: Some(session),
-        }))
-    }
-    async fn revoke_session(
-        &self,
-        request: Request<proto::RevokeSessionRequest>,
-    ) -> Result<Response<proto::RevokeSessionResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        let receipt =
-            sessions::revoke(&self.database, &self.native, &peer, request.into_inner()).await?;
-        Ok(Response::new(proto::RevokeSessionResponse {
-            receipt: Some(receipt),
-        }))
     }
     async fn get_policy_state(
         &self,

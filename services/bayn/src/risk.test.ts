@@ -1011,6 +1011,40 @@ describe('bounded execution risk', () => {
     expectBlocked(Reason.BuyingPowerExceeded, makeIntent(), makeState({ reservedBuyingPowerMicros: '1' }), makePolicy())
   })
 
+  test('unlimited turnover preserves turnover evidence and every other risk limit', () => {
+    const policy = makePolicy({ schemaVersion: 'bayn.execution-risk-policy.v5', maxDailyTradedNotionalMicros: null })
+    const state = makeState({ dailyTradedNotionalMicros: '1018000000000' })
+    const evaluated = evaluateSuccess(makeIntent(), state, policy)
+    expect(evaluated.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(BigInt(evaluated.metrics.dailyTradedNotionalMicros)).toBe(
+      BigInt(state.dailyTradedNotionalMicros) + BigInt(evaluated.metrics.orderNotionalMicros),
+    )
+    expectBlocked(
+      Reason.OrderNotionalExceeded,
+      makeIntent(),
+      state,
+      makePolicy({ ...policy, maxOrderNotionalMicros: '99999999' }),
+    )
+    expectBlocked(
+      Reason.GrossExposureExceeded,
+      makeIntent(),
+      state,
+      makePolicy({ ...policy, maxGrossExposureMicros: '299999999' }),
+    )
+    expectBlocked(
+      Reason.DailyLossExceeded,
+      makeIntent(),
+      state,
+      makePolicy({ ...policy, maxDailyLossMicros: '49999999' }),
+    )
+    expectBlocked(
+      Reason.DrawdownExceeded,
+      makeIntent(),
+      state,
+      makePolicy({ ...policy, maxDrawdownMicros: '99999999' }),
+    )
+  })
+
   test('blocks adverse slippage and an open-order count beyond the explicit cap', () => {
     const slippageState = makeState({
       account: { ...baseState().account, buyingPowerMicros: '101000000' },

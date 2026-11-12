@@ -1,327 +1,171 @@
-import { Result, Schema } from 'effect'
+import { Result } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
-import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { decodeJevResponse, jevModel, prepareJevRequest } from './contract'
 import type { NativeChartEvidence } from './chart-evidence'
-import { JevContractError } from './contract'
-import { jevEntryEconomics } from './entry-economics'
-import type { EntryInferenceInput } from './entry-inference-input'
+import { candleProjection } from './chart-projection'
+import type { Anchor, ChartAssessments } from './chart-assessments'
 import type { JevProtocolMaterial } from './protocol'
-import { makeChartSourceCandidates, makeEntrySourceCandidates } from './entry-proposals'
-import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
-import {
-  DecisionsRequestSchema,
-  decisionsModel,
-  prepareDecisionsRequest,
-  type DecisionsRequest,
-  type DecisionsResponse,
-} from './decisions'
-
-const presenceQuestions = [
-  {
-    type: 'predicate',
-    name: 'support_present',
-    instructions:
-      'Does the recent price sequence show a defended support level? A defended level has an observable rebound after price tests it. A low at the end of an ongoing decline is not a defended level.',
-  },
-  {
-    type: 'predicate',
-    name: 'resistance_present',
-    instructions:
-      'Does the chart show an identifiable resistance level above executionReference.bidUsd? Repeated rejection at a level is resistance. The latest completed close is historical; use the supplied current quote in USD. A hypothetical price above the chart is not observed resistance.',
-  },
-  {
-    type: 'predicate',
-    name: 'base_present',
-    instructions:
-      'Is there a completed consolidation before the newest directional move? A consolidation is a contiguous period of overlapping candles trading in a bounded range. An uninterrupted directional move is not a consolidation.',
-  },
-] as const
-
-const anchorQuestions = [
-  {
-    name: 'support_anchor',
-    instructions:
-      'Which offered completed bar has the low that anchors the most recently defended support below the current quote? Choose no_support if none of the offered lows represents defended support. Financial eligibility alone does not establish visible support.',
-    noMatch: { value: 'no_support', description: 'None of the eligible source lows identifies defended support.' },
-  },
-  {
-    name: 'resistance_anchor',
-    instructions:
-      'Which offered completed bar has the high that anchors the nearest identifiable overhead resistance above executionReference.bidUsd? Include resistance even when it is too close to cover trading costs. Choose no_resistance if none of the offered highs represents observed resistance.',
-    noMatch: {
-      value: 'no_resistance',
-      description: 'None of the observed overhead highs identifies resistance.',
-    },
-  },
-] as const
-const noBase = { value: 'no_base', description: 'No completed consolidation matches this question.' }
-const baseEndInstructions =
-  'Which offered bar ends the most recent completed consolidation before the newest directional move? The consolidation must contain at least two completed bars and end before the newest completed bar. Identify the observed structure independently of whether trading it would cover costs. Choose no_base if none is identifiable.'
-const baseStartInstructions =
-  'Evaluate a possible consolidation ending at the specified completed bar. Which offered earlier bar begins that same consolidation? Identify the whole contiguous interval, rather than an isolated low or an uninterrupted trend. Choose no_base if none of the offered intervals is a consolidation with this end.'
-const sharedInstructions =
-  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Anchor choices describe source price structure independently of fees and funding. Code checks whether a proposal based on the selected structure covers all modeled trading costs. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
-export const chartQuestionPolicy = {
-  model: decisionsModel,
-  candidatePolicy: 'source-structure-with-funded-proposal-preflight-v3',
-  presenceQuestions,
-  anchorQuestions,
-  baseEndInstructions,
-  baseStartInstructions,
-  noBase,
-  sharedInstructions,
-}
+import type { EntryInferenceInput } from './entry-inference-input'
+import { makeChartSourceCandidates } from './entry-proposals'
+import { entryJudgmentThresholds } from './judgment-policy'
 
 export type ChartDecisionSource = {
   readonly chart: NativeChartEvidence
   readonly protocol: JevProtocolMaterial
   readonly funding: EntryInferenceInput['funding']
 }
-
-type PreparedChartRequest = {
-  readonly body: string
-  readonly requestHash: string
-  readonly sourceFeasible: boolean
+const definitions = {
+  support: {
+    presence:
+      'Does the chart show a defended support level below source.bidUsd? A defended level has an observable rebound after a test. A low at the end of an ongoing decline is not defended support.',
+    region:
+      'The complete candlestick or candle group which established the most recently defended support below source.bidUsd in `chart`. Enclose the entire candles, including their bodies, high and low wicks and visible width. Do not box only a horizontal price line.',
+  },
+  resistance: {
+    presence:
+      'Does the chart show identifiable overhead resistance above source.bidUsd? Repeated rejection at an observed level is resistance. Do not invent a level above the image.',
+    region:
+      'The complete candlestick or candle group which established the nearest identifiable overhead resistance above source.bidUsd in `chart`. Enclose the entire candles, including their bodies, high and low wicks and visible width. Do not box only a horizontal price line.',
+  },
+  base: {
+    presence:
+      'Does the chart show a completed consolidation before the newest directional move? At least two overlapping completed candles form a bounded range. An uninterrupted directional move is not a consolidation.',
+    region:
+      'The entire most recent completed consolidation in `chart`, from its first candle through its last candle, including their wicks. Exclude the subsequent directional move. The newest completed candle cannot belong to the consolidation.',
+  },
+} as const
+const instructions =
+  'Read the completed one-minute candlesticks in chart. Older bars are on the left. The lower histogram is volume, not price. Locate structures only in the upper price plot. Labels below the plot are minutes before windowEndAt and identify the same source bars. The image and source table represent identical observations. Judge visible structure independently of fees and capital. Do not predict prices or invent a setup.'
+export const chartQuestionPolicy = {
+  model: jevModel,
+  transport: 'jev-presence-and-source-bound-box.v1',
+  mapping: 'rendered-candle-body-and-wick-overlap.v2',
+  coordinateReportingHalfStep: 0.005,
+  baseSelection: 'maximal-contiguous-source-window-within-candle-bodies',
+  instructions,
+  definitions,
+  absenceAtMost: entryJudgmentThresholds.negativeAtMost,
 }
-const preparedChartRequests = new Map<string, PreparedChartRequest>()
-const detachedChartRequest = (prepared: PreparedChartRequest) =>
-  Schema.decodeUnknownResult(
-    Schema.fromJsonString(DecisionsRequestSchema),
-    strictParseOptions,
-  )(prepared.body).pipe(Result.map((request) => ({ ...prepared, request })))
-
-export const buildChartDecisionsRequest = (
-  source: ChartDecisionSource,
-  stage: 'CHART' | { readonly selectedEnd: string },
-) =>
-  Result.gen(function* () {
-    const { chart, protocol, funding } = source
-    // Revalidation must hash actual source content; claimed chart hashes cannot establish cache identity.
-    const key = yield* canonicalHashV1Result({ chart, protocol, funding, stage, questionPolicy: chartQuestionPolicy })
-    const cached = preparedChartRequests.get(key)
-    if (cached !== undefined) return yield* detachedChartRequest(cached)
-    const economics = yield* jevEntryEconomics({
-      protocol,
-      symbol: chart.symbol,
-      bidMicros: BigInt(funding.bidMicros),
-      askMicros: BigInt(funding.askMicros),
-      capitalMicros: funding.capitalMicros,
-      cryptoFeeTier: funding.cryptoFeeTier,
-    })
-    const fundable =
-      economics === null
-        ? { supportBarIds: [], resistanceBarIds: [], baseWindows: [] }
-        : yield* makeEntrySourceCandidates({ chart, protocol, economics, bidMicros: BigInt(funding.bidMicros) })
-    const candidates = makeChartSourceCandidates({ chart, bidMicros: BigInt(funding.bidMicros) })
-    const anchors: DecisionsRequest['questions'][number][] = anchorQuestions.flatMap((question) => {
-      const ids = question.name === 'support_anchor' ? candidates.supportBarIds : candidates.resistanceBarIds
-      if (ids.length === 0) return []
-      return [
-        {
-          type: 'choice',
-          name: question.name,
-          instructions: question.instructions,
-          choices: [
-            ...chart.bars
-              .filter((bar) => ids.includes(bar.id))
-              .map((bar) => ({
-                value: bar.id,
-                description:
-                  question.name === 'support_anchor'
-                    ? `Bar labeled ${bar.chartLabel} minutes before the window end; low ${bar.low} USD at ${bar.timestamp}.`
-                    : question.name === 'resistance_anchor'
-                      ? `Bar labeled ${bar.chartLabel} minutes before the window end; high ${bar.high} USD at ${bar.timestamp}.`
-                      : `Bar labeled ${bar.chartLabel} minutes before the window end, beginning at ${bar.timestamp}.`,
-              })),
-            question.noMatch,
-          ],
-        },
-      ]
-    })
-    const baseEnds = chart.bars.filter((bar) => candidates.baseWindows.some((span) => span.lastBarId === bar.id))
-    const baseQuestions: DecisionsRequest['questions'][number][] =
-      baseEnds.length === 0
-        ? []
-        : [
-            ...(typeof stage === 'object'
-              ? []
-              : [
-                  {
-                    type: 'choice' as const,
-                    name: 'base_last_bar',
-                    instructions: baseEndInstructions,
-                    choices: [
-                      ...baseEnds.map((bar) => ({
-                        value: bar.id,
-                        description: `Consolidation ends at bar labeled ${bar.chartLabel} minutes before windowEndAt, beginning at ${bar.timestamp}.`,
-                      })),
-                      noBase,
-                    ],
-                  },
-                ]),
-            ...(stage === 'CHART'
-              ? []
-              : baseEnds
-                  .filter((end) => end.id === stage.selectedEnd)
-                  .map((end) => ({
-                    type: 'choice' as const,
-                    name: `base_first_bar_ending_${end.chartLabel}`,
-                    instructions: `${baseStartInstructions} The specified end is bar labeled ${end.chartLabel} minutes before windowEndAt, beginning at ${end.timestamp}.`,
-                    choices: [
-                      ...chart.bars
-                        .filter((bar) =>
-                          candidates.baseWindows.some(
-                            (span) => span.lastBarId === end.id && span.firstBarId === bar.id,
-                          ),
-                        )
-                        .map((bar) => ({
-                          value: bar.id,
-                          description: `Consolidation begins at bar labeled ${bar.chartLabel} minutes before windowEndAt, beginning at ${bar.timestamp}.`,
-                        })),
-                      noBase,
-                    ],
-                  }))),
-          ]
-    const prepared = yield* prepareDecisionsRequest({
-      model: decisionsModel,
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: sharedInstructions,
-            },
-            { type: 'input_image', image_url: chart.image },
-            {
-              type: 'input_json',
-              data: {
-                symbol: chart.symbol,
-                windowEndAt: chart.windowEndAt,
-                barsHash: chart.barsHash,
-                pngHash: chart.pngHash,
-                bars: chart.bars,
-                executionReference: {
-                  bidUsd: Number(BigInt(funding.bidMicros)) / 1_000_000,
-                  askUsd: Number(BigInt(funding.askMicros)) / 1_000_000,
-                  maximumEntryPriceUsd: economics?.maximumEntryPriceUsd ?? null,
-                  bidMicros: funding.bidMicros,
-                  askMicros: funding.askMicros,
-                  maximumEntryPriceMicros: economics?.maximumEntryPriceMicros ?? null,
-                  maximumHoldingMinutes: protocol.maximumHoldingMinutes,
-                },
-              },
-            },
-          ],
-        },
-      ],
-      questions: typeof stage === 'object' ? baseQuestions : [...presenceQuestions, ...anchors, ...baseQuestions],
-    })
-    const reusable = {
-      body: prepared.body,
-      requestHash: prepared.requestHash,
-      sourceFeasible:
-        fundable.baseWindows.length > 0 || (fundable.supportBarIds.length > 0 && fundable.resistanceBarIds.length > 0),
-    }
-    // Two stages for a fifteen-candidate cohort fit without retaining an unbounded chart history.
-    if (preparedChartRequests.size >= 64) {
-      const oldest = preparedChartRequests.keys().next()
-      if (oldest.done === false) preparedChartRequests.delete(oldest.value)
-    }
-    preparedChartRequests.set(key, reusable)
-    return yield* detachedChartRequest(reusable)
-  }).pipe(
-    Result.mapError(
-      (cause) => new JevContractError({ message: 'Executable chart questions could not be prepared', cause }),
+export const buildChartJevRequest = ({ chart, protocol, funding }: ChartDecisionSource) => {
+  const reference = `bayn_chart_image_${chart.pngHash}`
+  return prepareJevRequest({
+    model: protocol.model,
+    state: {
+      instructions,
+      chart: reference,
+      source: {
+        symbol: chart.symbol,
+        windowEndAt: chart.windowEndAt,
+        barsHash: chart.barsHash,
+        pngHash: chart.pngHash,
+        bars: chart.bars,
+        bidUsd: Number(BigInt(funding.bidMicros)) / 1_000_000,
+      },
+    },
+    assets: {
+      [reference]: { type: 'image', format: 'png', data_base64: chart.image.slice('data:image/png;base64,'.length) },
+    },
+    questions: Object.fromEntries(
+      Object.entries(definitions).flatMap(([name, definition]) => [
+        [`${name}_present`, { type: 'noul', instructions: definition.presence }],
+        [`${name}_region`, { type: 'box', instructions: definition.region }],
+      ]),
     ),
-  )
+  })
+}
 
-const Presence = Schema.Union([
-  Schema.Struct({
-    status: Schema.Literal('ASSESSED'),
-    probability: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-  }),
-  Schema.Struct({ status: Schema.Literal('REFUSED') }),
-])
-const Anchor = Schema.Union([
-  Schema.Struct({
-    status: Schema.Literal('ASSESSED'),
-    barId: Schema.NonEmptyString,
-    probability: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-  }),
-  Schema.Struct({ status: Schema.Literal('NOT_IDENTIFIED') }),
-  Schema.Struct({ status: Schema.Literal('REFUSED') }),
-])
-export const ChartAssessmentsSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.chart-assessments.v4'),
-  symbol: SymbolSchema,
-  windowEndAt: UtcInstantSchema,
-  barsHash: Sha256Schema,
-  pngHash: Sha256Schema,
-  support: Schema.Struct({ presence: Presence, anchor: Anchor }),
-  resistance: Schema.Struct({ presence: Presence, anchor: Anchor }),
-  base: Schema.Struct({ presence: Presence, first: Anchor, last: Anchor }),
-})
-export type ChartAssessments = typeof ChartAssessmentsSchema.Type
-export type ChartAssessmentsMaterial =
-  | ChartAssessments
-  | RetainedConditionalChartAssessmentsMaterial
-  | import('./retained-funded-chart-questions').ChartAssessments
-
-export const chartAssessmentsFromResponse = (
-  chart: NativeChartEvidence,
-  response: DecisionsResponse,
-  request: DecisionsRequest,
-) =>
+export const chartAssessmentsFromBoxes = (source: ChartDecisionSource, input: unknown) =>
   Result.gen(function* () {
-    const asked = new Set(request.questions.map((question) => question.name))
-    const invalid = () =>
-      Result.fail(new JevContractError({ message: 'Chart assessment does not match its source-bound question' }))
-    const presence = (name: string): Result.Result<typeof Presence.Type, JevContractError> => {
-      const answer = response.answers.find((value) => value.name === name)
-      if (answer?.type === 'refusal') return Result.succeed({ status: 'REFUSED' })
-      return answer?.type === 'predicate'
-        ? Result.succeed({ status: 'ASSESSED', probability: answer.probability })
-        : invalid()
+    const { chart, funding } = source
+    const request = yield* buildChartJevRequest(source)
+    const response = yield* decodeJevResponse(request.request, input)
+    const projection = candleProjection(chart.bars)
+    const marginX = chartQuestionPolicy.coordinateReportingHalfStep * projection.width + 1
+    const marginY = chartQuestionPolicy.coordinateReportingHalfStep * projection.height + 1
+    const candidates = makeChartSourceCandidates({ chart, bidMicros: BigInt(funding.bidMicros) })
+    const absent = { status: 'NOT_IDENTIFIED' as const }
+    const presence = (name: string) => {
+      const answer = response.answers[`${name}_present`]
+      if (answer?.type !== 'noul') throw new Error('Validated chart presence is missing')
+      return { status: 'ASSESSED' as const, probability: answer.noul }
     }
-    const anchor = (name: string): Result.Result<typeof Anchor.Type, JevContractError> => {
-      if (!asked.has(name)) return Result.succeed({ status: 'NOT_IDENTIFIED' })
-      const answer = response.answers.find((value) => value.name === name)
-      if (answer?.type === 'refusal') return Result.succeed({ status: 'REFUSED' })
-      if (answer?.type !== 'choice' || typeof answer.choice !== 'string') return invalid()
-      if (['no_base', 'no_support', 'no_resistance'].includes(answer.choice))
-        return Result.succeed({ status: 'NOT_IDENTIFIED' })
-      const probability = answer.probabilities.find((value) => value.value === answer.choice)?.probability
-      return probability === undefined
-        ? invalid()
-        : Result.succeed({ status: 'ASSESSED', barId: answer.choice, probability })
+    const region = (name: string) => {
+      const answer = response.answers[`${name}_region`]
+      if (answer?.type !== 'box') throw new Error('Validated chart Box is missing')
+      const { box } = answer
+      // Rounded thin regions are retained in the receipt but cannot identify a source candle.
+      const selected =
+        box.left === box.right || box.top === box.bottom
+          ? []
+          : projection.bars.filter(
+              (bar) =>
+                bar.x >= box.left * projection.width - marginX && bar.x <= box.right * projection.width + marginX,
+            )
+      return { answer, selected }
     }
-    const base = yield* Result.gen(function* () {
-      const presenceEvidence = yield* presence('base_present')
-      if (!asked.has('base_last_bar'))
-        return {
-          presence: presenceEvidence,
-          first: { status: 'NOT_IDENTIFIED' as const },
-          last: { status: 'NOT_IDENTIFIED' as const },
-        }
-      const last = yield* anchor('base_last_bar')
-      if (last.status === 'REFUSED' || last.status === 'NOT_IDENTIFIED')
-        return { presence: presenceEvidence, first: last, last }
-      if (last.status !== 'ASSESSED') return yield* invalid()
-      const end = chart.bars.find((bar) => bar.id === last.barId)
-      if (end === undefined) return yield* invalid()
-      const first = yield* anchor(`base_first_bar_ending_${end.chartLabel}`)
-      return { presence: presenceEvidence, first, last }
-    })
+    const anchor = (name: 'support' | 'resistance'): typeof Anchor.Type => {
+      if (presence(name).probability <= entryJudgmentThresholds.negativeAtMost) return absent
+      const { answer, selected } = region(name)
+      const allowed = name === 'support' ? candidates.supportBarIds : candidates.resistanceBarIds
+      const matching = selected.filter((bar) => {
+        return (
+          allowed.includes(bar.source.id) &&
+          bar.low >= answer.box.top * projection.height - marginY &&
+          bar.high <= answer.box.bottom * projection.height + marginY
+        )
+      })
+      const selectedAnchor = matching.reduce<(typeof matching)[number] | undefined>((best, bar) => {
+        if (best === undefined) return bar
+        return (name === 'support' ? bar.source.low <= best.source.low : bar.source.high <= best.source.high)
+          ? bar
+          : best
+      }, undefined)
+      return selectedAnchor === undefined
+        ? absent
+        : { status: 'ASSESSED', barId: selectedAnchor.source.id, probability: answer.confidence }
+    }
+    const base = () => {
+      const evidence = presence('base')
+      if (evidence.probability <= entryJudgmentThresholds.negativeAtMost)
+        return { presence: evidence, first: absent, last: absent }
+      const { answer, selected } = region('base')
+      const contained = selected.filter(
+        (bar) =>
+          bar.bodyTop >= answer.box.top * projection.height - marginY &&
+          bar.bodyBottom <= answer.box.bottom * projection.height + marginY,
+      )
+      if (
+        contained.some((bar) => bar.source.id === chart.bars.at(-1)?.id) ||
+        contained.some(
+          (bar, index) =>
+            index > 0 &&
+            bar.source.minuteBeforeWindowEnd !== (contained[index - 1]?.source.minuteBeforeWindowEnd ?? 0) - 1,
+        )
+      )
+        return { presence: evidence, first: absent, last: absent }
+      const indices = new Map(contained.map((bar, index) => [bar.source.id, index]))
+      const window = candidates.baseWindows
+        .flatMap((candidate) => {
+          const first = indices.get(candidate.firstBarId)
+          const last = indices.get(candidate.lastBarId)
+          return first === undefined || last === undefined ? [] : [{ ...candidate, first, last }]
+        })
+        .toSorted((a, b) => b.last - b.first - (a.last - a.first) || b.last - a.last)[0]
+      if (window === undefined) return { presence: evidence, first: absent, last: absent }
+      return {
+        presence: evidence,
+        first: { status: 'ASSESSED' as const, barId: window.firstBarId, probability: answer.confidence },
+        last: { status: 'ASSESSED' as const, barId: window.lastBarId, probability: answer.confidence },
+      }
+    }
     return {
       schemaVersion: 'bayn.chart-assessments.v4' as const,
       symbol: chart.symbol,
       windowEndAt: chart.windowEndAt,
       barsHash: chart.barsHash,
       pngHash: chart.pngHash,
-      support: { presence: yield* presence('support_present'), anchor: yield* anchor('support_anchor') },
-      resistance: { presence: yield* presence('resistance_present'), anchor: yield* anchor('resistance_anchor') },
-      base,
+      support: { presence: presence('support'), anchor: anchor('support') },
+      resistance: { presence: presence('resistance'), anchor: anchor('resistance') },
+      base: base(),
     } satisfies ChartAssessments
   })

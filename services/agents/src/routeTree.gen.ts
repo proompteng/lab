@@ -20,6 +20,7 @@ import { Route as V1SplatRouteImport } from './app-routes/v1.$'
 import { Route as PrimitivesKindRouteImport } from './app-routes/primitives.$kind'
 import { Route as ApiPrimitivesRouteImport } from './app-routes/api.primitives'
 import { Route as PrimitivesKindNewRouteImport } from './app-routes/primitives.$kind.new'
+import { Route as McpRelayTargetRouteImport } from './app-routes/mcp/relay/$target'
 import { Route as PrimitivesKindNamespaceNameRouteImport } from './app-routes/primitives.$kind.$namespace.$name'
 import { Route as ApiPrimitivesKindResourcesRouteImport } from './app-routes/api.primitives.$kind.resources'
 import { Route as ApiPrimitivesKindResourceRouteImport } from './app-routes/api.primitives.$kind.resource'
@@ -79,6 +80,11 @@ const PrimitivesKindNewRoute = PrimitivesKindNewRouteImport.update({
   path: '/new',
   getParentRoute: () => PrimitivesKindRoute,
 } as any)
+const McpRelayTargetRoute = McpRelayTargetRouteImport.update({
+  id: '/relay/$target',
+  path: '/relay/$target',
+  getParentRoute: () => McpRoute,
+} as any)
 const PrimitivesKindNamespaceNameRoute =
   PrimitivesKindNamespaceNameRouteImport.update({
     id: '/$namespace/$name',
@@ -101,7 +107,7 @@ const ApiPrimitivesKindResourceRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/mcp': typeof McpRoute
+  '/mcp': typeof McpRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/primitives': typeof PrimitivesRouteWithChildren
   '/ready': typeof ReadyRoute
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/api/primitives': typeof ApiPrimitivesRouteWithChildren
   '/primitives/$kind': typeof PrimitivesKindRouteWithChildren
   '/v1/$': typeof V1SplatRoute
+  '/mcp/relay/$target': typeof McpRelayTargetRoute
   '/primitives/$kind/new': typeof PrimitivesKindNewRoute
   '/api/primitives/$kind/resource': typeof ApiPrimitivesKindResourceRoute
   '/api/primitives/$kind/resources': typeof ApiPrimitivesKindResourcesRoute
@@ -117,7 +124,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/mcp': typeof McpRoute
+  '/mcp': typeof McpRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/primitives': typeof PrimitivesRouteWithChildren
   '/ready': typeof ReadyRoute
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/api/primitives': typeof ApiPrimitivesRouteWithChildren
   '/primitives/$kind': typeof PrimitivesKindRouteWithChildren
   '/v1/$': typeof V1SplatRoute
+  '/mcp/relay/$target': typeof McpRelayTargetRoute
   '/primitives/$kind/new': typeof PrimitivesKindNewRoute
   '/api/primitives/$kind/resource': typeof ApiPrimitivesKindResourceRoute
   '/api/primitives/$kind/resources': typeof ApiPrimitivesKindResourcesRoute
@@ -134,7 +142,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/mcp': typeof McpRoute
+  '/mcp': typeof McpRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/primitives': typeof PrimitivesRouteWithChildren
   '/ready': typeof ReadyRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/api/primitives': typeof ApiPrimitivesRouteWithChildren
   '/primitives/$kind': typeof PrimitivesKindRouteWithChildren
   '/v1/$': typeof V1SplatRoute
+  '/mcp/relay/$target': typeof McpRelayTargetRoute
   '/primitives/$kind/new': typeof PrimitivesKindNewRoute
   '/api/primitives/$kind/resource': typeof ApiPrimitivesKindResourceRoute
   '/api/primitives/$kind/resources': typeof ApiPrimitivesKindResourcesRoute
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/api/primitives'
     | '/primitives/$kind'
     | '/v1/$'
+    | '/mcp/relay/$target'
     | '/primitives/$kind/new'
     | '/api/primitives/$kind/resource'
     | '/api/primitives/$kind/resources'
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/api/primitives'
     | '/primitives/$kind'
     | '/v1/$'
+    | '/mcp/relay/$target'
     | '/primitives/$kind/new'
     | '/api/primitives/$kind/resource'
     | '/api/primitives/$kind/resources'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '/api/primitives'
     | '/primitives/$kind'
     | '/v1/$'
+    | '/mcp/relay/$target'
     | '/primitives/$kind/new'
     | '/api/primitives/$kind/resource'
     | '/api/primitives/$kind/resources'
@@ -201,7 +213,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
-  McpRoute: typeof McpRoute
+  McpRoute: typeof McpRouteWithChildren
   MetricsRoute: typeof MetricsRoute
   PrimitivesRoute: typeof PrimitivesRouteWithChildren
   ReadyRoute: typeof ReadyRoute
@@ -288,6 +300,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrimitivesKindNewRouteImport
       parentRoute: typeof PrimitivesKindRoute
     }
+    '/mcp/relay/$target': {
+      id: '/mcp/relay/$target'
+      path: '/relay/$target'
+      fullPath: '/mcp/relay/$target'
+      preLoaderRoute: typeof McpRelayTargetRouteImport
+      parentRoute: typeof McpRoute
+    }
     '/primitives/$kind/$namespace/$name': {
       id: '/primitives/$kind/$namespace/$name'
       path: '/$namespace/$name'
@@ -311,6 +330,16 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface McpRouteChildren {
+  McpRelayTargetRoute: typeof McpRelayTargetRoute
+}
+
+const McpRouteChildren: McpRouteChildren = {
+  McpRelayTargetRoute: McpRelayTargetRoute,
+}
+
+const McpRouteWithChildren = McpRoute._addFileChildren(McpRouteChildren)
 
 interface PrimitivesKindRouteChildren {
   PrimitivesKindNewRoute: typeof PrimitivesKindNewRoute
@@ -365,7 +394,7 @@ const ApiPrimitivesRouteWithChildren = ApiPrimitivesRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
-  McpRoute: McpRoute,
+  McpRoute: McpRouteWithChildren,
   MetricsRoute: MetricsRoute,
   PrimitivesRoute: PrimitivesRouteWithChildren,
   ReadyRoute: ReadyRoute,

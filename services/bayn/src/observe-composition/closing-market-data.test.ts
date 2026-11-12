@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -55,7 +56,7 @@ import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { OperationalError, retryableOperationalError } from '../errors'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { type ReconciliationPassResult } from '../reconciler'
-import { loadStrategyExecutionRiskPolicy } from './startup'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { makeJevMarketTestSnapshot as makeIntradayMomentumTestSnapshot } from '../testing/jev-market-fixture'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -198,7 +199,7 @@ const fixture = async (source = native) => {
     intradayMarketData: freshMarket,
   }
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
-  const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
+  const policy = await Effect.runPromise(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
   const unused = Effect.die(new Error('Unexpected fixture I/O'))
   const broker: BrokerReadShape = {
     account: unused,
@@ -261,9 +262,10 @@ const fixture = async (source = native) => {
         recordAll: () => unused,
         abandon: () => unused,
       }),
-      Effect.provideService(JevClient, { evaluate: () => unused }),
-      Effect.provideService(JevPositionStore, { read: () => unused }),
       Effect.provide(entryInferenceFixtureLayer),
+      Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => unused })),
+      Effect.provideService(JevPositionStore, { read: () => unused }),
+
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -608,6 +610,7 @@ describe('closing market-data fallback boundaries', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: unused,
+            recordProtectionCancelAccepted: unused,
             read: () => Effect.succeed(Option.some(record)),
             commit: unused,
             commitClosing: unused,
@@ -753,6 +756,7 @@ describe('closing market-data fallback boundaries', () => {
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: unused,
+          recordProtectionCancelAccepted: unused,
           read: () =>
             Effect.sync(() =>
               Option.some(
@@ -980,6 +984,8 @@ describe('closing market-data fallback boundaries', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             read: unused,
             commit: unused,
             commitClosing: unused,
@@ -1232,7 +1238,7 @@ describe('closing market-data fallback boundaries', () => {
                   30_000,
                   result.value.observedAt,
                 ),
-              ).toBe(pending ? 1_000 : undefined)
+              ).toBeUndefined()
             }
           }
           expect(freshReads).toBe(
@@ -1253,6 +1259,7 @@ describe('closing market-data fallback boundaries', () => {
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die('terminal close must not commit another intent'),
           commitClosing: () => Effect.die('terminal close must not commit another close'),
@@ -1544,6 +1551,7 @@ describe('closing market-data fallback boundaries', () => {
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die(new Error('residual close cannot use entry commit authority')),
           commitClosing: (intent, decision) =>
@@ -1586,6 +1594,7 @@ describe('closing market-data fallback boundaries', () => {
           observedAt: at,
         } as const,
         nextDelayMs: 1_000,
+        nextWakeAt: new Date(Date.parse(at) + 1_000).toISOString(),
       }
       let checks = 0
       const checked = checkAdvancedMarketProjection(
@@ -1625,6 +1634,7 @@ describe('closing market-data fallback boundaries', () => {
         nextDelayMs: failureDelay ?? 30_000,
         observation: { result: 'FAILURE', failure: 'market-data' },
       })
+      expect(outcome).not.toHaveProperty('nextWakeAt')
     },
   )
 
@@ -1687,7 +1697,7 @@ describe('closing market-data fallback boundaries', () => {
     )
   })
 
-  test('a short durable continuation catches a delayed quote that expires during the ordinary idle interval', async () => {
+  test('the protection deadline catches a delayed close quote inside its original validity', async () => {
     const request = await fixture()
     const start = Date.parse(at) + 16 * 60_000 + 24_000
     const quoteEventAt = new Date(start + 3_100).toISOString()
@@ -1745,7 +1755,7 @@ describe('closing market-data fallback boundaries', () => {
           cycle: request.cycle,
         } as const
         const nextDelayMs = executionEvidenceContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
-        expect(nextDelayMs).toBe(1_000)
+        expect(nextDelayMs).toBe(5_000)
         const command = {
           controllerKey: 'a'.repeat(64),
           epoch: 1,
@@ -1763,7 +1773,9 @@ describe('closing market-data fallback boundaries', () => {
               observedAt: result.observedAt,
               waitReason: 'CLOSE_QUOTE_PENDING',
             },
-            ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+            ...(nextDelayMs === undefined
+              ? {}
+              : { nextDelayMs, nextWakeAt: new Date(start + 3_000 + nextDelayMs).toISOString() }),
           }),
           nextDelayMs: 30_000,
         })
@@ -1788,26 +1800,24 @@ describe('closing market-data fallback boundaries', () => {
                 _tag: ExecutionControllerOutcome.Waiting,
                 receiptHash: outcome.receiptHash,
                 nextDelayMs: outcome.nextDelayMs,
+                ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
               },
             },
             command.sourceRevision,
           ),
         )
         const restarted = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(completed))))
-        expect(restarted.nextDueAt).toBe(new Date(start + 4_000).toISOString())
+        expect(restarted.nextDueAt).toBe(new Date(start + 8_000).toISOString())
         expect(
           Result.getOrThrow(
             decideExecutionControllerTick(
               restarted,
               { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
               command.controllerKey,
-              restarted.nextDueAt ?? '',
               command.sourceRevision,
             ),
           )._tag,
         ).toBe('Ignored')
-        yield* TestClock.adjust(nextDelayMs ?? 30_000)
-        expect(yield* Effect.flip(close)).toMatchObject({ quotePending: true })
         yield* TestClock.adjust(nextDelayMs ?? 30_000)
         const ready = yield* close
         expect(ready.document.dispatchable).toBe(true)
@@ -1842,7 +1852,7 @@ describe('closing market-data fallback boundaries', () => {
   })
 
   test.each(['BROKER_OBSERVATION_PENDING', 'JEV_POSITION_AWAITING_RECONCILIATION'] as const)(
-    'pending broker evidence %s uses a short continuation within the close deadline',
+    'pending broker evidence %s preserves only a protection deadline',
     (waitReason) => {
       const waiting = {
         outcome: 'RECOVERED',
@@ -1851,16 +1861,37 @@ describe('closing market-data fallback boundaries', () => {
         observedAt: at,
         cycle: activeCycle,
       } as const
-      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
-      expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(500)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(
+        waitReason === 'JEV_POSITION_AWAITING_RECONCILIATION' ? 5_000 : undefined,
+      )
+      expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(
+        waitReason === 'JEV_POSITION_AWAITING_RECONCILIATION' ? 500 : undefined,
+      )
       const close = Date.parse(activeCycle.window.executionCloseAt)
-      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(
+        waitReason === 'JEV_POSITION_AWAITING_RECONCILIATION' ? 250 : undefined,
+      )
       expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
       expect(
         executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
       ).toBeUndefined()
     },
   )
+
+  test('verified protection publication uses the five-second continuation', () => {
+    const waiting = {
+      outcome: 'RECOVERED',
+      action: 'WAITING',
+      waitReason: 'PROTECTION_PUBLICATION_PENDING',
+      observedAt: at,
+      cycle: activeCycle,
+    } as const
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(5_000)
+    expect(executionEvidenceContinuationDelayMs(waiting, 2_000, at)).toBe(2_000)
+    const close = Date.parse(activeCycle.window.executionCloseAt)
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+  })
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
     const request = await fixture()

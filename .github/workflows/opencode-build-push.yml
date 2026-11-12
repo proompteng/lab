@@ -15,7 +15,6 @@ on:
       - 'proto/proompteng/authz/**'
       - 'proto/proompteng/relay/**'
       - 'services/bayn/**'
-      - 'nix/**'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
@@ -23,12 +22,27 @@ on:
       - '.npmrc'
       - 'bunfig.toml'
       - 'patches/**'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/opencode-build-push.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
       - 'argocd/applications/opencode/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
+      - nix/images/opencode.nix
+      - nix/images/opencode-cli.nix
+      - nix/images/opencode-validation-tools.nix
+      - nix/packages/relay.nix
+      - nix/images/bayn-runtime-root.nix
+      - nix/images/bayn-deps-hash.nix
+      - nix/images/normalize-bayn-bun-deps.sh
+      - nix/images/bun-workspace-service.nix
+      - nix/images/bun-workspace-deps-source.nix
+      - nix/images/prune-bun-dependency-metadata.sh
+      - nix/images/relativize-bun-cache.sh
+      - nix/packages.nix
+      - nix/toolchain-doctor.sh
+      - nix/cache-doctor.sh
+      - nix/oci-doctor.sh
+      - nix/cache-push.sh
+      - nix/oci-push.sh
+      - nix/oci-inspect-archive.sh
+      - nix/oci-release-contract.sh
 
 concurrency:
   group: ${{ github.workflow }}-main

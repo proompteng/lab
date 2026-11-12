@@ -54,8 +54,13 @@ Fixed stage, operation, dependency, outcome, service, namespace and source-revis
 The OTLP resource identifies the pod. Cache keys, content hashes, account/order/cycle identifiers and raw errors
 are excluded from metric labels.
 
-- `bayn.valkey.put` includes queueing, SET and the complete required replica acknowledgement. Its child
-  `bayn.valkey.set` and `bayn.valkey.replica-ack` spans/histograms separate those components. The original single
+- `bayn.valkey.put` includes queueing, connection readiness, SET and the complete required replica acknowledgement.
+  `bayn.valkey.queue` ends when the single connection permit is acquired; `bayn.valkey.connect` covers checking
+  the existing connection and connecting when closed. Their bounded `operation` label distinguishes get/put/remove.
+  An interrupted queue phase with no connect phase means the command never owned the connection. An interrupted
+  connect phase with no SET means connection readiness did not finish, not a slow SET or replica acknowledgement.
+  An already-open connection still records a successful readiness check; it is not a reconnect count.
+  The `bayn.valkey.set` and `bayn.valkey.replica-ack` child spans/histograms separate the write components. The original single
   one-second command deadline, cancellation and one-replica requirement remain in force.
 - `bayn_valkey_reads_total` counts successful GET results as `hit` or `miss`. A required materialization miss still
   fails closed. Transport failures are counted separately in `bayn_valkey_failures_total` by bounded category.
@@ -74,27 +79,71 @@ are excluded from metric labels.
 
 Missing series and no-traffic quantiles remain unknown. The dashboard does not replace absent evidence with zeros.
 
+`bayn_scheduler_delay_seconds` measures the monotonic excess delay resuming a one-second diagnostic sleep in
+execution workers with OTLP metrics enabled. It shares the existing service/source identity and exporter; it makes no
+network or database calls. One completed wake-up produces one sample, with no synthetic catch-up samples after a stall.
+Scope shutdown interrupts the sleep. A diagnostic defect stops the sampler with a fixed warning and does not change trading
+or exporter behavior. Missing samples do not mean zero delay.
+
+Compare its source-bound histogram with an over-deadline operation's exact trace. For example, a SET lasting longer
+than the one-second command deadline can reflect delayed local timer processing as well as remote latency. The
+sampler measures local scheduling delay, not a specific CPU, garbage-collection, network or Valkey cause; a stall can
+overlap multiple operations. It does not change operation deadlines, the required replica acknowledgment, polling
+quota, freshness or authority. Confirm subsequent successful replicated publication separately.
+
 ## Alerts and diagnosis
 
 The `bayn-cache-performance.rules` Mimir group contains eight rules. They use the existing trading email route.
 
-| Alert                             | Trigger and next evidence                                                                                                                                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `BaynValkeyMetricsUnavailable`    | Fewer than two healthy exporter/server pairs for two minutes. Check discovery, scrape errors and both pods.                                                                                |
-| `BaynValkeyReplicaUnavailable`    | No connected replica, replica link down or missing replication observation for one minute. Publication requires WAIT; recover the peer.                                                    |
-| `BaynValkeyMemoryPressure`        | More than 85% of configured cache memory for ten minutes. Inspect payload bytes and expiry; `noeviction` can reject writes.                                                                |
-| `BaynValkeyPublicationFailure`    | A failed replicated put in the last five minutes, held for one minute. Join failure category with the publication trace.                                                                   |
-| `BaynValkeyLatencyHigh`           | Successful GET/PUT p99 above 250ms for five minutes, with at least twenty samples. Compare SET, WAIT and queueing. This diagnostic threshold is one quarter of the command deadline.       |
-| `BaynOperationMetricsUnavailable` | A missing or more than ninety-second-old service heartbeat for two minutes while the API revision expects native metrics. Check OTLP export failure logs and the exact Mimir network path. |
-| `BaynGenerationIndexUnavailable`  | Missing, invalid or unready index observation for two minutes. Inspect migration 104 and CNPG query collection.                                                                            |
-| `BaynGenerationSettlementSlow`    | Statement p95 above 500ms for ten minutes, with at least twenty samples. Inspect waits, the statement trace and a bounded read-only plan.                                                  |
+| Alert                             | Trigger and next evidence                                                                                                                                                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BaynValkeyMetricsUnavailable`    | Fewer than two healthy exporter/server pairs for two minutes. Check discovery, scrape errors and both pods.                                                                                                                              |
+| `BaynValkeyReplicaUnavailable`    | No connected replica, replica link down or missing replication observation for one minute. Publication requires WAIT; recover the peer.                                                                                                  |
+| `BaynValkeyMemoryPressure`        | More than 85% of configured cache memory for ten minutes. Inspect payload bytes and expiry; `noeviction` can reject writes.                                                                                                              |
+| `BaynValkeyPublicationFailure`    | A failed replicated put in the last five minutes, held for one minute. Join failure category with the publication trace.                                                                                                                 |
+| `BaynValkeyLatencyHigh`           | Successful GET/PUT p99 above 250ms for five minutes, with at least twenty samples. Compare SET, WAIT and queueing. This diagnostic threshold is one quarter of the command deadline.                                                     |
+| `BaynOperationMetricsUnavailable` | No service heartbeat within ninety seconds old and five seconds ahead for two minutes while the API revision expects native metrics. Compare API/controller revisions, clock skew and rollout progress before diagnosing export failure. |
+| `BaynGenerationIndexUnavailable`  | Missing, invalid or unready index observation for two minutes. Inspect migration 104 and CNPG query collection.                                                                                                                          |
+| `BaynGenerationSettlementSlow`    | Statement p95 above 500ms for ten minutes, with at least twenty samples. Inspect waits, the statement trace and a bounded read-only plan.                                                                                                |
 
 The API pull metric `bayn_operation_metrics_expected` gates native export and index telemetry absence alerts during
 the initial rollout, so the main-tracked observability app does not page before Kargo installs the application catalog
 queries and metric producers.
 This source-bound indicator remains available when the separate OTLP metrics path fails. Heartbeats must match
-each API-advertised source revision; retained older workers cannot satisfy it. Within a revision, the newest exporter
-per service is observed; existing replica alerts cover missing workers/APIs. No notification test is sent by acceptance.
+each API-advertised source revision; neither retained older workers nor newer controllers can satisfy another revision.
+Heartbeats more than five seconds ahead of the evaluator clock are rejected before selecting the newest exporter
+per service and revision. This matches the dashboard's clock tolerance and lets a healthy peer satisfy the alert
+without a future-dated peer hiding stale telemetry. Existing replica alerts cover missing workers/APIs.
+No notification test is sent by acceptance.
+
+### Distinguish revision skew from exporter failure
+
+Use the alert's full `source_revision` and `service`, not just a healthy scrape or a shortened dashboard label.
+Read these bounded queries through the existing authorized Mimir datasource or gateway:
+
+```promql
+max by (source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"} == 1)
+time() - max by (source_revision, service) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn"})
+```
+
+1. Compare the API-advertised revision with the heartbeat revision for the alert's service. A fresh controller
+   heartbeat at a different revision proves that exporter is reporting, not that the expected revision is covered.
+   An older API can remain deployed while a newer controller waits on an activation prerequisite. This is unresolved
+   deployment skew, not automatically a false positive or a global telemetry outage. Keep the exact-source alert.
+2. Inspect the existing Kargo promotion and Argo operation messages, then the relevant workload's image/source
+   metadata and hook conditions using explicit namespaces (`bayn-release`, `argocd`, `bayn`). Distinguish current
+   and retained controllers. Read only the relevant status/condition fields; do not dump credentials or raw logs.
+   If activation is blocked, identify its safe prerequisite evidence separately; do not reset authority, skip a hook,
+   force a rollout, change network policy or relax freshness to clear this alert.
+3. If the heartbeat age is negative by more than five seconds, inspect producer/evaluator clock skew. A future
+   timestamp does not prove current telemetry. If the expected revision is deployed but its heartbeat is missing/stale, inspect bounded sanitized export errors,
+   Mimir ingestion and the already-authorized gateway path. `up == 1` on the API does not prove the controller's
+   separate OTLP exporter works. Do not create another access route to bypass a denied read.
+4. Verify fresh heartbeats for both services at each expected revision after normal reviewed reconciliation.
+   Heartbeat recovery alone does not prove execution progress: check source-bound operation deltas, completed-pass
+   evidence and current readiness separately. Zero operation growth with a fresh heartbeat means no observed
+   instrumented work in that window, not successful cycles. Compare persisted cycle timestamps with alert history;
+   a new notification can describe an already-persistent failure rather than a new cycle failure.
 
 Publication notifications include the observed bounded `category/cause_category` pairs from the same five-minute
 failed-put window, deduplicated across API and execution-worker replicas. Missing labels are reported as `unknown`,
@@ -138,7 +187,7 @@ hours. An empty window remains unobserved because healthy servers can be quiet; 
 Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
-Validate the twenty alert cases and twenty-six dashboard query cases with the native PromQL test harness.
+Validate the twenty-five alert cases and twenty-six dashboard query cases with the native PromQL test harness.
 Publication cases cover multiple diagnostic categories, replica deduplication, unrelated streams, counter resets,
 missing labels, stale series and resolution without asserting recovered publication.
 The dashboard cases cover replica observations, missing telemetry, clock skew, database waits, snapshot freshness

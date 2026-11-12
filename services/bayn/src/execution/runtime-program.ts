@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect'
+import { Cause, Effect, Result } from 'effect'
 import type { CryptoTakerFeeBps } from '../broker/crypto-fees'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { OrderSide } from './contracts'
@@ -21,8 +21,14 @@ import {
   type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
-import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
-import { MutationStore, type MutationStoreShape } from './mutations/model'
+import {
+  IntentStore,
+  type IntentStoreService,
+  type NativeProtectionCancelCommand,
+  type NativeProtectionCancelReceipt,
+  type StoredIntent,
+} from './intents/domain'
+import { MutationStore, type ExpiredEntryCancellationAdmission, type MutationStoreShape } from './mutations/model'
 import {
   makeAuthorityGuardedBrokerMutation,
   constrainExecutionCapitalLimits,
@@ -65,6 +71,11 @@ export interface ExecutionProgramDependencies {
   readonly closeSubmitExpiresAt?: string
   readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean, FinalSubmitAuthorizationFailure>
 }
+
+export type ProtectionCancelOutcome =
+  | { readonly _tag: 'Accepted'; readonly phase: 'Fresh' | 'Durable'; readonly receipt: NativeProtectionCancelReceipt }
+  | { readonly _tag: 'PendingUnknown'; readonly command: NativeProtectionCancelCommand }
+  | { readonly _tag: 'NotEligible' }
 
 interface FinalExecutionCapitalAuthorization {
   readonly limits: ExecutionCapitalLimits
@@ -225,14 +236,18 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
       }),
     )
     .pipe(
-      Effect.mapError((cause) =>
-        transmissionStarted && cause instanceof WriterFenceError
-          ? unknownOutcome({
-              operation: MutationOperation.Submit,
-              message: 'final submit transaction failed after broker transmission began',
-              cause,
-            })
-          : cause,
+      Effect.catchCause((failure) =>
+        Effect.failCause(
+          Cause.map(failure, (cause) =>
+            transmissionStarted && cause instanceof WriterFenceError
+              ? unknownOutcome({
+                  operation: MutationOperation.Submit,
+                  message: 'final submit transaction failed after broker transmission began',
+                  cause,
+                })
+              : cause,
+          ),
+        ),
       ),
     )
 }
@@ -311,21 +326,44 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
         Effect.andThen(
           Effect.gen(function* () {
             const observedAt = yield* dependencies.currentUtcInstant
-            const allowed = yield* dependencies.intentStore.beginProtectionCancel(
+            const admission = yield* dependencies.intentStore.beginProtectionCancel(
               intentId,
               brokerOrderId,
               observedAt,
               exitTarget,
             )
-            if (allowed) yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
-            return allowed
+            switch (admission._tag) {
+              case 'NotEligible':
+                return { _tag: 'NotEligible' } as const
+              case 'PendingUnknown':
+                return admission
+              case 'Accepted':
+                return { _tag: 'Accepted', phase: 'Durable', receipt: admission.receipt } as const
+              case 'New': {
+                const receipt = yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
+                const accepted = yield* dependencies.intentStore.recordProtectionCancelAccepted(
+                  admission.command,
+                  receipt,
+                )
+                return accepted._tag === 'Accepted'
+                  ? ({ _tag: 'Accepted', phase: 'Fresh', receipt: accepted.receipt } as const)
+                  : accepted
+              }
+            }
           }),
         ),
       ),
-    cancel: (intentId: string, consistencyDelayMs: number) =>
+    cancel: (
+      intentId: string,
+      consistencyDelayMs: number,
+      expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+    ) =>
       dependencies.brokerStateCache.invalidate.pipe(
         Effect.andThen(
-          provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+          provideCoordinatorDependencies(
+            cancel(intentId, consistencyDelayMs, expiredEntryCancellation),
+            defaultCoordinatorDependencies,
+          ),
         ),
       ),
     recover: (intentId: string, operation: MutationOperation) =>

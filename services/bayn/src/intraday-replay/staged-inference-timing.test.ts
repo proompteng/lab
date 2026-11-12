@@ -1,15 +1,16 @@
+import { entryEvaluationRequestFixture } from '../jev/retained-jev.test-support'
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { expect, test } from 'bun:test'
 import { Clock, Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import {
-  chartProviderFixture,
-  chartInferenceFixture,
-  entryEvaluationRequestFixture,
-} from '../jev/entry-inference.test-support'
+import { chartProviderFixture, chartInferenceFixture } from '../jev/entry-inference.test-support'
 import { stageResponseIdentity } from '../jev/staged-checkpoint'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+} from '../jev/retained-jev-staged-chart-questions'
 import {
   makeReplayInferenceBudget,
   makeReplayInferenceTiming,
@@ -35,7 +36,7 @@ test('replay stage envelopes reject missing predecessor or mixed chart questions
   const { source, base } = baseRequest()
   const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
   const variants = [
-    { ...base.request, input: initial.request.input },
+    { ...base.request, state: initial.request.state },
     { ...base.request, questions: initial.request.questions },
   ]
   for (const raw of variants) {
@@ -60,16 +61,18 @@ test('replay stage envelopes reject missing predecessor or mixed chart questions
                 calls.push(call)
               }),
             providers: {
-              chart: {
-                evaluate: (request, remaining) =>
-                  Effect.sync(() => {
-                    providerCalls++
-                  }).pipe(Effect.andThen(chartProviderFixture.evaluate(request, remaining))),
-              },
-              jev: { evaluate: () => Effect.die('No Jev dispatch expected') },
+              jev: entryProviderFixture(
+                { evaluate: () => Effect.die('No Jev dispatch expected') },
+                {
+                  evaluate: (request, remaining) =>
+                    Effect.sync(() => {
+                      providerCalls++
+                    }).pipe(Effect.andThen(chartProviderFixture.evaluate(request, remaining))),
+                },
+              ),
             },
           }).pipe(Effect.provideService(Clock.Clock, marketClock))
-          const outcome = yield* timing.run(timing.clients.chart.evaluate(raw, 10_000)).pipe(Effect.result)
+          const outcome = yield* timing.run(timing.clients.jev.evaluate(raw, 10_000)).pipe(Effect.result)
           return { outcome, providerCalls, dispatches: budget.dispatchCount(), calls }
         }),
       ),
@@ -85,7 +88,7 @@ test('BASE_START wire identity is versioned separately without admitting it as a
   const { source, base } = baseRequest()
   const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
   const call = {
-    schemaVersion: 'bayn.replay-inference-call.v3',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     stage: 'BASE_START',
     request: base.request,
     requestHash: base.requestHash,
@@ -102,7 +105,7 @@ test('BASE_START wire identity is versioned separately without admitting it as a
     Result.isSuccess(
       decode({
         ...call,
-        schemaVersion: 'bayn.replay-inference-call.v2',
+        schemaVersion: 'bayn.replay-inference-call.v4',
         stage: 'CHART',
         request: initial.request,
         requestHash: initial.requestHash,

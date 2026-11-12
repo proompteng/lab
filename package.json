@@ -98,6 +98,8 @@
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",
     "atlas:code-search": "bun run packages/scripts/src/atlas/code-search.ts",
+    "context:retrieve": "bun run services/memories/context.ts",
+    "context:evaluate": "bun run services/memories/context-evaluate.ts",
     "atlas:rebuild": "bun run packages/scripts/src/atlas/rebuild.ts",
     "atlas:verify": "bun run packages/scripts/src/atlas/verify.ts",
     "lint:flamingo-hard-migration": "bun run scripts/jangar/validate-flamingo-hard-migration.ts",
@@ -136,9 +138,9 @@
   },
   "packageManager": "bun@1.4.2",
   "patchedDependencies": {
-    "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
     "@platformatic/kafka@2.12.1": "patches/@platformatic%2Fkafka@2.12.1.patch",
-    "effect@4.0.0": "patches/effect@4.0.0.patch",
-    "@effect/sql-pg@4.0.0": "patches/@effect%2Fsql-pg@4.0.0.patch"
+    "effect@4.1.4": "patches/effect@4.1.4.patch",
+    "@effect/sql-pg@4.1.4": "patches/@effect%2Fsql-pg@4.1.4.patch",
+    "@redis/client@6.3.0": "patches/@redis%2Fclient@6.3.0.patch"
   }
 }

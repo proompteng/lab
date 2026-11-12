@@ -17,6 +17,13 @@ def readNatural (json : Json) (key : String) : Except String Nat := do
   if value < 0 then throw s!"{key} must be nonnegative"
   return value.toNat
 
+def readConditionalSupport (json : Json) : Except String ConditionalSupport := do
+  return {
+    policy := ← json.getObjValAs? String "policy"
+    lower := ← readInteger json "lowerMicros"
+    upper := ← readInteger json "upperMicros"
+  }
+
 def readNativeArrivalPosition (json : Json) : Except String NativeArrivalPosition := do
   return {
     capture := ← json.getObjValAs? String "capture",
@@ -239,6 +246,30 @@ def readCycleIdentity (json : Json) : Except String CycleIdentity := do
     accountId := ← json.getObjValAs? String "accountId"
   }
 
+def readEntryWindowScope (json : Json) : Except String EntryWindowScope := do
+  return {
+    schemaVersion := ← json.getObjValAs? String "schema_version",
+    identitySchemaVersion := ← json.getObjValAs? String "identity_schema_version",
+    strategy := ← json.getObjValAs? String "strategy_name",
+    protocol := ← json.getObjValAs? String "strategy_protocol_hash",
+    qualification := ← json.getObjValAs? String "qualification_run_id",
+    account := ← json.getObjValAs? String "account_id",
+    executionPolicy := ← json.getObjValAs? String "execution_policy_hash",
+    calendarSchema := ← json.getObjValAs? String "execution_calendar_schema_version",
+    calendarSource := ← json.getObjValAs? String "execution_calendar_source",
+    calendar := ← json.getObjValAs? String "execution_calendar_hash",
+    session := ← json.getObjValAs? String "execution_session_date"
+  }
+
+def readEntryWindowSource (json : Json) : Except String EntryWindowSource := do
+  return {
+    cycle := ← json.getObjValAs? String "cycle",
+    scope := ← readEntryWindowScope (← json.getObjVal? "scope"),
+    jev := ← json.getObjValAs? Bool "jev",
+    entry := ← json.getObjValAs? Bool "entry",
+    windowEnd := ← readInteger json "windowEnd"
+  }
+
 def readCycleEvidence (json : Json) : Except String CycleEvidence := do
   return {
     identity := ← readCycleIdentity (← json.getObjVal? "identity"),
@@ -419,21 +450,12 @@ def evaluate (json : Json) : Except String Json := do
         ("unrealizedPnlMicros", toJson (toString value.unrealized)),
         ("positionCount", toJson value.positionCount)]
   | "registeredRisk" =>
-    let limitsJson ← json.getObjVal? "limits"
-    let limits : RegisteredRiskLimits := {
-      order := ← readNatural limitsJson "order",
-      symbol := ← readNatural limitsJson "symbol",
-      gross := ← readNatural limitsJson "gross",
-      net := ← readNatural limitsJson "net",
-      turnover := ← readNatural limitsJson "turnover"
-    }
     let binding : RegisteredRiskBinding := {
       declaredPolicyHash := ← json.getObjValAs? String "declaredPolicyHash",
       materialPolicyHash := ← json.getObjValAs? String "materialPolicyHash",
       declaredAccountHash := ← json.getObjValAs? String "declaredAccountHash",
       materialAccountHash := ← json.getObjValAs? String "materialAccountHash",
-      approvedPolicyHashes := ← json.getObjValAs? (List String) "approvedPolicyHashes",
-      limits
+      approvedPolicyHashes := ← json.getObjValAs? (List String) "approvedPolicyHashes"
     }
     return toJson (decide (registeredRiskPreserved binding))
   | "frozenQuantity" =>
@@ -613,6 +635,39 @@ def evaluate (json : Json) : Except String Json := do
       ("activation", toJson (cycleActivation cycle now)),
       ("completion", toJson (cycleCompletion cycle (← json.getObjValAs? Bool "completed") now))
     ]
+  | "controllerBuildBound" =>
+    return toJson (controllerBuildBound (← json.getObjValAs? (Option String) "registeredSource")
+      (← json.getObjValAs? (Option String) "registeredDigest")
+      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest")
+      (← json.getObjValAs? (Option String) "registeredRepository")
+      (← json.getObjValAs? (Option String) "workerRepository"))
+  | "expiredInferenceContinuation" =>
+    return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
+  | "sourceWaitReconciliationReusable" =>
+    return toJson (sourceWaitReconciliationReusable
+      (← json.getObjValAs? Bool "exact") (← json.getObjValAs? Bool "accounting")
+      (← json.getObjValAs? Bool "sameGeneration") (← json.getObjValAs? Bool "sameVersion")
+      (← json.getObjValAs? Bool "flat") (← json.getObjValAs? Bool "clearMutations")
+      (← json.getObjValAs? Bool "clearOrders") (← readInteger json "oldest")
+      (← readInteger json "newest") (← readInteger json "now") (← readInteger json "maximumAge"))
+  | "unusedEntryHandoffContinuation" =>
+    return toJson (unusedEntryHandoffContinuation (← json.getObjValAs? Bool "expiredTerminal")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
+  | "entryAttemptSuccessor" =>
+    return toJson (entryAttemptSuccessor (← readCycleState (← json.getObjVal? "state"))
+      (← json.getObjValAs? Bool "native") (← json.getObjValAs? Bool "recovered")
+      (← readOptionalInteger json "terminalAt") (← readInteger json "now") (← readInteger json "cutoff")
+      (← json.getObjValAs? Nat "ordinal"))
+  | "latestCompatibleEntryWindow" =>
+    if !(← json.getObjValAs? Bool "targetExists") then return toJson (none : Option Int)
+    let sources ← (← (← json.getObjVal? "sources").getArr?).toList.mapM readEntryWindowSource
+    return toJson (latestCompatibleEntryWindow (← json.getObjValAs? Bool "entry")
+      (← json.getObjValAs? String "targetCycle") (← readEntryWindowScope (← json.getObjVal? "scope")) sources)
+  | "sourceWindowContinuation" =>
+    return toJson (sourceWindowContinuation (← json.getObjValAs? Bool "known")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
+      (← readInteger json "availableAt") (← json.getObjValAs? Nat "normalDelay"))
   | "cycleDecisionBinding" =>
     return toJson (cycleDecisionBinding (← readCycleEvidence (← json.getObjVal? "cycle"))
       (← readCycleDecision (← json.getObjVal? "document")) (← readInteger json "now")
@@ -731,6 +786,9 @@ def evaluate (json : Json) : Except String Json := do
       (← json.getObjValAs? Bool "sourceMatches"))
   | "mutationAdmissionIndependent" =>
     return toJson (mutationAdmissionIndependent (← json.getObjValAs? Bool "ambient"))
+  | "intentRiskClockRejection" =>
+    return toJson (intentRiskClockRejection (← readInteger json "decided") (← readInteger json "expires")
+      (← readInteger json "updated") (← readInteger json "checked"))
   | "decisionCommitmentUpperBound" =>
     let bound := decisionCommitmentUpperBound (← json.getObjValAs? Bool "receiptValid")
       (← json.getObjValAs? Bool "independent") (← json.getObjValAs? Bool "routed")
@@ -792,28 +850,63 @@ def evaluate (json : Json) : Except String Json := do
     return toJson (toString (cashInventoryProfit (← readInteger json "openingEquityMicros")
       (← readInteger json "closingEquityMicros") (← readInteger json "netExternalFlowsMicros")
       (← readInteger json "passiveCashYieldMicros") (← readNatural json "operatingCostsPaidFromAccountMicros")))
-  | "qualification" =>
-    let reliability ← (← (← json.getObjVal? "reliability").getArr?).mapM fun row => do
-      return (← readNatural row "good", ← readNatural row "scheduled")
-    let evidence : QualificationEvidence := {
-      sessionCount := ← readNatural json "sessionCount",
-      netProfit := ← readInteger json "netProfit",
-      bestControlProfit := ← readInteger json "bestControlProfit",
-      profitLowerBoundTotal := ← readInteger json "profitLowerBoundTotal",
-      pairedLowerBoundTotals := (← readIntegerArray (← json.getObjVal? "pairedLowerBoundTotals")).toList,
-      profitWithoutBest := ← readInteger json "profitWithoutBest",
-      additionalCostProfit := ← readInteger json "additionalCostProfit",
-      latencyStressProfit := ← readInteger json "latencyStressProfit",
-      maximumSessionLoss := ← readNatural json "maximumSessionLoss",
-      maximumDrawdown := ← readNatural json "maximumDrawdown",
-      completedEpisodes := ← readNatural json "completedEpisodes",
-      filledNotional := ← readNatural json "filledNotional",
-      reliability := reliability.toList,
-      safetyViolations := ← readNatural json "safetyViolations",
-      completeEvidence := ← json.getObjValAs? Bool "completeEvidence",
-      supportedRealism := ← json.getObjValAs? Bool "supportedRealism"
-    }
-    return toJson (decide (qualificationPass evidence))
+  | "datedEquityTafRate" =>
+    let rate := datedEquityTafRate (← json.getObjValAs? Bool "retained")
+      (← readNatural json "sessionDate") (← readNatural json "baseRate")
+    return match rate with
+      | some value => toJson (toString value)
+      | none => Json.null
+  | "conditionalBound" =>
+    let values ← readIntegerArray (← json.getObjVal? "values")
+    let lower ← readInteger json "lower"
+    let upper ← readInteger json "upper"
+    let denominator ← readNatural json "denominator"
+    if upper < lower || denominator = 0 then throw "invalid registered support or alpha"
+    let width := (upper-lower).toNat
+    let count := values.size
+    let radius := conditionalRadius count width denominator
+    let sum := values.toList.sum
+    let bound := sum - (radius : Int)
+    return Json.mkObj [("count",toJson (toString count)), ("sumMicros",toJson (toString sum)),
+      ("squaredRangesMicros2",toJson (toString (count*width*width))),
+      ("logUpperBound",toJson (toString (conditionalLogBound denominator))),
+      ("radiusMicros",toJson (toString radius)), ("lowerSumMicros",toJson (toString bound)),
+      ("meanLowerBoundMicros",Json.mkObj [("numerator",toJson (toString bound)),("denominator",toJson (toString count))])]
+  | "conditionalSeriesBounds" =>
+    let supports ← (← (← json.getObjVal? "supports").getArr?).mapM readConditionalSupport
+    let series ← (← (← json.getObjVal? "series").getArr?).mapM fun row => do
+      return {
+        policy := ← row.getObjValAs? String "policy"
+        values := (← readIntegerArray (← row.getObjVal? "values")).toList
+      : ConditionalSeries }
+    match conditionalSeriesBounds supports.toList series.toList (← readNatural json "attempt") with
+    | none => return Json.null
+    | some bounds => return Json.mkObj [("denominator",toJson (toString bounds.denominator)),
+        ("profit",toJson (toString bounds.profit)), ("paired",toJson (bounds.paired.map fun (policy, value) =>
+          Json.mkObj [("policy",toJson policy),("lowerSumMicros",toJson (toString value))]))]
+  | "economicEvidence" =>
+    let dates ← json.getObjValAs? (Array String) "dates"
+    let supports ← (← (← json.getObjVal? "supports").getArr?).mapM readConditionalSupport
+    let policies ← (← (← json.getObjVal? "policies").getArr?).mapM fun row => do
+      let sessions ← (← (← row.getObjVal? "sessions").getArr?).mapM fun session => do
+        return {
+          date := ← session.getObjValAs? String "date"
+          profit := ← readInteger session "profit"
+          opening := ← readInteger session "opening"
+          closing := ← readInteger session "closing"
+          minimum := ← readInteger session "minimum"
+          maximum := ← readInteger session "maximum"
+          drawdown := ← readInteger session "drawdown"
+        : EconomicSession }
+      return { policy := ← row.getObjValAs? String "policy", sessions := sessions.toList : EconomicPolicy }
+    match evaluateEconomicEvidence dates.toList (← readInteger json "allocation")
+        (← readInteger json "lossLimit") (← readInteger json "drawdownLimit")
+        (← readNatural json "attempt") supports.toList policies.toList with
+    | none => return Json.null
+    | some checks => return Json.mkObj [("netProfit",toJson checks.netProfit),
+        ("positiveProfitLowerBound",toJson checks.positiveProfitLowerBound),
+        ("pairedIncrementalLowerBounds",toJson checks.pairedIncrementalLowerBounds),
+        ("drawdown",toJson checks.drawdown),("sessionLoss",toJson checks.sessionLoss)]
   | "reportedCash" =>
     let amount ← readInteger json "amount"
     let quantum ← readNatural json "quantum"
@@ -831,10 +924,14 @@ def evaluate (json : Json) : Except String Json := do
     let candidate ← readIntegerArray (← json.getObjVal? "candidate")
     let controls ← (← (← json.getObjVal? "controls").getArr?).mapM readIntegerArray
     let attempt ← readNatural json "attemptIndex"
-    if candidate.size == 0 || controls.size != 3 || controls.any (fun c => c.size != candidate.size) then
-      throw "bootstrap requires a nonempty matched window and three controls"
-    if ¬ tailResolutionSupported attempt then throw "unsupported bootstrap tail resolution"
-    let result := frozenBootstrap candidate controls attempt
+    if candidate.size == 0 || controls.size == 0 || controls.any (fun c => c.size != candidate.size) then
+      throw "bootstrap requires a nonempty matched window and selected controls"
+    let blockLength ← readNatural json "blockLengthSessions"
+    let replicates ← readNatural json "replicates"
+    let seed ← readNatural json "seed"
+    if blockLength == 0 || candidate.size < blockLength || seed == 0 || 4294967295 < seed then throw "invalid registered bootstrap plan"
+    if ¬ tailResolutionSupported attempt controls.size replicates then throw "unsupported bootstrap tail resolution"
+    let result := registeredBootstrap candidate controls attempt blockLength replicates seed
     return Json.mkObj [
       ("lowerProfitTotalMicros", toJson (toString result.lowerProfitTotal)),
       ("lowerIncrementalTotalsMicros", toJson (result.lowerIncrementalTotals.map toString))]
@@ -869,6 +966,77 @@ def evaluate (json : Json) : Except String Json := do
     let scheduled ← readNatural json "scheduled"
     return toJson (if scheduled = 0 ∨ good > scheduled then "UNDETERMINED"
       else if reliabilityPass good scheduled then "MEETS_TARGET" else "MISSES_TARGET")
+  | "marketHandoffReadiness" =>
+    let deadline ← readOptionalField json "deadline" (fun value => do
+      let text ← value.getStr?
+      match text.toInt? with
+      | some n => return n
+      | none => throw "deadline must be an integer string or null")
+    return toJson (marketHandoffReadiness (← json.getObjValAs? Bool "ready")
+      (← json.getObjValAs? Bool "failed") deadline (← readInteger json "now"))
+  | "nativeSafetyJournalInsert" =>
+    return toJson (nativeSafetyJournalInsertAllowed (← readNatural json "triggerDepth"))
+  | "nativeAuditTiming" =>
+    return Json.mkObj [
+      ("admission",toJson (nativeAuditSubmitTiming (← json.getObjValAs? Bool "approved")
+        (← readInteger json "decided") (← readInteger json "started")
+        (← readInteger json "expires") (← readInteger json "cutoff"))),
+      ("routing",toJson (nativeAuditRouteTiming (← readInteger json "started")
+        (← readInteger json "routeStarted") (← readInteger json "dispatched") (← readInteger json "cutoff")))]
+  | "nativeSafetyCoverage" =>
+    let checks ← (← json.getObjValAs? (Array Json) "checks").toList.mapM fun check => do
+      return { kind := ← check.getObjValAs? String "kind", status := ← check.getObjValAs? String "status" : SafetyCheck }
+    return toJson (if nativeSafetyComplete checks then "COMPLETE" else "INCOMPLETE")
+  | "currentTradingScope" =>
+    let market ← json.getObjValAs? String "market"
+    let sell ← json.getObjValAs? Bool "sell"
+    return Json.mkObj [("entryAllowed", toJson (currentEntryMarketAllowed market)),
+      ("submissionAllowed", toJson (currentSubmissionMarketAllowed market sell))]
+  | "measureWork" =>
+    let schedule ← (← (← json.getObjVal? "schedule").getArr?).mapM fun row => do
+      return {
+        id := ← row.getObjValAs? String "id"
+        kind := ← row.getObjValAs? String "kind"
+        due := ← readInteger row "due"
+        deadline := ← readInteger row "deadline"
+      : ScheduledWork }
+    let completions ← (← (← json.getObjVal? "completions").getArr?).mapM fun row => do
+      return {
+        id := ← row.getObjValAs? String "id"
+        completedAt := ← readInteger row "at"
+        correct := ← row.getObjValAs? Bool "correct"
+      : CompletedWork }
+    match measureWork (← readInteger json "asOf") (← json.getObjValAs? Bool "retained")
+        (← json.getObjValAs? Bool "recoveryComplete") schedule.toList completions.toList with
+    | none => return Json.null
+    | some classes => return Json.mkObj [
+        ("status",toJson (measuredWorkStatus classes)),
+        ("classes",toJson (classes.map fun row => Json.mkObj [
+          ("class",toJson row.kind),("status",toJson row.status),("scheduled",toJson (toString row.scheduled)),
+          ("correctOnTime",toJson (toString row.good)),("pending",toJson (toString row.pending)),
+          ("missed",toJson row.missed),("allowedFailures",toJson (toString (row.scheduled/1000)))]))]
+  | "operationalAssessmentVerdict" =>
+    return toJson (operationalAssessmentVerdict (← json.getObjValAs? String "reliability")
+      (← readNatural json "missing") (← json.getObjValAs? Bool "safetyComplete") (← readNatural json "violations"))
+  | "nativeObligationDeadline" =>
+    return toJson (toString (nativeObligationDeadline (← readInteger json "due") (← readInteger json "window")))
+  | "closedEntryWindowTiming" =>
+    return toJson (closedEntryWindowTimingSupported (← readInteger json "issued")
+      (← readInteger json "evaluated") (← readInteger json "available") (← readInteger json "decided")
+      (← readInteger json "observed") (← readInteger json "completed") (← readInteger json "witnessed")
+      (← json.getObjValAs? Bool "entryEligible"))
+  | "reconciliationCompletion" =>
+    return toJson (reconciliationCompletionSupported (← readInteger json "due")
+      (← readInteger json "deadline") (← readInteger json "observed") (← readInteger json "witnessed"))
+  | "protectionObservationOverlap" =>
+    let decode (key : String) : Except String ProtectionOrderFields := do
+      (← json.getObjValAs? (Array Json) key).toList.mapM fun field => do
+        return (← field.getObjValAs? String "name", ← field.getObjValAs? String "value")
+    return toJson (sameProtectionObservation (← decode "nested") (← decode "standalone"))
+  | "brokerClientIdentityCompatible" =>
+    return toJson (brokerClientIdentityCompatible (← json.getObjValAs? String "leftBroker")
+      (← json.getObjValAs? String "leftClient") (← json.getObjValAs? String "rightBroker")
+      (← json.getObjValAs? String "rightClient"))
   | "binaryEdge" =>
     let gain ← readNatural json "gainMicros"
     let loss ← readNatural json "lossMicros"

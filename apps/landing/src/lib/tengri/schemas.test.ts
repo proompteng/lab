@@ -7,6 +7,19 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('scopes active-run reads to a validated conversation without changing workspace reads', () => {
+    const action = { action: 'active-codex-runs', agentId: 'agent-test' } as const
+    expect(tengriActionSchema.parse(action)).toEqual(action)
+    expect(tengriActionSchema.parse({ ...action, threadId: 'thread-selected' })).toEqual({
+      ...action,
+      threadId: 'thread-selected',
+    })
+    for (const threadId of ['', ' ', '../other', 'x'.repeat(161), null]) {
+      expect(tengriActionSchema.safeParse({ ...action, threadId }).success).toBe(false)
+    }
+    expect(tengriActionSchema.safeParse({ ...action, ownerHash: 'other' }).success).toBe(false)
+  })
+
   test('power settings enforce integer idle limits and reject modes that retain RAM', () => {
     const action = { action: 'update-power-settings', agentId: 'agent-test' }
     for (const idleTimeoutMinutes of [0, 5, 60, 1440]) {
@@ -25,10 +38,9 @@ describe('Tengri BFF action schema', () => {
       }).success,
     ).toBe(false)
   })
-  test('accepts model options on conversation operations and rejects invalid choices', () => {
+  test('accepts model options when creating threads or sending turns and rejects invalid choices', () => {
     for (const action of [
       { action: 'create-thread', agentId: 'agent-test' },
-      { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' },
       {
         action: 'send-turn',
         operationId: '11111111-1111-4111-8111-111111111111',
@@ -43,6 +55,13 @@ describe('Tengri BFF action schema', () => {
       expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol\n' }).success).toBe(false)
       expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'unbounded' }).success).toBe(false)
     }
+  })
+
+  test('history reads accept only the conversation identity', () => {
+    const action = { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' }
+    expect(tengriActionSchema.safeParse(action).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol' }).success).toBe(false)
+    expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'high' }).success).toBe(false)
   })
 
   test('editor logout revocation cannot select another owner', () => {
@@ -406,4 +425,17 @@ describe('Codex image inputs', () => {
       }).success,
     ).toBe(false)
   })
+})
+
+test('run recovery binds an explicit run and stable control identity', () => {
+  const action = {
+    action: 'recover-run',
+    agentId: 'agent-test',
+    runId: '11111111-1111-4111-8111-111111111111',
+    operationId: '22222222-2222-4222-8222-222222222222',
+  }
+  expect(tengriActionSchema.safeParse(action).success).toBe(true)
+  expect(tengriActionSchema.safeParse({ ...action, operationId: undefined }).success).toBe(false)
+  expect(tengriActionSchema.safeParse({ ...action, runId: 'other' }).success).toBe(false)
+  expect(tengriActionSchema.safeParse({ ...action, sessionId: 'caller-session' }).success).toBe(false)
 })

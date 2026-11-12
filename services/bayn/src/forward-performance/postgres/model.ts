@@ -11,7 +11,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions,
 } from '../../schemas'
-import type { CycleDecisionDocument } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument, RetainedJevExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { IntradayPerformanceDecisionManifestSchema } from '../intraday-schema'
 import type {
   ForwardPerformanceCashYieldEvidence,
@@ -103,7 +103,7 @@ export const CycleDecisionRow = Schema.Struct({
   created_at: Schema.Date,
 })
 export type VerifiedCycleDecisionRow = Omit<typeof CycleDecisionRow.Type, 'document'> & {
-  readonly document: CycleDecisionDocument
+  readonly document: CycleDecisionDocument | RetainedJevExecutionDecisionDocument
 }
 export const MarketVolumeBindingRow = Schema.Struct({
   cycle_id: Sha256,
@@ -181,7 +181,6 @@ export const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(Transa
 export const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 export const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
 export const decodeDurableExecutions = Schema.decodeUnknownEffect(Schema.Array(DurableExecutionRow), strictParseOptions)
-export const decodeCycleDecisions = Schema.decodeUnknownEffect(Schema.Array(CycleDecisionRow), strictParseOptions)
 export const decodeMarketVolumeBindings = Schema.decodeUnknownEffect(
   Schema.Array(MarketVolumeBindingRow),
   strictParseOptions,

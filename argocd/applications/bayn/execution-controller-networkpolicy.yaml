@@ -29,6 +29,16 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: glitchtip
           podSelector:
             matchLabels:
@@ -103,9 +113,6 @@ spec:
         - podSelector:
             matchLabels:
               cnpg.io/cluster: bayn-db
-        - podSelector:
-            matchLabels:
-              cnpg.io/cluster: bayn-native-arrival-db
       ports:
         - port: 5432
           protocol: TCP

@@ -12,7 +12,6 @@ data:
   queries: |
     bayn_io:
       runonserver: ">=18.0.0 <19.0.0"
-      target_databases: [bayn]
       query: |
         SELECT backend_type, object, context,
                COALESCE(reads, 0) AS reads_total,
@@ -63,7 +62,6 @@ data:
             usage: GAUGE
             description: Unix timestamp of the I/O statistics reset
     bayn_waits:
-      target_databases: [bayn]
       query: |
         SELECT backend_type,
                COALESCE(wait_event_type, 'none') AS wait_event_type,
@@ -95,7 +93,6 @@ data:
             description: Age of the oldest active query in this group, not duration spent in this wait
     bayn_replication:
       primary: true
-      target_databases: [bayn]
       query: |
         SELECT count(*) AS connected_standbys,
                count(*) FILTER (WHERE state = 'streaming') AS streaming_standbys,
@@ -129,7 +126,6 @@ data:
             usage: GAUGE
             description: Largest outstanding WAL byte distance to a standby flush position
     bayn_io_timing:
-      target_databases: [bayn]
       query: |
         SELECT (pg_catalog.current_setting('track_io_timing') = 'on')::integer AS relation_enabled,
                (pg_catalog.current_setting('track_wal_io_timing') = 'on')::integer AS wal_enabled
@@ -140,6 +136,7 @@ data:
         - wal_enabled:
             usage: GAUGE
             description: Whether WAL I/O timings are currently collected
+  financial-queries: |
     bayn_generation_index:
       primary: true
       target_databases: [bayn]

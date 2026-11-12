@@ -265,8 +265,8 @@ test('a known metered expense without its request clock retains daily profit but
     }
     const result = Result.getOrThrow(assessSession(session, registration, definition, input.asOf, verifiedSources))
     expect(result.netEconomicPnlMicros).toBe('1000000000')
-    expect(inference.estimatedTotalCostMicros).toBe('29')
-    expect(result.qualificationPnlMicros).toBe('999999971')
+    expect(inference.estimatedTotalCostMicros).toBe('13')
+    expect(result.qualificationPnlMicros).toBe('1000000000')
     expect(result.economicEvidenceComplete).toBe(true)
     expect(result.violations).toEqual([])
     expect(result.missing).toEqual(meteredFailure ? ['INCOMPLETE_COST_ATTRIBUTION'] : [])

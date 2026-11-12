@@ -75,7 +75,9 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
       notionalMicros: String(Result.getOrThrow(notionalMicros(quantityAtoms, sellPrice))),
     }
     expect(Result.isFailure(applyReplayFill(bought, oversell, oversell.quantityAtoms, model, 1_000_000))).toBeTrue()
-    const fees = Result.getOrThrow(calculateSessionFees([buy], model, 2_000_000n, cryptoMaximumTakerFeeBps))
+    const fees = Result.getOrThrow(
+      calculateSessionFees([buy], model, 2_000_000n, cryptoMaximumTakerFeeBps, '2026-09-04T14:15:00.000Z'),
+    )
     expect(fees.cryptoMicros).toBeGreaterThan(400_000n)
     expect(fees.cashMicros).toBe(0n)
     expect(fees.secMicros + fees.tafMicros + fees.catMicros).toBe(0n)

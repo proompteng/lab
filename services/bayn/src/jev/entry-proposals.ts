@@ -5,9 +5,10 @@ import { canonicalHashV1Result } from '../hash'
 import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
 import { numberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessmentsMaterial } from './chart-questions'
+import type { ChartAssessmentsMaterial } from './/chart-assessments'
 import { JevContractError } from './contract'
 import type { JevEntryEconomics } from './entry-economics'
+import { chartPresenceIsAbsent } from './judgment-policy'
 import { jevExitLimitValue } from './liquidation-economics'
 import type { JevProtocolMaterial } from './protocol'
 
@@ -88,6 +89,7 @@ const sourcePrice = (value: number) =>
   })
 
 type ProposalFundingInput = {
+  readonly chart: NativeChartEvidence
   readonly symbol: string
   readonly economics: JevEntryEconomics
   readonly protocol: JevProtocolMaterial
@@ -106,7 +108,12 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
     )
     if (stopLimit <= 0n || stopLimit > stop || stop >= bidMicros || target <= BigInt(economics.maximumEntryPriceMicros))
       return { status: 'REJECTED', reason: ProposalRejection.InvalidPrices } as const
-    const liquidation = { protocol, symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
+    const liquidation = {
+      protocol,
+      feeAt: input.chart.windowEndAt,
+      symbol,
+      quantityAtoms: BigInt(economics.receivedQuantityAtoms),
+    }
     const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
     const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
     const acquisition = BigInt(economics.acquisitionCostMicros)
@@ -141,6 +148,7 @@ export const mayHaveRetainedFundableSourceProposal = (input: {
     const target = quantizeInstrumentPriceMicros(chart.symbol, highest - 1n, 'DOWN')
     for (const price of prices) {
       const funding = yield* fundProposalPrices({
+        chart,
         symbol: chart.symbol,
         economics,
         protocol,
@@ -164,6 +172,7 @@ export const mayHaveRetainedFundableSourceProposal = (input: {
         low = price.low < low ? price.low : low
         if (high <= low || bidMicros <= high) continue
         const funding = yield* fundProposalPrices({
+          chart,
           symbol: chart.symbol,
           economics,
           protocol,
@@ -244,6 +253,7 @@ export const makeEntrySourceCandidates = (input: {
         low = price.low.success < low ? price.low.success : low
         if (high <= low || bidMicros <= high) continue
         const funding = yield* fundProposalPrices({
+          chart,
           symbol: chart.symbol,
           economics,
           protocol,
@@ -340,6 +350,7 @@ export const makeEntryProposals = (input: {
     const add = (source: typeof ProposalMaterial.fields.source.Type, stop: bigint, target: bigint) =>
       Result.gen(function* () {
         const funding = yield* fundProposalPrices({
+          chart,
           symbol: chart.symbol,
           economics,
           protocol,
@@ -377,7 +388,12 @@ export const makeEntryProposals = (input: {
       })
 
     const { support, resistance, base } = assessments
-    if (support.anchor.status === 'NOT_IDENTIFIED' || resistance.anchor.status === 'NOT_IDENTIFIED') {
+    if (
+      (support.presence.status === 'ASSESSED' && chartPresenceIsAbsent(protocol, support.presence.probability)) ||
+      (resistance.presence.status === 'ASSESSED' && chartPresenceIsAbsent(protocol, resistance.presence.probability)) ||
+      support.anchor.status === 'NOT_IDENTIFIED' ||
+      resistance.anchor.status === 'NOT_IDENTIFIED'
+    ) {
       reject(EntrySetup.SupportRecovery, ProposalRejection.NoStructure)
     } else if (
       support.presence.status === 'REFUSED' ||
@@ -402,7 +418,11 @@ export const makeEntryProposals = (input: {
         quantizeInstrumentPriceMicros(chart.symbol, high - 1n, 'DOWN'),
       )
     }
-    if (base.first.status === 'NOT_IDENTIFIED' || base.last.status === 'NOT_IDENTIFIED') {
+    if (
+      (base.presence.status === 'ASSESSED' && chartPresenceIsAbsent(protocol, base.presence.probability)) ||
+      base.first.status === 'NOT_IDENTIFIED' ||
+      base.last.status === 'NOT_IDENTIFIED'
+    ) {
       reject(EntrySetup.BaseBreakout, ProposalRejection.NoStructure)
     } else if (
       base.presence.status === 'REFUSED' ||

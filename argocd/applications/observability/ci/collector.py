@@ -1,6 +1,7 @@
 """Attempt-aware GitHub Actions metrics and sanitized build records."""
 
 import collections
+import contextlib
 import datetime as dt
 import http.client
 import http.server
@@ -17,6 +18,15 @@ import urllib.parse
 import urllib.request
 
 UTC = dt.timezone.utc
+NIX_CACHE_FIELDS = {
+    "attic_substitutions": "Attic substitutions",
+    "nixos_substitutions": "cache.nixos.org substitutions",
+    "local_builds": "Local derivation builds",
+    "attic_upload_successes": "Attic upload successes",
+    "attic_upload_failures": "Attic upload failures",
+    "attic_download_failures": "Attic download failures",
+    "nixos_download_failures": "cache.nixos.org download failures",
+}
 BUCKETS = (1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 14400)
 RUN_FIELDS = (
     "id",
@@ -43,9 +53,35 @@ OUTCOMES = {
     "stale",
 }
 ACTIVE_STATES = ("in_progress", "queued", "waiting", "pending", "requested")
+COLLECTION_PHASES = (
+    "poll",
+    "pending_live",
+    "history",
+    "pending_backfill",
+    "prune",
+    "loki",
+    "refresh",
+    "sleep",
+)
 MAX_LOG_BYTES = 16 * 1024 * 1024
 LOKI_MAX_SAMPLE_AGE_SECONDS = 168 * 3600
 METRICS = {
+    "ci_observability_phase_active": (
+        "gauge",
+        "Whether the collector is currently executing this fixed phase.",
+    ),
+    "ci_observability_phase_elapsed_seconds": (
+        "gauge",
+        "Monotonic elapsed time of the current phase, or zero when inactive.",
+    ),
+    "ci_observability_phase_last_duration_seconds": (
+        "gauge",
+        "Duration of the last finished phase, regardless of outcome.",
+    ),
+    "ci_observability_phase_completions_total": (
+        "counter",
+        "Finished phases by outcome since process start.",
+    ),
     "ci_job_collection_delay_seconds": (
         "histogram",
         "Delay from job completion to collection after initial installation.",
@@ -90,6 +126,14 @@ METRICS = {
     "ci_job_oldest_queue_seconds": (
         "gauge",
         "Age of the oldest currently queued job in a cohort.",
+    ),
+    "ci_job_oldest_execution_seconds": (
+        "gauge",
+        "Age of the oldest currently running job in a cohort.",
+    ),
+    "ci_job_current_phase_age_seconds": (
+        "gauge",
+        "Oldest age of each current phase among nonterminal running jobs in a cohort.",
     ),
     "ci_observability_pending_attempts": (
         "gauge",
@@ -259,16 +303,15 @@ def cache_evidence(log):
             "durations": dict(durations),
         }
     data = {}
-    for key, title in {
-        "attic_substitutions": "Attic substitutions",
-        "nixos_substitutions": "cache.nixos.org substitutions",
-        "local_builds": "Local derivation builds",
-    }.items():
+    for key, title in NIX_CACHE_FIELDS.items():
         values = re.findall(r"\| " + re.escape(title) + r" \| (\d+) \|", log)
         if values:
             if len(values[-1]) <= 10:
                 data[key] = int(values[-1])
-    if len(data) == 3:
+    if all(
+        key in data
+        for key in ("attic_substitutions", "nixos_substitutions", "local_builds")
+    ):
         return {
             "source": "nix_derivations",
             "state": "nix_builds" if data["local_builds"] else "nix_no_builds",
@@ -634,11 +677,9 @@ class Store:
                             )
                         ] += value
                 elif cache["source"] == "nix_derivations":
-                    for key in (
-                        "attic_substitutions",
-                        "nixos_substitutions",
-                        "local_builds",
-                    ):
+                    for key in NIX_CACHE_FIELDS:
+                        if key not in cache:
+                            continue
                         cache_counts[
                             (
                                 "ci_nix_cache_events",
@@ -922,6 +963,68 @@ class GitHub:
         )
 
 
+class CollectionPhases:
+    """Small in-memory snapshots readable while the collector is blocked on I/O."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.active = None
+        self.started = 0
+        self.durations = dict.fromkeys(COLLECTION_PHASES, 0)
+        self.completions = collections.Counter()
+
+    @contextlib.contextmanager
+    def track(self, phase):
+        if phase not in COLLECTION_PHASES:
+            raise ValueError("Unknown collection phase")
+        started = time.monotonic()
+        with self.lock:
+            if self.active is not None:
+                raise RuntimeError("Collection phases must not overlap")
+            self.active, self.started = phase, started
+        outcome = "interrupted"
+        try:
+            yield
+            outcome = "success"
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            duration = max(0, time.monotonic() - started)
+            with self.lock:
+                self.durations[phase] = duration
+                self.completions[phase, outcome] += 1
+                self.active = None
+
+    def render(self):
+        with self.lock:
+            active = self.active
+            elapsed = max(0, time.monotonic() - self.started) if active else 0
+            durations = self.durations.copy()
+            completions = self.completions.copy()
+        metrics = ""
+        for phase in COLLECTION_PHASES:
+            attrs = {"phase": phase}
+            metrics += exposition(
+                "ci_observability_phase_active", int(active == phase), attrs
+            )
+            metrics += exposition(
+                "ci_observability_phase_elapsed_seconds",
+                elapsed if active == phase else 0,
+                attrs,
+            )
+            metrics += exposition(
+                "ci_observability_phase_last_duration_seconds", durations[phase], attrs
+            )
+            for outcome in ("success", "error", "interrupted"):
+                metrics += exposition(
+                    "ci_observability_phase_completions_total",
+                    completions[phase, outcome],
+                    attrs | {"outcome": outcome},
+                )
+        return metrics
+
+
 class Collector:
     def __init__(self, store, api, workflows, loki_url):
         self.store, self.api, self.workflows, self.loki_url = (
@@ -939,6 +1042,7 @@ class Collector:
         self.history_day = 0
         self.history_runs = None
         self.metrics = b""
+        self.phases = CollectionPhases()
 
     def selected(self, run):
         return run.get("path", "").split("@", 1)[0].rsplit("/", 1)[-1] in self.workflows
@@ -957,6 +1061,8 @@ class Collector:
                 self.store.discover(run, now)
         self.active_runs = active
         counts, oldest = collections.Counter(), collections.defaultdict(float)
+        running = collections.defaultdict(float)
+        current_phases = collections.defaultdict(float)
         for run in active.values():
             workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
             run_attrs = {
@@ -988,6 +1094,29 @@ class Collector:
                     oldest[encoded] = max(
                         oldest[encoded], now - timestamp(job["created_at"])
                     )
+                if state == "in_progress" and timestamp(job.get("started_at")):
+                    running[encoded] = max(
+                        running[encoded], now - timestamp(job["started_at"])
+                    )
+                    steps = job.get("steps") or []
+                    current = next(
+                        (s for s in steps if s.get("status") == "in_progress"), None
+                    )
+                    phase_name = "unattributed"
+                    phase_start = timestamp(job["started_at"])
+                    if current and timestamp(current.get("started_at")):
+                        phase_name = phase(current["name"])
+                        phase_start = timestamp(current["started_at"])
+                    elif steps and all(s.get("status") == "completed" for s in steps):
+                        completed = [timestamp(s.get("completed_at")) for s in steps]
+                        if all(completed):
+                            phase_name, phase_start = "finalizing", max(completed)
+                    phase_labels = json.dumps(
+                        attrs | {"phase": phase_name}, sort_keys=True
+                    )
+                    current_phases[phase_labels] = max(
+                        current_phases[phase_labels], now - phase_start
+                    )
         self.active_metrics = "".join(
             exposition(metric, value, json.loads(encoded))
             for (metric, encoded), value in counts.items()
@@ -999,6 +1128,14 @@ class Collector:
                 json.loads(encoded),
             )
             for encoded, value in oldest.items()
+        )
+        self.active_metrics += "".join(
+            exposition("ci_job_oldest_execution_seconds", value, json.loads(encoded))
+            for encoded, value in running.items()
+        )
+        self.active_metrics += "".join(
+            exposition("ci_job_current_phase_age_seconds", value, json.loads(encoded))
+            for encoded, value in current_phases.items()
         )
         today = dt.datetime.fromtimestamp(now, UTC).date()
         for run in self.api.runs(
@@ -1019,7 +1156,7 @@ class Collector:
                     self.api.runs(day + "T00:00:00Z", day + "T23:59:59Z")
                 )
             while True:
-                if time.time() >= deadline:
+                if time.time() >= deadline or self.api.remaining < 2000:
                     return
                 try:
                     run = next(self.history_runs)
@@ -1214,36 +1351,50 @@ class Collector:
             flush=True,
         )
 
+    def render_metrics(self):
+        # The HTTP thread must not touch SQLite or refresh cached GitHub facts.
+        return self.metrics + self.phases.render().encode()
+
     def run(self):
         while True:
             begin = time.time()
             try:
-                self.poll(begin)
-                self.collect_pending(time.time() + 20)
+                with self.phases.track("poll"):
+                    self.poll(begin)
+                with self.phases.track("pending_live"):
+                    self.collect_pending(time.time() + 20)
             except Exception as error:
                 self.failure(error)
-            self.refresh()
+            with self.phases.track("refresh"):
+                self.refresh()
             try:
-                self.history(begin)
+                with self.phases.track("history"):
+                    self.history(begin)
             except Exception as error:
                 self.failure(error)
             try:
-                self.collect_pending(time.time() + 10)
-                with self.store.db:
+                with self.phases.track("pending_backfill"):
+                    self.collect_pending(time.time() + 10)
+                with self.phases.track("prune"), self.store.db:
                     self.store.db.execute(
                         "DELETE FROM jobs WHERE completed < ?", (begin - 90 * 86400,)
                     )
             except Exception as error:
                 self.failure(error)
             try:
-                while self.store.db.execute("SELECT 1 FROM outbox LIMIT 1").fetchone():
-                    self.flush()
-                    if time.time() > begin + 55:
-                        break
+                with self.phases.track("loki"):
+                    while self.store.db.execute(
+                        "SELECT 1 FROM outbox LIMIT 1"
+                    ).fetchone():
+                        self.flush()
+                        if time.time() > begin + 55:
+                            break
             except Exception as error:
                 self.failure(error)
-            self.refresh()
-            time.sleep(max(1, 60 - (time.time() - begin)))
+            with self.phases.track("refresh"):
+                self.refresh()
+            with self.phases.track("sleep"):
+                time.sleep(max(1, 60 - (time.time() - begin)))
 
 
 def main():
@@ -1265,7 +1416,7 @@ def main():
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/metrics":
-                body = collector.metrics
+                body = collector.render_metrics()
                 content_type = "text/plain; version=0.0.4; charset=utf-8"
             elif self.path in ("/healthz", "/readyz"):
                 body, content_type = b"ok\n", "text/plain"

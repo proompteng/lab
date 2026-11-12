@@ -2,12 +2,12 @@ import 'server-only'
 
 import { randomUUID } from 'node:crypto'
 import { create } from '@bufbuild/protobuf'
-import type { TengriIdentity } from './auth'
+import type { PlatformIdentity } from '../platform/auth'
 import { RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
-import { OfzError } from './ofz'
+import { OfzError } from '../platform/ofz'
 
-export function humanContext(identity: TengriIdentity, workspaceUid = '', runtimeEpoch = '') {
-  const origin = new URL(process.env.TENGRI_DESKTOP_ORIGIN?.trim() || 'https://proompteng.ai')
+export function humanContext(identity: PlatformIdentity, workspaceUid = '', runtimeEpoch = '') {
+  const origin = new URL(process.env.PLATFORM_WEB_ORIGIN?.trim() || 'https://proompteng.ai')
   if (
     origin.protocol !== 'https:' ||
     origin.pathname !== '/' ||

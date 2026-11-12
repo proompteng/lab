@@ -52,7 +52,7 @@ scheduler without interruption. Effect 4 does not require the old global-root
 registry mutation. Scheduler replacement and disabling scheduler yields inside
 workflow code are unsupported.
 
-The SDK pins Effect to `4.0.0` to keep the validated execution contract stable.
+The SDK pins Effect to `4.1.4` to keep the validated execution contract stable.
 An Effect upgrade must pass `tests/workflow/activation-runtime.test.ts` as well
 as the executor and integration suites. The lifecycle tests exercise real
 interruption, late delivery after disposal, garbage collection of suspended

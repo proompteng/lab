@@ -102,6 +102,7 @@ export const buildChartDecisionsRequest = (
     const cached = preparedChartRequests.get(key)
     if (cached !== undefined) return yield* detachedChartRequest(cached)
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(funding.bidMicros),

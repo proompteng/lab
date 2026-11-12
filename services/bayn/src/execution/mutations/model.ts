@@ -57,6 +57,35 @@ export const MutationEventSchema = Schema.Struct({
 })
 export type MutationEvent = typeof MutationEventSchema.Type
 
+/** Evidence for the isolated expired-entry path, checked again at durable cancellation admission. */
+export const ExpiredEntryCancellationAdmissionSchema = Schema.Struct({
+  accountId: NonEmptyString,
+  authorityGenerationHash: Sha256,
+  authorityVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+  intentId: Sha256,
+  clientOrderId: BrokerOrderId,
+  brokerOrderId: BrokerOrderId,
+  observedAt: UtcInstant,
+  validUntil: UtcInstant,
+})
+export type ExpiredEntryCancellationAdmission = typeof ExpiredEntryCancellationAdmissionSchema.Type
+
+export interface ExpiredEntryCancellationFacts {
+  readonly accountId: string
+  readonly authorityGenerationHash: string
+  readonly authorityVersion: number
+  readonly maximum: Authority
+  readonly effective: Authority
+  readonly killState: KillState
+  readonly reason?: string
+  readonly intentId: string
+  readonly intentAuthorityGenerationHash: string
+  readonly clientOrderId: string
+  readonly side: OrderSide
+  readonly brokerOrderId: string
+  readonly admittedAt: string
+}
+
 export const StartInputSchema = Schema.Struct({
   intentId: Sha256,
   requestHash: Sha256,
@@ -64,6 +93,7 @@ export const StartInputSchema = Schema.Struct({
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
   closeOnly: Schema.optionalKey(Schema.Literal(true)),
+  expiredEntryCancellation: Schema.optionalKey(ExpiredEntryCancellationAdmissionSchema),
 })
 export const OutcomeInputSchema = Schema.Struct({
   intentId: Sha256,
@@ -157,6 +187,7 @@ export interface MutationStoreShape {
     brokerOrderId: string,
     consistencyDelayMs: number,
     occurredAt: string,
+    expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
   ) => Effect.Effect<StartReceipt, MutationStoreError | WriterFenceError>
   readonly cancelAccepted: (
     intentId: string,

@@ -53,3 +53,33 @@ spec:
       services:
         - name: proompteng
           port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: platform-admin
+  namespace: proompteng
+spec:
+  entryPoints: [web, websecure]
+  routes:
+    - kind: Rule
+      match: Host(`admin.proompteng.ai`) && Method(`POST`) && (Path(`/api/auth/login`) || Path(`/api/auth/step-up`) || Path(`/api/auth/add-passkey`))
+      priority: 200
+      middlewares:
+        - name: proompteng-auth-start-rate-limit
+      services:
+        - name: platform-admin
+          port: 80
+    - kind: Rule
+      match: Host(`admin.proompteng.ai`) && PathPrefix(`/api/platform`)
+      priority: 100
+      middlewares:
+        - name: proompteng-tengri-rate-limit
+      services:
+        - name: platform-admin
+          port: 80
+    - kind: Rule
+      match: Host(`admin.proompteng.ai`)
+      services:
+        - name: platform-admin
+          port: 80

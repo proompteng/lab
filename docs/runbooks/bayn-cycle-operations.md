@@ -16,6 +16,21 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
    `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
 
+## Bounded session-opening verification
+
+Resolve the broker calendar's exact session date and opening instant in `America/New_York`, then convert each
+requested check to `America/Los_Angeles` and UTC. A schedule without a timezone cannot establish a Pacific trigger.
+Read back the scheduler's next execution instant before treating a follow-up as installed. Reject a trigger already
+past its named session; do not silently advance it to a different trading day.
+
+Pre-open readiness requires the authorized account, compatible PAPER mandate, clear kill state, advancing native
+controller, broker mutation eligibility, fresh exact reconciliation, complete fill accounting, zero unresolved
+mutations, Jev availability, and stock-feed/feature-job readiness. At the open, inspect actual fresh equity bars,
+quotes, feature arrivals, and a durable decision or justified strategy abstention within the existing deadlines.
+Crypto activity and a healthy pod do not establish the equity boundary. Distinguish operational failures, source
+exclusions, strategy abstentions, submitted orders, broker fills, and profitability. End the follow-up after the
+requested opening check; retain its failure evidence when a check arrives late.
+
 ## Native PAPER restoration
 
 The account controller owns routine restoration under the existing approved mandate. Compatible Kargo releases retain
@@ -30,6 +45,45 @@ protection cannot be cleared by this path. Strategy identity changes still requi
 Check the deployed revision and the controller's `RECOVERED` pass, then verify `capitalActivation`, effective authority,
 the active kill state and current reconciliation in `GET /v1/status`. Confirm an actual usable decision or an explicit
 waiting reason in the native pass. A restored authority alone does not prove a decision, order or fill.
+
+### Expired entry recovery during a reconciliation outage
+
+An accepted BUY may still be working when its original approval or submission deadline expires. On a scheduled
+recovery pass, the existing PAPER owner can attempt a narrowly scoped cancellation before rebuilding full account
+history. Its current generation must match the bound decision, with either clear PAPER authority or a recognized
+system restriction. The immutable decision, risk commit, intent, client order and acknowledged broker parent must
+match. A fresh isolated parent lookup must report zero filled quantity; every native bracket exit must also be
+unfilled and held. True OBSERVE `RecoveryOnly` remains lookup-only and cannot issue this cancellation.
+
+The cancellation carries the observed authority generation/version and exact account, intent, client and parent
+identities. The existing fenced admission transaction checks them again and samples the intent account's execution
+commit clock after acquiring its locks: current database wall time for live accounts, and the existing bound source
+clock plus measured elapsed work for isolated replay. Expired evidence, a changed authority version/generation, an operator hold or a protective
+SELL rejects fresh admission. `CANCEL_STARTED` commits before broker I/O; replay and unknown outcomes use the
+existing durable mutation identity and lookup recovery. No new entry, capital activation or kill clear follows
+from this permission.
+
+Partial or filled parents, activated or filled exit legs, superseded generations, changed policy bindings, and
+unavailable or stale isolated lookup evidence return to ordinary reconciliation and protection recovery.
+Unresolved, unchanged or backed-off optional lookup recovery also falls through to full reconciliation on its
+normal due cadence. Durable uncertainty remains recorded and blocks fresh submission; a failed isolated lookup
+cannot indefinitely suppress healthy account, order-list or fill-history reconciliation. Integrity, persistence
+and fresh-cancellation failures retain their existing failure handling. An unrelated full-history failure may
+therefore leave these cases pending. An already bound generation with an incomplete reconciliation can construct
+its restricted driver, but settlement, rollover and restored PAPER authority still require their existing exact
+reconciliation gates.
+
+Under [Alpaca's order contract](https://docs.alpaca.markets/us/docs/orders-at-alpaca), bracket cancellation can
+cancel the remaining group orders. A zero-fill observation is not atomic with
+the broker DELETE: a partial or complete fill can race cancellation, including a terminal canceled order with
+nonzero fills. Keep its original quantity and accounting history, confirm the cancellation outcome, and obtain
+fresh complete reconciliation before sizing protection or declaring settlement. The entry deadline prevents
+fresh submission; it does not guarantee that an accepted broker order cannot fill after that deadline.
+
+The Restate recovery-window counter saturates at seven while bounded recovery deliveries continue at the
+existing recovery cadence. Retries retain the original command issue time and ownership identity; a new
+delivery does not renew a trade deadline. Check continuing durable delivery, the cancellation event and its
+confirmation, and a later exact reconciliation separately when accepting a repair.
 
 ## Trace one lifecycle pass
 
@@ -227,7 +281,10 @@ Confirm the current Restate registration's label selector before comparing worke
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
-  Native recovery retries retain their durable attempt budget and retry every thirty seconds. A newly deployed
+  Native recovery retains a bounded attempt budget per delivery and schedules another recovery window after thirty
+  seconds when those attempts fail. Its diagnostic window counter saturates at seven; reaching that value keeps
+  recovery scheduled with a new invocation-bound idempotency key and the original issuance time. This never renews
+  a trade admission deadline. A newly deployed
   source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
   recovery timer into the new epoch.
 
@@ -249,6 +306,14 @@ Confirm the current Restate registration's label selector before comparing worke
   then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
   acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
   minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
+  For `Streaming market snapshot rejected`, inspect the same observation's `inputCut.reasons` before attributing
+  complete bar coverage to a healthy consumer. `SOURCE_UNAVAILABLE` and `REQUIRED_PARTITIONS_MISSING` identify
+  incorporation/bootstrap setup; `AVAILABILITY_NOT_OBSERVED`, `EPOCH_MISMATCH` and `BOOTSTRAP_AFTER_OBSERVATION`
+  identify an ineligible cut, not missing producer data. `BOOTSTRAP_OFFSETS_INCOMPLETE` includes bounded pending
+  topic/partition positions and required end offsets for the existing consumer owner. Counts remain complete when
+  the eight-coordinate sample is truncated. An empty reason list clears only these gates; inspect the separate
+  feature/window diagnostics next. Correlate the exact replica and observation time with rollout/startup evidence,
+  and do not infer a current outage from a resolved notification or a later healthy sample.
   Warmup, a bound decision, cutoff, and ordinary abstention do not trigger this alert. Restore the failed input owner;
   do not relax freshness, admission, risk, or authority gates or force a trade.
 - `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
@@ -269,13 +334,23 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` remains a hard deadline for an
   ACTIVE cycle until its immutable decision is bound. A decision-bound ACTIVE cycle may continue broker recovery and
   reconciliation through `executionCloseAt`; an unbound ACTIVE cycle at the cutoff is a missed-submission incident.
-- `BaynCycleFailed`: preserve `cycle.reason` and the terminal cycle identity. Resolve the underlying authority,
-  reconciliation, mutation, or durable-cycle state through its existing writer contract. When
+- `BaynCycleFailed`: this is an operational fail-closed condition, not necessarily a terminal cycle failure.
+  Preserve `cycle.reason` and the matching current or last cycle identity. Reconciliation that predates a mutation,
+  an unresolved mutation, or active kill state can trigger it while an ACTIVE cycle is safely recovering.
+  Resolve the underlying authority, reconciliation, mutation, or durable-cycle state through its existing writer contract. When
   `cycle.reason=LAST_CYCLE_BLOCKED`, branch on the exact persisted `cycle.last.terminalReason`; never clear the alert
   by editing monitoring state.
+  The rule evaluates every 15 seconds, requires one minute of failed-condition observations, aggregates across
+  replicas, and retains firing for five minutes after the expression clears. Projection age, scrape timing and
+  replica differences can extend the observed interval; email grouping can delay both firing and resolution messages.
+  Notification timestamps are not incident onset or duration. A firing email may arrive after automatic recovery.
+  Correlate the historical per-replica `bayn_cycle_reason`, `bayn_cycle_condition` and `ALERTS` samples with the
+  matching controller trace, then verify current authority, reconciliation, unresolved mutations, orders and positions.
+  A terminal COMPLETED cycle can include a canceled, unfilled entry. Neither that terminal state nor a resolved alert
+  proves a fill, profit, or permission to trade; preserve the existing broker and authority safeguards.
 
-An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms
-recovery.
+The underlying condition clears only when its source-of-truth state changes and the next bounded projection or
+health probe confirms recovery. Rule keep-firing periods and notification grouping can delay the resolved message.
 
 Missing telemetry is UNKNOWN, not a healthy input window. A stale runtime projection closes `bayn_runtime_ready`;
 an unavailable cycle projection and a failed scrape have their own alerts. This rule cannot diagnose the underlying

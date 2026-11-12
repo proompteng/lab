@@ -15,6 +15,11 @@ import type { JevProtocolMaterial } from './protocol'
 
 export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: string) =>
   // Retired protocols retain their original price arithmetic for immutable financial evidence.
+  protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
@@ -36,7 +41,12 @@ export const jevMaximumEntryAskMicros = (
   observedAsk: bigint,
 ): bigint => {
   const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
-  return protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+  return protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
@@ -49,6 +59,7 @@ export const jevMaximumEntryAskMicros = (
 }
 
 export const jevEntryEconomics = (input: {
+  readonly feeAt: string
   readonly protocol: JevProtocolMaterial
   readonly symbol: string
   readonly bidMicros: bigint
@@ -58,6 +69,7 @@ export const jevEntryEconomics = (input: {
 }) =>
   Result.gen(function* () {
     const { protocol, symbol } = input
+    const entryAllowances = jevEntryPriceAllowances(protocol, symbol)
     const maximumAsk = jevMaximumEntryAskMicros(protocol, symbol, input.askMicros)
     const maximumEntryPrice = (yield* deriveExecutionIntentPricing({
       symbol,
@@ -66,7 +78,7 @@ export const jevEntryEconomics = (input: {
       timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       quantityAtoms: quantityScale,
       referencePriceMicros: maximumAsk,
-      limitSlippageBps: BigInt(jevEntryPriceAllowances(protocol, symbol).limitSlippageBps),
+      limitSlippageBps: BigInt(entryAllowances.limitSlippageBps),
     })).expectedExecutionPriceMicros
     const maximumTargetWeight = Math.min(protocol.maximumGrossWeight, protocol.maximumSymbolWeight)
     const quantities = yield* maximumAllocatedBuyQuantities({
@@ -86,12 +98,13 @@ export const jevEntryEconomics = (input: {
     const crypto = instrumentMarket(symbol) === MarketKind.Crypto
     const entryFeeTier = crypto ? input.cryptoFeeTier : null
     const entryTakerFeeBps = cryptoTakerFeeBps(entryFeeTier)
-    const fees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n, entryTakerFeeBps)
+    const fees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n, entryTakerFeeBps, input.feeAt)
     const received = quantity - receivedCryptoFee(buy, 1_000_000n, entryTakerFeeBps).quantityAtoms
     if (received <= 0n) return null
     const acquisitionCost = buy.notionalMicros + fees.cashMicros
     const breakEvenBid = yield* jevBreakEvenExitBid({
       protocol,
+      feeAt: input.feeAt,
       symbol,
       quantityAtoms: received,
       acquisitionCostMicros: acquisitionCost,
@@ -99,6 +112,7 @@ export const jevEntryEconomics = (input: {
     })
     const breakEvenLimit = yield* jevBreakEvenExitLimitPrice({
       protocol,
+      feeAt: input.feeAt,
       symbol,
       quantityAtoms: received,
       acquisitionCostMicros: acquisitionCost,
@@ -121,8 +135,16 @@ export const jevEntryEconomics = (input: {
       takeProfitBreakEvenLimitUsd: Number(breakEvenLimit) / 1_000_000,
       takeProfitRequiredBidRiseBps: Number(((breakEvenLimit - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
       maximumHoldingMinutes: protocol.maximumHoldingMinutes,
-      maximumEntryQuoteDriftBps: protocol.maximumEntryQuoteDriftBps,
-      maximumEntryLimitSlippageBps: protocol.maximumEntryLimitSlippageBps,
+      // v38 and earlier retain their emitted bytes. v39 describes the effective entry cap;
+      // shared protocol allowances still bind exit and proposal economics.
+      maximumEntryQuoteDriftBps:
+        protocol.schemaVersion === 'bayn.jev.protocol.v40' || protocol.schemaVersion === 'bayn.jev.protocol.v39'
+          ? entryAllowances.quoteDriftBps
+          : protocol.maximumEntryQuoteDriftBps,
+      maximumEntryLimitSlippageBps:
+        protocol.schemaVersion === 'bayn.jev.protocol.v40' || protocol.schemaVersion === 'bayn.jev.protocol.v39'
+          ? entryAllowances.limitSlippageBps
+          : protocol.maximumEntryLimitSlippageBps,
       operatingCostCoverage: 'UNKNOWN',
     }
   }).pipe(

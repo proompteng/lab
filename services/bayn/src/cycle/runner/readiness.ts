@@ -1,16 +1,21 @@
 import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
 import { Schema } from 'effect'
+import { decodeInputReadiness, InputReadinessSchema } from '../../market-data/intraday/input-readiness'
 
 import { UtcInstantSchema } from '../../schemas'
 import { Reason as RiskReason } from '../../risk'
 import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 import type { JevPositionHold } from '../../jev/hold'
+import { ExpiredRiskClockEvidenceSchema } from '../../execution/risk-clock'
 
 export enum DecisionReadinessReason {
   AccountProtection = 'ACCOUNT_PROTECTION',
+  TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
+  InferenceExpired = 'INFERENCE_EXPIRED',
+  ExecutionRiskExpired = 'EXECUTION_RISK_EXPIRED',
   LookbackWarmup = 'LOOKBACK_WARMUP',
   SnapshotUnavailable = 'SNAPSHOT_UNAVAILABLE',
   SnapshotCoverage = 'SNAPSHOT_COVERAGE',
@@ -20,8 +25,7 @@ export enum DecisionReadinessReason {
   SignalWindowObserved = 'SIGNAL_WINDOW_OBSERVED',
 }
 
-export const DecisionReadinessSchema = Schema.Struct({
-  reason: Schema.Enum(DecisionReadinessReason),
+const readinessFields = {
   message: Schema.NonEmptyString,
   accountProtectionReasons: Schema.optionalKey(
     Schema.Array(Schema.Literals([RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded])).check(
@@ -34,14 +38,25 @@ export const DecisionReadinessSchema = Schema.Struct({
   symbol: Schema.optionalKey(Schema.NonEmptyString),
   eventAt: Schema.optionalKey(UtcInstantSchema),
   requiredFeature: Schema.optionalKey(RequiredMarketFeatureSchema),
+  inputReadiness: Schema.optionalKey(InputReadinessSchema),
   snapshotQuery: Schema.optionalKey(
     Schema.Struct({
       rangeStartAt: UtcInstantSchema,
       rangeEndAt: UtcInstantSchema,
+      previousWindowEndAt: Schema.optionalKey(UtcInstantSchema),
       symbols: Schema.Array(Schema.NonEmptyString),
     }),
   ),
-}).check(
+} as const
+const { ExecutionRiskExpired: _executionRiskExpired, ...ordinaryReadinessReasons } = DecisionReadinessReason
+export const DecisionReadinessSchema = Schema.Union([
+  Schema.Struct({ reason: Schema.Enum(ordinaryReadinessReasons), ...readinessFields }),
+  Schema.Struct({
+    reason: Schema.Literal(DecisionReadinessReason.ExecutionRiskExpired),
+    ...readinessFields,
+    riskClockRejection: ExpiredRiskClockEvidenceSchema,
+  }),
+]).check(
   Schema.makeFilter(
     (readiness) =>
       readiness.accountProtectionReasons === undefined ||
@@ -56,6 +71,7 @@ export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionRea
   const symbol = failure.facts?.['symbol']
   const eventAt = failure.facts?.['eventAt']
   const requiredFeature = failure.facts?.['requiredFeature']
+  const inputReadiness = decodeInputReadiness(failure.facts?.['inputReadiness'])
   return {
     reason:
       failure.reason === 'watermark'
@@ -67,6 +83,7 @@ export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionRea
     ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
     ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
     ...(Schema.is(RequiredMarketFeatureSchema)(requiredFeature) ? { requiredFeature } : {}),
+    ...(inputReadiness === undefined ? {} : { inputReadiness }),
   }
 }
 
@@ -94,6 +111,7 @@ export const CycleWaitReasonSchema = Schema.Union([
     'PROTECTION_RECOVERY_ONLY',
     'PROTECTION_AWAITING_RECONCILIATION',
     'PROTECTION_CANCEL_PENDING',
+    'PROTECTION_PUBLICATION_PENDING',
     'PROTECTION_AUTHORITY_UNAVAILABLE',
     'PROTECTION_EXIT_COMMITTED',
     'POST_MUTATION_RECONCILIATION',

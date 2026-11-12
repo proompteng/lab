@@ -1,4 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -10,6 +13,7 @@ const setupAction = readRepoFile('.github/actions/setup-nix-toolchain/action.yml
 const arcApplication = readRepoFile('argocd/applications/arc/application.yaml')
 const arcRunnerImage = readRepoFile('nix/images/arc-runner.nix')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
+const arcPlacementAcceptance = readRepoFile('.github/workflows/arc-placement-acceptance.yml')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const argoLintWorkflow = readRepoFile('.github/workflows/argo-lint.yml')
@@ -27,15 +31,38 @@ const runnerScaleSetBlock = (name: string): string => {
   return arcApplication.slice(start, next === -1 ? arcApplication.length : next)
 }
 
-const arcRunnerBuildTriggerPaths = Array.from(
-  new Set(Array.from(arcRunnerBuildWorkflow.matchAll(/^\s+- '([^']+)'$/gm), ([, path]) => path)),
-)
+const arcRunnerBuildTriggerPaths = YAML.parse(arcRunnerBuildWorkflow).on.push.paths as string[]
 
 const arcRunnerToolchainScriptPaths = Array.from(
   new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
 )
+
+const arcNixSetupSteps = (workflow: string) => {
+  const jobs = YAML.parseDocument(workflow).get('jobs')
+  if (!YAML.isMap(jobs)) throw new Error('Workflow jobs are missing')
+  return jobs.items.flatMap(({ key, value: job }) => {
+    if (!YAML.isMap(job)) throw new Error('Workflow job is not a map')
+    const runner = job.get('runs-on')
+    const matrix = job.getIn(['strategy', 'matrix', 'include'])
+    const runners =
+      typeof runner === 'string' && runner.includes('matrix.runner') && YAML.isSeq(matrix)
+        ? matrix.items.map((row) => (YAML.isMap(row) ? row.get('runner') : undefined))
+        : YAML.isSeq(runner)
+          ? runner.toJSON()
+          : [runner]
+    if (!runners.some((name: unknown) => typeof name === 'string' && name.startsWith('arc-'))) return []
+    const steps = job.get('steps')
+    if (!YAML.isSeq(steps)) return []
+    return steps.items.flatMap((step) =>
+      YAML.isMap(step) && step.get('uses') === './.github/actions/setup-nix-toolchain'
+        ? [{ job: String(key), required: step.getIn(['with', 'require-preinstalled']) }]
+        : [],
+    )
+  })
+}
+
 describe('ARC Nix runner toolchain', () => {
-  it('keeps ARC runner scratch writes off shared Ceph while making runner images releasable by digest', () => {
+  it('keeps runner scratch disposable while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
@@ -44,7 +71,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(armBlock).toContain('emptyDir:')
     expect(armBlock).toContain('sizeLimit: 130Gi')
     expect(armBlock).not.toContain('volumeClaimTemplate:')
-    expect(arcApplication).not.toMatch(/storageClassName:\s*["']?rook-ceph/)
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
     const analysisBlock = runnerScaleSetBlock('analysis-arm64')
     expect(analysisBlock).toContain('emptyDir:')
     expect(analysisBlock).toContain('sizeLimit: 20Gi')
@@ -55,9 +82,43 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
-  it('places AMD64 Nix and workspace writes on one disposable local NVMe volume', () => {
+  it('keeps ARC control pods on Ryzen while ARM64 runners stay on Altra', () => {
+    const application = YAML.parse(arcApplication)
+    expect(application.spec.sources[0].helm.valuesObject).toMatchObject({
+      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+      tolerations: [
+        {
+          key: 'workload.proompteng.ai/compute-local',
+          operator: 'Equal',
+          value: 'true',
+          effect: 'NoSchedule',
+        },
+      ],
+    })
+
+    for (const name of ['arc-arm64', 'analysis-arm64']) {
+      const source = application.spec.sources.find(
+        (candidate: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
+          candidate.helm?.valuesObject?.runnerScaleSetName === name,
+      )
+      expect(source.helm.valuesObject.listenerTemplate.spec).toMatchObject({
+        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+        tolerations: [
+          {
+            key: 'workload.proompteng.ai/compute-local',
+            operator: 'Equal',
+            value: 'true',
+            effect: 'NoSchedule',
+          },
+        ],
+      })
+      expect(source.helm.valuesObject.template.spec.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+    }
+  })
+
+  it('places AMD64 Nix and workspace writes on one disposable Ceph RBD volume', () => {
     const application = YAML.parseDocument(arcApplication)
-    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {
+    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'rook-ceph-block']] as const) {
       const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
       expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe(name)
       expect(application.getIn([...valuesPath, 'scaleSetLabels']).toJSON()).toContain('arc-amd64')
@@ -66,20 +127,7 @@ describe('ARC Nix runner toolchain', () => {
 
       const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
       expect(pod.toJSON()).toMatchObject({
-        nodeSelector: { 'kubernetes.io/arch': 'amd64' },
-        affinity: {
-          nodeAffinity: {
-            requiredDuringSchedulingIgnoredDuringExecution: {
-              nodeSelectorTerms: [
-                {
-                  matchExpressions: [
-                    { key: 'kubernetes.io/hostname', operator: 'In', values: ['turin', 'talos-192-168-1-194'] },
-                  ],
-                },
-              ],
-            },
-          },
-        },
+        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' },
         initContainers: expect.arrayContaining([
           expect.objectContaining({
             volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
@@ -105,7 +153,7 @@ describe('ARC Nix runner toolchain', () => {
                   accessModes: ['ReadWriteOnce'],
                   storageClassName: storageClass,
                   volumeMode: 'Filesystem',
-                  resources: { requests: { storage: '45Gi' } },
+                  resources: { requests: { storage: '130Gi' } },
                 },
               }),
             },
@@ -121,34 +169,30 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('keeps lab ARC runner concurrency capped', () => {
+  it('keeps ten warm AMD64 runners while preserving the other runner pools', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 9')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 2')
-    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 4')
-    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 2')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 10')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 10')
+    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 2')
+    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 1')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
     expect(arcApplication).not.toContain('arc-amd64-turin')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
-  it('keeps all nine AMD64 slots schedulable when Ryzen has no memory for another runner', () => {
+  it('pins AMD64 builds to Turin without repurposing the existing local storage paths', () => {
     const application = YAML.parseDocument(arcApplication)
     const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
     if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
-    expect(pod.toJSON().topologySpreadConstraints).toEqual([
-      {
-        maxSkew: 3,
-        topologyKey: 'kubernetes.io/hostname',
-        whenUnsatisfiable: 'ScheduleAnyway',
-        nodeTaintsPolicy: 'Honor',
-        labelSelector: {
-          matchLabels: { 'actions.github.com/scale-set-name': 'arc-amd64', 'app.kubernetes.io/component': 'runner' },
-        },
-      },
-    ])
+    expect(pod.toJSON().nodeSelector).toEqual({
+      'kubernetes.io/arch': 'amd64',
+      'kubernetes.io/hostname': 'turin',
+    })
+    expect(pod.getIn(['volumes', 0, 'ephemeral', 'volumeClaimTemplate', 'spec', 'storageClassName'])).toBe(
+      'rook-ceph-block',
+    )
     expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
@@ -156,17 +200,83 @@ describe('ARC Nix runner toolchain', () => {
     const data = JSON.parse(String(config.getIn(['data', 'config.json'])))
     expect(data.nodePathMap).toEqual([])
     expect(data.storageClassConfigs['local-path-ci-amd64'].nodePathMap).toEqual([
-      { node: 'turin', paths: ['/var/mnt/turin-nvme-transcend'] },
       { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
+      { node: 'turin', paths: ['/var/lib/kubelet/ci-amd64'] },
       { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
     ])
     expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
       'local-path',
+      'local-path-bayn-wal',
       'local-path-ci-amd64',
-      'local-path-ryzen',
-      'local-path-turin-nvme-intel',
-      'local-path-turin-nvme-transcend',
     ])
+  })
+
+  it('admits only a separate Ceph RBD ext4 scratch mount before touching files', () => {
+    const application = YAML.parse(arcApplication)
+    const script = application.spec.sources[2].helm.valuesObject.template.spec.initContainers[0].args[0] as string
+    const boundary = script.indexOf('# A terminated init')
+    if (boundary < 0) throw new Error('Scratch admission boundary is missing')
+    const admission = script.slice(0, boundary)
+    const directory = mkdtempSync(join(tmpdir(), 'arc-scratch-admission-'))
+    writeFileSync(
+      join(directory, 'df'),
+      `#!/bin/sh
+for path do :; done
+printf 'Filesystem Type Blocks Used Available Capacity Mounted\\n'
+if [ "$path" = / ]; then
+  printf '%s overlay 1 0 1 0%% /\\n' "$ARC_TEST_ROOT"
+else
+  printf '%s %s 1 0 1 0%% /scratch\\n' "$ARC_TEST_DEVICE" "$ARC_TEST_FSTYPE"
+fi
+`,
+      { mode: 0o755 },
+    )
+    try {
+      for (const [device, filesystem, root, status] of [
+        ['/dev/rbd0', 'ext4', 'overlay', 0],
+        ['/dev/rbd12', 'ext4', 'overlay', 0],
+        ['/dev/nvme3n1p4', 'ext4', 'overlay', 1],
+        ['/dev/rbd0', 'xfs', 'overlay', 1],
+        ['overlay', 'overlay', 'overlay', 1],
+        ['/dev/rbd0', 'ext4', '/dev/rbd0', 1],
+      ] as const) {
+        const result = spawnSync('bash', ['-c', admission], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            ARC_TEST_DEVICE: device,
+            ARC_TEST_FSTYPE: filesystem,
+            ARC_TEST_ROOT: root,
+          },
+        })
+        expect(result.status, `${device} ${filesystem} root=${root}: ${result.stderr}`).toBe(status)
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('requires ten Ceph builders and two publication runners without weakening the overlap proof', () => {
+    const jobs = YAML.parse(arcPlacementAcceptance).jobs
+    expect(jobs['ceph-build'].strategy.matrix.slot).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(jobs['ceph-build'].strategy['max-parallel']).toBe(10)
+    expect(jobs['publication-tools'].strategy.matrix.slot).toEqual([1, 2])
+    expect(jobs['publication-tools'].strategy['max-parallel']).toBe(2)
+    expect(jobs['verify-placement'].needs).toEqual(['ceph-build', 'publication-tools'])
+    for (const job of Object.values(jobs) as { steps: { run?: string }[] }[]) {
+      for (const step of job.steps) {
+        if (step.run) {
+          const syntax = spawnSync('bash', ['-n'], { input: step.run, encoding: 'utf8' })
+          expect(syntax.status, syntax.stderr).toBe(0)
+        }
+      }
+    }
+    expect(arcPlacementAcceptance).toContain('"$RUNNER_TEMP" "$buildkit_root"')
+    expect(arcPlacementAcceptance).toContain('test "$device" = "$scratch_device"')
+    expect(arcPlacementAcceptance).toContain('test "$output_sha" = "$input_sha"')
+    expect(arcPlacementAcceptance).toContain('([.[].pod] | unique | length) == 12')
+    expect(arcPlacementAcceptance).toContain('([.[].end] | min) - ([.[].start] | max) >= 45')
   })
 
   it('reserves small sidecar-free runners for publication outside the native build queues', () => {
@@ -176,7 +286,13 @@ describe('ARC Nix runner toolchain', () => {
         source.helm?.valuesObject?.runnerScaleSetName === 'arc-amd64-publish',
     )
     const pod = source.helm.valuesObject.template.spec
-    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' })
+    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64' })
+    expect(pod.tolerations).toContainEqual({
+      key: 'workload.proompteng.ai/compute-local',
+      operator: 'Equal',
+      value: 'true',
+      effect: 'NoSchedule',
+    })
     expect(pod.automountServiceAccountToken).toBe(false)
     expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
     expect(pod.containers[0].securityContext.privileged).toBe(false)
@@ -272,24 +388,20 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain(
       "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
     )
-    expect(arcRunnerBuildTriggerPaths).not.toContain('flake.nix')
+    expect(arcRunnerBuildTriggerPaths).toContain('flake.nix')
+    expect(arcRunnerBuildTriggerPaths).toContain('flake.lock')
+    expect(arcRunnerBuildTriggerPaths).toContain('nix/packages.nix')
     expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
     expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerBuildWorkflow).not.toContain('docker run')
     expect(arcRunnerBuildWorkflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
-    expect(arcRunnerBuildWorkflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
+    expect(arcRunnerBuildTriggerPaths).not.toContain('.github/workflows/nix-oci-build-common.yml')
     expect(arcRunnerBuildWorkflow).toContain("- 'nix/oci-push.sh'")
     expect(arcRunnerBuildWorkflow).not.toContain("- '.github/workflows/arc-runner-build-push.yml'")
     expect(arcRunnerBuildWorkflow).not.toContain("'packages/scripts/src/shared/__tests__/arc-runner.test.ts'")
     expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
     expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
     for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
-      if (
-        toolchainScriptPath === 'nix/oci-release-contract.sh' ||
-        toolchainScriptPath === 'nix/cache-push.sh' ||
-        toolchainScriptPath === 'nix/oci-inspect-archive.sh'
-      )
-        continue
       expect(arcRunnerBuildTriggerPaths, `${toolchainScriptPath} must start ARC runner image builds`).toContain(
         toolchainScriptPath,
       )
@@ -345,19 +457,46 @@ describe('ARC Nix runner toolchain', () => {
     expect(nixOciWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
   })
 
+  it('checks setup steps in their own ARC jobs, including matrix runners', () => {
+    const setup = { uses: './.github/actions/setup-nix-toolchain' }
+    const workflow = YAML.stringify({
+      jobs: {
+        hosted: { 'runs-on': 'ubuntu-latest', steps: [setup] },
+        native: { 'runs-on': 'arc-amd64', steps: [] },
+      },
+    })
+    expect(arcNixSetupSteps(workflow)).toEqual([])
+    expect(
+      arcNixSetupSteps(
+        YAML.stringify({
+          jobs: {
+            guarded: {
+              'runs-on': 'arc-amd64',
+              steps: [{ ...setup, with: { 'require-preinstalled': 'true' } }],
+            },
+            unguarded: {
+              'runs-on': '${{ matrix.runner }}',
+              strategy: { matrix: { include: [{ runner: 'arc-arm64' }] } },
+              steps: [setup],
+            },
+          },
+        }),
+      ),
+    ).toEqual([
+      { job: 'guarded', required: 'true' },
+      { job: 'unguarded', required: undefined },
+    ])
+  })
+
   it('does not let ARC workflow callers silently use fallback Nix installation', () => {
     const workflowDir = new URL('.github/workflows/', repoRoot)
     const arcSetupCallers = readdirSync(workflowDir)
       .filter((file) => file.endsWith('.yml') || file.endsWith('.yaml'))
-      .map((file) => [file, readRepoFile(`.github/workflows/${file}`)] as const)
-      .filter(([, content]) => content.includes('uses: ./.github/actions/setup-nix-toolchain'))
-      .filter(([, content]) => content.includes('runs-on: arc-') || content.includes('runner: arc-'))
+      .flatMap((file) => arcNixSetupSteps(readRepoFile(`.github/workflows/${file}`)).map((step) => ({ file, ...step })))
 
     expect(arcSetupCallers.length).toBeGreaterThan(0)
-    for (const [file, content] of arcSetupCallers) {
-      expect(content, `${file} must require the preinstalled ARC Nix toolchain`).toContain(
-        "require-preinstalled: 'true'",
-      )
+    for (const { file, job, required } of arcSetupCallers) {
+      expect(required, `${file}:${job} must require the preinstalled ARC Nix toolchain`).toBe('true')
     }
   })
 })

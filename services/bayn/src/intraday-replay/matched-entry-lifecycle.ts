@@ -2,7 +2,7 @@ import { jevMarketForSymbol } from '../jev/markets'
 import { Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
-import type { JevProtocol } from '../jev/protocol'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from '../jev/protocol'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import {
   applyControlOrder,
@@ -39,7 +39,7 @@ export interface MatchedLifecycle {
 
 export interface MatchedTerms {
   readonly symbol: string
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
   readonly assumptions: typeof SignalStudyInputSchema.Type.assumptions
   readonly entryBudgetMicros: string
   readonly decidedAtMs: number
@@ -83,7 +83,11 @@ export const stepMatchedLifecycle = (
         ...jevMarketForSymbol(terms.symbol),
       })
       if (rejection !== null || quote === undefined) return problem(rejection ?? 'missing-entry-quote')
-      const quantityAtoms = yield* studyEntryQuantity({ ...terms, referencePrice: quote.value.askPrice })
+      const quantityAtoms = yield* studyEntryQuantity({
+        feeAt: new Date(atMs).toISOString(),
+        ...terms,
+        referencePrice: quote.value.askPrice,
+      })
       return {
         ...state,
         entry:

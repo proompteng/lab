@@ -15,8 +15,6 @@ spec:
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
-  minSyncReplicas: 1
-  maxSyncReplicas: 1
   managed:
     roles:
       - name: bayn_research
@@ -53,9 +51,13 @@ spec:
       cpu: "2"
       memory: 8Gi
   storage:
-    storageClass: rook-ceph-block
-    size: 100Gi
-    resizeInUseVolumes: true
+    storageClass: local-path
+    size: 500Gi
+    resizeInUseVolumes: false
+  walStorage:
+    storageClass: local-path
+    size: 32Gi
+    resizeInUseVolumes: false
   bootstrap:
     initdb:
       database: bayn
@@ -63,6 +65,10 @@ spec:
       encoding: UTF8
       dataChecksums: true
   postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
     parameters:
       jit: "off"
       shared_buffers: 512MB
@@ -89,6 +95,8 @@ spec:
         key: queries
       - name: bayn-postgres-monitoring
         key: queries
+      - name: bayn-postgres-monitoring
+        key: financial-queries
     disableDefaultQueries: false
   plugins:
     - name: barman-cloud.cloudnative-pg.io

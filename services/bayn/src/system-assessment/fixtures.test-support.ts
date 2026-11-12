@@ -1,4 +1,11 @@
 import {
+  HistoricalJevProtocolSchema,
+  retainedJevProtocolV39Document,
+  RetainedJevProtocolV35Schema,
+  RetainedJevProtocolV38Schema,
+} from '../jev/protocol'
+import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
+import {
   frozenDeployedControlIdentity,
   frozenControlOrigin,
   frozenControlPrompts,
@@ -14,11 +21,16 @@ import {
 import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
-  entryAblationQuestionPolicyHash,
+  historicalAblationQuestionPolicyHash,
 } from '../jev/entry-ablation-policy'
 import { IsoDateSchema } from '../schemas'
 import { canonicalHashV1Result, sha256 } from '../hash'
-import { jevAcceptanceProtocolHash, JevResearchPolicy } from '../jev/acceptance'
+import {
+  jevAcceptanceProtocolHash,
+  JevResearchPolicy,
+  JevAcceptanceVersion,
+  usesLegacyAcceptance,
+} from '../jev/acceptance'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
 import { ObligationClass, ObligationOutcome } from './reliability'
 import { systemQualificationPolicyHash, type SystemRegistration } from './policy'
@@ -29,7 +41,7 @@ import { OrderSide } from '../execution/contracts'
 import { registeredSchedule } from './schedule'
 import { CashFlowEvidenceSchema } from './cash-flows'
 import { withProviderSessions } from '../testing/market-calendar-fixture'
-import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
+import { defaultJevProtocolDocument, decodeJevProtocol, usesJevOnlyInference } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { systemLatencyStressProtocolHash } from './latency-protocol'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -84,130 +96,154 @@ export const calendarFixture = (registration: SystemRegistration) => {
   return { ...material, normalizedResponseHash: testHash(material) }
 }
 
-const ablationIdentity = Result.getOrThrow(
-  entryAblationStrategyIdentity(
-    makeEntryAblationPolicy(Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))),
-  ),
-)
-
-const momentumIdentity = Result.getOrThrow(
-  repeatedMomentumStrategyIdentity(
-    makeRepeatedMomentumPolicy(Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))),
-  ),
-)
-
-const baseRegistrationFixture = (sessionCount: number): SystemRegistration => ({
-  schemaVersion: 'bayn.system-registration.v2',
-  program: 'BAYN_SYSTEM_QUALIFICATION',
-  environment: 'PAPER',
-  policyHash: Result.getOrThrow(systemQualificationPolicyHash()),
-  acceptanceProtocolHash: Result.getOrThrow(jevAcceptanceProtocolHash()),
-  attemptIndex: 1,
-  priorAttemptHash: sha256('reviewed prior attempt history'),
-  registeredAt: '2026-10-30T12:00:00.000Z',
-  calendar: {
-    referenceMarket: 'US_EQUITIES',
-    tradingMarkets: [MarketKind.Equity, MarketKind.Crypto],
-    operatingHours: 'REGULAR_SESSION',
-    sourceHash: sha256('synthetic calendar'),
-    sessions: Array.from({ length: sessionCount }, (_, i) => {
-      const day = Schema.decodeUnknownSync(IsoDateSchema)(
-        new Date(Date.UTC(2026, 10, 2 + i + Math.floor(i / 5) * 2)).toISOString().slice(0, 10),
-      )
-      return { sessionDate: day, openAt: `${day}T14:30:00.000Z`, closeAt: `${day}T14:32:00.000Z` }
-    }),
-  },
-  policies: Object.values(JevResearchPolicy).map((policy) => ({
-    policy,
-    ...registeredRiskFixture(`${policy}:account`),
-    authorityGenerationHash: sha256(`${policy}:generation`),
-    sourceRevision: 'a'.repeat(40),
-    imageDigest: sha256('image'),
-    strategyHash: sha256(policy),
-    protocolHash: sha256(`${policy}:protocol`),
-    parametersHash:
-      policy === JevResearchPolicy.Candidate
-        ? testHash(Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument)))
-        : sha256(`${policy}:parameters`),
-    promptsHash: sha256(`${policy}:prompts`),
-    continuationAndExitsHash: sha256(`${policy}:exit`),
-    costAllocationRuleHash: testHash(costAttributionRule),
-    inferenceRateCard: {
-      schemaVersion: 'bayn.inference-rate-card.v1',
-      rates: replayRateCardFixture({
-        jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
-        chart: {
-          inputMicrosPerMillionTokens: '1',
-          outputMicrosPerMillionTokens: '0',
-          cachedInputMicrosPerMillionTokens: '0',
-          cacheWriteInputMicrosPerMillionTokens: '0',
-        },
-      }).rates.filter(
-        (rate) =>
-          policy === JevResearchPolicy.Candidate ||
-          (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
-      ),
+const baseRegistrationFixture = (
+  sessionCount: number,
+  protocol: typeof HistoricalJevProtocolSchema.Type,
+): SystemRegistration => {
+  const ablationIdentity = Result.getOrThrow(
+    entryAblationStrategyIdentity(
+      makeEntryAblationPolicy(protocol, Result.getOrThrow(historicalAblationQuestionPolicyHash(protocol))),
+    ),
+  )
+  const momentumIdentity = Result.getOrThrow(repeatedMomentumStrategyIdentity(makeRepeatedMomentumPolicy(protocol)))
+  return {
+    schemaVersion: 'bayn.system-registration.v4',
+    allocationMicros: '100000000000',
+    statisticalPlan: {
+      method: 'CONDITIONAL_HOEFFDING_V1',
+      meanModel: 'DETERMINISTIC_CONDITIONAL_SESSION_MEANS',
+      supports: [],
     },
-    executionModelHash: sha256(`${policy}:execution`),
-    ...(policy === JevResearchPolicy.Momentum
-      ? {
-          strategyHash: momentumIdentity.strategy.behaviorHash,
-          parametersHash: momentumIdentity.strategy.parameterHash,
-          protocolHash: momentumIdentity.protocolHash,
-          promptsHash: Result.getOrThrow(repeatedMomentumPromptsHash()),
-          executionModelHash: testHash(defaultJevProtocolDocument.executionModel),
-        }
-      : {}),
-    ...(policy === JevResearchPolicy.Ablation
-      ? {
-          strategyHash: ablationIdentity.strategy.behaviorHash,
-          parametersHash: ablationIdentity.strategy.parameterHash,
-          protocolHash: ablationIdentity.protocolHash,
-          promptsHash: entryAblationQuestionPolicyHash,
-          executionModelHash: testHash(defaultJevProtocolDocument.executionModel),
-        }
-      : {}),
-    ...(policy === JevResearchPolicy.Deployed
-      ? {
-          ...frozenDeployedControlIdentity,
-          executionModelHash: frozenControlOrigin.executionModelHash,
-          promptsHash: testHash(frozenControlPrompts),
-          continuationAndExitsHash: testHash(frozenControlContinuation),
-        }
-      : {}),
-  })),
-  costAllocationPlans: [],
-  obligations: {
-    configuration: {
-      schemaVersion: 'bayn.qualification-runtime.v1',
-      controllerPlanHash: sha256('controller plan'),
-      cyclePollIntervalMs: 60000,
-      operationTimeoutMs: 30000,
+    program: 'BAYN_SYSTEM_QUALIFICATION',
+    environment: 'PAPER',
+    policyHash: Result.getOrThrow(systemQualificationPolicyHash()),
+    acceptanceProtocolHash: Result.getOrThrow(jevAcceptanceProtocolHash()),
+    attemptIndex: 1,
+    priorAttemptHash: sha256('reviewed prior attempt history'),
+    registeredAt: '2026-10-30T12:00:00.000Z',
+    calendar: {
+      referenceMarket: 'US_EQUITIES',
+      tradingMarkets: [MarketKind.Equity, MarketKind.Crypto],
+      operatingHours: 'REGULAR_SESSION',
+      sourceHash: sha256('synthetic calendar'),
+      sessions: Array.from({ length: sessionCount }, (_, i) => {
+        const day = Schema.decodeUnknownSync(IsoDateSchema)(
+          new Date(Date.UTC(2026, 10, 2 + i + Math.floor(i / 5) * 2)).toISOString().slice(0, 10),
+        )
+        return { sessionDate: day, openAt: `${day}T14:30:00.000Z`, closeAt: `${day}T14:32:00.000Z` }
+      }),
+    },
+    policies: Object.values(JevResearchPolicy).map((policy) => ({
+      policy,
+      ...registeredRiskFixture(`${policy}:account`),
+      authorityGenerationHash: sha256(`${policy}:generation`),
+      sourceRevision: 'a'.repeat(40),
+      imageDigest: sha256('image'),
+      strategyHash: sha256(policy),
+      protocolHash: sha256(`${policy}:protocol`),
+      parametersHash: policy === JevResearchPolicy.Candidate ? testHash(protocol) : sha256(`${policy}:parameters`),
+      promptsHash: sha256(`${policy}:prompts`),
+      continuationAndExitsHash: sha256(`${policy}:exit`),
+      costAllocationRuleHash: testHash(costAttributionRule),
+      inferenceRateCard: {
+        schemaVersion: 'bayn.inference-rate-card.v1',
+        rates: replayRateCardFixture({
+          jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+          chart: {
+            inputMicrosPerMillionTokens: '1',
+            outputMicrosPerMillionTokens: '0',
+            cachedInputMicrosPerMillionTokens: '0',
+            cacheWriteInputMicrosPerMillionTokens: '0',
+          },
+        })
+          .rates.map((rate) => (rate.provider === 'typesafe' ? { ...rate, model: protocol.model } : rate))
+          .filter((rate) =>
+            usesJevOnlyInference(protocol)
+              ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
+                rate.provider === 'typesafe'
+              : policy === JevResearchPolicy.Candidate ||
+                (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
+          ),
+      },
+      executionModelHash: sha256(`${policy}:execution`),
+      ...(policy === JevResearchPolicy.Momentum
+        ? {
+            strategyHash: momentumIdentity.strategy.behaviorHash,
+            parametersHash: momentumIdentity.strategy.parameterHash,
+            protocolHash: momentumIdentity.protocolHash,
+            promptsHash: Result.getOrThrow(repeatedMomentumPromptsHash()),
+            executionModelHash: testHash(protocol.executionModel),
+          }
+        : {}),
+      ...(policy === JevResearchPolicy.Ablation
+        ? {
+            strategyHash: ablationIdentity.strategy.behaviorHash,
+            parametersHash: ablationIdentity.strategy.parameterHash,
+            protocolHash: ablationIdentity.protocolHash,
+            promptsHash: Result.getOrThrow(historicalAblationQuestionPolicyHash(protocol)),
+            executionModelHash: testHash(protocol.executionModel),
+          }
+        : {}),
+      ...(policy === JevResearchPolicy.Deployed
+        ? {
+            ...frozenDeployedControlIdentity,
+            executionModelHash: frozenControlOrigin.executionModelHash,
+            promptsHash: testHash(frozenControlPrompts),
+            continuationAndExitsHash: testHash(frozenControlContinuation),
+          }
+        : {}),
+    })),
+    costAllocationPlans: [],
+    obligations: {
+      configuration: {
+        schemaVersion: 'bayn.qualification-runtime.v1',
+        controllerPlanHash: sha256('controller plan'),
+        cyclePollIntervalMs: 60000,
+        operationTimeoutMs: 30000,
+        reconciliationIntervalMs: 60000,
+        reconciliationStaleThresholdMs: 180001,
+        unknownMutationThresholdMs: 120000,
+        protocol,
+      },
+      decisionScheduleHash: sha256('decisions'),
+      reconciliationScheduleHash: sha256('reconciliations'),
+      decisionIntervalMs: 60000,
+      decisionWindowMs: 30000,
       reconciliationIntervalMs: 60000,
-      reconciliationStaleThresholdMs: 180001,
-      unknownMutationThresholdMs: 120000,
-      protocol: Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument)),
+      reconciliationFreshnessMs: 30000,
+      mutationDeadlineMs: 30000,
+      recoveryDeadlineMs: 120000,
+      runtimeConfigurationHash: sha256('configuration'),
     },
-    decisionScheduleHash: sha256('decisions'),
-    reconciliationScheduleHash: sha256('reconciliations'),
-    decisionIntervalMs: 60000,
-    decisionWindowMs: 30000,
-    reconciliationIntervalMs: 60000,
-    reconciliationFreshnessMs: 30000,
-    mutationDeadlineMs: 30000,
-    recoveryDeadlineMs: 120000,
-    runtimeConfigurationHash: sha256('configuration'),
-  },
-  latencyReplayExecutionModelHash: sha256('shared latency execution model'),
-  latencyStressProtocolHash: Result.getOrThrow(systemLatencyStressProtocolHash()),
-  statisticalAssumptions: [
-    'Synthetic fixture only: sessions are exchangeable under the registered two-session blocks; no live performance claim.',
-  ],
-})
+    latencyReplayExecutionModelHash: sha256('shared latency execution model'),
+    latencyStressProtocolHash: Result.getOrThrow(systemLatencyStressProtocolHash()),
+    statisticalAssumptions: [
+      'Synthetic fixture only: sessions are exchangeable under the registered two-session blocks; no live performance claim.',
+    ],
+  }
+}
 
 export const withRegistrationCommitments = (registration: SystemRegistration): SystemRegistration => {
   const derived = {
     ...registration,
+    ...(registration.schemaVersion === 'bayn.system-registration.v4'
+      ? {
+          statisticalPlan: {
+            ...registration.statisticalPlan,
+            supports: registration.policies.map(
+              (definition) =>
+                registration.statisticalPlan.supports.find((support) => support.policy === definition.policy) ?? {
+                  policy: definition.policy,
+                  lowerMicros: '-5000000000',
+                  upperMicros: '5000000000',
+                  sourceHash: testHash('prospectively assumed synthetic support'),
+                  assumption:
+                    'Synthetic bounded-support test process; no claim that broker loss limits guarantee this support.',
+                },
+            ),
+          },
+        }
+      : {}),
     costAllocationPlans: registration.policies.flatMap((definition) =>
       registration.calendar.sessions.flatMap((session) =>
         Object.values(OperatingCostCategory).map((category) => ({
@@ -247,8 +283,32 @@ export const withRegistrationCommitments = (registration: SystemRegistration): S
   }
 }
 
-export const registrationFixture = (registeredAt?: string, sessionCount = 20): SystemRegistration => {
-  let registration = baseRegistrationFixture(sessionCount)
+export const registrationFixture = (
+  registeredAt?: string,
+  sessionCount = 20,
+  version = JevAcceptanceVersion.Current,
+): SystemRegistration => {
+  const protocol =
+    version === JevAcceptanceVersion.Current
+      ? Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
+      : version === JevAcceptanceVersion.RetainedV5
+        ? Result.getOrThrow(
+            Schema.decodeUnknownResult(RetainedJevProtocolV38Schema)({
+              ...retainedJevProtocolV39Document,
+              schemaVersion: 'bayn.jev.protocol.v38',
+            }),
+          )
+        : Result.getOrThrow(
+            Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
+              ...retainedJevProtocolV39Document,
+              schemaVersion: 'bayn.jev.protocol.v35',
+              inputDefinition: 'bayn.jev-entry-state.v23',
+              entrySignalPolicy: 'openai-decisions-then-jev' as const,
+              entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
+              executionModel: retainedIntradayExecutionModel,
+            }),
+          )
+  let registration = baseRegistrationFixture(sessionCount, protocol)
   if (registeredAt !== undefined) {
     const firstMonday = new Date(registeredAt)
     firstMonday.setUTCDate(firstMonday.getUTCDate() + ((8 - firstMonday.getUTCDay()) % 7 || 7))
@@ -287,8 +347,24 @@ export const registrationFixture = (registeredAt?: string, sessionCount = 20): S
       },
     })),
   }
+  if (registration.schemaVersion !== 'bayn.system-registration.v4')
+    throw new Error('Expected current fixture construction')
+  if (version !== JevAcceptanceVersion.Current) {
+    const { statisticalPlan: _statistics, ...retained } = registration
+    if (usesLegacyAcceptance(version)) {
+      const { allocationMicros: _allocation, ...legacy } = retained
+      registration = { ...legacy, schemaVersion: 'bayn.system-registration.v2' }
+    } else
+      registration = {
+        ...retained,
+        schemaVersion: 'bayn.system-registration.v3',
+        bootstrap: { blockLengthSessions: Math.min(2, sessionCount), replicates: 10000, seed: 20260921 },
+      }
+  }
   return withRegistrationCommitments({
     ...registration,
+    policyHash: Result.getOrThrow(systemQualificationPolicyHash(version)),
+    acceptanceProtocolHash: Result.getOrThrow(jevAcceptanceProtocolHash(version)),
     calendar: { ...registration.calendar, sourceHash: testHash(calendarFixture(registration)) },
   })
 }
@@ -310,6 +386,8 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
   source(registration.latencyStressProtocolHash)
   source(registration.latencyReplayExecutionModelHash)
   for (const plan of registration.costAllocationPlans) source(plan.basisSourceHash)
+  if (registration.schemaVersion === 'bayn.system-registration.v4')
+    for (const support of registration.statisticalPlan.supports) source(support.sourceHash)
   for (const hash of [
     registration.obligations.decisionScheduleHash,
     registration.obligations.reconciliationScheduleHash,
@@ -506,8 +584,11 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
   return { input, verifiedSources, source }
 }
 
-export const supportedAssessmentFixture = (sessionCount = 20) => {
-  const fixture = assessmentFixture(registrationFixture(undefined, sessionCount))
+export const supportedAssessmentFixture = (
+  sessionCount = 20,
+  registration = registrationFixture(undefined, sessionCount),
+) => {
+  const fixture = assessmentFixture(registration)
   const decisions: (typeof DecisionRealismSchema.Type)[] = []
   const fills: (typeof FillRealismSchema.Type)[] = []
   for (const policy of fixture.input.policies) {
@@ -580,4 +661,24 @@ export const supportedAssessmentFixture = (sessionCount = 20) => {
     },
   }
 }
+/** A controlled deterministic process, declared before observations; not a model for market returns. */
+export const knownPayoffAssessmentFixture = () => {
+  const base = registrationFixture(undefined, 1)
+  if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
+  const registration = withRegistrationCommitments({
+    ...base,
+    statisticalPlan: {
+      ...base.statisticalPlan,
+      supports: base.policies.map((policy) => ({
+        policy: policy.policy,
+        lowerMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
+        upperMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
+        sourceHash: testHash('prospectively fixed synthetic deterministic payouts'),
+        assumption: 'Synthetic deterministic net payouts known before registration; not a claim about market returns.',
+      })),
+    },
+  })
+  return supportedAssessmentFixture(1, registration)
+}
+
 import { ReplayImagePlatform } from './replay-image-platform'
