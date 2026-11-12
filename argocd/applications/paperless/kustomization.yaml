@@ -5,7 +5,17 @@ namespace: paperless
 resources:
   - secrets.yaml
   - postgres.yaml
+  - backup-retention.yaml
   - valkey.yaml
   - paperless.yaml
   - converters.yaml
   - network.yaml
+
+configMapGenerator:
+  - name: paperless-backup-maintenance
+    files:
+      - prune_backups.py
+
+generatorOptions:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"

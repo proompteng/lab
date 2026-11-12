@@ -96,6 +96,19 @@ def main() -> None:
     backup = resource("ScheduledBackup", "paperless-db-daily")["spec"]
     assert backup["method"] == "volumeSnapshot"
     assert backup["cluster"]["name"] == "paperless-db"
+    retention = resource("CronJob", "paperless-backup-retention")["spec"]
+    assert retention["schedule"] == "30 11 * * *"
+    assert (
+        retention["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"]
+        == "paperless-backup-maintainer"
+    )
+    assert resource("Role", "paperless-backup-maintainer")["rules"] == [
+        {
+            "apiGroups": ["postgresql.cnpg.io"],
+            "resources": ["backups"],
+            "verbs": ["get", "list", "delete"],
+        }
+    ]
     assert (
         "@sha256:"
         in resource("StatefulSet", "paperless-valkey")["spec"]["template"]["spec"][

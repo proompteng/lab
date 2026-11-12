@@ -55,6 +55,7 @@ restoring; rotating the secret invalidates sessions and signed artifacts.
 
 ```sh
 python3 argocd/applications/paperless/validate.py
+python3 -m unittest discover -s argocd/applications/paperless -p 'test_*.py'
 bash scripts/kubeconform.sh argocd/applications/paperless argocd/applicationsets/platform.yaml
 kubectl -n argocd get application paperless
 kubectl -n paperless get pods,pvc,cluster,scheduledbackup,ingress,externalsecret
@@ -69,7 +70,11 @@ Never use confidential documents for a smoke test.
 
 Each RBD claim carries `Prune=false,Delete=false`, and the runtime Secret uses
 `CreatedOnce` with orphaned/retained ownership. PostgreSQL daily volume
-snapshots run at **11:00 UTC** via `paperless-db-daily`. These snapshots live
+snapshots run at **11:00 UTC** via `paperless-db-daily`. The scoped
+`paperless-backup-retention` CronJob runs daily at 11:30 UTC and removes
+completed backups older than 30 days, always retaining at least the two latest
+successful backups. Snapshot ownership is bound to the Backup resource, so
+removing it also removes its underlying Ceph volume snapshot. Snapshots live
 on the same Ceph cluster and are **not offsite backups**. No automatic external
 backup of the Paperless media and index is yet configured; do not treat this
 deployment as a recoverable archive of irreplaceable documents until a
