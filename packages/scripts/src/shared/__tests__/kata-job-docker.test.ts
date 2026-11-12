@@ -295,7 +295,15 @@ describe('Kata job-owned Docker runtime', () => {
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('PID does not identify this job runtime')
         expect(existsSync(join(root, 'cli'))).toBe(false)
-        if (outsider?.pid) expect(existsSync('/proc/' + outsider.pid)).toBe(true)
+        if (outsider?.pid) {
+          expect(existsSync('/proc/' + outsider.pid)).toBe(true)
+          expect(
+            readFileSync('/proc/' + outsider.pid + '/stat', 'utf8')
+              .split(') ')
+              .at(-1)
+              ?.split(' ')[0],
+          ).not.toBe('Z')
+        }
       } finally {
         cleanup()
       }
@@ -309,6 +317,12 @@ describe('Kata job-owned Docker runtime', () => {
       expect(result.status).toBe(0)
       expect(existsSync(join(root, 'stopped'))).toBe(true)
       expect(existsSync('/proc/' + outsider?.pid)).toBe(true)
+      expect(
+        readFileSync('/proc/' + outsider?.pid + '/stat', 'utf8')
+          .split(') ')
+          .at(-1)
+          ?.split(' ')[0],
+      ).not.toBe('Z')
       expect(existsSync('/proc/' + readFileSync(join(root, 'daemon-pid'), 'utf8'))).toBe(false)
     } finally {
       cleanup()
