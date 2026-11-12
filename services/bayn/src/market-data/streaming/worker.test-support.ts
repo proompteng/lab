@@ -1,4 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
+import { randomUUID } from 'node:crypto'
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect, Exit, Logger, Redacted, Result, Scope } from 'effect'
 
@@ -14,13 +15,19 @@ import { nativeArrivalCaptureId } from './native-arrival'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
 import { serveProjectionWorker } from './market-projection-worker'
 import { sha256 } from '../../hash'
+import { MarketChangeReason, marketChangedEventId } from '../../execution/events'
 import { CaptureDisposition } from './transport-evidence'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import type { ProjectionWorkerRequest, ProjectionWorkerResponse } from './worker'
 
 if (parentPort === null) throw new Error('Test requires a worker port')
 const port = parentPort
-const { signals: shared, mode } = workerData as {
+const {
+  signals: shared,
+  mode,
+  instance,
+} = workerData as {
+  readonly instance: number
   readonly signals: SharedArrayBuffer
   readonly mode: 'consume' | 'hang' | 'fail' | 'fixture' | 'readiness' | 'malformed-readiness'
 }
@@ -38,33 +45,34 @@ const program = Effect.gen(function* () {
   if (mode === 'fixture' || mode === 'readiness' || mode === 'malformed-readiness') {
     const fixture = streamingFixture()
     let read = false
+    const producerId = randomUUID()
+    const sourceEpoch = mode === 'fixture' && instance === 0 ? fixture.cut.projection.epoch : producerId
     const cut = {
       ...fixture.cut,
+      projection: { ...fixture.cut.projection, epoch: sourceEpoch },
+      bootstrap: { ...fixture.cut.bootstrap, epoch: sourceEpoch },
       consumerSequence: fixture.cut.projection.sequence,
       deliveredPositions: fixture.cut.positions,
     }
     if (mode === 'readiness' || mode === 'malformed-readiness') {
       const acknowledged = (message: ProjectionWorkerRequest) => {
-        if (message.operation === 'market-ready-ack') {
+        if (message.operation === 'market-changed-ack') {
           Atomics.add(signals, 0, 1)
-          port.postMessage({ _tag: 'MarketReadyAcknowledged' })
+          port.postMessage({ _tag: 'MarketChangedAcknowledged' })
         }
       }
       port.on('message', acknowledged)
       yield* Effect.addFinalizer(() => Effect.sync(() => port.off('message', acknowledged)))
       port.postMessage({
-        _tag: 'MarketReady',
+        _tag: 'MarketChanged',
         event: {
           schemaVersion: 'bayn.execution-wakeup.v1',
-          _tag: 'MarketReady',
+          _tag: 'MarketChanged',
           sourceRevision: nativeArrivalEpochFixture.build.sourceRevision,
-          eventId: 'a'.repeat(64),
-          captureId: nativeArrivalEpochFixture.captureId,
-          sourceEpoch: 'retained-source-epoch',
-          consumerSequence: 5,
-          projectionSequence: 4,
-          originalAvailableAt: mode === 'malformed-readiness' ? 'untrusted-clock' : '2026-11-11T17:00:00.001Z',
-          readyAt: '2026-11-11T17:00:00.100Z',
+          eventId: marketChangedEventId(producerId, 5),
+          producerId,
+          sequence: mode === 'malformed-readiness' ? 0 : 5,
+          reason: MarketChangeReason.Data,
         },
       } satisfies ProjectionWorkerResponse)
     }

@@ -285,7 +285,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
                     visualClaim,
                   })),
                 )}, ${options.admissionDeadlineAt === undefined ? null : utcInstantFromEpochMillis(options.admissionDeadlineAt)}::timestamptz)`
-              return []
+              return null
             }
             return dispatches
           }
@@ -744,6 +744,9 @@ export const settleExpiredTerminalJevBatches = (
               AND cycle.terminal_at IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = plan.batch_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM jev_inference_work AS work WHERE work.batch_id = plan.batch_id
               )
               ${after}
             ORDER BY cycle.terminal_at, plan.batch_id COLLATE "C"

@@ -1,4 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
+import { randomUUID } from 'node:crypto'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
@@ -13,14 +14,12 @@ import {
   FiberSet,
   Layer,
   Logger,
-  Queue,
   Redacted,
   Scope,
 } from 'effect'
 
 import { PostgresClientLive } from '../../db/postgres-client'
 import { makeNativeArrivalStore } from '../../db/native-arrival-postgres'
-import { makeMarketReadyStore } from '../../db/market-ready-postgres'
 import { initializeErrorTracking } from '../../error-tracking'
 import { makeConfiguredTelemetryRuntimeLayer } from '../../telemetry'
 import { KafkaMarketFailure, makeKafkaMarketProjection } from './kafka'
@@ -28,11 +27,10 @@ import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/mo
 import { compactStreamingProjection } from './query-cut'
 import { snapshotCutMeasurement, snapshotFailureMeasurement } from './telemetry'
 import { nativeArrivalCaptureId } from './native-arrival'
+import type { NativeArrivalEpoch } from './native-arrival'
 import { makeCaptureHealth } from './capture-health'
 import { makeNativeArrivalJournal } from './native-arrival-journal'
-import type { NativeArrivalCapture } from './native-arrival-journal'
-import type { NativeArrivalCaptureError, NativeArrivalEpoch } from './native-arrival'
-import { serveMarketReadyOutbox } from './readiness'
+import { makeMarketHints } from './readiness'
 import type { ProjectionWorkerOptions, ProjectionWorkerRequest, ProjectionWorkerResponse } from './worker'
 
 export const serveProjectionWorker = (
@@ -47,7 +45,7 @@ export const serveProjectionWorker = (
     yield* send({ _tag: 'Ready', value: yield* projection.status })
     return yield* Effect.callback<void>((_resume) => {
       const onMessage = (request: ProjectionWorkerRequest) => {
-        if (request.operation === 'health-ack' || request.operation === 'market-ready-ack') return
+        if (request.operation === 'health-ack' || request.operation === 'market-changed-ack') return
         if (request.operation === 'cancel') {
           run(FiberMap.remove(requests, request.id))
           return
@@ -139,15 +137,12 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
     const scope = yield* Scope.make()
     yield* Effect.addFinalizer((exit) => Scope.close(scope, exit))
     const health = makeCaptureHealth()
-    const wake = yield* Queue.dropping<void>(1)
-    let capture: NativeArrivalCapture | undefined
-    let epoch: NativeArrivalEpoch | undefined
-    let pendingBootstrap: Effect.Effect<void, NativeArrivalCaptureError> | undefined
+    const hints = yield* makeMarketHints(options.build.sourceRevision, yield* Effect.sync(randomUUID))
     let pending: { readonly eventId: string; readonly acknowledged: Deferred.Deferred<void> } | undefined
     let awaitingHealthAck = false
     const acknowledge = (request: ProjectionWorkerRequest) => {
       if (request.operation === 'health-ack') awaitingHealthAck = false
-      if (request.operation === 'market-ready-ack' && pending?.eventId === request.eventId)
+      if (request.operation === 'market-changed-ack' && pending?.eventId === request.eventId)
         Deferred.doneUnsafe(pending.acknowledged, Exit.void)
     }
     port.on('message', acknowledge)
@@ -191,7 +186,6 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
     )
     const services = Context.add(Context.merge(parent, context), Scope.Scope, scope)
     const sql = Context.get(context, PgClient.PgClient)
-    const outbox = makeMarketReadyStore(sql, options.controllerKey, options.build.sourceRevision)
     const projection = yield* makeKafkaMarketProjection(
       { ...options.kafka, password: Redacted.make(options.kafka.password) },
       options.sources,
@@ -200,52 +194,32 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
       health.wrap((bootstrap, sources) =>
         Effect.gen(function* () {
           const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(options.build, bootstrap, sources))
-          epoch = {
+          const epoch: NativeArrivalEpoch = {
             schemaVersion: 'bayn.native-arrival-epoch.v1',
             captureId,
             build: options.build,
             bootstrap,
             sources,
           }
-          const currentEpoch = epoch
-          const store = makeNativeArrivalStore(sql, (chunks) => outbox.retain(currentEpoch, chunks))
-          capture = yield* makeNativeArrivalJournal(currentEpoch, {
-            ...store,
-            append: (chunks) => store.append(chunks).pipe(Effect.tap(() => Queue.offer(wake, undefined))),
-          })
-          return capture
+          return yield* makeNativeArrivalJournal(epoch, makeNativeArrivalStore(sql))
         }),
       ),
-      {
-        ready: (bootstrap) =>
-          Effect.sync(() => {
-            if (epoch !== undefined && epoch.bootstrap.epoch === bootstrap.epoch)
-              pendingBootstrap = (capture?.flush ?? Effect.void).pipe(Effect.andThen(outbox.bootstrap(epoch)))
-            Queue.offerUnsafe(wake, undefined)
-          }),
-      },
+      hints,
     ).pipe(Effect.provideContext(services))
-    const publish = serveMarketReadyOutbox(
-      {
-        ...outbox,
-        next: Effect.gen(function* () {
-          const bootstrap = pendingBootstrap
-          if (bootstrap !== undefined) {
-            yield* bootstrap
-            if (pendingBootstrap === bootstrap) pendingBootstrap = undefined
-          }
-          return yield* outbox.next
-        }),
-      },
-      wake,
-      (event) =>
-        Effect.gen(function* () {
-          const acknowledged = yield* Deferred.make<void>()
-          pending = { eventId: event.eventId, acknowledged }
-          yield* Effect.sync(() => port.postMessage({ _tag: 'MarketReady', event } satisfies ProjectionWorkerResponse))
-          yield* Deferred.await(acknowledged)
-          pending = undefined
-        }),
+    const publish = hints.serve((event) =>
+      Effect.gen(function* () {
+        const acknowledged = yield* Deferred.make<void>()
+        pending = { eventId: event.eventId, acknowledged }
+        yield* Effect.sync(() => port.postMessage({ _tag: 'MarketChanged', event } satisfies ProjectionWorkerResponse))
+        yield* Effect.logDebug('Market change hint offered to parent', {
+          eventId: event.eventId,
+          producerId: event.producerId,
+          sequence: event.sequence,
+          reason: event.reason,
+        })
+        yield* Deferred.await(acknowledged)
+        pending = undefined
+      }),
     )
     return yield* Effect.raceFirst(
       serveProjectionWorker(projection, Scope.close(scope, Exit.void), port),

@@ -24,7 +24,8 @@ export interface JevBatchEvidence {
 }
 
 export interface JevBatchAdmission extends JevBatchEvidence {
-  readonly dispatches: readonly JevDispatch[]
+  /** Null means admitted for durable inference; an empty array retains claimed-work recovery. */
+  readonly dispatches: readonly JevDispatch[] | null
 }
 
 export type JevBatchEvaluationOptions = EntryInferenceEvaluationOptions
@@ -89,9 +90,11 @@ export const evaluateAdmittedJevBatch = (
   Effect.gen(function* () {
     const store = yield* JevBatchStore
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
+    const dispatches = saved.dispatches
+    if (dispatches === null) return { plan: saved.plan, result: null }
     const requested = saved.plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-    if (saved.dispatches.length !== requested.length) return yield* store.finish(saved.plan.batchId)
-    const completions = yield* evaluateClaimedEntryInferences(saved.dispatches, options).pipe(
+    if (dispatches.length !== requested.length) return yield* store.finish(saved.plan.batchId)
+    const completions = yield* evaluateClaimedEntryInferences(dispatches, options).pipe(
       Effect.catchTags({
         EntryInferenceError: () => Effect.succeed(null),
         JevContractError: () => Effect.succeed(null),
@@ -109,7 +112,7 @@ export const evaluateAdmittedJevBatch = (
         }
         const request = candidate.request
         const completion = byRequest.get(request.requestId)
-        const dispatch = saved.dispatches.find((item) => item.request.requestId === request.requestId)
+        const dispatch = dispatches.find((item) => item.request.requestId === request.requestId)
         if (completion === undefined || dispatch === undefined)
           return yield* new JevEvidenceError({ message: 'Completed evaluations do not cover the admitted batch' })
         const receipt = yield* Effect.fromResult(

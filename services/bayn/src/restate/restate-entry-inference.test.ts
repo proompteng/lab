@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import type * as restate from '@restatedev/restate-sdk'
+import * as restate from '@restatedev/restate-sdk'
 
 import { makeBaynEntryInference } from './restate-entry-inference'
 import type { JevInferenceCompletion } from '../jev/inference-work'
@@ -107,4 +107,43 @@ test('a foreign account or source cannot dispatch provider work', async () => {
   )
   expect(String(wrongAccount)).toContain('immutable account')
   expect(String(wrongSource)).toContain('immutable account')
+  expect(wrongAccount).toBeInstanceOf(restate.TerminalError)
+  expect(wrongSource).toBeInstanceOf(restate.TerminalError)
+})
+
+test('a malformed dispatch is terminal before any provider runtime work', async () => {
+  let calls = 0
+  const failure = await evaluate({
+    executeInference: async () => {
+      calls += 1
+      return completed
+    },
+  })({} as restate.Context, { ...request, jobId: 'unknown' }).catch((cause: unknown) => cause)
+  expect(failure).toBeInstanceOf(restate.TerminalError)
+  expect(String(failure)).toContain('failed validation')
+  expect(calls).toBe(0)
+})
+
+test('an unknown admitted job is terminal and cannot fabricate a completion wake', async () => {
+  let calls = 0
+  let wakes = 0
+  const failure = await evaluate({
+    executeInference: async () => {
+      calls += 1
+      return null
+    },
+  })(
+    {
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      request: () => ({ attemptCompletedSignal: new AbortController().signal }),
+      genericSend: () => {
+        wakes += 1
+      },
+    } as unknown as restate.Context,
+    request,
+  ).catch((cause: unknown) => cause)
+  expect(failure).toBeInstanceOf(restate.TerminalError)
+  expect(String(failure)).toContain('durable admission')
+  expect(calls).toBe(1)
+  expect(wakes).toBe(0)
 })

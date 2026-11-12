@@ -2,15 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Effect, Option, Result, Schedule } from 'effect'
+import { Config, Effect, Fiber, Option, Redacted, Result, Schedule, Schema } from 'effect'
 
 import { decodeExecutionControllerState } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { sha256 } from '../hash'
+import { MarketChangeReason, marketChangedEventId, type MarketChangedWakeup } from '../execution/events'
+import { makeMarketHints } from '../market-data/streaming/readiness'
 import { makeBaynEntryInference } from './restate-entry-inference'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde } from './restate-broker-observations'
 import { executionActivationAuthorizationHash, makeBaynExecutionController } from './restate-execution-controller'
+import { publishMarketChange } from './restate-execution-server'
 
 const admin = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
 const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_INGRESS_URL'))).pipe(
@@ -43,7 +46,371 @@ const waitFor = (check: () => Effect.Effect<boolean, unknown>) =>
     Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 100 }),
   )
 
+const localRestateTargets = () => {
+  if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
+  for (const target of [admin, ingress])
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
+      throw new Error('Restate integration targets must be local')
+  return { admin, ingress }
+}
+
+const register = (services: Parameters<typeof restate.createEndpointHandler>[0]['services']) =>
+  Effect.gen(function* () {
+    const targets = localRestateTargets()
+    const server = createServer(restate.createEndpointHandler({ services }))
+    yield* acquireRestateHttp2Server(server, 0)
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
+    yield* json(`${targets.admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+  })
+
+const queueFixture = () => {
+  const targets = localRestateTargets()
+  const controllerKey = sha256(randomUUID())
+  const token = Buffer.alloc(32, 7).toString('base64url')
+  const config = {
+    controllerKey,
+    planHash: 'b'.repeat(64),
+    sourceRevision: 'c'.repeat(40),
+    operationTimeoutMs: 5_000,
+    activationAuthorizationHash: Result.getOrThrow(executionActivationAuthorizationHash(token)),
+  }
+  let releaseInitial: () => void = () => undefined
+  let releaseProtection: () => void = () => undefined
+  const initialGate = new Promise<void>((resolve) => {
+    releaseInitial = resolve
+  })
+  const protectionGate = new Promise<void>((resolve) => {
+    releaseProtection = resolve
+  })
+  let version = 0
+  const snapshots: Array<{ sequence: number; version: number }> = []
+  const brokerSnapshotHash = sha256(`${controllerKey}:broker-sentinel`)
+  const brokerSentinelKey = `market-queue-broker-${controllerKey}`
+  const protectionSentinelKey = `market-queue-protection-${controllerKey}`
+  const controller = alwaysReplay(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async (command) => {
+        // This is the owner's source read. Hint metadata never supplies the observed version.
+        snapshots.push({ sequence: command.sequence, version })
+        if (command.sequence === 0) await initialGate
+        if (command.sequence === 1) await protectionGate
+        return {
+          completedAt: new Date().toISOString(),
+          outcome: {
+            _tag: ExecutionControllerOutcome.Waiting,
+            receiptHash: sha256(`${controllerKey}:${command.sequence}`),
+            nextDelayMs: 1,
+          },
+        }
+      },
+    }),
+  )
+  const call = (ctx: restate.Context, method: string, parameter: unknown, idempotencyKey?: string) =>
+    ctx.genericCall({
+      service: 'BaynExecutionController',
+      method,
+      key: controllerKey,
+      parameter,
+      inputSerde: brokerObservationJsonSerde,
+      outputSerde: brokerObservationJsonSerde,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    })
+  const bridge = alwaysReplay(
+    restate.service({
+      name: 'MarketCompletionTestBridge',
+      handlers: {
+        start: (ctx: restate.Context) =>
+          call(ctx, 'activate', {
+            schemaVersion: 'bayn.execution-controller-activation.v1',
+            controllerKey,
+            epoch: 1,
+            firstSequence: 0,
+            planHash: config.planHash,
+            sourceRevision: config.sourceRevision,
+          }),
+        status: (ctx: restate.Context) => call(ctx, 'status', {}),
+        broker: (ctx: restate.Context) =>
+          call(
+            ctx,
+            'wake',
+            {
+              schemaVersion: 'bayn.execution-wakeup.v1',
+              _tag: 'BrokerObservation',
+              sourceRevision: config.sourceRevision,
+              eventId: brokerSnapshotHash,
+              snapshotHash: brokerSnapshotHash,
+              observedAt: '2026-11-11T18:00:00.000Z',
+            },
+            brokerSentinelKey,
+          ),
+        protection: (ctx: restate.Context) =>
+          call(
+            ctx,
+            'tick',
+            {
+              schemaVersion: 'bayn.execution-controller-tick.v1',
+              epoch: 1,
+              sequence: 1,
+            },
+            protectionSentinelKey,
+          ),
+      },
+    }),
+  )
+  const invoke = (method: string) => json(`${targets.ingress}/MarketCompletionTestBridge/${method}`, {})
+  const count = (where: string) =>
+    json(
+      `${targets.admin}/query`,
+      {
+        query: `SELECT COUNT(*) AS total FROM sys_invocation WHERE target LIKE 'BaynExecutionController/${controllerKey}/%' AND (${where})`,
+      },
+      { accept: 'application/json' },
+    ).pipe(
+      Effect.map((candidate) => {
+        const [row] = Schema.decodeUnknownSync(
+          Schema.Struct({ rows: Schema.Array(Schema.Struct({ total: Schema.Number })) }),
+        )(candidate).rows
+        if (row === undefined) throw new Error('Missing Restate inventory count')
+        return row.total
+      }),
+    )
+  const pendingMarket = count(
+    "target LIKE '%/wake' AND idempotency_key LIKE 'bayn-market-change-%' AND status != 'completed'",
+  )
+  return {
+    config,
+    controller,
+    bridge,
+    snapshots,
+    brokerSnapshotHash,
+    brokerSentinelKey,
+    protectionSentinelKey,
+    changed: () => {
+      version += 1
+    },
+    releaseInitial,
+    releaseProtection,
+    release: () => {
+      releaseInitial()
+      releaseProtection()
+    },
+    invoke,
+    count,
+    pendingMarket,
+    status: invoke('status').pipe(
+      Effect.map((candidate) => Result.getOrThrow(decodeExecutionControllerState(candidate))),
+    ),
+    publish: (event: MarketChangedWakeup) => publishMarketChange(targets.ingress, config, event, Redacted.make(token)),
+  }
+}
+
 describeRestate('Real always-replay streaming execution', () => {
+  test('source handover retries the same immutable hint and a repeated acknowledgement joins its original private wake', async () => {
+    const fixture = queueFixture()
+    const producerId = randomUUID()
+    const event = {
+      schemaVersion: 'bayn.execution-wakeup.v1' as const,
+      _tag: 'MarketChanged' as const,
+      sourceRevision: fixture.config.sourceRevision,
+      producerId,
+      sequence: 1,
+      reason: MarketChangeReason.Recovery,
+      eventId: marketChangedEventId(producerId, 1),
+    }
+    const retained = fixture.publish(event)
+    const predecessor = alwaysReplay(
+      makeBaynExecutionController(
+        { ...fixture.config, sourceRevision: 'd'.repeat(40) },
+        {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: async () => {
+            throw new Error('a rejected source cannot enter financial work')
+          },
+        },
+      ),
+    )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* register([predecessor])
+          expect(yield* Effect.result(retained)).toMatchObject({
+            _tag: 'Failure',
+            failure: { message: 'market change registration returned HTTP 412' },
+          })
+          yield* register([fixture.controller, fixture.bridge])
+          yield* retained.pipe(Effect.retry({ schedule: Schedule.spaced('50 millis'), times: 20 }))
+          // A successful response may have been lost. The fresh public retry joins the completed private identity.
+          yield* retained
+          expect(yield* fixture.count(`idempotency_key = 'bayn-market-change-${event.eventId}'`)).toBe(1)
+          expect(fixture.snapshots).toEqual([])
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(fixture.release))),
+    )
+  }, 30_000)
+
+  test.each([1, 3])(
+    '%s active producers conflate bursts behind the owner while broker and protection work retain progress',
+    async (producerCount) => {
+      const fixture = queueFixture()
+      const sent: MarketChangedWakeup[] = []
+      const acknowledged = new Set<string>()
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* register([fixture.controller, fixture.bridge])
+            expect(yield* json(`${localRestateTargets().admin}/services/BaynExecutionController`)).toMatchObject({
+              inactivity_timeout: '0s',
+            })
+            yield* fixture.invoke('start')
+            yield* waitFor(() => Effect.sync(() => fixture.snapshots.length === 1))
+            const producers: Array<{
+              readonly producerId: string
+              readonly hints: Effect.Success<ReturnType<typeof makeMarketHints>>
+            }> = []
+            for (let index = 0; index < producerCount; index++) {
+              const producerId = randomUUID()
+              const hints = yield* makeMarketHints(fixture.config.sourceRevision, producerId)
+              yield* hints
+                .serve((event) =>
+                  Effect.gen(function* () {
+                    sent.push(event)
+                    yield* fixture.publish(event)
+                    acknowledged.add(event.eventId)
+                  }),
+                )
+                .pipe(Effect.forkScoped)
+              producers.push({ producerId, hints })
+              yield* hints.changed(MarketChangeReason.Startup)
+            }
+            yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === producerCount)))
+            for (const { hints } of producers)
+              for (let index = 0; index < 1_000; index++) {
+                fixture.changed()
+                yield* hints.changed(MarketChangeReason.Data)
+              }
+            expect(fixture.snapshots).toEqual([{ sequence: 0, version: 0 }])
+            expect(acknowledged.size).toBe(0)
+            expect(new Set(sent.map((event) => event.eventId)).size).toBe(producerCount)
+            expect(yield* fixture.pendingMarket).toBe(producerCount)
+            const broker = yield* fixture.invoke('broker').pipe(Effect.forkScoped)
+            yield* waitFor(() =>
+              fixture
+                .count(`idempotency_key = '${fixture.brokerSentinelKey}'`)
+                .pipe(Effect.map((count) => count === 1)),
+            )
+            const protection = yield* fixture.invoke('protection').pipe(Effect.forkScoped)
+            yield* waitFor(() =>
+              fixture
+                .count(`idempotency_key IN ('${fixture.brokerSentinelKey}', '${fixture.protectionSentinelKey}')`)
+                .pipe(Effect.map((count) => count === 2)),
+            )
+            // The sentinels have at most one distinct market wake per active producer ahead of them, not the burst size.
+            expect(yield* fixture.pendingMarket).toBe(producerCount)
+            fixture.releaseInitial()
+            yield* Fiber.join(broker)
+            yield* waitFor(() => Effect.sync(() => fixture.snapshots.some((snapshot) => snapshot.sequence === 1)))
+            expect(fixture.snapshots.find((snapshot) => snapshot.sequence === 1)?.version).toBe(producerCount * 1_000)
+            expect((yield* fixture.status).lastBrokerSnapshotHash).toBe(fixture.brokerSnapshotHash)
+            yield* waitFor(() =>
+              Effect.sync(() =>
+                producers.every(({ producerId }) =>
+                  sent.some((event) => event.producerId === producerId && event.sequence === 1_001),
+                ),
+              ),
+            )
+            yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === producerCount)))
+            expect(acknowledged.size).toBe(producerCount)
+            const first = producers[0]
+            if (first === undefined) throw new Error('Missing active producer')
+            // This change occurs after the owner's source read. No later Kafka input is supplied to rescue it.
+            fixture.changed()
+            yield* first.hints.changed(MarketChangeReason.Data)
+            expect(yield* fixture.pendingMarket).toBe(producerCount)
+            fixture.releaseProtection()
+            yield* Fiber.join(protection)
+            yield* waitFor(() =>
+              Effect.sync(() =>
+                fixture.snapshots.some(
+                  (snapshot) => snapshot.sequence > 1 && snapshot.version === producerCount * 1_000 + 1,
+                ),
+              ),
+            )
+            yield* waitFor(() =>
+              Effect.sync(
+                () =>
+                  acknowledged.has(marketChangedEventId(first.producerId, 1_002)) &&
+                  producers
+                    .slice(1)
+                    .every(({ producerId }) => acknowledged.has(marketChangedEventId(producerId, 1_001))),
+              ),
+            )
+            yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === 0)))
+            expect(yield* fixture.count("idempotency_key LIKE 'bayn-market-change-%'")).toBe(producerCount * 2 + 1)
+            expect(new Set(fixture.snapshots.map((snapshot) => snapshot.sequence)).size).toBe(fixture.snapshots.length)
+            expect((yield* fixture.status).nextDueAt).toBeUndefined()
+          }),
+        ).pipe(Effect.ensuring(Effect.sync(fixture.release))),
+      )
+    },
+    30_000,
+  )
+
+  test('abandoned publisher incarnations retain their queued wakes beyond the active-producer bound', async () => {
+    const fixture = queueFixture()
+    const abandoned = 3
+    const acknowledged = new Set<string>()
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* register([fixture.controller, fixture.bridge])
+          yield* fixture.invoke('start')
+          yield* waitFor(() => Effect.sync(() => fixture.snapshots.length === 1))
+          for (let incarnation = 0; incarnation < abandoned; incarnation++) {
+            const hints = yield* makeMarketHints(fixture.config.sourceRevision, randomUUID())
+            const publisher = yield* hints.serve(fixture.publish).pipe(Effect.forkScoped)
+            yield* hints.changed(MarketChangeReason.Startup)
+            yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === incarnation + 1)))
+            yield* Fiber.interrupt(publisher)
+          }
+          expect(yield* fixture.pendingMarket).toBe(abandoned)
+          const producerId = randomUUID()
+          const active = yield* makeMarketHints(fixture.config.sourceRevision, producerId)
+          yield* active
+            .serve((event) =>
+              fixture.publish(event).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    acknowledged.add(event.eventId)
+                  }),
+                ),
+              ),
+            )
+            .pipe(Effect.forkScoped)
+          yield* active.changed(MarketChangeReason.Startup)
+          yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === abandoned + 1)))
+          for (let index = 0; index < 1_000; index++) yield* active.changed(MarketChangeReason.Data)
+          // Cancelling a sender does not cancel a durable Restate invocation. This is explicitly not a global bound.
+          expect(yield* fixture.pendingMarket).toBe(abandoned + 1)
+          yield* Effect.logInfo('Bayn market wake incarnation inventory', {
+            abandonedIncarnations: abandoned,
+            activeProducers: 1,
+            outstandingPrivateWakes: abandoned + 1,
+          })
+          fixture.release()
+          yield* waitFor(() => Effect.sync(() => acknowledged.has(marketChangedEventId(producerId, 1_001))))
+          yield* waitFor(() => fixture.pendingMarket.pipe(Effect.map((count) => count === 0)))
+          expect(yield* fixture.count("idempotency_key LIKE 'bayn-market-change-%'")).toBe(abandoned + 2)
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(fixture.release))),
+    )
+  }, 30_000)
+
   test('provider work releases the owner for burst and protection progress, then stale completion cannot reenter a new epoch', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress])
@@ -202,21 +569,18 @@ describeRestate('Real always-replay streaming execution', () => {
           yield* invoke('start')
           yield* waitFor(() => Effect.sync(() => passes.length === 1 && providerEntered))
           expect(providerCalls).toBe(1)
-          const readyAt = new Date().toISOString()
+          const producerId = randomUUID()
           const event = {
             schemaVersion: 'bayn.execution-wakeup.v1',
-            _tag: 'MarketReady',
+            _tag: 'MarketChanged',
             sourceRevision: config.sourceRevision,
-            eventId: sha256(`${controllerKey}:frontier`),
-            captureId: sha256(`${controllerKey}:capture`),
-            sourceEpoch: 'source-1',
-            consumerSequence: 1,
-            projectionSequence: 1,
-            originalAvailableAt: readyAt,
-            readyAt,
+            eventId: marketChangedEventId(producerId, 1),
+            producerId,
+            sequence: 1,
+            reason: MarketChangeReason.Data,
           }
           const denied = yield* Effect.promise(() =>
-            fetch(`${ingress}/BaynExecutionController/${controllerKey}/marketReady`, {
+            fetch(`${ingress}/BaynExecutionController/${controllerKey}/marketChanged`, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify(event),
@@ -228,9 +592,8 @@ describeRestate('Real always-replay streaming execution', () => {
           })
           yield* Effect.all(
             Array.from({ length: 100 }, () =>
-              json(`${ingress}/BaynExecutionController/${controllerKey}/marketReady`, event, {
+              json(`${ingress}/BaynExecutionController/${controllerKey}/marketChanged`, event, {
                 authorization: `Bearer ${token}`,
-                'idempotency-key': event.eventId,
               }),
             ),
             { concurrency: 20 },

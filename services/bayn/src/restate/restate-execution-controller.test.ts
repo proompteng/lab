@@ -11,6 +11,7 @@ import {
 import { TransientExecutionFailure } from '../execution/advance'
 import { sha256 } from '../hash'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
+import { MarketChangeReason, marketChangedEventId } from '../execution/events'
 import { CycleRunnerError } from '../cycle/runner/model'
 import { OperationalError } from '../errors'
 import {
@@ -41,6 +42,16 @@ const makeBaynExecutionController: typeof makeController = (configuration, runti
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
+const producerId = '11111111-1111-4111-8111-111111111111'
+const marketChange = (sequence: number, producer = producerId) => ({
+  schemaVersion: 'bayn.execution-wakeup.v1' as const,
+  _tag: 'MarketChanged' as const,
+  sourceRevision,
+  eventId: marketChangedEventId(producer, sequence),
+  producerId: producer,
+  sequence,
+  reason: MarketChangeReason.Data,
+})
 const config = {
   controllerKey,
   operationTimeoutMs: 30_000,
@@ -73,7 +84,7 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
         readonly rotate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly tick: (ctx: TestContext, candidate: unknown) => Promise<void>
         readonly wake: (ctx: TestContext, candidate: unknown) => Promise<void>
-        readonly marketReady: (ctx: ObjectSharedContext, candidate: unknown) => Promise<void>
+        readonly marketChanged: (ctx: ObjectSharedContext, candidate: unknown) => Promise<void>
         readonly deactivate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly prepareActivation: (
           ctx: ObjectSharedContext,
@@ -156,7 +167,7 @@ test('a prepared inference is durably dispatched and releases the account owner 
   ])
 })
 
-test('market bursts preserve eligibility and ignore duplicate, older and foreign readiness frontiers', async () => {
+test('market bursts preserve eligibility and ignore duplicate, older and foreign producer hints', async () => {
   let state: ExecutionControllerState = {
     schemaVersion: 1,
     active: true,
@@ -189,35 +200,117 @@ test('market bursts preserve eligibility and ignore duplicate, older and foreign
     genericSend: (delivery: unknown) => deliveries.push(delivery),
     date: { now: async () => now },
   } as unknown as TestContext
-  const event = {
-    schemaVersion: 'bayn.execution-wakeup.v1',
-    _tag: 'MarketReady',
-    sourceRevision,
-    eventId: 'd'.repeat(64),
-    captureId: 'capture-1',
-    sourceEpoch: 'source-1',
-    consumerSequence: 2,
-    projectionSequence: 2,
-    originalAvailableAt: '2026-08-13T18:01:00.000Z',
-    readyAt: '2026-08-13T18:01:00.100Z',
-  }
+  const event = marketChange(2)
   await object.wake(context, event)
   expect(deliveries).toHaveLength(0)
   expect(state.nextDueAt).toBe('2026-08-13T18:01:02.000Z')
   now += 2_000
   await object.wake(context, event)
-  await object.wake(context, { ...event, eventId: 'e'.repeat(64), projectionSequence: 1 })
-  await object.wake(context, { ...event, eventId: 'f'.repeat(64), sourceRevision: 'a'.repeat(40) })
+  await object.wake(context, marketChange(1))
+  await object.wake(context, { ...event, sourceRevision: 'a'.repeat(40) })
   expect(deliveries).toHaveLength(0)
-  await object.wake(context, {
-    ...event,
-    eventId: '1'.repeat(64),
-    projectionSequence: 3,
-    consumerSequence: 3,
-    readyAt: '2026-08-13T18:01:02.100Z',
-  })
+  await object.wake(context, marketChange(3))
   expect(deliveries).toHaveLength(1)
-  expect(state.marketFrontier?.projectionSequence).toBe(3)
+  expect(state.marketFrontier).toEqual({ producerId, sequence: 3 })
+})
+
+test('independent market producers cannot suppress one another and share one queued account tick', async () => {
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+  }
+  const deliveries: Delivery[] = []
+  const object = handlers(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async () => {
+        throw new Error('a hint cannot perform financial work')
+      },
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    genericSend: (delivery: Delivery) => deliveries.push(delivery),
+    date: {
+      now: async () => {
+        throw new Error('producer ordering must not depend on wall clocks')
+      },
+    },
+  } as unknown as TestContext
+  await object.wake(context, marketChange(100))
+  const replacementProducer = '22222222-2222-4222-8222-222222222222'
+  await object.wake(context, marketChange(1, replacementProducer))
+  await object.wake(context, marketChange(1, replacementProducer))
+  expect(state.marketFrontier).toEqual({ producerId: replacementProducer, sequence: 1 })
+  expect(deliveries).toHaveLength(1)
+  expect(new Set(deliveries.map((delivery) => delivery.idempotencyKey))).toEqual(new Set(['bayn-execution-wake-1-4']))
+  expect(state.nextSequence).toBe(4)
+})
+
+test('the authenticated market gateway awaits only its small private wake and rejects invalid source or identity', async () => {
+  const deliveries: unknown[] = []
+  let releaseWake: () => void = () => undefined
+  const wakeCompletion = new Promise<void>((resolve) => {
+    releaseWake = resolve
+  })
+  let acknowledged = false
+  const object = handlers(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async () => {
+        throw new Error('the ingress cannot advance financial work')
+      },
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    request: () => ({ headers: new Map([['authorization', `Bearer ${Buffer.alloc(32, 7).toString('base64url')}`]]) }),
+    genericCall: (delivery: unknown) => {
+      deliveries.push(delivery)
+      return wakeCompletion
+    },
+    objectClient: () => {
+      throw new Error('the gateway cannot wait for the exclusive owner')
+    },
+  } as unknown as ObjectSharedContext
+  const event = marketChange(1)
+  const acknowledgement = object.marketChanged(context, event).then(() => {
+    acknowledged = true
+  })
+  expect(acknowledged).toBe(false)
+  expect(deliveries).toHaveLength(1)
+  expect(deliveries[0]).toMatchObject({ service: 'BaynExecutionController', method: 'wake', parameter: event })
+  releaseWake()
+  await acknowledgement
+  expect(acknowledged).toBe(true)
+  expect(
+    await object.marketChanged(context, { ...event, sourceRevision: 'd'.repeat(40) }).catch((cause: unknown) => cause),
+  ).toMatchObject({
+    code: 412,
+    message: `market change source is not registered: expected ${'d'.repeat(40)}, served ${sourceRevision}`,
+  })
+  expect(
+    await object.marketChanged(context, { ...event, eventId: 'd'.repeat(64) }).catch((cause: unknown) => cause),
+  ).toBeInstanceOf(TerminalError)
+  expect(
+    await object
+      .marketChanged({ ...context, request: () => ({ headers: new Map() }) } as unknown as ObjectSharedContext, event)
+      .catch((cause: unknown) => cause),
+  ).toMatchObject({ code: 403 })
+  expect(deliveries).toHaveLength(1)
 })
 
 test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
@@ -257,18 +350,7 @@ test('closed-session completion retains the next eligibility boundary against un
   } as unknown as TestContext
   await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
   expect(state.marketEligibleAt).toBe(nextWakeAt)
-  await object.wake(context, {
-    schemaVersion: 'bayn.execution-wakeup.v1',
-    _tag: 'MarketReady',
-    sourceRevision,
-    eventId: 'e'.repeat(64),
-    captureId: 'capture',
-    sourceEpoch: 'epoch',
-    consumerSequence: 1,
-    projectionSequence: 1,
-    originalAvailableAt: '2026-08-13T18:00:00.000Z',
-    readyAt: '2026-08-13T18:00:01.000Z',
-  })
+  await object.wake(context, marketChange(1))
   expect(deliveries).toHaveLength(1)
   expect(state.nextDueAt).toBe(nextWakeAt)
 })
@@ -2209,7 +2291,7 @@ describe('native Restate execution controller', () => {
     },
   )
 
-  test('keeps bounded recovery windows alive through a long outage and resumes the same owned sequence', async () => {
+  test('a queued wake marker preserves recovery timers through a long outage on the unchanged owned sequence', async () => {
     let state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -2269,6 +2351,9 @@ describe('native Restate execution controller', () => {
         projectState: () => Promise.resolve(),
       }),
     )
+    await object.wake(context, marketChange(1))
+    expect(deliveries.shift()?.idempotencyKey).toBe('bayn-execution-wake-7-12')
+    expect(state.wakeScheduledSequence).toBe(12)
     let tick: unknown = {
       schemaVersion: 'bayn.execution-controller-tick.v1',
       epoch: 7,
@@ -2296,6 +2381,9 @@ describe('native Restate execution controller', () => {
       expect(keys.has(recovery.idempotencyKey)).toBe(false)
       keys.add(recovery.idempotencyKey)
       expect(state.nextSequence).toBe(12)
+      await object.wake(context, marketChange(recoveryWindow + 1))
+      expect(deliveries).toHaveLength(0)
+      expect(state.wakeScheduledSequence).toBe(12)
       tick = {
         ...(recovery.parameter as object),
         attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
@@ -2308,6 +2396,7 @@ describe('native Restate execution controller', () => {
     expect(state.nextSequence).toBe(13)
     expect(state.epoch).toBe(7)
     expect(state.sourceRevision).toBe(sourceRevision)
+    expect(state.wakeScheduledSequence).toBe(12)
     expect(new Set(issuedAt)).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
     const successor = deliveries.shift()
     expect(successor?.parameter).toMatchObject({ epoch: 7, sequence: 13, attempt: 0 })

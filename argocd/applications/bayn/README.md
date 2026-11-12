@@ -44,8 +44,19 @@ and [0.1.1 configuration](https://github.com/restatedev/ingress-integration-kafk
 
 The receiver independently checks the current account, credentials, HMAC, Kafka identity key and session lineage.
 Notifications wake the canonical financial owner; source WebSocket frames cannot post fills or change capital authority.
-The market-ready outbox uses `RESTATE_INGRESS_ORIGIN` to wake the execution controller. Ordinary cycle and broker
-discovery polling is removed; named freshness, recovery, reconciliation and deadline timers retain their specific purpose.
+Market workers use `RESTATE_INGRESS_ORIGIN` to send authenticated advisory `marketChanged` hints directly to Restate.
+The gateway awaits the short private `wake` handler, which durably schedules any required financial tick. It does not
+wait for that tick or a native audit flush. One request remains in flight per stable publisher while source incorporation
+continues and newer changes coalesce; startup and recovery also emit hints. Process restarts can leave accepted prior
+wakes behind, so the publisher bound does not establish a global bound across arbitrary restarts. There is no
+market-readiness SQL outbox. Ordinary cycle and broker discovery polling is removed; named freshness, recovery,
+reconciliation and deadline timers retain their specific purpose.
+
+Adapter health compares assigned Kafka partitions with active Restate ingestion requests. A terminal partition-session
+failure can leave the upstream metrics endpoint healthy while delivery has stopped. The probe detects that mismatch;
+its liveness failure restarts the adapter after six failed ten-second checks. The measured local fault-to-completion
+recovery was 74.4 seconds, including the probe and consumer recovery. This is a local fault-recovery measurement,
+not a normal-delivery latency measurement or a production service-level guarantee.
 
 Both new workloads reuse the existing `bayn-market-data` SCRAM principal. The collector receives its `password`;
 the adapter receives its generated `sasl.jaas.config` and no Alpaca credentials. No additional Kafka identities or copied
@@ -78,7 +89,7 @@ Rollout order and acceptance:
    Confirm canonical broker state is fresh and wakes execution without an ordinary poll chain. Do not submit a test order
    or alter account/risk limits to manufacture activity.
 5. Exercise restart/reconnect recovery and verify a new verified session notification triggers canonical gap repair,
-   preserving existing financial identities. Confirm market-ready notification and inference-completion wake behavior
+   preserving existing financial identities. Confirm market-change notification and inference-completion wake behavior
    independently; health and Argo readiness alone do not prove product delivery.
 
 The hard cutover removes `BaynBrokerObservations.poll`. On Restate 1.8.1, an old running or scheduled call to that

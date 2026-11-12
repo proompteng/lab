@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schema, Stream } from 'effect'
+import { Duration, Effect, Schedule, Schema, Stream } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
@@ -13,7 +13,6 @@ import {
   type NativeArrivalEpoch,
 } from '../market-data/streaming/native-arrival'
 import type { NativeArrivalStore } from '../market-data/streaming/native-arrival-journal'
-import { marketReadyRecoverySchedule } from '../market-data/streaming/readiness'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { withObservedStage } from '../telemetry'
 
@@ -35,16 +34,15 @@ const transientAppendSqlError = (cause: unknown): SqlError | undefined => {
     : undefined
 }
 const retryableAppendFailure = (cause: unknown): boolean => transientAppendSqlError(cause) !== undefined
+const appendRecoverySchedule = Schedule.exponential('1 second').pipe(
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(30)))),
+)
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
 )
 
-export const makeNativeArrivalStore = (
-  sql: PgClient.PgClient,
-  retainReadiness: (chunks: readonly NativeArrivalChunk[]) => Effect.Effect<void, NativeArrivalCaptureError> = () =>
-    Effect.void,
-): NativeArrivalStore => ({
+export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalStore => ({
   begin: (input) =>
     Effect.gen(function* () {
       const epoch = yield* Schema.decodeUnknownEffect(NativeArrivalEpochSchema, strictParseOptions)(input)
@@ -124,9 +122,6 @@ export const makeNativeArrivalStore = (
                 ${sha256(chunks.map((chunk) => chunk.contentHash).join(''))}) > '0/0'::pg_lsn AS matches`,
             )
           }
-          // Market readiness and its original source prefix commit together. An uncertain COMMIT retries
-          // both immutable identities; no worker callback is the only record of pending delivery.
-          yield* retainReadiness(chunks)
         }),
       )
     }).pipe(
@@ -142,9 +137,9 @@ export const makeNativeArrivalStore = (
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        // Availability has no retry deadline. Every attempt retains its configured SQL/socket deadline,
+        // Transient append recovery has no total retry deadline. Each attempt retains its SQL/socket deadline,
         // and the existing compressed byte bound backpressures ingestion while this exact batch waits.
-        schedule: marketReadyRecoverySchedule,
+        schedule: appendRecoverySchedule,
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),

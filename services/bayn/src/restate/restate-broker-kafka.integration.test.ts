@@ -1,18 +1,21 @@
 import { spawn } from 'node:child_process'
 import { createHmac, randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { createServer } from 'node:http2'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { connect, createServer, type IncomingHttpHeaders, type ServerHttp2Stream } from 'node:http2'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Effect, Redacted, Result, Schedule, Schema } from 'effect'
+import { Config, Effect, Exit, Redacted, Result, Schedule, Schema, Scope } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import {
+  BrokerNotificationSchema,
   brokerNotificationVersion,
   SignedBrokerNotificationSchema,
   verifyBrokerNotification,
 } from '../broker/notifications'
 import { decodeExecutionWakeup, type ExecutionWakeup } from '../execution/events'
+import { sha256 } from '../hash'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
 
@@ -24,6 +27,43 @@ const kafkaImage = 'confluentinc/cp-kafka:8.1.0'
 const restateImage = 'docker.restate.dev/restatedev/restate:1.8.1'
 const topic = 'bayn.broker-notifications.v1'
 const group = 'bayn-broker-notifications-restate-v1'
+const saslUser = 'bayn-local-proof'
+const saslPassword = 'synthetic-local-kafka-proof'
+const jaas = `org.apache.kafka.common.security.scram.ScramLoginModule required username="${saslUser}" password="${saslPassword}";`
+const clientConfig = '/tmp/bayn-proof-client.properties'
+const healthScriptPath = fileURLToPath(
+  new URL('../../../../argocd/applications/bayn/broker-kafka-health.sh', import.meta.url),
+)
+const healthScriptSha256 = sha256(readFileSync(healthScriptPath, 'utf8'))
+const HealthDeploymentSchema = Schema.Struct({
+  spec: Schema.Struct({
+    template: Schema.Struct({
+      spec: Schema.Struct({
+        containers: Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            livenessProbe: Schema.Struct({
+              exec: Schema.Struct({ command: Schema.Array(Schema.String) }),
+              periodSeconds: Schema.Int,
+              failureThreshold: Schema.Int,
+            }),
+          }),
+        ),
+      }),
+    }),
+  }),
+})
+const healthDeployment = Result.getOrThrow(
+  Schema.decodeUnknownResult(HealthDeploymentSchema)(
+    Bun.YAML.parse(
+      readFileSync(new URL('../../../../argocd/applications/bayn/broker-kafka-ingress.yaml', import.meta.url), 'utf8'),
+    ),
+  ),
+)
+const healthPolicy = healthDeployment.spec.template.spec.containers.find(
+  (container) => container.name === 'kafka-ingress',
+)?.livenessProbe
+if (healthPolicy === undefined) throw new Error('Missing broker ingress liveness policy')
 const fixture = Result.getOrThrow(
   Schema.decodeUnknownResult(
     Schema.fromJsonString(
@@ -38,6 +78,9 @@ const fixture = Result.getOrThrow(
     ),
   )(readFileSync(new URL('../../../dorvud/fixtures/bayn-broker-notification-v1.json', import.meta.url), 'utf8')),
 )
+const notification = Result.getOrThrow(
+  Schema.decodeUnknownResult(Schema.fromJsonString(BrokerNotificationSchema))(fixture.notification.message),
+)
 const connection = {
   identity: Result.getOrThrow(
     makeBrokerIdentity({
@@ -50,7 +93,22 @@ const connection = {
   key: Redacted.make(fixture.keyId),
   secret: Redacted.make(fixture.secret),
 }
-
+const sign = (candidate: unknown) => {
+  const message = JSON.stringify(candidate)
+  return {
+    schemaVersion: 'bayn.signed-broker-notification.v1',
+    message,
+    signature: createHmac('sha256', fixture.secret).update(`${brokerNotificationVersion}\n${message}`).digest('hex'),
+  }
+}
+const ready = (sessionId: string) =>
+  sign({
+    schemaVersion: brokerNotificationVersion,
+    _tag: 'SessionReady',
+    eventId: sha256(`${fixture.key}\n${sessionId}\nready`),
+    session: { ...notification.session, sessionId },
+    receivedAt: notification.receivedAt,
+  })
 const docker = (args: readonly string[], input?: string) =>
   Effect.tryPromise({
     try: (signal) =>
@@ -75,35 +133,59 @@ const docker = (args: readonly string[], input?: string) =>
       }),
     catch: (cause) => cause,
   })
-const json = (url: string, body?: unknown) =>
+const response = (url: string, body?: unknown) =>
   Effect.tryPromise({
     try: async (signal) => {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
         throw new Error('Kafka integration HTTP targets must be local')
-      const response = await fetch(url, {
+      return fetch(url, {
         signal,
         ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
         headers: { 'content-type': 'application/json', accept: 'application/json' },
       })
-      if (!response.ok) throw new Error(`Local Restate returned ${response.status}: ${await response.text()}`)
-      return response.json() as Promise<unknown>
     },
     catch: (cause) => cause,
   })
-const waitFor = (check: () => Effect.Effect<boolean, unknown>) =>
+const json = (url: string, body?: unknown) =>
+  response(url, body).pipe(
+    Effect.flatMap((result) =>
+      Effect.tryPromise({
+        try: async () => {
+          if (!result.ok) throw new Error(`Local Restate returned ${result.status}: ${await result.text()}`)
+          return result.json() as Promise<unknown>
+        },
+        catch: (cause) => cause,
+      }),
+    ),
+  )
+const waitFor = (check: () => Effect.Effect<boolean, unknown>, times = 100) =>
   Effect.suspend(check).pipe(
     Effect.flatMap((ready) => (ready ? Effect.void : Effect.fail('local Kafka ingress has not converged'))),
-    Effect.retry({ schedule: Schedule.spaced('200 millis'), times: 100 }),
+    Effect.retry({ schedule: Schedule.spaced('200 millis'), times }),
   )
-// Production retains bounded operation deadlines. Only this disposable endpoint requests replay after every suspension.
 const alwaysReplay = <A extends { name: string }>(service: A): A => {
   const definition = service as A & { options?: restate.ObjectOptions }
   definition.options = { ...definition.options, inactivityTimeout: 0 }
   return service
 }
+const QuerySchema = Schema.Struct({ rows: Schema.Array(Schema.Struct({ id: Schema.String, status: Schema.String })) })
+
+// IngestionResponse.error(kind=BAD_REQUEST=4, no invocation_offset), framed as one gRPC message.
+// This is the actual stream-scoped protocol error, not an HTTP failure or terminal handler result.
+const terminalStreamError = (stream: ServerHttp2Stream, kind = 4) => {
+  const error = Buffer.concat([Buffer.from([0x10, kind, 0x1a, 0x0b]), Buffer.from('proof fault')])
+  const payload = Buffer.concat([Buffer.from([0x1a, error.length]), error])
+  const header = Buffer.alloc(5)
+  header.writeUInt32BE(payload.length, 1)
+  if (!stream.headersSent)
+    stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true })
+  if (stream.listenerCount('wantTrailers') === 0)
+    stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': '0' }))
+  stream.end(Buffer.concat([header, payload]))
+}
 
 describeKafka('Pinned Kafka adapter and actual broker notification ingress', () => {
-  test('preserves Kafka routing and signed bytes, rejects foreign accounts, and deduplicates capture after acknowledgement', async () => {
+  test('retains source offsets through outages, retries durable receipts, and recovers ingestion after stream failure and rebalance', async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -115,53 +197,94 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
           for (const image of [kafkaImage, restateImage, adapterImage]) yield* docker(['image', 'inspect', image])
           const suffix = randomUUID().slice(0, 8)
           const network = `bayn-kafka-proof-${suffix}`
+          const evidence = `/tmp/bayn-broker-kafka-${suffix}`
           yield* Effect.acquireRelease(docker(['network', 'create', network]), () =>
             docker(['network', 'rm', network]).pipe(Effect.orDie),
           )
-          const container = (name: string, image: string, args: readonly string[]) =>
+          const container = (
+            name: string,
+            image: string,
+            args: readonly string[],
+            command: readonly string[] = [],
+            namespace = network,
+          ) =>
             Effect.acquireRelease(
-              docker(['run', '-d', '--pull=never', '--name', name, '--network', network, ...args, image]).pipe(
+              docker([
+                'run',
+                '-d',
+                '--pull=never',
+                '--name',
+                name,
+                '--network',
+                namespace,
+                ...args,
+                image,
+                ...command,
+              ]).pipe(
                 Effect.onError(() => docker(['rm', '-f', name]).pipe(Effect.ignore)),
                 Effect.as(name),
               ),
-              (owned) => docker(['rm', '-f', owned]).pipe(Effect.orDie),
+              (owned) =>
+                docker(['logs', owned]).pipe(
+                  Effect.tap((log) => Effect.sync(() => writeFileSync(`${evidence}-${owned}.log`, log))),
+                  Effect.ignore,
+                  Effect.andThen(docker(['rm', '-f', owned]).pipe(Effect.orDie)),
+                ),
             )
-          const kafka = yield* container(`bayn-kafka-proof-broker-${suffix}`, kafkaImage, [
-            '--network-alias',
-            'kafka',
-            '--tmpfs',
-            '/var/lib/kafka/data:rw,size=256m,mode=1777',
-            '--tmpfs',
-            '/tmp:rw,size=64m',
-            '-e',
-            'KAFKA_NODE_ID=1',
-            '-e',
-            'KAFKA_PROCESS_ROLES=broker,controller',
-            '-e',
-            'KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093',
-            '-e',
-            'KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092',
-            '-e',
-            'KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT',
-            '-e',
-            'KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER',
-            '-e',
-            'KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093',
-            '-e',
-            'KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT',
-            '-e',
-            'KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1',
-            '-e',
-            'KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1',
-            '-e',
-            'KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1',
-            '-e',
-            'KAFKA_LOG_DIRS=/var/lib/kafka/data',
-            '-e',
-            'KAFKA_HEAP_OPTS=-Xms128m -Xmx256m',
-            '-e',
-            'CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk',
-          ])
+          // Only bootstrap/admin setup uses INTERNAL. All application traffic and offset inspection authenticate
+          // over the production SASL_PLAINTEXT / SCRAM-SHA-512 mechanism with disposable synthetic credentials.
+          const kafka = yield* container(
+            `bayn-kafka-proof-broker-${suffix}`,
+            kafkaImage,
+            [
+              '--network-alias',
+              'kafka',
+              '--tmpfs',
+              '/var/lib/kafka/data:rw,size=256m,mode=1777',
+              '--tmpfs',
+              '/tmp:rw,size=64m',
+              '--entrypoint',
+              '/bin/bash',
+              '-e',
+              'KAFKA_NODE_ID=1',
+              '-e',
+              'KAFKA_PROCESS_ROLES=broker,controller',
+              '-e',
+              'KAFKA_LISTENERS=SASL_PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093',
+              '-e',
+              'KAFKA_ADVERTISED_LISTENERS=SASL_PLAINTEXT://kafka:9092,INTERNAL://kafka:9094',
+              '-e',
+              'KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT',
+              '-e',
+              'KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER',
+              '-e',
+              'KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093',
+              '-e',
+              'KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL',
+              '-e',
+              'KAFKA_SASL_ENABLED_MECHANISMS=SCRAM-SHA-512',
+              '-e',
+              'KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1',
+              '-e',
+              'KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1',
+              '-e',
+              'KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1',
+              '-e',
+              'KAFKA_LOG_DIRS=/var/lib/kafka/data',
+              '-e',
+              'KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0',
+              '-e',
+              'KAFKA_HEAP_OPTS=-Xms128m -Xmx256m',
+              '-e',
+              'KAFKA_OPTS=-Djava.security.auth.login.config=/tmp/bayn-proof-jaas.conf',
+              '-e',
+              'CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk',
+            ],
+            [
+              '-c',
+              `cat > /tmp/bayn-proof-jaas.conf <<'JAAS'\nKafkaServer { ${jaas} };\nJAAS\ncat > ${clientConfig} <<'CLIENT'\nsecurity.protocol=SASL_PLAINTEXT\nsasl.mechanism=SCRAM-SHA-512\nsasl.jaas.config=${jaas}\ndefault.api.timeout.ms=10000\nrequest.timeout.ms=5000\nCLIENT\nexec /etc/confluent/docker/run`,
+            ],
+          )
           const core = yield* container(`bayn-kafka-proof-restate-${suffix}`, restateImage, [
             '--network-alias',
             'restate',
@@ -180,7 +303,7 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
           const admin = `http://${yield* docker(['port', core, '9070/tcp'])}`
           yield* waitFor(() => json(`${admin}/deployments`).pipe(Effect.result, Effect.map(Result.isSuccess)))
           yield* waitFor(() =>
-            docker(['exec', kafka, 'kafka-topics', '--bootstrap-server', 'kafka:9092', '--list']).pipe(
+            docker(['exec', kafka, 'kafka-topics', '--bootstrap-server', 'kafka:9094', '--list']).pipe(
               Effect.result,
               Effect.map(Result.isSuccess),
             ),
@@ -188,9 +311,23 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
           yield* docker([
             'exec',
             kafka,
-            'kafka-topics',
+            'kafka-configs',
             '--bootstrap-server',
-            'kafka:9092',
+            'kafka:9094',
+            '--alter',
+            '--add-config',
+            `SCRAM-SHA-512=[password=${saslPassword}]`,
+            '--entity-type',
+            'users',
+            '--entity-name',
+            saslUser,
+          ])
+          const commandConfig = ['--bootstrap-server', 'kafka:9092', '--command-config', clientConfig] as const
+          yield* docker([
+            'exec',
+            kafka,
+            'kafka-topics',
+            ...commandConfig,
             '--create',
             '--topic',
             topic,
@@ -199,11 +336,34 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
             '--replication-factor',
             '1',
           ])
+          yield* docker([
+            'exec',
+            kafka,
+            'bash',
+            '-c',
+            `sed 's/${saslPassword}/incorrect-proof-password/' ${clientConfig} > /tmp/bayn-proof-rejected.properties`,
+          ])
+          const rejectedSasl = yield* docker([
+            'exec',
+            kafka,
+            'kafka-topics',
+            '--bootstrap-server',
+            'kafka:9092',
+            '--command-config',
+            '/tmp/bayn-proof-rejected.properties',
+            '--list',
+          ]).pipe(Effect.result)
+          expect(Result.isFailure(rejectedSasl)).toBe(true)
+          if (Result.isFailure(rejectedSasl))
+            expect(String(rejectedSasl.failure)).toContain('SaslAuthenticationException')
           let captures = 0
+          let notificationCaptures = 0
+          let completenessCaptures = 0
           let invalidations = 0
-          let receiptWrites = 0
+          let receiptAttempts = 0
+          let receiptBlocked = true
           const receipts = new Map<string, boolean>()
-          const verified: { readonly candidate: unknown; readonly accepted: boolean; readonly reason?: string }[] = []
+          const verified: { candidate: unknown; accepted: boolean; reason?: string }[] = []
           const config = {
             controllerKey: fixture.key,
             sourceRevision: '2'.repeat(40),
@@ -224,17 +384,20 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
               },
               activate: async () => undefined,
               recordNotification: async (_signal, receipt) => {
-                receiptWrites += 1
+                receiptAttempts++
+                if (receiptBlocked) throw new Error('Injected transient SQL receipt outage')
                 const covered = receipts.get(receipt.eventId) ?? false
                 receipts.set(receipt.eventId, covered)
                 return { covered }
               },
               invalidate: async () => {
-                invalidations += 1
+                invalidations++
               },
               poll: async () => {
                 const now = Date.now()
-                captures += 1
+                captures++
+                if ([...receipts.values()].some((covered) => !covered)) notificationCaptures++
+                else if (captures > 1) completenessCaptures++
                 for (const eventId of receipts.keys()) receipts.set(eventId, true)
                 return {
                   poll: {
@@ -309,20 +472,80 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
           yield* invoke('activate')
           expect(captures).toBe(1)
           for (const method of ['activate', 'accept', 'refresh', 'capture', 'freshness', 'status']) {
-            const denied = yield* Effect.promise(() =>
-              fetch(`${ingress}/${owner.name}/${config.controllerKey}/${method}`, {
-                method: 'POST',
-                body: '{}',
-                headers: { 'content-type': 'application/json' },
-              }),
-            )
+            const denied = yield* response(`${ingress}/${owner.name}/${config.controllerKey}/${method}`, {})
             expect(denied.status).toBe(400)
           }
-          const adapter = yield* container(`bayn-kafka-proof-adapter-${suffix}`, adapterImage, [
+          const upstream = yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              const session = connect(ingress)
+              session.on('error', () => undefined)
+              return session
+            }),
+            (session) => Effect.sync(() => session.destroy()),
+          )
+          let fault = false
+          let streamFaults = 0
+          let openedStreams = 0
+          const activeStreams = new Map<ServerHttp2Stream, ReturnType<typeof upstream.request>>()
+          const proxy = createServer()
+          proxy.on('stream', (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
+            if (fault) {
+              streamFaults++
+              terminalStreamError(stream)
+              return
+            }
+            const request = upstream.request({ ...headers, ':authority': new URL(ingress).host })
+            openedStreams++
+            activeStreams.set(stream, request)
+            let trailers: Record<string, string | string[] | undefined> = { 'grpc-status': '0' }
+            request.on('response', (reply) => stream.respond(reply, { waitForTrailers: true }))
+            request.on('trailers', (reply) => {
+              trailers = reply
+            })
+            stream.on('wantTrailers', () => {
+              if (!stream.destroyed) stream.sendTrailers(trailers)
+            })
+            request.on('error', () => stream.close())
+            stream.on('error', () => request.close())
+            stream.on('close', () => {
+              activeStreams.delete(stream)
+              request.close()
+            })
+            stream.pipe(request)
+            request.pipe(stream)
+          })
+          const failActiveStreams = (kind: number) => {
+            for (const [stream, request] of activeStreams) {
+              request.unpipe(stream)
+              stream.unpipe(request)
+              request.removeAllListeners('response')
+              request.removeAllListeners('trailers')
+              request.removeAllListeners('error')
+              request.on('error', () => undefined)
+              terminalStreamError(stream, kind)
+              request.close()
+            }
+          }
+          yield* acquireRestateHttp2Server(proxy, 0)
+          const proxyAddress = proxy.address()
+          if (proxyAddress === null || typeof proxyAddress === 'string')
+            throw new Error('Missing local fault proxy address')
+          const adapterArgs = [
             '--platform',
             'linux/amd64',
+            '--user',
+            '65532:65532',
+            '--read-only',
+            '--cap-drop',
+            'ALL',
+            '--security-opt',
+            'no-new-privileges',
+            '--mount',
+            `type=bind,source=${healthScriptPath},target=/opt/bayn/health/probe.sh,readonly`,
             '--tmpfs',
             '/tmp:rw,size=64m',
+            '-p',
+            '127.0.0.1::9464',
             '-e',
             'KAFKA_BOOTSTRAP_SERVERS=kafka:9092',
             '-e',
@@ -330,11 +553,21 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
             '-e',
             `KAFKA_TOPICS=${topic}`,
             '-e',
-            'KAFKA_SECURITY_PROTOCOL=PLAINTEXT',
+            'KAFKA_SECURITY_PROTOCOL=SASL_PLAINTEXT',
+            '-e',
+            'KAFKA_SASL_MECHANISM=SCRAM-SHA-512',
+            '-e',
+            `KAFKA_SASL_JAAS_CONFIG=${jaas}`,
             '-e',
             'KAFKA_AUTO_OFFSET_RESET=earliest',
             '-e',
-            'RESTATE_INGRESS_URL=http://restate:8080',
+            'KAFKA_SESSION_TIMEOUT_MS=6000',
+            '-e',
+            'KAFKA_HEARTBEAT_INTERVAL_MS=1000',
+            '-e',
+            'KAFKA_METADATA_MAX_AGE_MS=1000',
+            '-e',
+            `RESTATE_INGRESS_URL=http://host.docker.internal:${proxyAddress.port}`,
             '-e',
             'RESTATE_RECORD_MAPPER_CLASS=dev.restate.integration.kafka.mapper.StaticRecordMapper',
             '-e',
@@ -347,24 +580,31 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
             'RESTATE_KAFKA_CONSUMER_INSTANCES=1',
             '-e',
             'JDK_JAVA_OPTIONS=-Xmx256m',
-          ])
-          const message = JSON.parse(fixture.notification.message) as { session: { accountId: string } }
-          message.session.accountId = '00000000-0000-4000-8000-000000000003'
-          const foreignMessage = JSON.stringify(message)
-          const foreign = {
-            ...fixture.notification,
-            message: foreignMessage,
-            signature: createHmac('sha256', fixture.secret)
-              .update(`${brokerNotificationVersion}\n${foreignMessage}`)
-              .digest('hex'),
-          }
-          const records: readonly (readonly [string, unknown])[] = [
-            [fixture.key, fixture.notification],
-            [fixture.key, fixture.notification],
-            [fixture.key, foreign],
-            [fixture.key, { ...fixture.notification, signature: 'f'.repeat(64) }],
-            ['f'.repeat(64), fixture.notification],
           ]
+          const adapter = yield* container(`bayn-kafka-proof-adapter-${suffix}`, adapterImage, adapterArgs)
+          expect(yield* docker(['exec', adapter, '/usr/bin/id', '-u'])).toBe('65532')
+          expect(yield* docker(['exec', adapter, '/usr/bin/awk', '/^CapEff:/{print $2}', '/proc/self/status'])).toBe(
+            '0000000000000000',
+          )
+          expect(yield* docker(['inspect', '--format', '{{.HostConfig.ReadonlyRootfs}}', adapter])).toBe('true')
+          expect(
+            (yield* docker(['exec', adapter, '/usr/bin/sha256sum', '/opt/bayn/health/probe.sh'])).split(/\s+/)[0],
+          ).toBe(healthScriptSha256)
+          const probe = (name: string, port?: number) =>
+            docker([
+              'exec',
+              ...(port === undefined ? [] : ['-e', `RESTATE_METRICS_PORT=${port}`]),
+              name,
+              ...healthPolicy.exec.command,
+            ])
+          const metrics = (member = adapter) =>
+            docker(['port', member, '9464/tcp']).pipe(
+              Effect.flatMap((address) => response(`http://${address}/metrics`)),
+              Effect.flatMap((result) => {
+                expect(result.status).toBe(200)
+                return Effect.promise(() => result.text())
+              }),
+            )
           const produce = (entries: readonly (readonly [string, unknown])[]) =>
             docker(
               [
@@ -374,6 +614,8 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
                 'kafka-console-producer',
                 '--bootstrap-server',
                 'kafka:9092',
+                '--producer.config',
+                clientConfig,
                 '--topic',
                 topic,
                 '--property',
@@ -385,71 +627,298 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
                 '--producer-property',
                 'enable.idempotence=true',
               ],
-              entries.map(([recordKey, value]) => `${recordKey}|${JSON.stringify(value)}`).join('\n') + '\n',
+              entries.map(([key, value]) => `${key}|${JSON.stringify(value)}`).join('\n') + '\n',
             )
-          yield* produce(records)
-          yield* waitFor(() => Effect.sync(() => verified.length === 4 && captures === 2))
-          expect(verified.filter((record) => record.accepted).map((record) => record.candidate)).toEqual([
-            fixture.notification,
-            fixture.notification,
+          const offsets = () =>
+            docker(['exec', kafka, 'kafka-consumer-groups', ...commandConfig, '--group', group, '--describe'])
+          const committed = (output: string): number | null => {
+            const row = output.split('\n').find((line) => line.includes(topic))
+            const columns = row?.trim().split(/\s+/)
+            const value = columns?.[3]
+            return value === undefined || value === '-' ? null : Number(value)
+          }
+          const atOffset = (offset: number) =>
+            waitFor(() => offsets().pipe(Effect.map((output) => committed(output) === offset)))
+          yield* waitFor(() => Effect.sync(() => activeStreams.size === 1))
+          const healthyMetrics = yield* metrics()
+          expect(healthyMetrics).toMatch(/^kafka_consumer_coordinator_assigned_partitions\{[^\n]*\} 1\.0$/m)
+          expect(healthyMetrics).toMatch(/^vertx_http_client_active_requests\{method="POST"\} 1\.0$/m)
+          writeFileSync(`${evidence}-healthy-quiet.prom`, healthyMetrics)
+          process.stdout.write(`BROKER_KAFKA_HEALTHY_METRICS=${evidence}-healthy-quiet.prom\n`)
+          yield* probe(adapter)
+          const stallScope = yield* Scope.fork(yield* Effect.scope)
+          const stall = yield* container(
+            `bayn-kafka-proof-stall-${suffix}`,
+            kafkaImage,
+            ['--entrypoint', '/usr/bin/python3', '--user', '65532:65532', '--read-only', '--cap-drop', 'ALL'],
+            [
+              '-u',
+              '-c',
+              'import socket,time; listener=socket.socket(); listener.bind(("127.0.0.1",19464)); listener.listen(); print("ready",flush=True); connection,address=listener.accept(); time.sleep(10)',
+            ],
+            `container:${adapter}`,
+          ).pipe(Effect.provideService(Scope.Scope, stallScope))
+          yield* waitFor(() => docker(['logs', stall]).pipe(Effect.map((text) => text.includes('ready'))))
+          const stalledProbe = yield* probe(adapter, 19464).pipe(Effect.result)
+          expect(Result.isFailure(stalledProbe)).toBe(true)
+          if (Result.isFailure(stalledProbe)) expect(String(stalledProbe.failure)).toContain('(124)')
+          yield* Scope.close(stallScope, Exit.succeed(undefined))
+          // The actual retryable SHUTTING_DOWN protocol response must reconnect within the liveness budget.
+          const priorOpened = openedStreams
+          failActiveStreams(1)
+          yield* produce([[fixture.key, { ...fixture.notification, signature: 'f'.repeat(64) }]])
+          yield* waitFor(() => Effect.sync(() => openedStreams > priorOpened && activeStreams.size === 1))
+          const reconnectedMetrics = yield* metrics()
+          writeFileSync(`${evidence}-transient-reconnected.prom`, reconnectedMetrics)
+          yield* probe(adapter)
+          yield* atOffset(1)
+          expect(notificationCaptures).toBe(0)
+          const terminalAt = Date.now()
+          fault = true
+          streamFaults += activeStreams.size
+          failActiveStreams(4)
+          yield* produce([[fixture.key, fixture.notification]])
+          yield* waitFor(() =>
+            docker(['logs', adapter]).pipe(
+              Effect.map(
+                (output) => output.includes('permanent ingestion error') && output.includes('ingestion session for'),
+              ),
+            ),
+          )
+          const terminalMetrics = yield* metrics()
+          writeFileSync(`${evidence}-terminal.prom`, terminalMetrics)
+          const terminalOffsets = yield* offsets()
+          expect(committed(terminalOffsets)).toBe(1)
+          expect(notificationCaptures).toBe(0)
+          expect(Result.isFailure(yield* probe(adapter).pipe(Effect.result))).toBe(true)
+          fault = false
+          yield* Effect.sleep('1500 millis')
+          const repairedOffsets = yield* offsets()
+          const repairedMetrics = yield* metrics()
+          writeFileSync(`${evidence}-repaired.prom`, repairedMetrics)
+          const unaidedRecovery = receiptAttempts > 0
+          const terminalEvidence = {
+            adapterImage,
+            protocol: 'SASL_PLAINTEXT',
+            mechanism: 'SCRAM-SHA-512',
+            streamFaults,
+            unaidedRecovery,
+            committedBeforeRepair: committed(terminalOffsets),
+            committedAfterRepair: committed(repairedOffsets),
+            captures,
+            receiptAttempts,
+            metricsBytes: repairedMetrics.length,
+            terminalMetrics: `${evidence}-terminal.prom`,
+            repairedMetrics: `${evidence}-repaired.prom`,
+          }
+          writeFileSync(`${evidence}-terminal.json`, JSON.stringify(terminalEvidence, null, 2))
+          process.stdout.write(`BROKER_KAFKA_TERMINAL_EVIDENCE=${JSON.stringify(terminalEvidence)}\n`)
+          let livenessFailures = 0
+          let automaticRestarts = 0
+          // Model kubelet's configured cadence and consecutive-failure budget without an F2 manual restart.
+          yield* Effect.gen(function* () {
+            while (receiptAttempts === 0 && automaticRestarts === 0) {
+              yield* Effect.sleep(`${healthPolicy.periodSeconds} seconds`)
+              const result = yield* probe(adapter).pipe(Effect.result)
+              livenessFailures = Result.isFailure(result) ? livenessFailures + 1 : 0
+              if (livenessFailures >= healthPolicy.failureThreshold) {
+                yield* docker(['restart', adapter])
+                automaticRestarts++
+              }
+            }
+          }).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* waitFor(
+            () => Effect.sync(() => receiptAttempts >= 6),
+            (healthPolicy.periodSeconds * healthPolicy.failureThreshold + 20) * 5,
+          )
+          yield* atOffset(2)
+          expect(receipts.size).toBe(0)
+          expect(notificationCaptures).toBe(0)
+          const pending = yield* json(`${admin}/query`, {
+            query: `SELECT id,status FROM sys_invocation WHERE target_service_name='${owner.name}' AND target_handler_name='notify' AND target_service_key='${fixture.key}' AND status <> 'completed'`,
+          }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(QuerySchema)))
+          expect(pending.rows).toHaveLength(1)
+          expect(pending.rows[0]?.status).not.toBe('paused')
+          expect(pending.rows[0]?.status).not.toBe('completed')
+          receiptBlocked = false
+          yield* waitFor(() => Effect.sync(() => notificationCaptures === 1 && receipts.size === 1))
+          const canonicalRecoveryMs = Date.now() - terminalAt
+          const automaticRecovery = receiptAttempts > 0 && (automaticRestarts === 1 || unaidedRecovery)
+          expect(automaticRecovery).toBe(true)
+          expect(automaticRestarts).toBe(1)
+          expect(livenessFailures).toBe(healthPolicy.failureThreshold)
+          yield* probe(adapter)
+          expect(invalidations).toBe(1)
+          expect([...receipts.values()]).toEqual([true])
+          // Pausing the actual core prevents any new durable ingestion while retaining its journal/tmpfs.
+          yield* docker(['pause', core])
+          yield* Effect.addFinalizer(() => docker(['unpause', core]).pipe(Effect.ignore))
+          const second = ready(`second-${suffix}`)
+          yield* produce([[fixture.key, second]])
+          yield* Effect.sleep('1200 millis')
+          expect(committed(yield* offsets())).toBe(2)
+          expect(notificationCaptures).toBe(1)
+          yield* docker(['unpause', core])
+          yield* atOffset(3)
+          yield* waitFor(() => Effect.sync(() => notificationCaptures === 2 && receipts.size === 2))
+          const foreign = sign({
+            ...notification,
+            session: { ...notification.session, accountId: '00000000-0000-4000-8000-000000000003' },
+          })
+          const invalidSource = sign({
+            ...notification,
+            session: { ...notification.session, sourceRevision: 'not-a-source-revision' },
+          })
+          yield* produce([
+            [fixture.key, foreign],
+            [fixture.key, { ...fixture.notification, signature: 'f'.repeat(64) }],
+            [fixture.key, invalidSource],
+            ['f'.repeat(64), fixture.notification],
           ])
+          yield* atOffset(7)
+          yield* waitFor(() => Effect.sync(() => verified.filter((entry) => !entry.accepted).length === 4))
           expect(
             verified
-              .filter((record) => !record.accepted)
-              .map((record) => record.reason)
+              .filter((entry) => !entry.accepted)
+              .map((entry) => entry.reason)
               .sort((left, right) => (left ?? '').localeCompare(right ?? '')),
-          ).toEqual(['account', 'signature'])
-          expect(invalidations).toBe(1)
-          expect(receiptWrites).toBe(2)
-          expect(receipts.size).toBe(1)
-          expect([...receipts.values()]).toEqual([true])
-          const offsets = () =>
+          ).toEqual(['account', 'message', 'signature', 'signature'])
+          expect(notificationCaptures).toBe(2)
+          const baselineAttempts = receiptAttempts
+          yield* produce([
+            [fixture.key, fixture.notification],
+            [fixture.key, second],
+          ])
+          yield* atOffset(9)
+          yield* waitFor(() => Effect.sync(() => receiptAttempts === baselineAttempts + 2))
+          expect(notificationCaptures).toBe(2)
+          expect(invalidations).toBe(2)
+          // Crash with polled records still unacknowledged by the paused core, then force reassignment.
+          yield* docker(['pause', core])
+          const third = ready(`third-${suffix}`)
+          const consumedCount = (text: string) =>
+            Number(/^kafka_consumer_fetch_manager_records_consumed_total\{[^\n]*\} ([\d.]+)$/m.exec(text)?.[1] ?? 'NaN')
+          const beforeCrashConsumed = consumedCount(yield* metrics())
+          yield* produce([
+            [fixture.key, third],
+            [fixture.key, fixture.notification],
+          ])
+          yield* waitFor(() => metrics().pipe(Effect.map((text) => consumedCount(text) >= beforeCrashConsumed + 2)))
+          expect(committed(yield* offsets())).toBe(9)
+          yield* docker(['kill', '--signal=KILL', adapter])
+          const replacement = yield* container(`bayn-kafka-proof-replacement-${suffix}`, adapterImage, adapterArgs)
+          const peer = yield* container(`bayn-kafka-proof-peer-${suffix}`, adapterImage, adapterArgs)
+          yield* waitFor(() =>
             docker([
               'exec',
               kafka,
               'kafka-consumer-groups',
-              '--bootstrap-server',
-              'kafka:9092',
+              ...commandConfig,
               '--group',
               group,
               '--describe',
-            ])
-          yield* waitFor(() =>
-            offsets().pipe(
-              Effect.map((output) =>
-                output
-                  .split('\n')
-                  .some((line) => new RegExp(`${topic.replaceAll('.', '\\.')}\\s+0\\s+5\\s+5\\s+0`).test(line)),
-              ),
+              '--members',
+            ]).pipe(
+              Effect.map((output) => output.split('\n').filter((line) => line.trim().startsWith(group)).length === 2),
             ),
           )
-          yield* docker(['restart', adapter])
-          yield* produce([[fixture.key, fixture.notification]])
-          yield* waitFor(() => Effect.sync(() => verified.length === 5 && receiptWrites === 3))
-          yield* waitFor(() =>
-            offsets().pipe(
-              Effect.map((output) =>
-                output
-                  .split('\n')
-                  .some((line) => new RegExp(`${topic.replaceAll('.', '\\.')}\\s+0\\s+6\\s+6\\s+0`).test(line)),
-              ),
-            ),
-          )
-          expect(captures).toBe(2)
-          expect(invalidations).toBe(1)
-          expect(yield* invoke('status')).toMatchObject({ captureScheduled: false, sequence: 3 })
-          const wakes = yield* invoke('wakes')
-          expect(wakes).toMatchObject([
-            { _tag: 'BrokerObservation', sourceRevision: config.sourceRevision, snapshotHash: '1'.padStart(64, '0') },
-            { _tag: 'BrokerObservation', sourceRevision: config.sourceRevision, snapshotHash: '2'.padStart(64, '0') },
+          expect(committed(yield* offsets())).toBe(9)
+          yield* docker(['unpause', core])
+          yield* atOffset(11)
+          yield* waitFor(() => Effect.sync(() => notificationCaptures === 3 && receipts.size === 3))
+          expect(invalidations).toBe(3)
+          expect([...receipts.values()]).toEqual([true, true, true])
+          const finalInvocations = yield* json(`${admin}/query`, {
+            query: `SELECT id,status FROM sys_invocation WHERE target_service_name='${owner.name}' AND target_handler_name='notify'`,
+          }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(QuerySchema)))
+          expect(finalInvocations.rows).toHaveLength(11)
+          expect(finalInvocations.rows.every((row) => row.status === 'completed')).toBe(true)
+          for (const [label, member] of [
+            ['replacement', replacement],
+            ['peer', peer],
+          ] as const) {
+            yield* waitFor(() => probe(member).pipe(Effect.result, Effect.map(Result.isSuccess)))
+            expect(
+              (yield* docker(['exec', member, '/usr/bin/sha256sum', '/opt/bayn/health/probe.sh'])).split(/\s+/)[0],
+            ).toBe(healthScriptSha256)
+            const metricResponse = yield* response(`http://${yield* docker(['port', member, '9464/tcp'])}/metrics`)
+            expect(metricResponse.status).toBe(200)
+            writeFileSync(`${evidence}-${label}.prom`, yield* Effect.promise(() => metricResponse.text()))
+          }
+          // Match the production topic's three partitions without changing the checked source record sequence.
+          yield* docker([
+            'exec',
+            kafka,
+            'kafka-topics',
+            ...commandConfig,
+            '--alter',
+            '--topic',
+            topic,
+            '--partitions',
+            '3',
           ])
-          expect(
-            yield* json(`${admin}/query`, {
-              query: `SELECT COUNT(*) AS accepted FROM sys_invocation WHERE target_service_name = '${owner.name}' AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'accept'`,
-            }),
-          ).toEqual({ rows: [{ accepted: 1 }] })
+          const assignedCount = (text: string) =>
+            Number(/^kafka_consumer_coordinator_assigned_partitions\{[^\n]*\} ([\d.]+)$/m.exec(text)?.[1] ?? 'NaN')
+          yield* waitFor(() =>
+            Effect.all([metrics(replacement), metrics(peer)], { concurrency: 2 }).pipe(
+              Effect.map((samples) => {
+                const counts = samples.map(assignedCount).sort((left, right) => left - right)
+                return counts[0] === 1 && counts[1] === 2
+              }),
+            ),
+          )
+          for (const [label, member] of [
+            ['replacement', replacement],
+            ['peer', peer],
+          ] as const) {
+            yield* waitFor(() => probe(member).pipe(Effect.result, Effect.map(Result.isSuccess)))
+            const sample = yield* response(`http://${yield* docker(['port', member, '9464/tcp'])}/metrics`).pipe(
+              Effect.flatMap((result) => Effect.promise(() => result.text())),
+            )
+            writeFileSync(`${evidence}-three-partitions-${label}.prom`, sample)
+          }
+          yield* docker(['kill', '--signal=KILL', peer])
+          const replacementMetricsUrl = `http://${yield* docker(['port', replacement, '9464/tcp'])}/metrics`
+          yield* waitFor(() =>
+            response(replacementMetricsUrl).pipe(
+              Effect.flatMap((result) => Effect.promise(() => result.text())),
+              Effect.map((sample) => /^kafka_consumer_coordinator_assigned_partitions\{[^\n]*\} 3\.0$/m.test(sample)),
+            ),
+          )
+          yield* waitFor(() => probe(replacement).pipe(Effect.result, Effect.map(Result.isSuccess)))
+          const allPartitions = yield* response(
+            `http://${yield* docker(['port', replacement, '9464/tcp'])}/metrics`,
+          ).pipe(Effect.flatMap((result) => Effect.promise(() => result.text())))
+          writeFileSync(`${evidence}-three-partitions-single-owner.prom`, allPartitions)
+          expect(allPartitions).toMatch(/^vertx_http_client_active_requests\{method="POST"\} 3\.0$/m)
+          expect(sha256(readFileSync(healthScriptPath, 'utf8'))).toBe(healthScriptSha256)
+          const final = {
+            ...terminalEvidence,
+            receiptAttempts,
+            uniqueReceipts: receipts.size,
+            captures,
+            notificationCaptures,
+            completenessCaptures,
+            canonicalRecoveryMs,
+            livenessFailures,
+            automaticRestarts,
+            automaticRecovery,
+            healthScriptSha256,
+            livenessPeriodSeconds: healthPolicy.periodSeconds,
+            livenessFailureThreshold: healthPolicy.failureThreshold,
+            invalidations,
+            committed: committed(yield* offsets()),
+            notifyInvocations: finalInvocations.rows.length,
+            replacement,
+            peer,
+            metricsLimit:
+              'Synthetic SCRAM credentials; private bootstrap listener; no production ACL/TLS or live financial I/O is exercised',
+          }
+          writeFileSync(`${evidence}-qualified.json`, JSON.stringify(final, null, 2))
+          process.stdout.write(`BROKER_KAFKA_RECOVERY_EVIDENCE=${JSON.stringify(final)}\n`)
+          expect(automaticRecovery).toBe(true)
         }),
-      ).pipe(Effect.timeout('90 seconds')),
+      ).pipe(Effect.timeout('210 seconds')),
     )
-  }, 120_000)
+  }, 240_000)
 })

@@ -11,6 +11,9 @@ const previousKey = 'polling'
 const budgetKey = 'next-poll-not-before-ms'
 const recoveryDelayMs = 1_000
 const coalescingDelayMs = 100
+// Explicit intervals override the finite handler retry policy. Accepted notifications must survive a database
+// outage without recording a terminal run result; leave attempt and duration limits unset for idempotent writes.
+const persistenceRunOptions = { initialRetryInterval: 50, maxRetryInterval: 1_000 }
 const BudgetDeadlineSchema = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
@@ -187,11 +190,14 @@ export const makeBaynBrokerObservations = (
           })
           if (!verified.accepted)
             throw new restate.TerminalError(`broker notification rejected: ${verified.reason}`, { errorCode: 400 })
-          const retained = await ctx.run('record verified broker notification', () =>
-            runtime.recordNotification(ctx.request().attemptCompletedSignal, {
-              eventId: verified.eventId,
-              receivedAt: verified.receivedAt,
-            }),
+          const retained = await ctx.run(
+            'record verified broker notification',
+            () =>
+              runtime.recordNotification(ctx.request().attemptCompletedSignal, {
+                eventId: verified.eventId,
+                receivedAt: verified.receivedAt,
+              }),
+            persistenceRunOptions,
           )
           if (retained.covered) return { accepted: true, eventId: verified.eventId }
           // Only the stable identity is retained; payloads and credentials never enter owner state.
@@ -218,8 +224,10 @@ export const makeBaynBrokerObservations = (
             current.pendingNotificationId !== undefined
           )
             return
-          await ctx.run('invalidate broker observation after notification', () =>
-            runtime.invalidate(ctx.request().attemptCompletedSignal),
+          await ctx.run(
+            'invalidate broker observation after notification',
+            () => runtime.invalidate(ctx.request().attemptCompletedSignal),
+            persistenceRunOptions,
           )
           const state: State = {
             sourceRevision: current.sourceRevision,
@@ -248,8 +256,10 @@ export const makeBaynBrokerObservations = (
           const current = await read(ctx)
           if (current === null || current.sourceRevision !== config.sourceRevision) return
           const receivedAt = await ctx.date.now()
-          await ctx.run('invalidate broker observation after execution mutation', () =>
-            runtime.invalidate(ctx.request().attemptCompletedSignal),
+          await ctx.run(
+            'invalidate broker observation after execution mutation',
+            () => runtime.invalidate(ctx.request().attemptCompletedSignal),
+            persistenceRunOptions,
           )
           const state: State = {
             sourceRevision: current.sourceRevision,
@@ -262,12 +272,7 @@ export const makeBaynBrokerObservations = (
               : { pendingNotificationId: current.pendingNotificationId }),
           }
           ctx.set(key, state)
-          schedule(
-            ctx,
-            'capture',
-            state,
-            Math.max(receivedAt + mutationConsistencyDelayMs, state.nextCaptureNotBeforeMs),
-          )
+          schedule(ctx, 'capture', state, Math.max(receivedAt + coalescingDelayMs, state.nextCaptureNotBeforeMs))
         },
       ),
       activate: restate.handlers.object.exclusive(

@@ -1,39 +1,46 @@
 import { Duration, Effect, Queue, Schedule } from 'effect'
 
-import type { PendingMarketReady } from '../../db/market-ready-postgres'
-import type { MarketReadyWakeup } from '../../execution/events'
-import type { NativeArrivalCaptureError } from './native-arrival'
-
-export interface MarketReadyOutbox {
-  readonly next: Effect.Effect<PendingMarketReady | undefined, NativeArrivalCaptureError>
-  readonly acknowledge: (pending: PendingMarketReady) => Effect.Effect<void, NativeArrivalCaptureError>
-}
+import { marketChangedEventId, type MarketChangedWakeup } from '../../execution/events'
 
 // These are retries of retained work, never discovery of new market inputs.
-export const marketReadyRecoverySchedule = Schedule.exponential('1 second').pipe(
+export const marketHintRecoverySchedule = Schedule.exponential('1 second').pipe(
   Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(30)))),
 )
 
-/** Drains once at startup, then only after committed appends. Transport completion acknowledges a durable prefix. */
-export const serveMarketReadyOutbox = <E>(
-  outbox: MarketReadyOutbox,
-  changed: Queue.Queue<void>,
-  deliver: (event: MarketReadyWakeup) => Effect.Effect<void, E>,
-) =>
+/** Private-wake completion releases one immutable hint; newer changes occupy one conflated slot. */
+export const makeMarketHints = (sourceRevision: string, producerId: string) =>
   Effect.gen(function* () {
-    Queue.offerUnsafe(changed, undefined)
-    return yield* Effect.forever(
-      Queue.take(changed).pipe(
-        Effect.andThen(
-          Effect.gen(function* () {
-            while (true) {
-              const next = yield* outbox.next.pipe(Effect.retry({ schedule: marketReadyRecoverySchedule }))
-              if (next === undefined) return
-              yield* deliver(next.event).pipe(Effect.retry({ schedule: marketReadyRecoverySchedule }))
-              yield* outbox.acknowledge(next).pipe(Effect.retry({ schedule: marketReadyRecoverySchedule }))
-            }
-          }),
+    const changed = yield* Queue.dropping<void>(1)
+    let sequence = 0
+    let latest: MarketChangedWakeup | undefined
+    return {
+      changed: (reason: MarketChangedWakeup['reason']) =>
+        Effect.sync(() => {
+          sequence += 1
+          latest = Object.freeze({
+            schemaVersion: 'bayn.execution-wakeup.v1',
+            _tag: 'MarketChanged',
+            sourceRevision,
+            producerId,
+            sequence,
+            reason,
+            eventId: marketChangedEventId(producerId, sequence),
+          })
+          Queue.offerUnsafe(changed, undefined)
+        }),
+      serve: <E>(deliver: (event: MarketChangedWakeup) => Effect.Effect<void, E>) =>
+        Effect.forever(
+          Queue.take(changed).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                while (latest !== undefined) {
+                  const event = latest
+                  latest = undefined
+                  yield* deliver(event).pipe(Effect.retry({ schedule: marketHintRecoverySchedule }))
+                }
+              }),
+            ),
+          ),
         ),
-      ),
-    )
+    }
   })

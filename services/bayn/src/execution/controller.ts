@@ -89,14 +89,11 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   lastCompletion: Schema.optionalKey(CompletionSchema),
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
   marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
+  wakeScheduledSequence: Schema.optionalKey(CounterSchema),
   marketFrontier: Schema.optionalKey(
     Schema.Struct({
-      eventId: Sha256Schema,
-      captureId: Schema.NonEmptyString,
-      sourceEpoch: Schema.NonEmptyString,
-      consumerSequence: CounterSchema,
-      projectionSequence: CounterSchema,
-      readyAt: UtcInstantSchema,
+      producerId: Schema.String.check(Schema.isUUID(4)),
+      sequence: EpochSchema,
     }),
   ),
   lastBrokerSnapshotHash: Schema.optionalKey(Sha256Schema),

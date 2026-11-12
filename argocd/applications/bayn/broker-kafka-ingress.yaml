@@ -100,21 +100,28 @@ spec:
             periodSeconds: 2
             failureThreshold: 60
           readinessProbe:
-            httpGet:
-              path: /metrics
-              port: metrics
+            exec:
+              command: [/usr/bin/timeout, 2s, /usr/bin/bash, /opt/bayn/health/probe.sh]
             periodSeconds: 5
-            timeoutSeconds: 2
+            timeoutSeconds: 3
           livenessProbe:
-            httpGet:
-              path: /metrics
-              port: metrics
-            periodSeconds: 20
-            timeoutSeconds: 2
+            exec:
+              command: [/usr/bin/timeout, 2s, /usr/bin/bash, /opt/bayn/health/probe.sh]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            # Allow two maximum 30-second reconnect intervals, then replace a stopped assigned forwarder.
+            failureThreshold: 6
           volumeMounts:
+            - name: health
+              mountPath: /opt/bayn/health
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: health
+          configMap:
+            name: bayn-broker-kafka-health
+            defaultMode: 292
         - name: tmp
           emptyDir:
             sizeLimit: 128Mi

@@ -1,7 +1,8 @@
 import { makeResearchStore, projectResearchExpenses } from './research-inference/store'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Duration, Effect, Schema } from 'effect'
+import * as PgConnection from '@effect/sql-pg/PgConnection'
+import { Cause, Clock, Duration, Effect, Queue, Schedule, Schema } from 'effect'
 import { Statement } from 'effect/sql'
 
 import type { LoadedRuntimeConfig } from './config/model'
@@ -69,22 +70,82 @@ export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(
   return summary
 })
 
-export const inferenceExpenseLoop = <A, E, R>(pass: Effect.Effect<A, E, R>) =>
+type ExpenseContinuation = { readonly pending: boolean; readonly nextWakeAt: string | null }
+
+const expenseRecoverySchedule = Schedule.exponential('1 second').pipe(
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(30)))),
+)
+
+const logExpenseFailure = (error: unknown) =>
+  Effect.logWarning('Bayn inference expense projection unavailable; frozen quotes remain pending').pipe(
+    Effect.annotateLogs({
+      errorTag: typeof error === 'object' && error !== null && '_tag' in error ? String(error._tag) : 'UNKNOWN',
+      ...(error instanceof InferenceCostError ? { reason: error.message } : {}),
+    }),
+  )
+
+// PostgreSQL retains microseconds. Round a future deadline up instead of firing before its original instant.
+const expenseWakeAtMillis = (at: string) => {
+  const fraction = /\.(\d+)(?:Z|[+-]\d\d(?::?\d\d)?)$/.exec(at)?.[1]
+  return Date.parse(at) + (fraction !== undefined && /[1-9]/.test(fraction.slice(3)) ? 1 : 0)
+}
+
+export const inferenceExpenseLoop = <E, R>(
+  changed: Queue.Dequeue<void>,
+  pass: Effect.Effect<ExpenseContinuation | undefined, E, R>,
+) =>
   Effect.gen(function* () {
     while (true) {
-      yield* pass.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning('Bayn inference expense projection unavailable; frozen quotes remain pending').pipe(
-            Effect.annotateLogs({
-              errorTag: typeof error === 'object' && error !== null && '_tag' in error ? String(error._tag) : 'UNKNOWN',
-              ...(error instanceof InferenceCostError ? { reason: error.message } : {}),
-            }),
-          ),
-        ),
+      // Clear only before the drain: a commit during it must retain its wakeup.
+      yield* Queue.clear(changed)
+      const continuation = yield* pass.pipe(
+        Effect.tapError(logExpenseFailure),
+        Effect.retry({ schedule: expenseRecoverySchedule }),
       )
-      yield* Effect.sleep('30 seconds')
+      if (continuation === undefined) {
+        // Another replica owns this known drain. Retain the obligation until its lock is released or lost.
+        yield* Effect.sleep('1 second')
+        continue
+      }
+      if (continuation.pending) {
+        yield* Effect.yieldNow
+        continue
+      }
+      if (continuation.nextWakeAt === null) yield* Queue.take(changed)
+      else {
+        const now = yield* Clock.currentTimeMillis
+        yield* Queue.take(changed).pipe(
+          Effect.raceFirst(Effect.sleep(Math.max(0, expenseWakeAtMillis(continuation.nextWakeAt) - now))),
+        )
+      }
     }
   })
+
+export const listenInferenceExpenses = <E, R>(
+  postgres: PgClient.PgClientConfig,
+  channel: string,
+  pass: Effect.Effect<ExpenseContinuation | undefined, E, R>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if (postgres.connectTimeout === undefined)
+        return yield* new InferenceCostError({ message: 'Inference expense listener requires a PostgreSQL deadline' })
+      const connection = yield* PgConnection.make(postgres)
+      const pinned = yield* connection.pin
+      // Registration completes only after LISTEN ACK, before the first durable drain.
+      const notifications = yield* pinned.listen(channel)
+      const changed = yield* Queue.dropping<void>(1)
+      const receive = Queue.take(notifications).pipe(Effect.andThen(Queue.offer(changed, undefined)), Effect.forever)
+      // LISTEN pins this session. The pinned API keeps this exact socket alive without a transaction or work query.
+      const keepAlive = Effect.sleep(Duration.toMillis(postgres.connectTimeout) / 2).pipe(
+        Effect.andThen(pinned.query('SELECT 1')),
+        Effect.forever,
+      )
+      return yield* inferenceExpenseLoop(changed, pass).pipe(
+        Effect.raceFirst(receive.pipe(Effect.raceFirst(keepAlive))),
+      )
+    }),
+  )
 
 const OwnershipRows = Schema.Tuple([Schema.Struct({ acquired: Schema.Boolean })])
 
@@ -154,25 +215,36 @@ export const startInferenceExpenseProjection = (config: LoadedRuntimeConfig) =>
         // session. It is only a fairness hint; committed batch results remain the
         // authority and a process restart may safely reset this cursor.
         const settlementCursor = makeJevTerminalBatchSettlementCursor(config.alpaca.expectedAccountId)
-        yield* inferenceExpenseLoop(
-          withInferenceExpenseOwner(postgres, 'research', (sql) =>
-            projectResearchExpenses(makeResearchStore(sql), client),
-          ),
-        ).pipe(Effect.forkScoped)
-        return yield* inferenceExpenseLoop(
-          withInferenceExpenseOwner(postgres, `account:${config.alpaca.expectedAccountId}`, (sql) =>
-            runInferenceExpensePass(
-              makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId, undefined, settlementCursor),
-              client,
-            ),
-          ),
-        )
+        const research = listenInferenceExpenses(
+          postgres,
+          'bayn_inference_expense_research',
+          withInferenceExpenseOwner(postgres, 'research', (sql) => {
+            const store = makeResearchStore(sql)
+            return projectResearchExpenses(store, client).pipe(Effect.andThen(store.continuation))
+          }),
+        ).pipe(Effect.tapError(logExpenseFailure), Effect.retry({ schedule: expenseRecoverySchedule }))
+        const account = listenInferenceExpenses(
+          postgres,
+          'bayn_inference_expense_account',
+          withInferenceExpenseOwner(postgres, `account:${config.alpaca.expectedAccountId}`, (sql) => {
+            const store = makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId, undefined, settlementCursor)
+            return Effect.gen(function* () {
+              const summary = yield* runInferenceExpensePass(store, client)
+              if (summary.failedBatchCount > 0)
+                return yield* new InferenceCostError({ message: 'Terminal batch expense settlement remains pending' })
+              return yield* store.continuation
+            })
+          }),
+        ).pipe(Effect.tapError(logExpenseFailure), Effect.retry({ schedule: expenseRecoverySchedule }))
+        return yield* account.pipe(Effect.raceFirst(research))
       }),
     ).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- independent background accounting owns its platform resources
       Effect.provide(NodeServices.layer),
     )
-    return yield* inferenceExpenseLoop(owned).pipe(
+    return yield* owned.pipe(
+      Effect.tapError(logExpenseFailure),
+      Effect.retry({ schedule: expenseRecoverySchedule }),
       Effect.tapCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void

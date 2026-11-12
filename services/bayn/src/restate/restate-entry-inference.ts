@@ -39,10 +39,12 @@ export const makeBaynEntryInference = (
             throw new restate.TerminalError('inference dispatch differs from its immutable account deployment')
 
           const execute = async () => {
+            // An explicit run policy avoids inheriting the invocation's finite retry cap.
+            // The one-way SQL claim prevents another paid call after an uncertain provider outcome.
             const result = await ctx.run(
               'execute admitted Bayn inference',
               () => runtime.executeInference(command.jobId, ctx.request().attemptCompletedSignal),
-              { maxRetryAttempts: 0 },
+              { initialRetryInterval: 50, maxRetryInterval: 1_000 },
             )
             const decoded = Schema.decodeUnknownResult(JevInferenceCompletionSchema, strictParseOptions)(result)
             if (Result.isFailure(decoded) || decoded.success.jobId !== command.jobId)
@@ -86,6 +88,6 @@ export const makeBaynEntryInference = (
       hooks: [...hooks],
       inactivityTimeout: config.operationTimeoutMs * 5 + 60_000,
       abortTimeout: 30_000,
-      retryPolicy: { maxAttempts: 3, onMaxAttempts: 'pause' },
+      retryPolicy: { initialInterval: 50, maxInterval: 1_000 },
     },
   })

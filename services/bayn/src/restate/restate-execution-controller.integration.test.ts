@@ -235,7 +235,7 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
             handlers: expect.arrayContaining([
               expect.objectContaining({ name: 'tick', public: false }),
               expect.objectContaining({ name: 'wake', public: false }),
-              expect.objectContaining({ name: 'marketReady', public: true }),
+              expect.objectContaining({ name: 'marketChanged', public: true }),
             ]),
           })
           const unauthenticated = yield* invoke(config.controllerKey, 'activateDeployment')

@@ -26,7 +26,7 @@ import {
 import { startInferenceExpenseProjection } from '../inference-expense-runtime'
 import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 import { makeBaynEntryInference, type EntryInferenceRuntime } from './restate-entry-inference'
-import type { MarketReadyWakeup } from '../execution/events'
+import type { MarketChangedWakeup } from '../execution/events'
 import { KafkaMarketFailure } from '../market-data/streaming/kafka'
 import { InternalHttpOriginSchema } from './restate-execution-activate'
 
@@ -44,36 +44,60 @@ export const restateExecutionServerConfig = Config.all({
   ),
 })
 
-export const publishMarketReadiness = (
+export const publishMarketChange = (
   ingressOrigin: string,
-  config: Pick<ExecutionControllerConfig, 'controllerKey' | 'operationTimeoutMs'>,
-  event: MarketReadyWakeup,
+  config: Pick<ExecutionControllerConfig, 'controllerKey' | 'operationTimeoutMs' | 'sourceRevision'>,
+  event: MarketChangedWakeup,
   activationToken: Redacted.Redacted<string>,
-): Effect.Effect<void, KafkaMarketFailure> =>
-  Effect.tryPromise({
+): Effect.Effect<void, KafkaMarketFailure> => {
+  if (event.sourceRevision !== config.sourceRevision)
+    return Effect.fail(
+      new KafkaMarketFailure({
+        operation: 'read',
+        message: 'market change differs from its local worker source',
+        retryable: false,
+      }),
+    )
+  const body = JSON.stringify(event)
+  return Effect.tryPromise({
     try: async (signal) => {
       const response = await fetch(
-        `${ingressOrigin}/BaynExecutionController/${encodeURIComponent(config.controllerKey)}/marketReady`,
+        `${ingressOrigin}/BaynExecutionController/${encodeURIComponent(config.controllerKey)}/marketChanged`,
         {
           method: 'POST',
+          // Only the private wake is idempotent; source registration preconditions must be checked again.
           headers: {
             'content-type': 'application/json',
-            'idempotency-key': event.eventId,
             authorization: `Bearer ${Redacted.value(activationToken)}`,
           },
-          body: JSON.stringify(event),
+          body,
           signal: AbortSignal.any([signal, AbortSignal.timeout(config.operationTimeoutMs)]),
         },
       )
       try {
-        if (!response.ok) throw new Error(`market readiness registration returned HTTP ${response.status}`)
+        if (!response.ok)
+          throw new KafkaMarketFailure({
+            operation: 'read',
+            message: `market change registration returned HTTP ${response.status}`,
+            ...(response.status >= 400 &&
+            response.status < 500 &&
+            response.status !== 404 &&
+            response.status !== 408 &&
+            response.status !== 412 &&
+            response.status !== 429
+              ? { retryable: false }
+              : {}),
+          })
       } finally {
         await response.body?.cancel()
       }
     },
     catch: (cause) =>
-      new KafkaMarketFailure({ operation: 'read', message: 'durable market readiness registration failed', cause }),
+      cause instanceof KafkaMarketFailure
+        ? cause
+        : new KafkaMarketFailure({ operation: 'read', message: 'durable market change registration failed', cause }),
   })
+}
 
 export const withNativeStartupReadiness = (
   handler: (request: Http2ServerRequest, response: Http2ServerResponse) => void,
@@ -176,7 +200,7 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     ),
   )
   yield* acquireRestateHttp2Server(server, port)
-  yield* startMarketWakeups((event) => publishMarketReadiness(ingressOrigin, config, event, activationToken))
+  yield* startMarketWakeups((event) => publishMarketChange(ingressOrigin, config, event, activationToken))
   yield* Effect.logInfo('Bayn native Restate execution endpoint is listening').pipe(
     Effect.annotateLogs({
       controllerKey: config.controllerKey,

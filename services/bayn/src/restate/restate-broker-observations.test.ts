@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import type { ObjectContext, ObjectSharedContext } from '@restatedev/restate-sdk'
+import type { ObjectContext, ObjectSharedContext, RunOptions } from '@restatedev/restate-sdk'
 import { Effect, Redacted, Result, Schema } from 'effect'
 
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
@@ -76,6 +76,7 @@ const harness = (
   let request = 0
   const sleeps: number[] = []
   const commands: string[] = []
+  const runOptions = new Map<string, RunOptions<unknown> | undefined>()
   const deliveries: Delivery[] = []
   const runtime: BrokerObservationRuntime = {
     verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
@@ -117,8 +118,9 @@ const harness = (
     get: async (key: string) => durable.get(key) ?? null,
     clear: (key: string) => durable.delete(key),
     set: (key: string, value: unknown) => durable.set(key, value),
-    run: async (name: string, action: () => Promise<unknown>) => {
+    run: async (name: string, action: () => Promise<unknown>, options?: RunOptions<unknown>) => {
       commands.push(name)
+      runOptions.set(name, options)
       if (input.runResults?.has(name)) return input.runResults.get(name)
       const value = await action()
       if (name === 'capture and publish broker observation' && input.loseResult === 'before-journal')
@@ -153,6 +155,7 @@ const harness = (
     deliveries,
     sleeps,
     commands,
+    runOptions,
     durable,
     calls: () => ({ activations, polls }),
     invalidations: () => invalidations,
@@ -254,6 +257,31 @@ describe('event-driven Restate broker observation owner', () => {
     expect(h.deliveries).toEqual([])
     expect(h.invalidations()).toBe(0)
   })
+  test('receipt and notification invalidation retain durable retries independently of finite handler attempts', async () => {
+    const h = harness({ state: active() })
+    await h.handlers.notify(h.context, fixture.notification)
+    await h.handlers.accept(h.context, receipt)
+    for (const operation of [
+      'record verified broker notification',
+      'invalidate broker observation after notification',
+    ]) {
+      expect(h.runOptions.get(operation)).toEqual({ initialRetryInterval: 50, maxRetryInterval: 1_000 })
+    }
+    expect(h.deliveries.some((delivery) => delivery.method === 'capture')).toBe(true)
+  })
+  test('known mutation invalidation retries durably while canonical HTTP capture keeps its separate recovery owner', async () => {
+    const h = harness({ state: active() })
+    await h.handlers.refresh(h.context, { sourceRevision })
+    expect(h.runOptions.get('invalidate broker observation after execution mutation')).toEqual({
+      initialRetryInterval: 50,
+      maxRetryInterval: 1_000,
+    })
+    const scheduled = h.timers()[0]
+    if (scheduled === undefined) throw new Error('missing mutation continuation')
+    h.advance(1_000)
+    await h.handlers.capture(h.context, scheduled.parameter)
+    expect(h.runOptions.get('capture and publish broker observation')).toEqual({ maxRetryAttempts: 0 })
+  })
   test('ingress does not acknowledge a verified notification whose durable receipt cannot be retained', async () => {
     const h = harness({
       runtime: {
@@ -301,7 +329,7 @@ describe('event-driven Restate broker observation owner', () => {
     expect(h.timers()[1]?.delay?.milliseconds).toBe(100)
   })
   test.each([0, 16_800])(
-    'a known execution mutation requests a fresh cut after consistency and quota (%s)',
+    'a known execution mutation coalesces a capture behind its existing database deadline (%s)',
     async (quotaDelay) => {
       const previous = active({ nextCaptureNotBeforeMs: initialNow + quotaDelay })
       const h = harness({ state: previous })
@@ -310,11 +338,24 @@ describe('event-driven Restate broker observation owner', () => {
       expect(h.invalidations()).toBe(1)
       expect(h.state()?.lastSnapshotHash).toBeUndefined()
       expect(h.timers()).toHaveLength(1)
-      expect(h.timers()[0]).toMatchObject({ method: 'capture', delay: { milliseconds: Math.max(1_000, quotaDelay) } })
+      expect(h.timers()[0]).toMatchObject({ method: 'capture', delay: { milliseconds: Math.max(100, quotaDelay) } })
       await h.handlers.freshness(h.context, tick(previous))
       expect(h.timers()).toHaveLength(1)
     },
   )
+  test('a late mutation refresh preserves the original database consistency deadline instead of renewing it', async () => {
+    const h = harness({
+      state: active({ captureScheduled: true }),
+      runtime: { poll: async () => pollResult({ _tag: 'QuotaWait', nextPollNotBeforeMs: initialNow + 1_000 }) },
+    })
+    h.advance(150)
+    await h.handlers.capture(h.context, tick(active()))
+    h.advance(100)
+    await h.handlers.refresh(h.context, { sourceRevision })
+    expect(h.state()?.nextCaptureNotBeforeMs).toBe(initialNow + 1_000)
+    expect(h.timers().at(-1)).toMatchObject({ method: 'capture', delay: { milliseconds: 750 } })
+    expect(h.calls().polls).toBe(0)
+  })
   test('a known mutation supersedes an earlier queued capture without resetting the quota deadline', async () => {
     const previous = active({ captureScheduled: true, nextCaptureNotBeforeMs: initialNow + 16_800 })
     const h = harness({ state: previous })

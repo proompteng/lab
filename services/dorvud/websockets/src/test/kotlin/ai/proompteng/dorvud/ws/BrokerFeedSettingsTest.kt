@@ -27,6 +27,7 @@ class BrokerFeedSettingsTest {
     assertEquals("wss://paper-api.alpaca.markets/stream", config.connection.streamUrl)
     assertEquals("all", config.kafka.acks)
     assertEquals(true, config.kafka.enableIdempotence)
+    assertEquals(0, config.kafka.lingerMs)
   }
 
   @Test

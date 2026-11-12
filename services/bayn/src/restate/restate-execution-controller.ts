@@ -32,7 +32,7 @@ import {
 import { sha256 } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
-import { decodeExecutionWakeup, MarketReadySchema } from '../execution/events'
+import { decodeExecutionWakeup, MarketChangedSchema, marketChangedEventId } from '../execution/events'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -716,6 +716,7 @@ export const makeBaynExecutionController = (
           const state = await readState(ctx)
           if (state === null || !state.active || !ownsControllerState(config, state)) return
           if (event.sourceRevision !== config.sourceRevision) return
+          let nextState = state
           if (event._tag === 'InferenceCompleted' && event.epoch !== state.epoch) {
             await writeRuntimeLog(runtime, 'info', 'Bayn ignored a stale inference completion', {
               controllerKey: ctx.key,
@@ -725,42 +726,42 @@ export const makeBaynExecutionController = (
             })
             return
           }
-          if (event._tag === 'MarketReady') {
+          if (event._tag === 'MarketChanged') {
+            if (event.eventId !== marketChangedEventId(event.producerId, event.sequence))
+              throw terminal('market change identity differs')
             const frontier = state.marketFrontier
-            if (
-              frontier !== undefined &&
-              (frontier.eventId === event.eventId ||
-                event.readyAt < frontier.readyAt ||
-                (event.captureId === frontier.captureId &&
-                  event.sourceEpoch === frontier.sourceEpoch &&
-                  (event.consumerSequence < frontier.consumerSequence ||
-                    event.projectionSequence < frontier.projectionSequence)))
-            )
-              return
-            ctx.set(stateKey, {
+            if (frontier?.producerId === event.producerId && event.sequence <= frontier.sequence) return
+            nextState = {
               ...state,
               marketFrontier: {
-                eventId: event.eventId,
-                captureId: event.captureId,
-                sourceEpoch: event.sourceEpoch,
-                consumerSequence: event.consumerSequence,
-                projectionSequence: event.projectionSequence,
-                readyAt: event.readyAt,
+                producerId: event.producerId,
+                sequence: event.sequence,
               },
-            })
+            }
           }
           if (event._tag === 'BrokerObservation') {
             if (event.snapshotHash === state.lastBrokerSnapshotHash) return
-            ctx.set(stateKey, { ...state, lastBrokerSnapshotHash: event.snapshotHash })
+            nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
           }
+          if (nextState !== state) ctx.set(stateKey, nextState)
           if (
-            event._tag === 'MarketReady' &&
+            event._tag === 'MarketChanged' &&
             state.marketEligibleAt !== undefined &&
             (await ctx.date.now()) < Date.parse(state.marketEligibleAt)
-          )
+          ) {
+            await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
+              controllerKey: ctx.key,
+              eventId: event.eventId,
+              producerId: event.producerId,
+              hintSequence: event.sequence,
+              marketEligibleAt: state.marketEligibleAt,
+            })
             return
+          }
+          if (state.wakeScheduledSequence === state.nextSequence) return
           // The event only accelerates the serialized owner. Every account, quote, authority and deadline check
           // remains inside the native financial pass; a market or broker hint never grants mutation authority.
+          ctx.set(stateKey, { ...nextState, wakeScheduledSequence: state.nextSequence })
           ctx.genericSend({
             service: 'BaynExecutionController',
             method: 'tick',
@@ -771,12 +772,22 @@ export const makeBaynExecutionController = (
               sequence: state.nextSequence,
             },
             inputSerde: executionTickSerde,
-            idempotencyKey: `bayn-execution-wake-${state.epoch}-${state.nextSequence}-${event.eventId}`,
+            idempotencyKey: `bayn-execution-wake-${state.epoch}-${state.nextSequence}`,
           })
+          if (event._tag === 'MarketChanged')
+            await writeRuntimeLog(runtime, 'info', 'Bayn scheduled the owner from a market change', {
+              controllerKey: ctx.key,
+              eventId: event.eventId,
+              producerId: event.producerId,
+              hintSequence: event.sequence,
+              reason: event.reason,
+              epoch: state.epoch,
+              nextSequence: state.nextSequence,
+            })
         },
       ),
 
-      marketReady: restate.handlers.object.shared(
+      marketChanged: restate.handlers.object.shared(
         {
           ingressPrivate: false,
           idempotencyRetention: executionControllerActivationRetentionMs,
@@ -785,14 +796,43 @@ export const makeBaynExecutionController = (
         },
         async (ctx: restate.ObjectSharedContext<ControllerObjectState>, candidate: unknown): Promise<void> => {
           const event = decodeOrTerminal(
-            Schema.decodeUnknownResult(MarketReadySchema, strictParseOptions)(candidate),
-            'market readiness notification failed validation',
+            Schema.decodeUnknownResult(MarketChangedSchema, strictParseOptions)(candidate),
+            'market change notification failed validation',
           )
           verifyTickKey(config, ctx.key)
           authorizeDeployment(config.activationAuthorizationHash, ctx.request().headers.get('authorization'))
-          if (event.sourceRevision !== config.sourceRevision) throw terminal('market readiness source differs')
-          // Await durable registration in the exclusive owner before acknowledging the SQL outbox item.
-          await ctx.objectClient(controller, ctx.key).wake(event)
+          if (event.eventId !== marketChangedEventId(event.producerId, event.sequence))
+            throw terminal('market change identity differs')
+          if (event.sourceRevision !== config.sourceRevision) {
+            await writeRuntimeLog(runtime, 'warning', 'Bayn market change awaits source registration', {
+              eventId: event.eventId,
+              producerId: event.producerId,
+              hintSequence: event.sequence,
+              expectedSourceRevision: event.sourceRevision,
+              registeredSourceRevision: config.sourceRevision,
+            })
+            throw new restate.TerminalError(
+              `market change source is not registered: expected ${event.sourceRevision}, served ${config.sourceRevision}`,
+              { errorCode: 412 },
+            )
+          }
+          // Backpressure the publisher until this small wake completes; the separate financial tick is not awaited.
+          await ctx.genericCall({
+            service: 'BaynExecutionController',
+            method: 'wake',
+            key: ctx.key,
+            parameter: event,
+            inputSerde: brokerObservationJsonSerde,
+            outputSerde: brokerObservationJsonSerde,
+            idempotencyKey: `bayn-market-change-${event.eventId}`,
+          })
+          await writeRuntimeLog(runtime, 'info', 'Bayn completed a market wake', {
+            controllerKey: ctx.key,
+            eventId: event.eventId,
+            producerId: event.producerId,
+            hintSequence: event.sequence,
+            reason: event.reason,
+          })
         },
       ),
 

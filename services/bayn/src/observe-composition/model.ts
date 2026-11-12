@@ -29,6 +29,7 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevPositionStore } from '../jev/portfolio'
+import type { JevInferenceJob } from '../jev/inference-work'
 
 export type ReconciliationRuntime =
   | CandidateObservationStore
@@ -65,6 +66,7 @@ export type ObserveStartupPreparation = {
 export type RecoveryFirstCycleAdvance = {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: CycleRunResult
+  readonly inferenceJobs?: readonly JevInferenceJob[]
   /** Optional one-shot durable scheduling override for the next Restate command. */
   readonly nextDelayMs?: number
   /** Absolute cap retained until completion, so post-pass work cannot extend a selected wake. */

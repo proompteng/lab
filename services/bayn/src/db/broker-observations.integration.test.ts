@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, ManagedRuntime, Redacted, Ref, Result } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
@@ -467,6 +467,110 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
+  test('an early notification cannot start HTTP before the original mutation deadline while the account turn is held', async () =>
+    run((sql, store) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* store.activate(0)
+          const [timing] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([
+              Schema.Struct({
+                occurredAt: Schema.String,
+                deadlineMs: Schema.Number,
+              }),
+            ]),
+          )(
+            yield* sql`WITH timing AS (SELECT clock_timestamp() AS occurred_at)
+          SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "occurredAt",
+            ceil(EXTRACT(EPOCH FROM occurred_at + interval '1 second') * 1000)::double precision AS "deadlineMs"
+          FROM timing`,
+          )
+          yield* reserve(sql, '1'.repeat(64), timing.occurredAt)
+          const released = yield* Deferred.make<void>()
+          let accountCompleted = false
+          const accountTurn = yield* Deferred.await(released).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                accountCompleted = true
+              }),
+            ),
+            Effect.forkScoped,
+          )
+          const until = (afterMs: number) => sql`SELECT pg_sleep(GREATEST(0,
+          EXTRACT(EPOCH FROM ${timing.occurredAt}::timestamptz + ${afterMs} * interval '1 millisecond' - clock_timestamp())))`
+          yield* until(50)
+          yield* store.recordNotification({
+            eventId: '2'.repeat(64),
+            receivedAt: new Date(Date.parse(timing.occurredAt) + 50).toISOString(),
+          })
+          yield* until(150)
+          const captureId = randomUUID()
+          expect(yield* store.begin(captureId, timing.deadlineMs + 180_000)).toEqual({
+            status: BrokerObservationClaimStatus.QuotaWait,
+            nextPollNotBeforeMs: timing.deadlineMs,
+          })
+          yield* until(250)
+          expect(yield* store.begin(captureId, timing.deadlineMs + 180_000)).toEqual({
+            status: BrokerObservationClaimStatus.QuotaWait,
+            nextPollNotBeforeMs: timing.deadlineMs,
+          })
+          expect(accountCompleted).toBe(false)
+          expect(
+            yield* sql`SELECT capture_id FROM broker_observation_captures WHERE account_id = ${accountId}`,
+          ).toEqual([])
+          yield* until(1000)
+          const admitted = yield* store.begin(captureId, timing.deadlineMs + 180_000)
+          if (admitted.status !== BrokerObservationClaimStatus.Reserved)
+            throw new Error('Original mutation deadline did not admit its capture')
+          yield* advanceToTicket(admitted.ticket)
+          expect(yield* store.publish(admitted.ticket, snapshot(admitted.ticket), 0)).toBe(true)
+          expect(yield* store.readState).toEqual(observedBrokerState(snapshot(admitted.ticket)))
+          expect(
+            yield* sql`SELECT capture_id FROM broker_observation_captures WHERE account_id = ${accountId}`,
+          ).toEqual([{ capture_id: captureId }])
+          expect(accountCompleted).toBe(false)
+          yield* Deferred.succeed(released, undefined)
+          yield* Fiber.join(accountTurn)
+          expect(accountCompleted).toBe(true)
+        }),
+      ),
+    ))
+
+  test.each(['quota', 'mutation'] as const)(
+    'capture admission retains the later %s deadline and ignores another account',
+    async (later) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          const [timing] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([
+              Schema.Struct({
+                occurredAt: Schema.String,
+                mutationDeadlineMs: Schema.Number,
+              }),
+            ]),
+          )(
+            yield* sql`WITH timing AS (SELECT clock_timestamp() AS occurred_at)
+        SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "occurredAt",
+          ceil(EXTRACT(EPOCH FROM occurred_at + interval '1 second') * 1000)::double precision AS "mutationDeadlineMs"
+        FROM timing`,
+          )
+          const quotaDeadline = timing.mutationDeadlineMs + (later === 'quota' ? 5_000 : -500)
+          yield* store.activate(quotaDeadline)
+          yield* reserve(sql, '1'.repeat(64), timing.occurredAt)
+          expect(yield* store.begin(randomUUID(), timing.mutationDeadlineMs + 180_000)).toEqual({
+            status: BrokerObservationClaimStatus.QuotaWait,
+            nextPollNotBeforeMs: Math.max(quotaDeadline, timing.mutationDeadlineMs),
+          })
+          expect(
+            yield* sql`SELECT capture_id FROM broker_observation_captures WHERE account_id = ${accountId}`,
+          ).toEqual([])
+          const unrelated = makeBrokerObservationStore(sql, 'unrelated-account', revision, 60_000, cacheFixture.cache)
+          yield* unrelated.activate(0)
+          expect((yield* unrelated.begin(randomUUID(), 0)).status).toBe(BrokerObservationClaimStatus.Reserved)
+        }),
+      ),
+  )
+
   test('a raced invalidation settles only its own quota after completed HTTP', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
@@ -726,6 +830,8 @@ describePostgres('Durable per-account broker observations', () => {
         expect(corrupt.kind).toBe(BrokerReadErrorKind.Timeout)
         expect(corrupt.observationFailure).toBeUndefined()
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${Result.getOrThrow(canonicalHashV1Result(snapshot(first)))} WHERE account_id = ${accountId}`
+        yield* sql`SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM
+          ${first.startedAt}::timestamptz + interval '1001 milliseconds' - clock_timestamp())))`
         const second = yield* claim(store)
         yield* store.failed(second, 0)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
@@ -874,6 +980,8 @@ describePostgres('Durable per-account broker observations', () => {
         yield* store.publish(first, snapshot(first), 0)
         yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
         yield* advanceToTicket(first, 1000)
+        yield* sql`SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM
+          ${first.startedAt}::timestamptz + interval '1001 milliseconds' - clock_timestamp())))`
         const second = { ...(yield* claim(store)), startedAt: first.startedAt }
         yield* store.failed(second, 0)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)

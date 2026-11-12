@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Effect, Schema } from 'effect'
+import { Clock, Context, Effect, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
 import { InferenceCostError } from './inference-costs'
@@ -16,8 +16,9 @@ import {
   verifyPendingInferenceExpenses,
   type InferenceExpenseQuote,
 } from './inference-expense'
-import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
+import { IsoDateSchema, Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { makeJevInferenceWorkStore } from './db/jev-inference-work-postgres'
+import { utcInstantFromEpochMillis } from './time'
 
 const FrozenRowSchema = Schema.Struct({
   quoteHash: Sha256Schema,
@@ -203,6 +204,43 @@ export const makeInferenceExpenseStore = (
     Effect.provideService(PgClient.PgClient, sql),
     Effect.flatMap((work) => work.settleExpired(accountId)),
   )
+  const continuation = Effect.gen(function* () {
+    const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
+    const [row] = yield* Schema.decodeUnknownEffect(
+      Schema.Tuple([Schema.Struct({ pending: Schema.Boolean, nextWakeAt: Schema.NullOr(UtcDatabaseInstantSchema) })]),
+      strictParseOptions,
+    )(
+      yield* sql`WITH unresolved AS MATERIALIZED (
+        SELECT GREATEST((plan.payload->>'expiresAt')::timestamptz,
+          CASE WHEN work.batch_id IS NOT NULL THEN recovery.next_attempt_at END) AS wake_at
+        FROM jev_batch_plans AS plan
+        JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
+        LEFT JOIN jev_inference_work AS work USING (batch_id)
+        LEFT JOIN jev_inference_recovery_cursor AS recovery ON recovery.account_id = cycle.account_id
+        WHERE cycle.account_id = ${accountId}
+          AND NOT EXISTS (SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = plan.batch_id)
+          AND (work.batch_id IS NOT NULL OR (
+            cycle.strategy_name = 'jev' AND cycle.state IN ('COMPLETED', 'NO_TRADE', 'BLOCKED')
+            AND cycle.terminal_at IS NOT NULL))
+      )
+      SELECT EXISTS (
+        SELECT 1 FROM inference_expense_source_pending AS pending
+        JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
+        JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+        WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
+          AND inference_expense_source_needs_quotes(pending.request_id)
+      ) OR EXISTS (
+        SELECT 1 FROM inference_expense_quotes AS quote
+        JOIN jev_evaluation_requests AS request ON request.request_id = quote.request_id
+        JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+        WHERE quote.account_id = ${accountId} AND cycle.account_id = ${accountId}
+          AND quote.session_date = cycle.execution_session_date AND quote.verified_at IS NULL
+      ) OR EXISTS (SELECT 1 FROM unresolved WHERE wake_at <= ${now}::timestamptz) AS pending,
+        (SELECT to_char(wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+          FROM unresolved WHERE wake_at > ${now}::timestamptz ORDER BY wake_at LIMIT 1) AS "nextWakeAt"`,
+    )
+    return row
+  })
   return {
     newSources,
     freeze,
@@ -212,5 +250,6 @@ export const makeInferenceExpenseStore = (
     currentSession,
     settleExpiredTerminalBatches,
     settleExpiredInferenceWork,
+    continuation,
   }
 }

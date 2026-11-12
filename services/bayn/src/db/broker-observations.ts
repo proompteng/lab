@@ -177,7 +177,13 @@ export const makeBrokerObservationStore = (
     run(
       sql`
     WITH owner AS (
-      SELECT account_id, generation, next_poll_not_before, clock_timestamp() AS checked_at FROM broker_observations
+      SELECT account_id, generation,
+        GREATEST(next_poll_not_before, (
+          SELECT max(mutation.occurred_at) + ${mutationConsistencyDelayMs} * interval '1 millisecond'
+          FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
+          WHERE intent.account_id = broker_observations.account_id
+        )) AS next_poll_not_before,
+        clock_timestamp() AS checked_at FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
       FOR UPDATE
     ), claimed AS (
@@ -201,7 +207,7 @@ export const makeBrokerObservationStore = (
       SELECT 1 FROM broker_observation_captures WHERE account_id = owner.account_id AND capture_id = ${captureId}
     ) THEN 'ALREADY_CLAIMED' ELSE 'QUOTA_WAIT' END AS status,
       NULL::integer AS generation, NULL::text AS "startedAt",
-      (EXTRACT(EPOCH FROM next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
+      ceil(EXTRACT(EPOCH FROM next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
     FROM owner WHERE NOT EXISTS (SELECT 1 FROM reserved)
   `.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(claimRows, strictParseOptions)),
@@ -264,7 +270,10 @@ export const makeBrokerObservationStore = (
         AND NOT EXISTS (
           SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
           WHERE intent.account_id = ${accountId}
-            AND mutation.occurred_at + ${mutationConsistencyDelayMs} * interval '1 millisecond' >= ${ticket.startedAt}::timestamptz
+            AND mutation.occurred_at + ${mutationConsistencyDelayMs} * interval '1 millisecond' >= (
+              SELECT claimed_at FROM broker_observation_captures
+              WHERE account_id = ${accountId} AND generation = ${ticket.generation}
+            )
         )
         AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
           AND observed_at > ${ticket.startedAt}::timestamptz)

@@ -53,7 +53,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
             status: 'RESERVED',
             generation: 1,
             startedAt: new Date(now).toISOString(),
-            nextPollNotBeforeMs: Number(values[3]),
+            nextPollNotBeforeMs: Number(values[4]),
           },
         ]),
       )

@@ -19,14 +19,6 @@ await mock.module('../../db/postgres-client', () => ({
   PostgresClientLive: () => Layer.succeed(PgClient.PgClient, {} as PgClient.PgClient),
 }))
 await mock.module('../../db/native-arrival-postgres', () => ({ makeNativeArrivalStore: () => store }))
-await mock.module('../../db/market-ready-postgres', () => ({
-  makeMarketReadyStore: () => ({
-    retain: () => Effect.void,
-    bootstrap: () => Effect.void,
-    next: Effect.void,
-    acknowledge: () => Effect.void,
-  }),
-}))
 const kafka = await import('./kafka')
 await mock.module('./kafka', () => ({
   ...kafka,

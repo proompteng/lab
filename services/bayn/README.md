@@ -428,25 +428,40 @@ rejects the exit; accepting a cached position does not extend an executable quot
 
 ### Streaming execution owner
 
-`BaynExecutionController` is the sole account-keyed financial owner. Committed market readiness, canonical broker
+`BaynExecutionController` is the sole account-keyed financial owner. Market changes, canonical broker
 publication, and completed inference wake that owner. A successful pass does not schedule another ordinary pass.
 The removed `BAYN_CYCLE_POLL_INTERVAL_MS` setting cannot select a second discovery path.
 
-The market worker batches native arrival persistence with its existing size/time limits. The same transaction writes
-a compact readiness outbox item with its original source availability, capture, epoch and sequences. A scoped publisher
-holds one outstanding notification, conflates newer committed frontiers, and acknowledges the outbox only after Restate
-has durably registered the owner wake. Restart repeats the same event identity and original clocks. A notification is
-only a reevaluation hint: it cannot supply prices, make an unavailable source usable or grant order authority. The public
-`marketReady` gateway requires the existing activation credential; it forwards to private `wake`. The owner drops duplicate
-or regressed frontiers and retains the original close-plus-two-second eligibility timer while quotes arrive early.
+The market worker sends an advisory `MarketChanged` hint immediately after updating its projection. Native arrival
+persistence retains its existing size/time limits and runs independently. There is no market-readiness SQL outbox or
+audit-flush barrier before the hint. A scoped publisher retains one immutable request until its private wake completes,
+and conflates newer changes into one pending request. Each producer has its own UUID and increasing sequence;
+unrelated workers' clocks never order or suppress one another's hints.
+
+Startup and recovery emit a hint even when bootstrap fails. Successful bootstrap emits another hint without requiring
+a subsequent market tick. A process that crashes before acknowledgement restarts with a new, truthful recovery hint;
+it does not recreate a lost request's identity or claim that another worker received data at the original time.
+The authenticated public `marketChanged` gateway awaits private `wake`. That short exclusive handler records the hint
+and durably schedules any required financial tick; the gateway does not wait for that tick to run. While the account
+is busy, source incorporation continues and newer hints coalesce locally. Each stable publisher can have one outstanding
+private wake. A parent process that crashes can leave its accepted wake behind, so this is not a global bound across
+arbitrary process restarts. The private call deduplicates the event identity. The public request deliberately has no
+Restate idempotency key, so an old registered deployment's source-mismatch response cannot poison a later retry.
+
+A hint cannot supply prices, make an unavailable source usable, or grant order authority. The owner selects and verifies
+its current projection, preserving actual source and receipt evidence. A new worker replays bounded Kafka history rather
+than starting quotes and trades at HEAD; [the projection contract](src/market-data/streaming/README.md) defines those bounds
+and their limits. Replay does not recover a lost worker's original receipt time or guarantee recovery before an opportunity
+expires. The owner retains the original close-plus-two-second eligibility timer while quotes arrive early.
 
 An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
-transaction with its inference outbox. It durably sends `BaynEntryInference.evaluate` and returns. The provider-only
+transaction with `jev_inference_work`. That row retains the admitted financial work and its one-way dispatch claim.
+The owner durably sends `BaynEntryInference.evaluate` and returns. The provider-only
 service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
 binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
 worker from repeating paid work whose provider outcome is uncertain. Unknown outcomes retain their original expiry and
 existing expense classification; a retry cannot invent a fresh validity window.
-Expired outbox history, including earlier authority generations, settles under the existing independent account
+Expired admitted work, including earlier authority generations, settles under the existing independent account
 inference-expense owner. Its SQL page scan and persisted retry backoff never run in the account's protection turn.
 
 Completion returns a compact event to the same account owner, bound to its source revision and activation epoch.
@@ -1200,8 +1215,12 @@ path. It verifies the original plan and request hashes and independently committ
 remain `UNATTEMPTED`; claimed requests without receipts receive an `ABANDONED` resolution. Original evidence stays
 immutable, missing receipts do not become zero-cost evidence, and unexpected provider receipts abort the migration.
 
-The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
-most four pages of 64 pending terminal-cycle batches for its bound account and settles those past their original request expiry
+The native execution server also owns an independent inference-expense projection. It subscribes to committed
+PostgreSQL notifications before draining retained work at startup and after every reconnect. Admissions, source changes,
+terminal cycles and research receipts wake independent account and research projections; notification bursts coalesce
+into one pending wake. Idle projections perform no work-discovery queries. Original batch expiries and persisted recovery
+deadlines schedule known work without renewing its deadline. Each account pass reads at most four pages of 64 pending
+terminal-cycle batches and settles those past their original request expiry
 through the existing idempotent finalizer. This closes evidence after an admission expires or the process restarts;
 it makes no provider calls and cannot bind a decision or authorize an order.
 An account-bound cursor survives physical session recreation and wraps at the end of the sweep, so failed batches
@@ -1220,11 +1239,18 @@ Each account's expense pass has one nonblocking PostgreSQL advisory owner across
 Research expense projection uses a separate owner and continues independently. Each pass owns one physical
 PostgreSQL connection with the normal TLS and query, socket and connection deadlines. Its statements commit
 normally before ledger I/O; closing the connection releases ownership on completion, failure or interruption,
-including a lost lock-acquisition response. Other replicas retry on the existing 30-second cadence. Ownership
+including a lost lock-acquisition response. A replica that encounters a busy owner retains that known obligation and
+retries until it can drain, including after an owner crashes; successful drains return to waiting for committed hints
+or an original deadline. Failed work uses capped recovery backoff. Ownership
 avoids duplicate scans and quote contention; frozen evidence and deterministic ledger IDs still enforce correctness.
 During ledger I/O, a same-session keepalive runs at half the configured PostgreSQL statement/connect budget to
-preserve ownership through the unchanged socket inactivity deadline. A keepalive failure interrupts the pass.
-Retained server versions that predate this ownership protocol remain uncoordinated until their normal retirement.
+preserve ownership through the unchanged socket inactivity deadline. Separate LISTEN sessions use the same physical-session
+keepalive, without holding a transaction or discovering work. A listener failure interrupts its drain and reconnects
+before recovering retained work; a keepalive failure interrupts the affected session.
+
+PostgreSQL delivers these hints at commit. If its notification queue fills, the notifying domain transaction fails
+and rolls back. The caller must observe that failure and recover the same durable identity before retrying.
+Listeners remain outside transactions while idle so they do not retain notification-queue history.
 
 Migration 173 backfills pending work once from the retained request and quote metadata. Inserts of resolutions,
 receipts, handoffs, claims, terminals, and skips enqueue the affected request in the same PostgreSQL transaction.

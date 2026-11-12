@@ -244,6 +244,7 @@ export const bindRecoveryFirstCycleDriver = (
         return {
           ...advanced,
           ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+          ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore)) ? { inferenceJobs: pending } : {}),
           observation: {
             ...advanced.observation,
             executionBuild,
@@ -470,6 +471,7 @@ const advanceAndProject = (
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
         observation: outcome.observation,
+        ...(outcome.inferenceJobs === undefined ? {} : { inferenceJobs: outcome.inferenceJobs }),
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
@@ -518,7 +520,7 @@ export const executeNativeExecutionAdvance = (
       replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
     ),
     Effect.flatMap((step) =>
-      driver.inference === undefined
+      driver.inference === undefined || step.inferenceJobs !== undefined
         ? Effect.succeed(step)
         : driver.inference.pending.pipe(
             Effect.mapError(projectionFailure),

@@ -4,12 +4,13 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Deferred, Effect, Exit, Fiber, Result, Schedule, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
-import type { MarketReadyWakeup } from '../../execution/events'
+import { MarketChangeReason, type MarketChangedWakeup } from '../../execution/events'
 
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
 import { makeThreadedKafkaProjection, type ProjectionWorkerOptions } from './worker'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { KafkaMarketFailure } from './kafka'
 import { constructStreamingSnapshot } from './snapshot'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { reproduceStreamingSnapshot } from './replay'
@@ -44,19 +45,36 @@ const options: ProjectionWorkerOptions = {
   build: nativeArrivalEpochFixture.build,
   sources: nativeArrivalEpochFixture.sources,
 }
-const setup = (mode: 'consume' | 'hang' | 'fail' | 'fixture' | 'readiness' | 'malformed-readiness' = 'consume') => {
+const setup = (
+  mode: 'consume' | 'hang' | 'fail' | 'fixture' | 'readiness' | 'malformed-readiness' = 'consume',
+  failAck = false,
+) => {
   const shared = new SharedArrayBuffer(64)
   const signals = new Int32Array(shared)
   const times = new BigInt64Array(shared, 32)
   let worker: Worker | undefined
+  let spawns = 0
   return {
+    get spawns() {
+      return spawns
+    },
     signals,
     times,
     get worker() {
       return worker
     },
     projection: makeThreadedKafkaProjection(options, () => {
-      worker = new Worker(join(directory, 'worker.test-support.js'), { workerData: { signals: shared, mode } })
+      worker = new Worker(join(directory, 'worker.test-support.js'), {
+        workerData: { signals: shared, mode, instance: spawns++ },
+      })
+      if (failAck && spawns === 1) {
+        const send = worker.postMessage.bind(worker)
+        worker.postMessage = (message: unknown, transferList) => {
+          if (Schema.is(Schema.Struct({ operation: Schema.Literal('market-changed-ack') }))(message))
+            throw new Error('Injected sender exit during IPC acknowledgement')
+          send(message, transferList)
+        }
+      }
       return worker
     }),
   }
@@ -64,19 +82,19 @@ const setup = (mode: 'consume' | 'hang' | 'fail' | 'fixture' | 'readiness' | 'ma
 
 const query = streamingFixture().query
 
-test('an invalid readiness IPC timestamp fails closed before starting the publisher', async () => {
+test('an invalid market hint sequence fails closed before starting the publisher', async () => {
   const fixture = setup('malformed-readiness')
   const result = await Effect.runPromise(Effect.scoped(fixture.projection).pipe(Effect.result))
   expect(result).toMatchObject({
     _tag: 'Failure',
-    failure: { _tag: 'KafkaMarketFailure', message: 'Kafka projection returned an invalid market readiness event' },
+    failure: { _tag: 'KafkaMarketFailure', message: 'Kafka projection returned an invalid market change hint' },
   })
   expect(fixture.worker?.threadId).toBe(-1)
 }, 10_000)
 
 test('a two-minute scheduling outage keeps source reads healthy and retries exact bytes after cancellable deadlines', async () => {
   const fixture = setup('readiness')
-  const events: MarketReadyWakeup[] = []
+  const events: MarketChangedWakeup[] = []
   let available = false
   let cancellations = 0
   await Effect.runPromise(
@@ -87,7 +105,7 @@ test('a two-minute scheduling outage keeps source reads healthy and retries exac
           const started = yield* Deferred.make<void>()
           const ack = yield* Effect.callback<void>((resume) => {
             const received = (reply: unknown) => {
-              if (Schema.is(Schema.TaggedStruct('MarketReadyAcknowledged', {}))(reply)) resume(Effect.void)
+              if (Schema.is(Schema.TaggedStruct('MarketChangedAcknowledged', {}))(reply)) resume(Effect.void)
             }
             fixture.worker?.on('message', received)
             return Effect.sync(() => {
@@ -127,7 +145,7 @@ test('a two-minute scheduling outage keeps source reads healthy and retries exac
 
 test('market handoff crosses the isolated worker and acknowledges only completed durable scheduling', async () => {
   const fixture = setup('readiness')
-  const events: MarketReadyWakeup[] = []
+  const events: MarketChangedWakeup[] = []
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -150,10 +168,9 @@ test('market handoff crosses the isolated worker and acknowledges only completed
         )
         expect(events).toHaveLength(1)
         expect(events[0]).toMatchObject({
-          originalAvailableAt: '2026-11-11T17:00:00.001Z',
-          readyAt: '2026-11-11T17:00:00.100Z',
-          consumerSequence: 5,
-          projectionSequence: 4,
+          producerId: expect.any(String),
+          sequence: 5,
+          reason: MarketChangeReason.Data,
         })
       }),
     ),
@@ -277,24 +294,91 @@ test('a request deadline cancels remote work and reports a failure', async () =>
   )
 }, 10_000)
 
-test('thread failure invalidates reads and retains the last real source identity and deadline', async () => {
+test('an established worker respawns on a quiet source and never reuses the failed source epoch', async () => {
   const fixture = setup('fixture')
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const projection = yield* fixture.projection
-        const initial = yield* projection.status
         const before = yield* projection.read(query)
-        expect(before.projection.sequence).toBeGreaterThan(initial.sequence)
-        yield* Effect.promise(() => fixture.worker?.terminate() ?? Promise.resolve(0))
-        expect(Exit.isFailure(yield* Effect.exit(projection.read(query)))).toBe(true)
-        expect(yield* projection.status).toEqual({
-          epoch: before.projection.epoch,
-          sequence: before.projection.sequence,
-          bootstrapDeadlineAtMs: null,
-          ready: false,
-          failure: 'Kafka projection thread exited before shutdown was acknowledged',
-        })
+        const first = fixture.worker
+        if (first === undefined) throw new Error('Missing first projection worker')
+        yield* Effect.promise(() => first.terminate())
+        const recovered = yield* projection.status.pipe(
+          Effect.repeat({
+            until: (status) => status.ready && status.epoch !== before.projection.epoch,
+            schedule: Schedule.spaced('1 millis'),
+          }),
+          Effect.timeout('3 seconds'),
+        )
+        expect(recovered.epoch).not.toBe(before.projection.epoch)
+        expect((yield* projection.read(query)).projection.epoch).toBe(recovered.epoch)
+        expect(fixture.spawns).toBe(2)
+        expect(first.threadId).toBe(-1)
+      }),
+    ),
+  )
+}, 10_000)
+
+test('an ACK race after durable acceptance cannot strand replacement worker hints', async () => {
+  const fixture = setup('readiness', true)
+  const events: MarketChangedWakeup[] = []
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* fixture.projection
+        const done = yield* Deferred.make<void>()
+        yield* projection.startWakeups((event) =>
+          Effect.gen(function* () {
+            events.push(event)
+            if (events.length === 2) yield* Deferred.succeed(done, undefined)
+          }),
+        )
+        yield* Deferred.await(done).pipe(Effect.timeout('3 seconds'))
+        expect(events).toHaveLength(2)
+        expect(events[0]?.eventId).not.toBe(events[1]?.eventId)
+        expect(events[0]?.producerId).not.toBe(events[1]?.producerId)
+        expect(fixture.spawns).toBe(2)
+      }),
+    ),
+  )
+}, 10_000)
+
+test('a retained hint survives sender crash during ingress outage before a quiet replacement hint', async () => {
+  const fixture = setup('readiness')
+  const events: MarketChangedWakeup[] = []
+  let available = false
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* fixture.projection
+        const began = yield* Deferred.make<void>()
+        const done = yield* Deferred.make<void>()
+        yield* projection.startWakeups((event) =>
+          Effect.gen(function* () {
+            events.push(event)
+            yield* Deferred.succeed(began, undefined)
+            if (!available) return yield* new KafkaMarketFailure({ operation: 'read', message: 'ingress unavailable' })
+            if (event.producerId !== events[0]?.producerId) yield* Deferred.succeed(done, undefined)
+          }),
+        )
+        yield* Deferred.await(began)
+        const first = fixture.worker
+        if (first === undefined) throw new Error('Missing first projection worker')
+        yield* Effect.promise(() => first.terminate())
+        yield* projection.status.pipe(
+          Effect.repeat({
+            until: (status) => status.ready && fixture.spawns === 2,
+            schedule: Schedule.spaced('1 millis'),
+          }),
+          Effect.timeout('3 seconds'),
+        )
+        available = true
+        yield* Deferred.await(done).pipe(Effect.timeout('4 seconds'))
+        const original = JSON.stringify(events[0])
+        expect(events.slice(0, -1).every((event) => JSON.stringify(event) === original)).toBe(true)
+        expect(events.at(-1)?.producerId).not.toBe(events[0]?.producerId)
+        expect(first.threadId).toBe(-1)
       }),
     ),
   )

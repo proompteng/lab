@@ -1009,6 +1009,7 @@ test('prepared replay admits a native control batch before any provider dispatch
       const journal = yield* makeControlJevJournal(directory, prepared.runId)
       yield* TestClock.setTime(Date.parse(observation.payload.observedAt))
       const admitted = yield* journal.batches.begin(plan, observation.payload)
+      if (admitted.dispatches === null) throw new Error('Offline replay must retain in-process dispatch rights')
       expect(admitted.dispatches.length).toBeGreaterThan(0)
       for (const dispatch of admitted.dispatches)
         expect(yield* fs.exists(`${directory}/request-${dispatch.request.requestId}.json`)).toBeTrue()

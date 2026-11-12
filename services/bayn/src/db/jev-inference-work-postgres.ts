@@ -95,29 +95,30 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
         return yield* failure('Inference expiry recovery must commit independently')
       const accountId = yield* Schema.decodeUnknownEffect(Schema.NonEmptyString, strictParseOptions)(input)
-      const nowMs = yield* Clock.currentTimeMillis
-      const now = utcInstantFromEpochMillis(nowMs)
+      const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
       const CursorRow = Schema.Struct({
         last_expires_at: Schema.String,
         last_batch_id: Sha256Schema,
         next_attempt_at: Schema.NullOr(UtcDatabaseInstantSchema),
+        waiting: Schema.Boolean,
       })
       const cursors = yield* Schema.decodeUnknownEffect(
         Schema.Array(CursorRow),
         strictParseOptions,
       )(
         yield* sql`SELECT last_expires_at, last_batch_id,
+          COALESCE(next_attempt_at > ${now}::timestamptz, false) AS waiting,
           to_char(next_attempt_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS next_attempt_at
           FROM jev_inference_recovery_cursor
           WHERE account_id = ${accountId}`,
       )
       const cursor = cursors[0]
-      if (cursor !== undefined && cursor.next_attempt_at !== null && Date.parse(cursor.next_attempt_at) > nowMs)
+      if (cursor !== undefined && cursor.next_attempt_at !== null && cursor.waiting)
         return {
           sealed: 0,
           failed: 0,
           remaining: true,
-          nextAttemptAt: utcInstantFromEpochMillis(Date.parse(cursor.next_attempt_at)),
+          nextAttemptAt: cursor.next_attempt_at,
         }
       const select = (after: typeof CursorRow.Type | undefined) =>
         sql`SELECT work.batch_id, plan.payload->>'expiresAt' AS expires_at

@@ -1,5 +1,6 @@
 import { Schema } from 'effect'
 
+import { sha256 } from '../hash'
 import { Sha256Schema, SourceRevisionSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const envelope = {
@@ -14,16 +15,22 @@ export const BrokerObservationWakeupSchema = Schema.TaggedStruct('BrokerObservat
   observedAt: UtcInstantSchema,
 })
 
-export const MarketReadySchema = Schema.TaggedStruct('MarketReady', {
+export enum MarketChangeReason {
+  Startup = 'Startup',
+  Data = 'Data',
+  Ready = 'Ready',
+  Recovery = 'Recovery',
+}
+
+export const MarketChangedSchema = Schema.TaggedStruct('MarketChanged', {
   ...envelope,
-  captureId: Schema.NonEmptyString,
-  sourceEpoch: Schema.NonEmptyString,
-  consumerSequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  projectionSequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  originalAvailableAt: UtcInstantSchema,
-  readyAt: UtcInstantSchema,
+  producerId: Schema.String.check(Schema.isUUID(4)),
+  sequence: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+  reason: Schema.Enum(MarketChangeReason),
 })
-export type MarketReadyWakeup = typeof MarketReadySchema.Type
+export type MarketChangedWakeup = typeof MarketChangedSchema.Type
+export const marketChangedEventId = (producerId: string, sequence: number): string =>
+  sha256(`bayn.market-change.v1:${producerId}:${sequence}`)
 
 export const InferenceCompletedWakeupSchema = Schema.TaggedStruct('InferenceCompleted', {
   ...envelope,
@@ -38,7 +45,7 @@ export const InferenceCompletedWakeupSchema = Schema.TaggedStruct('InferenceComp
 
 export const ExecutionWakeupSchema = Schema.Union([
   BrokerObservationWakeupSchema,
-  MarketReadySchema,
+  MarketChangedSchema,
   InferenceCompletedWakeupSchema,
 ])
 export type ExecutionWakeup = typeof ExecutionWakeupSchema.Type

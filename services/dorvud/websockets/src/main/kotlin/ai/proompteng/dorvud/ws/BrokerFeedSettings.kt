@@ -42,6 +42,7 @@ internal class BrokerFeedSettings(
         KafkaProducerSettings(
           bootstrapServers = required("KAFKA_BOOTSTRAP"),
           clientId = "bayn-broker-feed",
+          lingerMs = 0,
           securityProtocol = securityProtocol,
           auth = KafkaAuth(required("KAFKA_SASL_USER"), required("KAFKA_SASL_PASSWORD")),
         ),
