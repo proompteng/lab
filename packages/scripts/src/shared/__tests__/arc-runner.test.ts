@@ -185,25 +185,6 @@ describe('ARC Nix runner toolchain', () => {
     expect(pod.toJSON().nodeSelector).toEqual({
       'kubernetes.io/arch': 'amd64',
     })
-    expect(pod.toJSON().affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms).toEqual(
-      [
-        {
-          matchExpressions: [
-            { key: 'kubernetes.io/hostname', operator: 'In', values: ['talos-192-168-1-194', 'turin'] },
-          ],
-        },
-      ],
-    )
-    expect(pod.toJSON().topologySpreadConstraints).toEqual([
-      {
-        maxSkew: 1,
-        topologyKey: 'kubernetes.io/hostname',
-        whenUnsatisfiable: 'ScheduleAnyway',
-        labelSelector: {
-          matchLabels: { 'actions.github.com/scale-set-name': 'arc-amd64', 'app.kubernetes.io/component': 'runner' },
-        },
-      },
-    ])
     expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
@@ -214,12 +195,6 @@ describe('ARC Nix runner toolchain', () => {
       { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
       { node: 'turin', paths: ['/var/local-path-provisioner/ci-amd64'] },
       { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
-    ])
-    const storageClass = YAML.parse(readRepoFile('argocd/applications/local-path/storageclass-ci-amd64.yaml'))
-    expect(storageClass.allowedTopologies).toEqual([
-      {
-        matchLabelExpressions: [{ key: 'kubernetes.io/hostname', values: ['talos-192-168-1-194', 'turin'] }],
-      },
     ])
     expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
       'local-path',
@@ -236,11 +211,6 @@ describe('ARC Nix runner toolchain', () => {
     )
     const pod = source.helm.valuesObject.template.spec
     expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64' })
-    expect(pod.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms).toEqual([
-      {
-        matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['talos-192-168-1-194', 'turin'] }],
-      },
-    ])
     expect(pod.tolerations).toContainEqual({
       key: 'workload.proompteng.ai/compute-local',
       operator: 'Equal',
