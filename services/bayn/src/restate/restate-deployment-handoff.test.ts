@@ -171,7 +171,7 @@ const handoff = (
   const controllerContext = {
     key: controllerKey,
     date: { now: async () => clock.currentTimeMillisUnsafe() },
-    get: async () => state,
+    get: async (key: string) => (key === 'controller' ? state : null),
     set: (_key: string, next: ExecutionControllerState) => {
       state = next
     },
