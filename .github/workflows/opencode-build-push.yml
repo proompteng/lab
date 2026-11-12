@@ -10,11 +10,21 @@ on:
       - main
     paths:
       - 'services/opencode/**'
+      - '!services/opencode/**/*.md'
+      - '!services/opencode/**/*.mdx'
       - 'services/relay/**'
       - 'packages/platform-client/**'
       - 'proto/proompteng/authz/**'
       - 'proto/proompteng/relay/**'
       - 'services/bayn/**'
+      - '!services/bayn/**/*.md'
+      - '!services/bayn/**/*.mdx'
+      - '!services/bayn/**/*.test.ts'
+      - 'services/bayn/src/opencode/server.integration.test.ts'
+      - '!services/bayn/tools/test-*'
+      - '!services/bayn/tools/ci-*-timings.json'
+      - '!services/bayn/tools/verify-image-metadata.ts'
+      - 'docs/bayn/jev-migration-acceptance-v2.json'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
@@ -43,13 +53,33 @@ on:
       - nix/oci-push.sh
       - nix/oci-inspect-archive.sh
       - nix/oci-release-contract.sh
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
 
 concurrency:
-  group: ${{ github.workflow }}-main
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ fromJSON(steps.filter.outputs.affected).image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/opencode-build-push.yml
+          dependency-aware-push: 'true'
+          workspaces: |
+            image: ['', 'services/bayn']
+
   image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: opencode

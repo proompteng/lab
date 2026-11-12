@@ -29,6 +29,8 @@ on:
       - 'nix/packages.nix'
       - 'flake.nix'
       - 'flake.lock'
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   push:
     branches: [main]
     paths:
@@ -81,17 +83,37 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   workflow_dispatch:
 
 concurrency:
-  group: ofz-authorization-${{ github.ref }}
+  group: ofz-authorization-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ofz: ${{ fromJSON(steps.filter.outputs.affected).ofz }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/ofz.yaml
+          workspaces: |
+            ofz: ['', 'apps/landing', 'packages/backend', 'packages/design']
+
   validate:
+    needs: changes
+    if: needs.changes.outputs.ofz == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

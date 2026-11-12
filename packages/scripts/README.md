@@ -13,6 +13,13 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 - Authenticated GitHub CLI (`gh auth status`) for GitHub integrations
 - Kubernetes/Argo credentials when triggering infrastructure workflows
 
+## CI input selection
+
+The affected-inputs action compares installed dependency closures and owned source paths. Root `package.json`
+script aliases do not rebuild unrelated consumers. Other manifest fields, install lifecycle hooks, their referenced
+scripts and pre/post hooks remain inputs. Dynamic hook commands conservatively retain all root scripts. Image
+workflows also exclude operating guides where they are outside the runtime source closure.
+
 ## Available scripts
 
 | Script                                                | Description                                                                                                                                                                                                                                                                                                        | Required CLIs                      | Example                                                                                                                           |
@@ -93,6 +100,9 @@ Changes to CI runners, timing inputs, metadata checks and Bayn validation script
 the controller. Runtime compiler tools retain main-branch publication.
 Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
 GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
+
+Main publication concurrency follows the source revision, so an input-skipped push cannot cancel or evict required
+work for another commit. Exact-source validation belongs to its run. PR validation still supersedes older heads.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.

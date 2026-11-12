@@ -24,6 +24,38 @@ const canonical = (value: unknown): string =>
     isRecord(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item,
   )
 
+export const rootInputsChanged = (before: unknown, after: unknown): boolean => {
+  const inputs = (value: unknown) => {
+    const { scripts = {}, ...manifest } = record(value)
+    const commands = record(scripts)
+    const retained = new Set([
+      'preinstall',
+      'install',
+      'postinstall',
+      'prepare',
+      'preprepare',
+      'postprepare',
+      'prepublish',
+      'prepublishOnly',
+      'publish',
+      'postpublish',
+      'prepack',
+      'postpack',
+    ])
+    for (const name of retained) {
+      const command = commands[name]
+      if (command === undefined) continue
+      if (typeof command !== 'string') throw new Error(`Invalid root script: ${name}`)
+      for (const hook of [`pre${name}`, `post${name}`]) if (Object.hasOwn(commands, hook)) retained.add(hook)
+      if (command.includes('$')) for (const script of Object.keys(commands)) retained.add(script)
+      const tokens = new Set(command.split(/[\s;&|(){}[\]'"`]+/))
+      for (const script of Object.keys(commands)) if (tokens.has(script)) retained.add(script)
+    }
+    return { ...manifest, scripts: Object.fromEntries(Object.entries(commands).filter(([name]) => retained.has(name))) }
+  }
+  return canonical(inputs(before)) !== canonical(inputs(after))
+}
+
 type LockNode = { id: string; context: string; value: unknown; metadata: Record<string, unknown> }
 
 class LockGraph {
@@ -204,12 +236,20 @@ if (import.meta.main) {
     event === 'workflow_dispatch' ? 'push' : event,
   )
   let affected: Record<string, boolean>
+  let changedFiles: string[] = []
   if (event === 'workflow_dispatch') {
     affected = Object.fromEntries(Object.keys(targets).map((name) => [name, true]))
   } else {
     if (!['pull_request', 'push'].includes(event)) throw new Error(`Unsupported CI event: ${event}`)
     const range = changedRange(event, env.BASE_SHA ?? '', env.HEAD_SHA ?? '')
-    const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
+    changedFiles = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
+    const rootChanged =
+      changedFiles.includes('package.json') &&
+      rootInputsChanged(
+        JSON.parse(git('show', `${range.base}:package.json`)),
+        JSON.parse(git('show', `${range.head}:package.json`)),
+      )
+    const files = changedFiles.filter((file) => file !== 'package.json' || rootChanged)
     // Main publishes co-built Kargo image sets at one revision. Keep its source path contract.
     affected =
       event === 'push' && dependencyAwarePush === 'false'
@@ -227,5 +267,6 @@ if (import.meta.main) {
           )
   }
   console.log(JSON.stringify(affected, null, 2))
-  if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `affected=${JSON.stringify(affected)}\n`)
+  if (env.GITHUB_OUTPUT)
+    appendFileSync(env.GITHUB_OUTPUT, `affected=${JSON.stringify(affected)}\nfiles=${JSON.stringify(changedFiles)}\n`)
 }

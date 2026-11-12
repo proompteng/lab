@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - 'services/opencode/**'
+      - '!services/opencode/**/*.md'
+      - '!services/opencode/**/*.mdx'
       - 'services/relay/**'
       - 'packages/platform-client/**'
       - 'proto/proompteng/authz/**'
@@ -12,12 +14,16 @@ on:
       - 'nix/packages/relay.nix'
       - 'services/bayn/src/opencode*'
       - 'services/bayn/src/opencode/**'
+      - '!services/bayn/**/*.test.ts'
+      - 'services/bayn/src/opencode/server.integration.test.ts'
       - 'nix/images/opencode*.nix'
       - 'nix/images/bayn-deps-hash.nix'
       - 'nix/images/bayn-runtime-root.nix'
       - 'flake.nix'
       - 'flake.lock'
       - 'argocd/applications/opencode/**'
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
 jobs:
   migration:
     runs-on: ubuntu-latest

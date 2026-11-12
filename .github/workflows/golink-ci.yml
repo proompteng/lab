@@ -29,5 +29,5 @@ jobs:
       oxlint-command: bun run --cwd services/golink lint:oxlint
       oxlint-type-command: bun run --cwd services/golink lint:oxlint:type
       test-command: bun run test:golink
-      build-command: bun run build:golink
+      build-command: bun run --filter @proompteng/golink build
     secrets: inherit

@@ -5,14 +5,23 @@ on:
   schedule:
     - cron: '0 8 * * 1'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: temporal-bun-sdk-proto-regen
+  cancel-in-progress: false
+
 jobs:
   regenerate:
-    runs-on: arc-arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
@@ -31,7 +40,7 @@ jobs:
           setup_only: true
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk
 
       - name: Run Temporal proto regeneration
         run: bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts
@@ -59,7 +68,7 @@ jobs:
             - Ran `bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`
             - Updated vendored proto sources and generated TypeScript stubs
 
-            Merge after verifying CI to keep generated protos aligned with upstream Temporal APIs.
+            Review the generated diff and approve its workflows if GitHub requests it. Merge only after CI passes.
 
       - name: No changes detected
         if: steps.proto_changes.outputs.changed != 'true'

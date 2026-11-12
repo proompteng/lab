@@ -321,6 +321,13 @@ def cache_evidence(log):
     return {"source": "unavailable", "state": "unknown", "durations": {}}
 
 
+def job_complete(job):
+    return job["status"] == "completed" or (
+        timestamp(job.get("completed_at")) is not None
+        and job.get("conclusion") in OUTCOMES
+    )
+
+
 def job_record(run, job, families=()):
     created = job.get("created_at")
     started, completed = job.get("started_at"), job.get("completed_at")
@@ -380,6 +387,9 @@ def job_record(run, job, families=()):
         "event": run["event"] if run["event"] in EVENTS else "other",
         "outcome": outcome if outcome in OUTCOMES else "unknown",
         "github_conclusion": outcome,
+        "github_status": job["status"]
+        if job["status"] in (*ACTIVE_STATES, "completed")
+        else "unknown",
         "head_sha": run["head_sha"],
         "runner_name": (job.get("runner_name") or ""),
         "created_at": created,
@@ -482,8 +492,8 @@ class Store:
 
     def pending(self):
         return self.db.execute(
-            "SELECT * FROM attempts WHERE state='pending' ORDER BY priority DESC LIMIT 1"
-        ).fetchone()
+            "SELECT * FROM attempts WHERE state='pending' ORDER BY priority DESC"
+        ).fetchall()
 
     def observe(self, record_key, key, metric, attrs, value):
         inserted = self.db.execute(
@@ -1077,7 +1087,7 @@ class Collector:
             for job in jobs:
                 if job["run_attempt"] != run["run_attempt"]:
                     continue
-                if job["status"] == "completed":
+                if job_complete(job):
                     self.collect_job(run, job, now + 20)
                     continue
                 state = job["status"] if job["status"] in ACTIVE_STATES else "waiting"
@@ -1230,22 +1240,28 @@ class Collector:
         jobs = [j for j in jobs if j["run_attempt"] == run["run_attempt"]]
         deadline = time.time() + 30
         for job in jobs:
-            if job["status"] != "completed":
+            if not job_complete(job):
                 raise RuntimeError("Completed run still has nonterminal jobs")
             self.collect_job(run, job, deadline)
         self.store.finish(run, jobs)
 
     def collect_pending(self, deadline):
-        while time.time() < deadline:
-            pending = self.store.pending()
-            if pending is None:
+        for pending in self.store.pending():
+            if time.time() >= deadline:
                 break
             if (
                 pending["priority"] < self.store.installed_at
                 and self.api.remaining < 2000
             ):
                 break
-            self.collect_attempt(pending)
+            try:
+                self.collect_attempt(pending)
+            except Exception as error:
+                if isinstance(error, GitHubQuotaError) or (
+                    isinstance(error, GitHubError) and error.status in (403, 429)
+                ):
+                    raise
+                self.failure(error)
 
     def flush(self):
         cutoff = int((time.time() - LOKI_MAX_SAMPLE_AGE_SECONDS) * 1e9)

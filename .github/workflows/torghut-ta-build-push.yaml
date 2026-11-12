@@ -47,12 +47,29 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: torghut-ta-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: torghut-ta-build-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/torghut-ta-build-push.yaml
+          workspaces: |
+            service: ['', 'services/signal-publisher']
+
   nix-image:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: changes
+    if: needs.changes.outputs.changed == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: torghut-ta

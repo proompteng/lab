@@ -6,6 +6,7 @@ let
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = import ./bayn-deps-hash.nix;
   researchRoot = import ./bayn-runtime-root.nix {
+    testFiles = [ "services/bayn/src/opencode/server.integration.test.ts" ];
     inherit pkgs lib repoRoot dependencySource depsHash bun nodejs;
     buildCommands = [
       "BAYN_TEST_OPENCODE_BINARY=${cli}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"

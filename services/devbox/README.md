@@ -45,6 +45,9 @@ cannot use the image's virtio-fs filesystem as their writable backing store.
 
 ## Deliver an image
 
+Portable shell, Python and GitOps checks run on a hosted runner through `nix run .#validate-devbox`, with only
+their pinned tools. Native image construction and publication retain the architecture-specific ARC runners.
+
 The `Codex devbox` workflow builds and exercises one development image on both
 native architectures, then publishes a signed immutable index. The release receipt
 must upload successfully before the Kargo discovery tag is exposed. Publication

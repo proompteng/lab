@@ -14,6 +14,9 @@ inputs:
     description: Compare resolved dependencies for an independent publisher rather than a co-built image cohort.
     default: 'false'
 outputs:
+  files:
+    description: JSON array of changed paths from the same Git comparison as affected.
+    value: ${{ steps.filter.outputs.files }}
   affected:
     description: JSON mapping of target names to booleans.
     value: ${{ steps.filter.outputs.affected }}

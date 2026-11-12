@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
-import { changedRange, matchesPaths, parseTargets, selectAffectedInputs } from '../affected-inputs'
+import { changedRange, matchesPaths, parseTargets, rootInputsChanged, selectAffectedInputs } from '../affected-inputs'
 import { matchesGlob } from '../impact-router'
 
 const before = {
@@ -38,6 +38,152 @@ const targets = {
   landing: { workspaces: ['', 'apps/landing'], paths: ['apps/landing/**', 'bun.lock', '**/package.json'] },
 }
 
+test('root manifest comparison preserves install hooks and their script dependencies', () => {
+  const manifest = {
+    workspaces: ['services/*'],
+    scripts: {
+      postinstall: 'bun run install:workspace',
+      'install:workspace': 'bun run install:generated',
+      'install:generated': 'bun generate.ts',
+      'context:retrieve': 'bun context.ts',
+    },
+  }
+  expect(rootInputsChanged(manifest, { ...manifest, scripts: { ...manifest.scripts, help: 'bun help.ts' } })).toBe(
+    false,
+  )
+  expect(
+    rootInputsChanged(manifest, { ...manifest, scripts: { ...manifest.scripts, 'context:retrieve': 'bun other.ts' } }),
+  ).toBe(false)
+  for (const script of ['postinstall', 'install:workspace', 'install:generated']) {
+    expect(rootInputsChanged(manifest, { ...manifest, scripts: { ...manifest.scripts, [script]: 'changed' } })).toBe(
+      true,
+    )
+  }
+  for (const field of [
+    'dependencies',
+    'devDependencies',
+    'overrides',
+    'packageManager',
+    'workspaces',
+    'trustedDependencies',
+  ]) {
+    expect(rootInputsChanged(manifest, { ...manifest, [field]: ['changed'] })).toBe(true)
+  }
+  expect(
+    rootInputsChanged(manifest, { ...manifest, scripts: { ...manifest.scripts, prepare: 'bun prepare.ts' } }),
+  ).toBe(true)
+  expect(
+    rootInputsChanged(manifest, {
+      ...manifest,
+      scripts: { ...manifest.scripts, 'preinstall:workspace': 'bun setup.ts' },
+    }),
+  ).toBe(true)
+  const dynamic = { scripts: { postinstall: 'bun run "$INSTALL_SCRIPT"', generate: 'bun generate.ts' } }
+  expect(rootInputsChanged(dynamic, { scripts: { ...dynamic.scripts, generate: 'bun changed.ts' } })).toBe(true)
+  expect(() => rootInputsChanged(manifest, { ...manifest, scripts: { ...manifest.scripts, postinstall: 42 } })).toThrow(
+    'Invalid root script',
+  )
+})
+
+test('image selection ignores operating guides while keeping runtime and acceptance inputs', () => {
+  for (const filename of [
+    'ofz.yaml',
+    'tengri-images.yml',
+    'product-nix-images.yml',
+    'opencode-build-push.yml',
+    'bayn-build-push.yml',
+    'headlamp-ci.yml',
+  ]) {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing image inputs: ${filename}`)
+    expect(matchesPaths('argocd/applications/ofz/README.md', paths.map(text))).toBe(false)
+    expect(matchesPaths('argocd/applications/ofz/control-plane/README.md', paths.map(text))).toBe(false)
+    if (filename === 'headlamp-ci.yml') expect(matchesPaths('services/headlamp/README.md', paths.map(text))).toBe(false)
+    if (filename === 'opencode-build-push.yml')
+      expect(matchesPaths('services/opencode/README.md', paths.map(text))).toBe(false)
+    if (['opencode-build-push.yml', 'bayn-build-push.yml'].includes(filename)) {
+      expect(matchesPaths('services/bayn/src/system-assessment/README.md', paths.map(text))).toBe(false)
+      expect(matchesPaths('docs/bayn/jev-migration-acceptance-v2.json', paths.map(text))).toBe(true)
+      expect(matchesPaths('services/bayn/src/opencode-command.ts', paths.map(text))).toBe(true)
+    }
+    if (filename === 'opencode-build-push.yml') {
+      expect(matchesPaths('services/bayn/src/opencode/server.integration.test.ts', paths.map(text))).toBe(true)
+      expect(matchesPaths('services/bayn/src/reconciliation/algebra.test.ts', paths.map(text))).toBe(false)
+    }
+  }
+})
+
+test('Headlamp selects manifest, upstream and native-image work independently', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/headlamp-ci.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw Error('Missing Headlamp selector')
+  const filters = property(
+    property(
+      steps.find((step) => property(step, 'id') === 'filter'),
+      'with',
+    ),
+    'filters',
+  )
+  const configured: unknown = Bun.YAML.parse(text(filters))
+  const selected = (file: string, target: string) => {
+    const paths = property(configured, target)
+    if (!Array.isArray(paths)) throw Error(`Missing Headlamp target: ${target}`)
+    return matchesPaths(file, paths.map(text))
+  }
+  expect(selected('argocd/applications/headlamp/values.yaml', 'manifests')).toBe(true)
+  expect(selected('argocd/applications/headlamp/values.yaml', 'image')).toBe(false)
+  expect(selected('argocd/applications/headlamp/values.yaml', 'release')).toBe(true)
+  expect(selected('argocd/applications/headlamp/values.yaml', 'upstream')).toBe(false)
+  expect(selected('services/headlamp/scripts/test-upstream.sh', 'upstream')).toBe(true)
+  expect(selected('services/headlamp/scripts/test-upstream.sh', 'image')).toBe(false)
+  for (const file of ['services/headlamp/patches/0001.patch', 'nix/images/headlamp.nix']) {
+    expect(selected(file, 'image')).toBe(true)
+    expect(selected(file, 'upstream')).toBe(true)
+  }
+  for (const file of ['flake.nix', 'flake.lock', 'nix/packages.nix']) {
+    expect(selected(file, 'image')).toBe(file === 'flake.lock')
+    expect(selected(file, 'manifests')).toBe(true)
+    expect(selected(file, 'release')).toBe(false)
+  }
+  const releaseCondition = text(property(property(property(workflow, 'jobs'), 'nix-image'), 'if'))
+    .replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+    .trim()
+  for (const event of ['pull_request', 'push'])
+    for (const release of ['false', 'true'])
+      expect(
+        runInNewContext(releaseCondition, {
+          github: { event_name: event, ref: 'refs/heads/main', event: { head_commit: { message: 'fix config' } } },
+          needs: { changes: { outputs: { image: 'false', release } } },
+          contains: (value: string, search: string) => value.includes(search),
+        }),
+      ).toBe(event === 'push' && release === 'true')
+})
+
+test('cohort and compiler jobs honor a false main input plan', () => {
+  for (const [filename, target, jobs] of [
+    ['ofz.yaml', 'ofz', ['validate']],
+    ['tengri-images.yml', 'images', ['validate-tengri', 'validate-nanoagent', 'build']],
+    ['cdk8s-manifests.yml', 'manifests', ['validate']],
+    ['torghut-build-push.yaml', 'changed', ['nix-image']],
+    ['torghut-notebook-build-push.yaml', 'changed', ['nix-image']],
+    ['torghut-ta-build-push.yaml', 'changed', ['nix-image']],
+    ['torghut-ws-build-push.yaml', 'changed', ['nix-image']],
+  ] as const) {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    for (const id of jobs) {
+      const condition = text(property(property(property(workflow, 'jobs'), id), 'if'))
+      for (const selected of [false, true])
+        expect(
+          runInNewContext(condition, {
+            github: { event_name: 'push', ref: 'refs/heads/main', event: { action: 'synchronize', changes: {} } },
+            needs: { changes: { outputs: { [target]: String(selected) } } },
+          }),
+        ).toBe(selected)
+    }
+  }
+})
+
 const publicationWorkflows = readdirSync('.github/workflows').filter((filename) => {
   if (!/\.ya?ml$/.test(filename)) return false
   return (
@@ -69,7 +215,8 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
     ])
       expect(matchesPaths(file, patterns)).toBe(
-        filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml',
+        (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
+          (filename === 'headlamp-ci.yml' && event === 'pull_request' && file === '.github/workflows/headlamp-ci.yml'),
       )
     for (const file of [
       'nix/cache-push.sh',
@@ -466,6 +613,63 @@ const text = (value: unknown): string => {
   return value
 }
 
+const mainSelectors = readdirSync('.github/workflows').filter((filename) => {
+  if (!/\.ya?ml$/.test(filename)) return false
+  const source = readFileSync(`.github/workflows/${filename}`, 'utf8')
+  if (!source.includes('./.github/actions/affected-inputs')) return false
+  const workflow: unknown = Bun.YAML.parse(source)
+  const push = property(property(workflow, 'on'), 'push')
+  if (push === undefined || push === null) return false
+  const paths = property(push, 'paths')
+  return (
+    Array.isArray(paths) &&
+    matchesPaths('package.json', paths.map(text)) &&
+    source.includes('./.github/actions/affected-inputs')
+  )
+})
+
+test.each([...mainSelectors, 'bayn-ci.yml'])(
+  '%s keeps skipped main pushes out of another source publication',
+  (filename) => {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const concurrency = property(workflow, 'concurrency')
+    const evaluate = (
+      value: unknown,
+      sha: string,
+      runId: number,
+      pr: boolean,
+      ref = pr ? 'refs/pull/19866/merge' : 'refs/heads/main',
+    ) =>
+      String(value).replace(/\$\{\{([\s\S]*?)\}\}/g, (_match, expression: string) =>
+        String(
+          runInNewContext(expression, {
+            format: (template: string, ...values: unknown[]) =>
+              template.replace(/\{(\d+)\}/g, (_key, index: string) => String(values[Number(index)])),
+            github: {
+              workflow: property(workflow, 'name'),
+              sha,
+              run_id: runId,
+              event_name: pr ? 'pull_request' : 'push',
+              ref,
+              event: { pull_request: pr ? { number: 19866 } : {}, action: 'synchronize', changes: {} },
+            },
+          }),
+        ),
+      )
+    const group = property(concurrency, 'group')
+    const cancel = property(concurrency, 'cancel-in-progress')
+    expect(evaluate(group, 'a'.repeat(40), 1, false)).not.toBe(evaluate(group, 'b'.repeat(40), 2, false))
+    expect(evaluate(cancel, 'a'.repeat(40), 1, false)).toBe('false')
+    expect(evaluate(group, 'a'.repeat(40), 1, false)).not.toBe(
+      evaluate(group, 'a'.repeat(40), 2, false, 'refs/heads/diagnostic'),
+    )
+    if (property(property(workflow, 'on'), 'pull_request') !== undefined) {
+      expect(evaluate(group, 'a'.repeat(40), 1, true)).toBe(evaluate(group, 'b'.repeat(40), 2, true))
+      expect(evaluate(cancel, 'b'.repeat(40), 2, true)).toBe('true')
+    }
+  },
+)
+
 test('planner implementation, action, and map changes retain their owning validation', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
   for (const event of ['pull_request', 'push']) {
@@ -618,7 +822,8 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
   const script = resolve('packages/scripts/src/ci/affected-inputs.ts')
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-  const commit = (lock: unknown) => {
+  const commit = (lock: unknown, manifest: unknown = {}) => {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
     writeFileSync(join(dir, 'bun.lock'), JSON.stringify(lock))
     git('add', '.')
     git(
@@ -639,7 +844,7 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
   try {
     git('init', '-b', 'main')
     const initial = commit(before)
-    const head = commit(after)
+    let head = commit(after)
     git('checkout', '-b', 'base', initial)
     const base = commit({ ...before, configVersion: 0 })
     const run = (event: string, baseSha: string, dependencyAwarePush = 'false') => {
@@ -653,14 +858,20 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
           BASE_SHA: baseSha,
           HEAD_SHA: head,
           INPUT_WORKSPACES: 'bayn: ["", "services/bayn"]\nlanding: ["", "apps/landing"]',
-          INPUT_FILTERS: 'bayn: ["bun.lock"]\nlanding: ["bun.lock"]',
+          INPUT_FILTERS: 'bayn: ["bun.lock", "package.json"]\nlanding: ["bun.lock", "package.json"]',
           INPUT_WORKFLOW: '',
           INPUT_DEPENDENCY_AWARE_PUSH: dependencyAwarePush,
           GITHUB_OUTPUT: output,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
-      return JSON.parse(readFileSync(output, 'utf8').trim().slice('affected='.length))
+      return JSON.parse(
+        text(
+          readFileSync(output, 'utf8')
+            .split('\n')
+            .find((line) => line.startsWith('affected=')),
+        ).slice('affected='.length),
+      )
     }
     expect(run('pull_request', base)).toEqual({ bayn: false, landing: true })
     expect(run('push', base)).toEqual({ bayn: true, landing: true })
@@ -669,6 +880,17 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     expect(() => run('push', initial, 'typo')).toThrow()
     expect(run('workflow_dispatch', '')).toEqual({ bayn: true, landing: true })
     expect(() => changedRange('pull_request', '', head)).toThrow('valid nonzero')
+    const rootBase = git('rev-parse', 'HEAD')
+    const lock = { ...before, configVersion: 0 }
+    head = commit(lock, { scripts: { 'context:retrieve': 'bun context.ts' } })
+    for (const event of ['push', 'pull_request']) {
+      expect(run(event, rootBase)).toEqual({ bayn: false, landing: false })
+      expect(run(event, rootBase, 'true')).toEqual({ bayn: false, landing: false })
+    }
+    const scriptHead = head
+    head = commit(lock, { scripts: { postinstall: 'bun setup.ts' } })
+    expect(run('push', scriptHead)).toEqual({ bayn: true, landing: true })
+    expect(run('pull_request', scriptHead)).toEqual({ bayn: true, landing: true })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

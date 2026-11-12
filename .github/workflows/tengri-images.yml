@@ -26,6 +26,8 @@ on:
       - 'packages/scripts/src/tengri/**'
       - '!packages/scripts/src/tengri/__tests__/**'
       - '!packages/scripts/src/tengri/**/*.test.ts'
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   push:
     branches:
       - main
@@ -79,10 +81,12 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   workflow_dispatch:
 
 concurrency:
-  group: tengri-images-${{ github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
+  group: tengri-images-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.ref, github.sha) }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -93,8 +97,26 @@ env:
   TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri
 
 jobs:
-  validate-tengri:
+  changes:
     if: github.event.action != 'edited' || github.event.changes.base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      images: ${{ fromJSON(steps.filter.outputs.affected).images }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/tengri-images.yml
+          workspaces: |
+            images: ['', 'apps/landing', 'packages/backend', 'packages/design']
+
+  validate-tengri:
+    needs: changes
+    if: needs.changes.outputs.images == 'true' && (github.event.action != 'edited' || github.event.changes.base)
     name: Validate Tengri
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -152,7 +174,8 @@ jobs:
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
 
   validate-nanoagent:
-    if: github.event.action != 'edited' || github.event.changes.base
+    needs: changes
+    if: needs.changes.outputs.images == 'true' && (github.event.action != 'edited' || github.event.changes.base)
     name: Validate Nanoagent
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -209,7 +232,8 @@ jobs:
           GOWORK=off go vet ./...
 
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: changes
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.images == 'true'
     name: Build native (${{ matrix.architecture }})
     timeout-minutes: 90
     strategy:

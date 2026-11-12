@@ -30,6 +30,7 @@ const successful = {
   PATH: process.env.PATH ?? '',
   CHANGES_RESULT: 'success',
   BAYN_RELEVANT: 'true',
+  INTEGRATION_RELEVANT: 'true',
   PR_CHECKS_RESULT: 'success',
   FORMAL_RELEVANT: 'true',
   FORMAL_RESULT: 'success',
@@ -142,7 +143,7 @@ esac
 )
 
 test('market-data fixture runs for Bayn changes and participates in the existing release gate', () => {
-  expect(replay.if).toBe("needs.changes.outputs.bayn == 'true'")
+  expect(replay.if).toBe("needs.changes.outputs.integration == 'true'")
   expect(replay.needs).toBe('changes')
   expect(replay['timeout-minutes']).toBeLessThanOrEqual(15)
   expect(required.needs).toContain('market-data-replay')
@@ -160,6 +161,17 @@ test('market-data fixture runs for Bayn changes and participates in the existing
     expect(required.needs).toContain(job)
     expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
   }
+})
+
+test('the required replay observer verifies retained financial bytes in the production Nix runtime', () => {
+  const observer = workflow.jobs['replay-execution-observer']
+  expect(observer?.if).toBe("needs.changes.outputs.integration == 'true'")
+  const script = observer?.steps.find(
+    (step) => step.name === 'Verify dependency boundaries and replay image execution',
+  )?.run
+  expect(script).toContain('nix develop .#bayn-replay --command bash')
+  expect(script).toContain('bun run --cwd services/bayn test:production-runtime')
+  expect(required.needs).toContain('replay-execution-observer')
 })
 
 test.each([
@@ -183,6 +195,28 @@ test.each([
 test('irrelevant changes retain the existing skip policy but detection failures still fail', async () => {
   expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)
   expect((await run({ BAYN_RELEVANT: 'false', CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
+})
+
+test('unit-only changes may skip integration while still requiring unit and static validation', async () => {
+  const unitOnly = {
+    INTEGRATION_RELEVANT: 'false',
+    ARCHIVE_RESULT: 'skipped',
+    LEDGER_RESULT: 'skipped',
+    POSTGRES_RESULT: 'skipped',
+    MARKET_DATA_REPLAY_RESULT: 'skipped',
+    REPLAY_EXECUTION_RESULT: 'skipped',
+    GEPA_RELEVANT: 'false',
+    GEPA_RESULT: 'skipped',
+    FORMAL_RELEVANT: 'false',
+    FORMAL_RESULT: 'skipped',
+  }
+  expect((await run(unitOnly)).exit).toBe(0)
+  for (const name of ['PR_CHECKS_RESULT', 'UNIT_RESULT']) {
+    for (const outcome of ['failure', 'cancelled', 'skipped', ''])
+      expect((await run({ ...unitOnly, [name]: outcome })).exit).not.toBe(0)
+  }
+  expect((await run({ ...unitOnly, INTEGRATION_RELEVANT: 'true' })).exit).not.toBe(0)
+  expect((await run({ ...unitOnly, POSTGRES_RESULT: 'failure' })).exit).not.toBe(0)
 })
 
 test('unchanged Python inputs may skip GEPA independently of service validation', async () => {

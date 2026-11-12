@@ -45,6 +45,8 @@ on:
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
       - '**/package.json'
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   push:
     branches:
       - main
@@ -107,6 +109,8 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!argocd/**/*.md'
+      - '!argocd/**/*.mdx'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -231,6 +235,8 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -248,6 +254,8 @@ jobs:
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
               - tsconfig.base.json
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
@@ -265,6 +273,8 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
@@ -282,6 +292,8 @@ jobs:
               - tsconfig.base.json
               - nix/images/relativize-bun-cache.sh
               - nix/images/prune-bun-dependency-metadata.sh
+              - '!argocd/**/*.md'
+              - '!argocd/**/*.mdx'
             app_dependencies:
               - "**/package.json"
               - bun.lock
@@ -345,6 +357,7 @@ jobs:
       package_attr: app-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
+      kargo_tag_include_run_id: true
       latest: true
     secrets: inherit
 
@@ -357,6 +370,7 @@ jobs:
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
+      kargo_tag_include_run_id: true
       latest: true
     secrets: inherit
 
@@ -369,5 +383,6 @@ jobs:
       package_attr: docs-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
+      kargo_tag_include_run_id: true
       latest: true
     secrets: inherit

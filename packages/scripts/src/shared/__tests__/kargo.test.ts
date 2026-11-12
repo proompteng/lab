@@ -238,134 +238,52 @@ const expected = {
     includePaths: [],
   },
   app: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('app')],
     apps: ['app'],
-    includePaths: [
-      'apps/app',
-      'packages/design',
-      'nix/images/app.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'argocd/applications/app',
-      'package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'nix/images/relativize-bun-cache.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'tsconfig.base.json',
-    ],
+    includePaths: [],
   },
   synthesis: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('synthesis')],
     apps: ['synthesis'],
-    includePaths: [
-      'apps/synthesis',
-      'packages/design',
-      'nix/images/synthesis.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'argocd/applications/synthesis',
-      'package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'tsconfig.base.json',
-      'nix/images/relativize-bun-cache.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-    ],
+    includePaths: [],
   },
   docs: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('docs')],
     apps: ['docs'],
-    includePaths: [
-      'apps/docs',
-      'packages/design',
-      'nix/images/docs.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'argocd/applications/docs',
-      'package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'tsconfig.base.json',
-      'nix/images/relativize-bun-cache.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-    ],
+    includePaths: [],
   },
   bumba: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('bumba')],
     apps: ['bumba'],
-    includePaths: [
-      'services/bumba',
-      'packages/temporal-bun-sdk',
-      'nix/images/bumba.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'argocd/applications/bumba',
-    ],
+    includePaths: [],
   },
   oirat: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('oirat')],
     apps: ['oirat'],
-    includePaths: [
-      'services/oirat',
-      'packages/discord',
-      'nix/images/oirat.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'argocd/applications/oirat',
-    ],
+    includePaths: [],
   },
   froussard: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('froussard')],
     apps: ['froussard'],
-    includePaths: [
-      'apps/froussard',
-      'packages/agent-contracts',
-      'packages/otel',
-      'nix/images/froussard.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'argocd/applications/froussard',
-    ],
+    includePaths: [],
   },
   'arc-runner': {
     creationCriteria: 'single',
@@ -550,82 +468,198 @@ const expected = {
 
 const expectedStageNames = Object.keys(expected).sort()
 const cohortStages = new Set(['ofz', 'tengri', 'proompteng'])
+const ancestryGuardedStages = ['app', 'synthesis', 'docs', 'bumba', 'oirat', 'froussard'] as const
 
 const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
-  it('promotes one immutable Torghut source after a stack ends beyond the last path-filtered commit', () => {
-    const source = '21c7541cea499b753c4003bab998ac1e2818239b'
-    const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
-    const warehouse = byName(warehouses).get('torghut')
-    const expression = warehouse?.spec?.freightCreationCriteria?.expression
-    expect(typeof expression).toBe('string')
-    const images = Object.fromEntries(
-      expected.torghut.images.map((repo) => [
-        repo,
-        {
-          Tag: `kargo-sha-${source}`,
-          Annotations: {
-            'org.opencontainers.image.revision': source,
-            'org.opencontainers.image.source': imageSourceRepo,
-          },
-        },
-      ]),
-    )
-    const evaluate = (input: typeof images) =>
-      runInNewContext(
-        expression,
-        {
-          imageFrom: (repo: string) => input[repo],
-          commitFrom: () => ({ ID: filteredAncestor }),
-        },
-        { timeout: 100 },
-      )
-    expect(evaluate(images)).toBe(true)
-    for (const repo of expected.torghut.images) {
-      const image = images[repo]
-      if (image === undefined) throw new Error('Missing release fixture')
-      expect(evaluate({ ...images, [repo]: { ...image, Tag: `kargo-sha-${filteredAncestor}` } })).toBe(false)
-      expect(
-        evaluate({
-          ...images,
-          [repo]: {
-            ...image,
-            Annotations: { ...image.Annotations, 'org.opencontainers.image.revision': filteredAncestor },
-          },
-        }),
-      ).toBe(false)
-      expect(
-        evaluate({
-          ...images,
-          [repo]: {
-            ...image,
+  it.each(['torghut', ...ancestryGuardedStages] as const)(
+    'promotes the immutable %s source despite a different filtered Git commit',
+    (name) => {
+      const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+      const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
+      const warehouse = byName(warehouses).get(name)
+      const expression = warehouse?.spec?.freightCreationCriteria?.expression
+      expect(typeof expression).toBe('string')
+      const images = Object.fromEntries(
+        expected[name].images.map((repo) => [
+          repo,
+          {
+            Tag: name === 'torghut' ? `kargo-sha-${source}` : `kargo-sha-${source}-run-43122728159`,
             Annotations: {
-              ...image.Annotations,
-              'org.opencontainers.image.source': 'https://github.com/other/repository',
+              [buildRunIdAnnotation]: '43122728159',
+              [buildConclusionAnnotation]: 'success',
+              'org.opencontainers.image.revision': source,
+              'org.opencontainers.image.source': imageSourceRepo,
             },
           },
-        }),
-      ).toBe(false)
-    }
-    const stage = byName(stages).get('torghut')
-    const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
-      (step: Record<string, any>) => step.uses === 'git-clone',
-    )
-    const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
-    expect(
-      runInNewContext(
-        sourceExpression,
-        {
-          vars: { imageRepo: imageRepo('torghut'), gitRepo },
-          imageFrom: (repo: string) => images[repo],
-          commitFrom: () => ({ ID: filteredAncestor }),
+        ]),
+      )
+      const evaluate = (input: typeof images) =>
+        runInNewContext(
+          expression,
+          {
+            nil: null,
+            imageFrom: (repo: string) => input[repo],
+            commitFrom: () => ({ ID: filteredAncestor }),
+          },
+          { timeout: 100 },
+        )
+      expect(evaluate(images)).toBe(true)
+      for (const repo of expected[name].images) {
+        const image = images[repo]
+        if (image === undefined) throw new Error('Missing release fixture')
+        expect(evaluate({ ...images, [repo]: { ...image, Tag: `kargo-sha-${filteredAncestor}` } })).toBe(false)
+        expect(
+          evaluate({
+            ...images,
+            [repo]: {
+              ...image,
+              Annotations: { ...image.Annotations, 'org.opencontainers.image.revision': filteredAncestor },
+            },
+          }),
+        ).toBe(false)
+        expect(
+          evaluate({
+            ...images,
+            [repo]: {
+              ...image,
+              Annotations: {
+                ...image.Annotations,
+                'org.opencontainers.image.source': 'https://github.com/other/repository',
+              },
+            },
+          }),
+        ).toBe(false)
+      }
+      const stage = byName(stages).get(name)
+      const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
+        (step: Record<string, any>) => step.uses === 'git-clone',
+      )
+      const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
+      expect(
+        runInNewContext(
+          sourceExpression,
+          {
+            vars: { imageRepo: imageRepo(name), gitRepo },
+            imageFrom: (repo: string) => images[repo],
+            commitFrom: () => ({ ID: filteredAncestor }),
+          },
+          { timeout: 100 },
+        ),
+      ).toBe(source)
+    },
+  )
+
+  it.each([...ancestryGuardedStages])(
+    '%s rejects an unmerged image revision before cloning or writing desired state',
+    (name) => {
+      const steps = byName(stages).get(name)?.spec?.promotionTemplate?.spec?.steps
+      const guard = steps[0]
+      expect(guard.uses).toBe('http')
+      expect(guard.retry.timeout).toBe('2m')
+      expect(guard.config.timeout).toBe('10s')
+      expect(guard.config.url).toBe(
+        "${{ 'https://api.github.com/repos/proompteng/lab/compare/' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] + '...main' }}",
+      )
+      for (const [status, relation, success, failure] of [
+        [200, 'ahead', true, false],
+        [200, 'identical', true, false],
+        [200, 'behind', false, true],
+        [200, 'diverged', false, true],
+        [200, 'unknown', false, true],
+        [404, undefined, false, true],
+        [403, undefined, false, false],
+        [500, undefined, false, false],
+      ]) {
+        const context = { response: { status, body: { status: relation } } }
+        expect(runInNewContext(guard.config.successExpression, context)).toBe(success)
+        expect(runInNewContext(guard.config.failureExpression, context)).toBe(failure)
+      }
+      expect(steps[3].uses).toBe('git-clone')
+    },
+  )
+
+  it.each([...ancestryGuardedStages])(
+    '%s binds discovery to a digest receipt from its trusted main publisher',
+    (name) => {
+      const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+      const digest = `sha256:${'a'.repeat(64)}`
+      const image = {
+        Digest: digest,
+        Annotations: {
+          'org.opencontainers.image.revision': source,
+          [buildRunIdAnnotation]: '43122728159',
         },
-        { timeout: 100 },
-      ),
-    ).toBe(source)
-  })
+      }
+      const stage = byName(stages).get(name)
+      const steps = stage?.spec?.promotionTemplate?.spec?.steps
+      const vars = Object.fromEntries(stage?.spec?.vars.map((variable: any) => [variable.name, variable.value]))
+      const render = (expression: string) =>
+        expression.replace(/\$\{\{(.*?)\}\}/g, (_match, code: string) =>
+          String(
+            runInNewContext(code.trim(), {
+              vars,
+              imageFrom: () => image,
+              trimPrefix: (value: string, prefix: string) =>
+                value.startsWith(prefix) ? value.slice(prefix.length) : value,
+            }),
+          ),
+        )
+      const accept = (step: any, body: any, status = 200) =>
+        runInNewContext(render(step.config.successExpression), { response: { status, body } })
+      const run = {
+        head_branch: 'main',
+        head_sha: source,
+        event: 'push',
+        path: vars.buildWorkflow,
+        repository: { full_name: 'proompteng/lab' },
+        head_repository: { full_name: 'proompteng/lab' },
+      }
+      expect(steps[1].uses).toBe('http')
+      expect(render(steps[1].config.url)).toBe('https://api.github.com/repos/proompteng/lab/actions/runs/43122728159')
+      expect(accept(steps[1], run)).toBe(true)
+      expect(accept(steps[1], { ...run, event: 'workflow_dispatch' })).toBe(true)
+      for (const invalid of [
+        { ...run, event: 'pull_request' },
+        { ...run, event: 'pull_request_target' },
+        { ...run, head_branch: 'feature' },
+        { ...run, head_sha: 'b'.repeat(40) },
+        { ...run, path: '.github/workflows/untrusted.yml' },
+        { ...run, head_repository: { full_name: 'attacker/lab' } },
+      ])
+        expect(accept(steps[1], invalid)).toBe(false)
+      const artifact = {
+        name: `nix-release-${name}-${digest.slice(7)}`,
+        expired: false,
+        workflow_run: { head_sha: source, head_branch: 'main' },
+      }
+      const receipt = { total_count: 1, artifacts: [artifact] }
+      expect(steps[2].uses).toBe('http')
+      expect(render(steps[2].config.url)).toBe(
+        'https://api.github.com/repos/proompteng/lab/actions/runs/43122728159/artifacts',
+      )
+      expect(steps[2].config.queryParams[0].name).toBe('name')
+      expect(render(steps[2].config.queryParams[0].value)).toBe(artifact.name)
+      expect(accept(steps[2], receipt)).toBe(true)
+      for (const invalid of [
+        { total_count: 0, artifacts: [] },
+        { total_count: 2, artifacts: [artifact, artifact] },
+        { total_count: 1, artifacts: [{ ...artifact, name: `nix-release-${name}-${'b'.repeat(64)}` }] },
+        { total_count: 1, artifacts: [{ ...artifact, expired: true }] },
+        {
+          total_count: 1,
+          artifacts: [{ ...artifact, workflow_run: { head_sha: 'b'.repeat(40), head_branch: 'main' } }],
+        },
+      ])
+        expect(accept(steps[2], invalid)).toBe(false)
+      for (const status of [403, 404, 429, 500]) {
+        expect(accept(steps[1], run, status)).toBe(false)
+        expect(accept(steps[2], receipt, status)).toBe(false)
+      }
+    },
+  )
 
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
     expect(kargoHelmElement?.version).toBe('1.11.4')
@@ -821,27 +855,12 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns each product Warehouse source paths with its exact image build filter', () => {
+  it('preserves product publication concurrency while image annotations own the source', () => {
     expect(productNixWorkflow.concurrency).toEqual({
       group:
         "product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}",
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
-
-    const filtersSource = productNixWorkflow.jobs?.changes?.steps?.find(
-      (step: Record<string, any>) => step.id === 'filter',
-    )?.with?.filters
-    expect(typeof filtersSource).toBe('string')
-    const buildFilters = YAML.parse(filtersSource) as Record<string, string[]>
-    const warehouseMap = byName(warehouses)
-
-    for (const product of ['app', 'synthesis', 'docs']) {
-      const warehouse = warehouseMap.get(product)
-      const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
-      const warehousePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
-      const buildPaths = buildFilters[product]?.map((path) => path.replace(/\/\*\*$/, ''))
-      expect(warehousePaths).toEqual(buildPaths)
-    }
   })
 
   it('aligns Temporal worker publication with source discovery and limits PR builds to worker changes', () => {
@@ -1012,6 +1031,9 @@ describe('Kargo direct-push GitOps contract', () => {
         expect(steps[0].uses).toBe('fail')
         expect(steps[0].if).toContain('imageFrom(vars.tengriImage).Tag')
         expect(steps[0].if).toContain('imageFrom(vars.nanoagentImage).Tag')
+      } else if (ancestryGuardedStages.some((name) => name === stageName)) {
+        expect(steps[0].uses).toBe('http')
+        expect(steps[3].uses).toBe('git-clone')
       } else {
         expect(steps[0].uses).toBe('git-clone')
       }
