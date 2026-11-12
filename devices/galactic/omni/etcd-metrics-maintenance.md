@@ -36,9 +36,10 @@ The available investigation transport has Reader authority. Node configuration c
 administrative Omni maintenance path; this document does not grant that capability or authorize an immediate apply.
 
 1. Record a current, verified recoverable **etcd** backup/snapshot and its recovery procedure. Confirm all three voters
-   are healthy, caught up and alarm-free, the API passes consistent reads, Ceph has healthy monitor quorum, and no other
-   upgrade/configuration operation or unresolved control-plane regression is active. A Bayn database backup does not
-   substitute for an etcd recovery point. Preserve active workspace/session recovery requirements from the existing
+   are healthy, caught up and alarm-free, the API passes consistent reads, and Ceph has healthy monitor quorum. Require
+   no missing/unhealthy voter, failing consistent API reads, concurrent upgrade/configuration operation or unrecovered
+   rollout. Record existing WAL/apply latency and storage behavior as the maintenance baseline. A Bayn database backup
+   does not substitute for an etcd recovery point. Preserve active workspace/session recovery requirements from the existing
    [Omni ownership and rollout instructions](README.md).
 2. Review the exact current machine identities, leader and desired/live configuration. Select one member using the
    existing maintenance procedure; handle leadership through that procedure if necessary. Never reconfigure two etcd
@@ -53,14 +54,16 @@ administrative Omni maintenance path; this document does not grant that capabili
    through that reviewed administrative path. An etcd service restart may be required; do not add a manual restart or
    reboot. Stop if the plan requires a broader lifecycle operation than the approved maintenance.
 5. Observe the affected member until its original identity is healthy and caught up, all three voters and quorum are
-   healthy again, consistent API reads pass, and no new WAL, API, quorum or storage regression appears. Confirm the
-   listener binds only loopback. From the existing authorized host-network Alloy transport, make a bounded read of
+   healthy again, consistent API reads pass, and latency/storage behavior shows no material deterioration from the
+   recorded baseline. Abort on loss of member, API, quorum or storage health. Confirm the listener binds only loopback.
+   From the existing authorized host-network Alloy transport, make a bounded read of
    `/metrics` with a 5-second deadline and 1 MiB response cap, retaining only the two histogram families and counts.
    No TLS bypass, new host mount, credential access or network-policy exception is needed. If that transport is not
    available, stop and arrange an approved read path instead of weakening access controls.
 6. Record the exact source/configuration version, member identity, listener, histogram presence and recovery interval.
-   **Do not proceed to another member until all three are healthy.** Stop on any regression. Repeat the reviewed
-   single-Machine change for each remaining member, rechecking the backup and preconditions before every apply.
+   **Do not proceed to another member until all three are healthy.** Stop on health loss or material deterioration from
+   the recorded baseline. Repeat the reviewed single-Machine change for each remaining member, rechecking the backup
+   and preconditions before every apply.
 
 ## Deferred collector change
 
