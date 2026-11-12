@@ -50,6 +50,12 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   The init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
   filesystem overhead. The claim size is separate from the runner's unchanged ephemeral-storage resource limit.
   A failed bootstrap remains an admission failure; do not weaken the free-space or complete-copy checks.
+- The init sets scratch `/tmp` with explicit `01777` so GNU chmod clears inherited `fsGroup` setgid bits.
+  For the existing ARC image marker, the shared Nix setup action also creates a private `00700` build directory
+  beneath `RUNNER_TEMP` and passes it through `NIX_CONFIG`'s `build-dir`, including the existing sudo launcher.
+  Hosted Nix configuration stays unchanged. On AMD64 this directory stays on the same Ceph
+  volume. Nix's sandbox and syscall filter remain enabled; inherited setgid directories otherwise make readonly
+  source unpacking fail with `Operation not permitted`. Job temporary storage is removed with the runner.
 - New AMD64 scratch claims never use `local-path-ci-amd64`. Existing busy runners keep their old local claims until
   their normal Pod lifecycle ends; no data migration or active-job deletion is required. Retain the old local-path
   mappings for that cleanup. Ceph RBD data uses the existing HDD OSDs and dedicated BlueStore DB NVMe devices,

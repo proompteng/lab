@@ -1,5 +1,15 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -279,6 +289,29 @@ fi
     expect(arcPlacementAcceptance).toContain('([.[].end] | min) - ([.[].start] | max) >= 45')
   })
 
+  it('clears inherited setgid from the bootstrapped temporary directory', () => {
+    const application = YAML.parse(arcApplication)
+    const script = application.spec.sources[2].helm.valuesObject.template.spec.initContainers[0].args[0] as string
+    const modeCommand = script.split('\n').find((line) => /^\s*chmod [0-7]+ "\$stage\/tmp"$/.test(line))
+    if (!modeCommand) throw new Error('Scratch temporary-directory mode command is missing')
+    const directory = mkdtempSync(join(tmpdir(), 'arc-scratch-mode-'))
+    const temporary = join(directory, 'tmp')
+    mkdirSync(temporary)
+    chmodSync(temporary, 0o3777)
+    expect(statSync(temporary).mode & 0o7777).toBe(0o3777)
+    try {
+      const result = spawnSync('bash', ['-euc', modeCommand], {
+        encoding: 'utf8',
+        env: { ...process.env, stage: directory },
+        timeout: 10_000,
+      })
+      expect(result.status, result.stderr).toBe(0)
+      expect(statSync(temporary).mode & 0o7777).toBe(0o1777)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('reserves small sidecar-free runners for publication outside the native build queues', () => {
     const application = YAML.parse(arcApplication)
     const source = application.spec.sources.find(
@@ -455,6 +488,67 @@ fi
 
     expect(nixOciWorkflow).not.toContain('Install xz for Nix installer')
     expect(nixOciWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
+  })
+
+  it('isolates ARC Nix build directories on job storage without changing hosted configuration', () => {
+    const configure = YAML.parse(setupAction).runs.steps.find(
+      (step: { name?: string }) => step.name === 'Configure Nix',
+    ).run as string
+    const directory = mkdtempSync(join(tmpdir(), 'arc-nix-build-dir-'))
+    const runnerTemp = join(directory, 'runner-temp')
+    const fixtureHome = join(directory, 'home')
+    const bin = join(directory, 'bin')
+    for (const path of [runnerTemp, fixtureHome, bin]) mkdirSync(path)
+    chmodSync(runnerTemp, 0o2770)
+    writeFileSync(join(bin, 'nix'), '#!/bin/sh\nprintf "nix fixture\\n"\n', { mode: 0o755 })
+    const githubEnv = join(directory, 'github-env')
+    const buildDirectories: string[] = []
+    try {
+      for (const arcRunner of [true, true, false]) {
+        const result = spawnSync('bash', ['-euc', configure], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            HOME: fixtureHome,
+            LAB_ARC_RUNNER_TOOLCHAIN: arcRunner ? '1' : '',
+            RUNNER_TEMP: runnerTemp,
+            GITHUB_ENV: githubEnv,
+            GITHUB_PATH: join(directory, 'github-path'),
+            EXTRA_NIX_CONFIG: 'experimental-features = nix-command flakes\nsandbox = true\nfilter-syscalls = true',
+            NIX_GITHUB_TOKEN: '',
+          },
+          timeout: 10_000,
+        })
+        expect(result.status, result.stderr).toBe(0)
+        const configuration = readFileSync(join(fixtureHome, '.config/nix/nix.conf'), 'utf8')
+        const buildDirectory = configuration.match(/^build-dir = (.+)$/m)?.[1]
+        if (!arcRunner) {
+          expect(buildDirectory).toBeUndefined()
+          expect(readdirSync(runnerTemp)).toHaveLength(2)
+          expect(configuration).toStartWith(
+            'experimental-features = nix-command flakes\nsandbox = true\nfilter-syscalls = true',
+          )
+          continue
+        }
+        if (!buildDirectory) throw new Error('Nix build-dir was not configured')
+        buildDirectories.push(buildDirectory)
+        expect(buildDirectory.startsWith(`${runnerTemp}/`)).toBe(true)
+        expect(statSync(buildDirectory).mode & 0o7777).toBe(0o700)
+        expect(statSync(buildDirectory).uid).toBe(process.getuid?.())
+        expect(statSync(buildDirectory).dev).toBe(statSync(runnerTemp).dev)
+        expect(statSync(runnerTemp).mode & 0o7777).toBe(0o2770)
+        expect(configuration).toContain('sandbox = true\nfilter-syscalls = true')
+        // The existing sudo launcher preserves this exact NIX_CONFIG value.
+        expect(readFileSync(githubEnv, 'utf8')).toContain(
+          `NIX_CONFIG<<__LAB_NIX_CONFIG__\n${configuration}__LAB_NIX_CONFIG__`,
+        )
+      }
+      expect(new Set(buildDirectories).size).toBe(2)
+      expect(setupAction).toContain('exec sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('checks setup steps in their own ARC jobs, including matrix runners', () => {
