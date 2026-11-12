@@ -16,7 +16,8 @@ const image = { digest: `sha256:${'b'.repeat(64)}`, os: 'linux', architecture: '
 const gateScript = workflow.jobs['verify-placement'].steps.find(
   (step: { name?: string }) => step.name === 'Require thirty minutes of common native work on ten builders',
 ).run as string
-const predicate = readFileSync(join(repoRoot, 'nix/ci-arc-native-qualification.jq'), 'utf8')
+const predicate = gateScript.match(/jq -s -e --arg source "\$EXPECTED_SOURCE" '([\s\S]*?)' native-proof/)?.[1]
+if (!predicate) throw new Error('Native qualification workflow gate is missing')
 
 const receipts = () =>
   Array.from({ length: 10 }, (_, index) => ({
@@ -47,7 +48,6 @@ describe('ARC native image qualification', () => {
     expect(nativeSteps.at(-1).if).toContain('always()')
     expect(nativeSteps.at(-1).with.path).toContain('arc-native/*.tsv')
     expect(workflow.permissions).toEqual({ contents: 'read', actions: 'read' })
-    expect(gateScript).toContain('-f nix/ci-arc-native-qualification.jq')
     expect(readFileSync(script, 'utf8')).not.toMatch(/oci-push|cache-push|ATTIC_TOKEN|kubectl|kargo-sha/)
   })
 
