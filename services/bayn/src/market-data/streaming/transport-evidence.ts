@@ -1,5 +1,10 @@
 import { Schema } from 'effect'
 
+export enum CaptureReason {
+  AssignmentInvalidated = 'assignment-invalidated',
+  RetiredLatestRest = 'retired-latest-rest',
+}
+
 export enum CaptureDisposition {
   Accepted = 'ACCEPTED',
   Rejected = 'REJECTED',

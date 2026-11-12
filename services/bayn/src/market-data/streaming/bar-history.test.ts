@@ -128,7 +128,7 @@ describe('bounded streaming bar history', () => {
           }))
           for (const [index, change] of [...prelude, ...changes].entries()) {
             const record = recordFor(index, change.minute, change.publication, change.price)
-            const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe))
+            const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe, 'recorded'))
             if (decoded.kind !== RawMarketEventKind.Bar) throw new Error('expected bar fixture')
             const recorded = index % 3 === 0
             const bar = recorded

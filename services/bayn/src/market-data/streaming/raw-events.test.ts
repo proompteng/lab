@@ -28,6 +28,7 @@ const decode = (eventTs: string, ingestTs: string) =>
       }),
     },
     universe,
+    'recorded',
   )
 
 test.each([
@@ -92,6 +93,7 @@ test.each([
         }),
       },
       universe,
+      'recorded',
     ),
   )
   expect(result.kind).toBe(RawMarketEventKind.Quote)
@@ -132,6 +134,7 @@ test.each([
           }),
         },
         universe,
+        'recorded',
       ),
     ),
   ).toBe(true)

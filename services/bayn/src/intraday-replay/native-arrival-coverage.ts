@@ -135,6 +135,7 @@ export const auditNativeArrivalCoverage = (input: unknown) =>
         const decoded = yield* decodeRawMarketRecord(
           { ...record.record, ...(timestampMs === undefined ? {} : { timestampMs }) },
           source,
+          'recorded',
         )
         if (decoded.kind === RawMarketEventKind.Ignored)
           return yield* fail('Accepted original arrival no longer reproduces its decoder disposition')

@@ -68,7 +68,7 @@ test('REST normalization rounds nanoseconds up and preserves modeled provenance 
   expect(events.map((event) => event.record.offset)).toEqual(['0', '1'])
   expect(events[0]?.availableAtMs).toBe(Date.parse('2026-09-11T13:30:00.001Z'))
   for (const event of events) {
-    const decoded = Result.getOrThrow(decodeRawMarketRecord(event.record, universe))
+    const decoded = Result.getOrThrow(decodeRawMarketRecord(event.record, universe, 'recorded'))
     expect(decoded.kind).toBe(RawMarketEventKind.Quote)
     expect(JSON.parse(event.record.value).provenance).toMatchObject({
       transport: 'historical-rest',
@@ -101,7 +101,7 @@ test.each(['bid', 'ask', 'both'] as const)('preserves withdrawn %s prices as una
     ap: retained.askPrice,
     as: retained.askSize,
   })
-  const decoded = Result.getOrThrow(decodeRawMarketRecord(event.record, universe))
+  const decoded = Result.getOrThrow(decodeRawMarketRecord(event.record, universe, 'recorded'))
   expect(decoded.kind).toBe(RawMarketEventKind.Quote)
   const cursor = Result.getOrThrow(
     advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('5'.repeat(64), [universe])), event),
@@ -142,7 +142,7 @@ test('minute bars arrive only after completion and inclusive endpoint rows remai
   expect(JSON.parse(delayed[0]?.record.value ?? '').ingestTs).toBe('2026-09-11T20:00:00.035Z')
   const event = events[0]
   if (event === undefined) throw new Error('expected a bar')
-  expect(Result.getOrThrow(decodeRawMarketRecord(event.record, universe)).kind).toBe(RawMarketEventKind.Bar)
+  expect(Result.getOrThrow(decodeRawMarketRecord(event.record, universe, 'recorded')).kind).toBe(RawMarketEventKind.Bar)
   expect(Result.isFailure(restCaptureArrivals({ ...base, capture, rawDeliveryDelayMs: -1 }))).toBe(true)
   expect(
     Result.isFailure(

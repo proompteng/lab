@@ -206,129 +206,43 @@ actual derived Kafka messages for BTC/USD, ETH/USD, and SOL/USD, raw-input joins
 on both replicas, and completed checkpoints after savepoint restore. A ready Pod or raw archive row does not prove
 the derived path.
 
-## Latest quote and trade observations
+## Streaming equity source
 
-The producer can supply missing IEX quotes and trades with Alpaca's bulk
-[latest-quotes](https://docs.alpaca.markets/us/reference/stocklatestquotes-1) and
-[latest-trades](https://docs.alpaca.markets/us/reference/stocklatesttrades-1) endpoints. Enable it with
-`ALPACA_LATEST_SYMBOLS`, listing static equity symbols that have neither quote nor trade WebSocket subscriptions.
-The configuration requires one shard and the existing IEX feed. An absent symbol list disables polling.
+The static core IEX connection subscribes to trades, quotes and bars for all sixteen configured Bayn symbols.
+One authenticated socket and one admitted source map supply the three channels. Ordinary latest-quote/trade REST
+acquisition and its temporary subscription qualifier are removed. There is no REST acquisition fallback.
 
-`ALPACA_LATEST_POLL_INTERVAL_MS` defaults to 2,000 ms and accepts values from 2,000 to 60,000 ms. Each pass requests both
-channels; the next pass starts after the current pass finishes and the interval elapses. `ALPACA_LATEST_MAX_AGE_MS`
-defaults to 10,000 ms and accepts values from 1,000 to 10,000 ms. A five-second deadline bounds each channel's request
-and Kafka acknowledgements, including interruption of a blocking Kafka send. The shared REST client waits at least
-500 ms after each HTTP request completes before starting another, including every historical recovery page, and
-applies provider retry and reset headers. A rate limit without usable headers delays requests for 60 seconds. Each HTTP
-request has a ten-second deadline; expiration is a retryable failure, while caller cancellation still propagates.
-These are per-process limits; production uses one replica
-with a Recreate rollout.
+The forty-eight-membership budget applies only to one static, sixteen-symbol equity IEX shard with exactly those
+three channels and no per-channel overrides. Dynamic subscriptions, other core configurations and observation feeds
+retain the thirty-membership budget. Provider rejection and incomplete acknowledgements leave the connection unready;
+normal bounded recovery still applies. The initial rollout requires the retained same-socket qualification receipt:
+all sixteen bars/quotes/trades acknowledged, 130 seconds of usable regular-session coverage, original provider times,
+quote/trade ages and gaps within ten seconds, processing delay within one second, and verified baseline restoration.
+A healthy connection outside regular hours does not establish this qualification.
 
-Emitted version-2 envelopes use `source=rest_latest`. They preserve provider event timestamps, numeric values,
-exchanges, conditions and trade IDs, and record actual HTTP arrival time in `ingestTs`. Alpaca's latest-trade endpoint
-excludes odd lots and other trades that do not update bar prices. Repeated polling also omits intermediate events.
-These records are point samples. Both technical-analysis trade-volume aggregators exclude them before creating
-microbars. Provider bars continue to supply Bayn's volume and technical features.
+Data from an unacknowledged or unconfigured equity membership is dropped before sequence allocation, deduplication,
+channel freshness and Kafka publication. A reconnect starts with empty admitted memberships and requires fresh
+authentication and subscription acknowledgement. `torghut.proompteng.ai/ws-config-generation` identifies the source
+cutover; the Kargo-selected image and actual source-to-Bayn observations establish deployed behavior.
 
-The poller validates each response before publication. Missing symbols produce no observation; stale or future events
-are omitted; malformed responses fail that channel. It retains deduplication state only after Kafka acknowledges the
-record. Failed publication remains retryable, acknowledged observations cannot regress in event time, and shutdown
-cancels the polling task. Restarts may republish an equivalent sample with new transport coordinates.
+Named historical bar/trade gap repair remains separate and emits `source=rest`. Retained `source=rest_latest` point
+samples remain excluded from both volume aggregators. Bayn's live consumer ignores those retired samples, including
+records already accepted by Kafka before cutover, and records that exclusion in native arrival evidence. Earlier
+captures retain their original sampled-record interpretation; current excluded records reproduce their exact receipt
+and cannot become executable quotes or trades during replay. `fixtures/alpaca-latest-v1.json` remains a retained-data
+fixture. Existing archives, provider event times, delivery times, offsets, Flink state, crypto and Webull remain intact.
 
-Quote shape, identity, finite nonnegative values and timestamp syntax are validated before age filtering. Stale and
-future quotes are then omitted before checking executable prices, so an expired closing quote with a zero ask cannot
-discard fresh quotes for other symbols. Quotes within the age bound still require positive, non-crossed prices.
-
-`/readyz` reports `latest_rest_observations` separately from WebSocket gates. It includes configured symbols,
-acknowledged provider event times, unavailable symbols and channel errors. An old acknowledged value becomes
-unavailable when its provider age exceeds the configured bound, even when HTTP remains successful. REST publication
-does not satisfy WebSocket subscription or event-freshness gates. Bayn still applies its own snapshot and Jev pricing
-checks. The Kafka record retains sample provenance; Bayn's snapshot binds normalized values and source coordinates.
-ClickHouse quote and trade archive rows retain normalized values and Kafka coordinates, but omit the `source`
-discriminator and complete provider payload. Preserve the original Kafka envelopes when acquisition provenance is
-required beyond Kafka's configured retention period.
-
-Roll out the TA sample exclusions and the producer implementation first. Verify the deployed TA image contains the
-exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended missing set is
-`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`; keep the existing 16 bar and seven quote/trade WebSocket subscriptions.
-Activation requires regular-session proof that actual provider events for these symbols reach Bayn and change its
-candidate coverage. Access checks and readiness alone cannot establish this. Existing historical captures retain their
-gaps, and completing the input stream does not establish a profitable strategy.
-
-Disabling polling does not remove retained sampled records. Keep compatible volume exclusions during rollback, or
-verify that restored offsets cannot replay sampled records into an older volume consumer.
-
-`fixtures/alpaca-latest-v1.json` is a shared provider-to-envelope fixture checked by the real producer publication path
-and Bayn's immutable snapshot/replay tests. Run producer and consumer checks from this directory:
+Run the producer and consumer contract checks from this directory:
 
 ```sh
 ./gradlew :platform:test :websockets:test :technical-analysis:test :technical-analysis-flink:test
 ./gradlew :platform:ktlintCheck :websockets:ktlintCheck :technical-analysis:ktlintCheck :technical-analysis-flink:ktlintCheck
 ```
 
-See [the Flink guide](technical-analysis-flink/README.md) for contracts, state migration, and validation, and the
-[Bayn streaming design](../../docs/bayn/streaming-market-data-design.md) for the consumer and replay architecture.
-
-Run the producer checks from this directory:
-
-```sh
-./gradlew :technical-analysis-flink:ktlintCheck :technical-analysis-flink:test :technical-analysis-flink:uberJar
-```
-
-Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
-Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
-
-## Same-session IEX subscription qualification
-
-`ALPACA_IEX_SUBSCRIPTION_QUALIFICATION=true` enables a diagnostic on the existing core IEX connection. The reviewed
-baseline remains sixteen bar, seven quote and seven trade subscriptions. The nine REST-only symbols continue through
-the existing latest-observation path. Neither the summed baseline subscription budget nor its REST/WS overlap guard
-is relaxed. Credentials, destination, preferred feed, delay class, topics, private trade updates, crypto and delayed SIP
-retain their existing contracts.
-
-After authentication and a complete baseline acknowledgement, the diagnostic waits for a regular equity session and
-sends one additive subscription containing only the nine missing quote and trade memberships. It never adds a fourth
-channel or another connection. Alpaca documents that subscriptions are additive, acknowledgements contain the full
-current membership, and error 405 preserves the previous membership. See the
-[provider protocol](https://docs.alpaca.markets/us/docs/streaming-market-data).
-
-Candidate data is blocked before sequence allocation, deduplication, Kafka publication and ordinary freshness tracking,
-including frames before acknowledgement, buffered frames after rollback and frames on a later connection. Candidate
-and admitted maps are separate. The diagnostic records only membership, counters and provider/receipt/processing
-times; it retains no prices, raw source payloads, credentials or account identity.
-
-A complete sixteen-quote/sixteen-trade/sixteen-bar acknowledgement starts a bounded observation window: two sixty-second bar intervals plus the existing ten-second provider-age allowance
-(130 seconds).
-Qualification requires usable coverage of every member across that active window, quote/trade age and receipt gaps
-within ten seconds, bar coverage within 130 seconds, and decoded-frame processing delay within one second. Silence,
-unusable values, clock or queue violations and departure from the regular session leave coverage unproved. These are
-qualification limits, not measured production latency or an entitlement claim. The bar budget accommodates starting
-just after a minute boundary and receiving a completed bar after that minute; bars retain their minute-start timestamp.
-
-The diagnostic removes only its added quote/trade memberships after the observation window, including success, and
-requires the full original baseline acknowledgement within ten seconds. A partial or delayed candidate acknowledgement
-also triggers that exact rollback; an uncertain rollback closes the connection for coherent baseline recovery. Error
-405 is consumed only while the additive request is pending: it latches rejection and preserves baseline authentication
-without reconnecting. Other provider errors retain normal recovery. The process attempts the amendment once and does
-not repeat it on reconnect. Session generations fence late diagnostic updates; historical completed proof never makes
-a replacement session appear fresh.
-
-Inspect `/readyz` field `iex_subscription_qualification` alongside the exact Kargo revision, running image and ordinary
-channel readiness. `qualified` requires a completed observation window and verified baseline restoration; it does not
-switch financial admission. `outcome` retains the last trial decision; a new connection resets current qualification
-and retains any completed proof under its original generation. Retain the full diagnostic outcome and timing coverage during a real regular session.
-Infrastructure health, an accepted subscription or a quiet after-hours connection alone cannot establish qualification.
-
-The reviewed desired configuration changes the existing single-replica Recreate Deployment's configuration generation.
-Its normal immutable image/Kargo rollout has a restart gap; it preserves neither the old TCP connection nor uninterrupted
-market capture. Within the replacement process, baseline admission and the additive trial share one authenticated TCP
-session. A failed trial preserves current inputs or reconnects to the baseline. Recovery disables the flag through
-reviewed GitOps and the same Kargo path; it does not repoint an account or change entitlements. A process restart creates
-a new diagnostic attempt, so retain evidence and disable the flag after the bounded qualification is assessed.
-
-After live qualification, a separately reviewed hard cutover must promote one admitted source map under a new source
-generation, fence in-flight REST publications and delete ordinary latest polling and the temporary qualification path.
-The full forty-eight-membership target remains open until that product proof and hard migration are complete.
+See [the Flink guide](technical-analysis-flink/README.md) and the
+[Bayn streaming design](../../docs/bayn/streaming-market-data-design.md). Deployment follows reviewed main,
+immutable publication, Kargo promotion and Argo reconciliation. Checkpoint restoration, full subscription coverage
+and actual usable Bayn snapshots are separate acceptance checks; none establishes a profitable strategy.
 
 ## Producer stall diagnostics
 

@@ -2,7 +2,12 @@ import { SimulatedSnapshotSourceSchema } from './evidence-schema'
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import { sha256 } from '../../hash'
-import { CaptureDisposition, OriginalKafkaTransportSchema, restoreKafkaTransportTimestamp } from './transport-evidence'
+import {
+  CaptureDisposition,
+  CaptureReason,
+  OriginalKafkaTransportSchema,
+  restoreKafkaTransportTimestamp,
+} from './transport-evidence'
 import { kafkaCaptureDisposition } from './kafka'
 import {
   NonNegativeIntegerSchema,
@@ -12,7 +17,12 @@ import {
   UnsignedMicrosSchema,
   strictParseOptions,
 } from '../../schemas'
-import { emptyStreamingProjection, incorporateSimulatedMarketRecord, topicPartitionKey } from './projection'
+import {
+  emptyStreamingProjection,
+  incorporateLiveMarketRecord,
+  incorporateSimulatedMarketRecord,
+  topicPartitionKey,
+} from './projection'
 import { MarketSourcesSchema, marketSourceForTopic, type MarketSources } from './raw-events'
 
 const ArrivalFields = {
@@ -309,18 +319,36 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
             offset: record.offset,
           }),
         )
-      if (!original.receipt.tombstone && original.receipt.reason !== 'assignment-invalidated') {
+      if (!original.receipt.tombstone && original.receipt.reason !== CaptureReason.AssignmentInvalidated) {
         const timestampMs = restoreKafkaTransportTimestamp(original.originalTransport)
-        projection = incorporateSimulatedMarketRecord(
-          cursor.projection,
-          { ...record, ...(timestampMs === undefined ? {} : { timestampMs }) },
-          universe,
-          event.availableAtMs,
-        )
+        if (original.receipt.reason === CaptureReason.RetiredLatestRest) {
+          const incorporated = incorporateLiveMarketRecord(
+            { ...cursor.projection, availabilityMode: 'simulated' },
+            { ...record, ...(timestampMs === undefined ? {} : { timestampMs }) },
+            universe,
+            event.availableAtMs,
+          )
+          if (incorporated.ignoredReason !== CaptureReason.RetiredLatestRest)
+            return yield* Result.fail(
+              new HistoricalMarketArrivalFailure({
+                message: 'Retired-source receipt does not match the original acquisition',
+                topic: record.topic,
+                partition: record.partition,
+                offset: record.offset,
+              }),
+            )
+          projection = incorporated.projection
+        } else
+          projection = incorporateSimulatedMarketRecord(
+            cursor.projection,
+            { ...record, ...(timestampMs === undefined ? {} : { timestampMs }) },
+            universe,
+            event.availableAtMs,
+          )
       }
       const disposition = original.receipt.tombstone
         ? CaptureDisposition.Rejected
-        : original.receipt.reason === 'assignment-invalidated'
+        : original.receipt.reason === CaptureReason.AssignmentInvalidated
           ? CaptureDisposition.Ignored
           : kafkaCaptureDisposition(cursor.projection, projection)
       if (projection.sequence !== original.receipt.projectionSequence || disposition !== original.receipt.disposition)

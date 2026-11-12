@@ -85,8 +85,6 @@ data class ForwarderConfig(
   val marketDataChannelFreshnessMaxMs: Long = 180_000,
   val marketDataChannelFreshnessWarmupMs: Long = 120_000,
   val marketDataReadIdleTimeoutMs: Long = 180_000,
-  val latestMarketData: LatestMarketDataConfig? = null,
-  val qualifyIexSubscriptions: Boolean = false,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -193,63 +191,6 @@ data class ForwarderConfig(
         }
       }
       val alpacaMarketDataSymbolOverrides = configuredSymbolOverrides
-      val latestSymbols = mergedEnv["ALPACA_LATEST_SYMBOLS"]?.split(",")?.map { it.trim().uppercase() }
-      val latestMarketData =
-        latestSymbols?.let { symbols ->
-          require(symbols.isNotEmpty() && symbols.size <= 100 && symbols.distinct() == symbols && symbols.all { it in staticSymbolSet }) {
-            "ALPACA_LATEST_SYMBOLS must contain 1 to 100 unique symbols present in SYMBOLS"
-          }
-          require(
-            alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == "iex" && shardCount == 1 &&
-              mergedEnv["JANGAR_SYMBOLS_URL"].isNullOrBlank(),
-          ) {
-            "ALPACA_LATEST_SYMBOLS requires one static equity IEX shard"
-          }
-          for (channel in listOf("quotes", "trades")) {
-            val streamed = if (channel in alpacaMarketDataChannels) configuredSymbolOverrides[channel] ?: staticSymbolSet else emptySet()
-            require(symbols.none { it in streamed }) { "ALPACA_LATEST_SYMBOLS must not overlap WebSocket $channel symbols" }
-          }
-          val interval =
-            mergedEnv["ALPACA_LATEST_POLL_INTERVAL_MS"]?.let {
-              requireNotNull(
-                it.toLongOrNull(),
-              ) { "invalid ALPACA_LATEST_POLL_INTERVAL_MS" }
-            }
-              ?: 2_000
-          val maximumAge =
-            mergedEnv["ALPACA_LATEST_MAX_AGE_MS"]?.let { requireNotNull(it.toLongOrNull()) { "invalid ALPACA_LATEST_MAX_AGE_MS" } }
-              ?: 10_000
-          require(interval in 2_000..60_000) { "ALPACA_LATEST_POLL_INTERVAL_MS must be within [2000, 60000]" }
-          require(maximumAge in 1_000..10_000) { "ALPACA_LATEST_MAX_AGE_MS must be within [1000, 10000]" }
-          LatestMarketDataConfig(symbols, interval, maximumAge)
-        }
-      require(latestSymbols != null || listOf("ALPACA_LATEST_POLL_INTERVAL_MS", "ALPACA_LATEST_MAX_AGE_MS").none { it in mergedEnv }) {
-        "latest observation settings require ALPACA_LATEST_SYMBOLS"
-      }
-      val qualifyIexSubscriptions =
-        mergedEnv["ALPACA_IEX_SUBSCRIPTION_QUALIFICATION"]?.let {
-          requireNotNull(it.toBooleanStrictOrNull()) { "ALPACA_IEX_SUBSCRIPTION_QUALIFICATION must be true or false" }
-        } ?: false
-      if (qualifyIexSubscriptions) {
-        val candidates =
-          requireNotNull(
-            latestMarketData,
-          ) { "IEX qualification requires the existing latest REST observations" }.symbols.toSet()
-        val quotes = configuredSymbolOverrides["quotes"]?.toSet().orEmpty()
-        val trades = configuredSymbolOverrides["trades"]?.toSet().orEmpty()
-        val bars = configuredSymbolOverrides["bars"]?.toSet() ?: staticSymbolSet
-        require(
-          alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == "iex" && shardCount == 1 &&
-            mergedEnv["JANGAR_SYMBOLS_URL"].isNullOrBlank() &&
-            alpacaMarketDataChannels.toSet() == setOf("trades", "quotes", "bars") &&
-            staticSymbolSet.size == 16 && bars == staticSymbolSet && quotes.size == 7 && trades == quotes &&
-            candidates.size == 9 && quotes.intersect(candidates).isEmpty() && quotes + candidates == staticSymbolSet &&
-            latestMarketData.symbols == latestMarketData.symbols.sorted() && staticSymbols == staticSymbols.sorted() &&
-            configuredSymbolOverrides["quotes"] == quotes.sorted() && configuredSymbolOverrides["trades"] == trades.sorted() &&
-            configuredSymbolOverrides["bars"].let { it == null || it == bars.sorted() } &&
-            subscribeBatchSize >= staticSymbolSet.size,
-        ) { "IEX qualification requires the admitted 16-bar/7-quote/7-trade baseline and its nine REST-only symbols" }
-      }
       val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
       val jangarSymbolsUrl =
@@ -331,6 +272,15 @@ data class ForwarderConfig(
           alpacaMarketDataChannels.associateWith { channel ->
             alpacaMarketDataSymbolOverrides[channel]?.size ?: coreSubscriptionCount
           },
+          maximum =
+            if (alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == "iex" && shardCount == 1 &&
+              jangarSymbolsUrl == null && staticSymbols.size == 16 && alpacaMarketDataSymbolOverrides.isEmpty() &&
+              alpacaMarketDataChannels.toSet() == setOf("trades", "quotes", "bars")
+            ) {
+              48
+            } else {
+              30
+            },
         )
       }
       observationFeeds.forEach { observation ->
@@ -465,8 +415,6 @@ data class ForwarderConfig(
         marketDataChannelFreshnessMaxMs = marketDataChannelFreshnessMaxMs,
         marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
         marketDataReadIdleTimeoutMs = marketDataReadIdleTimeoutMs.coerceAtLeast(30_000),
-        latestMarketData = latestMarketData,
-        qualifyIexSubscriptions = qualifyIexSubscriptions,
       )
     }
 
@@ -567,14 +515,15 @@ data class ForwarderConfig(
     private fun requireMarketDataSubscriptionBudget(
       feed: String,
       symbolCountsByChannel: Map<String, Int>,
+      maximum: Int = 30,
     ) {
       val subscriptionCount = symbolCountsByChannel.values.sumOf(Int::toLong)
-      if (subscriptionCount > 30) {
+      if (subscriptionCount > maximum) {
         val detail =
           symbolCountsByChannel.entries.sortedBy { it.key }.joinToString(",") { (channel, count) -> "$channel=$count" }
         error(
           "market-data feed $feed requires $subscriptionCount symbol-channel subscriptions " +
-            "($detail); maximum is 30",
+            "($detail); maximum is $maximum",
         )
       }
     }

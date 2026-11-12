@@ -4,7 +4,7 @@ import { marketHistoryMinutes, marketQuoteMaximumAgeMs } from '../history'
 import { marketFeatureClockSkewAllowanceMs } from '../features/feature-core'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
-import { CaptureDisposition } from './transport-evidence'
+import { CaptureDisposition, CaptureReason } from './transport-evidence'
 import {
   bootstrapKafkaPartitions,
   canonicalPositions,
@@ -49,7 +49,7 @@ import {
 
 import {
   emptyStreamingProjection,
-  incorporateMarketRecord,
+  incorporateLiveMarketRecord,
   topicPartitionKey,
   type StreamingProjection,
 } from './projection'
@@ -598,11 +598,14 @@ export const makeKafkaMarketProjection = (
                   partition: record.partition,
                   offset: String(BigInt(record.offset) + 1n),
                 })
+              let ignoredReason: CaptureReason.RetiredLatestRest | undefined
               if (invalidation === undefined && record.tombstone !== true) {
                 const source = marketSourceForTopic(universe, record.topic)
                 if (source === undefined)
                   return yield* failure('consume', 'Consumer delivered an unconfigured market topic')
-                projection = incorporateMarketRecord(projection, record, source, availableAtMs)
+                const incorporated = incorporateLiveMarketRecord(projection, record, source, availableAtMs)
+                projection = incorporated.projection
+                ignoredReason = incorporated.ignoredReason
               }
               projectionConsumerSequence = consumerSequence
               const disposition =
@@ -622,6 +625,9 @@ export const makeKafkaMarketProjection = (
                   projectionSequence: projection.sequence,
                   disposition,
                   assignmentInvalidated: invalidation !== undefined,
+                  ...(disposition !== CaptureDisposition.Ignored || ignoredReason === undefined
+                    ? {}
+                    : { reason: ignoredReason }),
                 })
 
               if (invalidation !== undefined) return

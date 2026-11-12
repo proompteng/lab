@@ -9,7 +9,7 @@ import { StreamingSnapshotEvidenceSchema } from './evidence-schema'
 import { HistoricalMarketArrivalSchema, type HistoricalMarketArrival } from './historical'
 import type { KafkaConsumedRecord } from './kafka'
 import { MarketSourcesSchema, type MarketSources } from './raw-events'
-import { captureKafkaTransport, CaptureDisposition } from './transport-evidence'
+import { captureKafkaTransport, CaptureDisposition, CaptureReason } from './transport-evidence'
 
 export class NativeArrivalCaptureError extends Data.TaggedError('NativeArrivalCaptureError')<{
   readonly message: string
@@ -47,6 +47,7 @@ export interface NativeArrivalObservation {
   readonly projectionSequence: number
   readonly disposition: CaptureDisposition
   readonly assignmentInvalidated: boolean
+  readonly reason?: CaptureReason.RetiredLatestRest
 }
 
 export const NativeArrivalChunkHeaderSchema = Schema.Struct({
@@ -91,7 +92,8 @@ export const nativeArrival = (epoch: NativeArrivalEpoch, input: NativeArrivalObs
     tombstone: input.record.tombstone === true,
     rawValueSha256: input.record.rawValueSha256 ?? null,
     rawByteLength: input.record.rawByteLength ?? null,
-    ...(input.assignmentInvalidated ? { reason: 'assignment-invalidated' } : {}),
+    ...(input.reason === undefined ? {} : { reason: input.reason }),
+    ...(input.assignmentInvalidated ? { reason: CaptureReason.AssignmentInvalidated } : {}),
   },
 })
 

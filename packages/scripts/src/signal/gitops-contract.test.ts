@@ -77,12 +77,11 @@ describe('Signal publisher GitOps authority contract', () => {
     const cronVariables = environment(cronJob.spec.jobTemplate.spec.template.spec.containers[0])
     const coreSymbols = csv(websocketConfig.data.SYMBOLS)
     const schedulerSymbols = csv(schedulerVariables.get('TRADING_UNIVERSE_SYMBOL_ALLOWLIST')?.value ?? '')
-    const decisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
     const channels = csv(websocketConfig.data.ALPACA_MARKET_DATA_CHANNELS)
     const symbolsByChannel = {
       bars: coreSymbols,
-      quotes: csv(websocketConfig.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS),
-      trades: csv(websocketConfig.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS),
+      quotes: csv(websocketConfig.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS ?? websocketConfig.data.SYMBOLS),
+      trades: csv(websocketConfig.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS ?? websocketConfig.data.SYMBOLS),
     }
 
     expect(universe.metadata.annotations['bayn.proompteng.ai/contract']).toBe('cross-asset-taa-v1')
@@ -97,9 +96,9 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
     expect(coreSymbols).toHaveLength(16)
     expect(channels).toEqual(['trades', 'quotes', 'bars'])
-    expect(symbolsByChannel.quotes).toEqual(decisionSymbols)
-    expect(symbolsByChannel.trades).toEqual(decisionSymbols)
-    expect(channels.reduce((total, channel) => total + symbolsByChannel[channel].length, 0)).toBe(30)
+    expect(symbolsByChannel.quotes).toEqual(coreSymbols)
+    expect(symbolsByChannel.trades).toEqual(coreSymbols)
+    expect(channels.reduce((total, channel) => total + symbolsByChannel[channel].length, 0)).toBe(48)
     expect(selected.length * 4).toBeLessThanOrEqual(30)
     expect(websocketVariables.get('ALPACA_OBSERVATION_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
@@ -304,13 +303,12 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     const liveCoreSymbols = csv(websocket.data.SYMBOLS)
     const liveCoreChannels = csv(websocket.data.ALPACA_MARKET_DATA_CHANNELS)
-    const liveDecisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
     expect(liveCoreSymbols).toEqual(coreArchiveSymbols)
     expect(csv(websocket.data.SYMBOLS_ALLOWLIST)).toEqual(liveCoreSymbols)
-    expect(csv(websocket.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS)).toEqual(liveDecisionSymbols)
-    expect(csv(websocket.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS)).toEqual(liveDecisionSymbols)
+    expect(csv(websocket.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS ?? websocket.data.SYMBOLS)).toEqual(liveCoreSymbols)
+    expect(csv(websocket.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS ?? websocket.data.SYMBOLS)).toEqual(liveCoreSymbols)
     expect(liveCoreChannels).toEqual(['trades', 'quotes', 'bars'])
-    expect(liveCoreSymbols.length + liveDecisionSymbols.length * 2).toBe(30)
+    expect(liveCoreSymbols.length * liveCoreChannels.length).toBe(48)
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
@@ -349,7 +347,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'argocd.argoproj.io/sync-wave': '5',
     })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-iex-single-session-qualification-v1',
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-iex-streaming-v1',
     })
   })
 

@@ -1,3 +1,4 @@
+import { CaptureReason } from './transport-evidence'
 import { MarketKind } from '../../instruments'
 import { marketHistoryMinutes } from '../history'
 import {
@@ -163,7 +164,8 @@ const incorporateDecodedRecord = (
   record: KafkaMarketRecord,
   universe: StreamingUniverse,
   availableAtMs: number,
-  decodedEvent?: RawMarketEvent,
+  admission: Parameters<typeof decodeRawMarketRecord>[2],
+  decodedEvent?: Result.Result<RawMarketEvent, MarketFeatureFailure>,
   featureRecordedAtMs = availableAtMs,
   technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
@@ -271,7 +273,7 @@ const incorporateDecodedRecord = (
       .slice(0, 64)
     return { ...state, featureArrival: incoming, features: new Map(state.features).set(material.symbol, features) }
   }
-  const parsed = decodedEvent === undefined ? decodeRawMarketRecord(record, universe) : Result.succeed(decodedEvent)
+  const parsed = decodedEvent ?? decodeRawMarketRecord(record, universe, admission)
   if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
   const event = parsed.success
   if (event.kind === RawMarketEventKind.Ignored) return state
@@ -393,7 +395,28 @@ export const incorporateMarketRecord = (
   record: KafkaMarketRecord,
   universe: StreamingUniverse,
   availableAtMs: number,
-): StreamingProjection => incorporateDecodedRecord(previous, record, universe, availableAtMs)
+): StreamingProjection => incorporateDecodedRecord(previous, record, universe, availableAtMs, 'recorded')
+
+export const incorporateLiveMarketRecord = (
+  previous: StreamingProjection,
+  record: KafkaMarketRecord,
+  universe: StreamingUniverse,
+  availableAtMs: number,
+): { readonly projection: StreamingProjection; readonly ignoredReason?: CaptureReason.RetiredLatestRest } => {
+  if (
+    record.topic !== universe.topics.bars &&
+    record.topic !== universe.topics.quotes &&
+    record.topic !== universe.topics.trades
+  )
+    return { projection: incorporateMarketRecord(previous, record, universe, availableAtMs) }
+  const parsed = decodeRawMarketRecord(record, universe, 'live')
+  const projection = incorporateDecodedRecord(previous, record, universe, availableAtMs, 'live', parsed)
+  return Result.isSuccess(parsed) &&
+    parsed.success.kind === RawMarketEventKind.Ignored &&
+    parsed.success.reason !== undefined
+    ? { projection, ignoredReason: parsed.success.reason }
+    : { projection }
+}
 
 /** Research can model earlier feature arrivals while retaining the real production timestamp. */
 export const incorporateSimulatedMarketRecord = (
@@ -409,6 +432,7 @@ export const incorporateSimulatedMarketRecord = (
     record,
     universe,
     availableAtMs,
+    'recorded',
     undefined,
     featureRecordedAtMs,
     technicalRecordedAtMs,
@@ -437,7 +461,8 @@ export const incorporateRecordedMarketValue = (
     },
     universe,
     availableAtMs,
-    event,
+    'recorded',
+    Result.succeed(event),
   )
 }
 
