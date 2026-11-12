@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -23,9 +25,82 @@ const sourceEnv = () => ({
   SOURCE_REF: 'refs/heads/main',
   UPSTREAM_RUN_ID: '1234',
   UPSTREAM_RUN_ATTEMPT: '2',
+  LOG_RECIPIENT: 'configured-recipient',
 })
 
 describe('analysis common-worker bridge', () => {
+  it('returns only authenticated encrypted application output from public jobs', () => {
+    expect(workflow.env.DOCKER_BUILD_RECORD_UPLOAD).toBe('false')
+    expect(workflow.env.DOCKER_BUILD_SUMMARY).toBe('false')
+    const directory = mkdtempSync(join(tmpdir(), 'analysis-log-envelope-'))
+    const certificate = join(directory, 'cert.pem')
+    const key = join(directory, 'key.pem')
+    const payload = 'private application output\nUnicode: π\n'
+    try {
+      const generate = spawnSync(
+        'openssl',
+        [
+          'req',
+          '-x509',
+          '-newkey',
+          'rsa:2048',
+          '-noenc',
+          '-days',
+          '1',
+          '-subj',
+          '/CN=ci-log-test',
+          '-keyout',
+          key,
+          '-out',
+          certificate,
+        ],
+        { encoding: 'utf8' },
+      )
+      expect(generate.status).toBe(0)
+      for (const name of ['validate', 'publish']) {
+        const job = workflow.jobs[name]
+        const encryption = job.steps.find((step: { id?: string }) => step.id === 'encrypt')
+        const upload = job.steps.find((step: { uses?: string }) => step.uses === 'actions/upload-artifact@v4')
+        expect(encryption.if).toBe('always()')
+        expect(upload.if).toBe("always() && steps.encrypt.outcome == 'success'")
+        expect(upload.with.path).toBe('${{ runner.temp }}/analysis-ci.log.p7m')
+        writeFileSync(join(directory, 'analysis-ci.log'), payload)
+        const encrypted = spawnSync('bash', ['-c', encryption.run], {
+          env: { ...process.env, RUNNER_TEMP: directory, LOG_RECIPIENT: readFileSync(certificate, 'utf8') },
+          encoding: 'utf8',
+        })
+        expect(encrypted.status).toBe(0)
+        expect(encrypted.stdout).not.toContain(payload)
+        expect(readFileSync(join(directory, 'analysis-ci.log.p7m')).includes(Buffer.from(payload))).toBe(false)
+        const decrypted = spawnSync(
+          'openssl',
+          [
+            'cms',
+            '-decrypt',
+            '-binary',
+            '-inform',
+            'DER',
+            '-in',
+            join(directory, 'analysis-ci.log.p7m'),
+            '-recip',
+            certificate,
+            '-inkey',
+            key,
+          ],
+          { encoding: 'utf8' },
+        )
+        expect(decrypted.status).toBe(0)
+        expect(decrypted.stdout).toBe(payload)
+        const missing = spawnSync('bash', ['-c', encryption.run], {
+          env: { ...process.env, RUNNER_TEMP: directory, LOG_RECIPIENT: '' },
+          encoding: 'utf8',
+        })
+        expect(missing.status).not.toBe(0)
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
   it('keeps application execution on the shared ARM pool without exposing its source credential to actions', () => {
     expect(workflow.permissions).toEqual({})
     for (const name of ['validate', 'publish']) {
