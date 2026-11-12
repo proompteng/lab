@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
+import { executionControllerPlanHash } from '../../../../../services/bayn/src/execution/controller-plan'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
@@ -390,6 +391,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-broker-feed' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
@@ -458,7 +460,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'BAYN_BROKER_PROVIDER',
     'BAYN_BROKER_ENVIRONMENT',
     'BAYN_ALPACA_BASE_URL',
-    'BAYN_CYCLE_POLL_INTERVAL_MS',
     'BAYN_RECONCILIATION_INTERVAL_MS',
     'BAYN_OPERATION_TIMEOUT_MS',
     'BAYN_TIGERBEETLE_CLUSTER_ID',
@@ -495,6 +496,10 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
       newName: 'registry.ide-newton.ts.net/lab/bayn',
       newTag: imageTag,
       digest: imageDigest,
+    },
+    {
+      name: 'bayn-broker-feed',
+      newName: 'registry.ide-newton.ts.net/lab/bayn-broker-feed',
     },
   ])
 
@@ -559,7 +564,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc',
+    executionControllerPlanHash,
   )
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   if (mandateIdentity !== undefined) expect(request).toBeString()

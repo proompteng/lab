@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Array as Arr, Effect, Schedule, Schema, Stream } from 'effect'
+import { Array as Arr, Duration, Effect, Schedule, Schema, Stream } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
@@ -24,11 +24,19 @@ const PersistedChunk = Schema.Struct({
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
 const CannotConnectNow = Schema.Struct({ code: Schema.Literal('57P03') })
-const retryableAppendFailure = (cause: unknown): cause is SqlError =>
-  isSqlError(cause) &&
-  (cause.reason._tag === 'ConnectionError' ||
+const transientAppendSqlError = (cause: unknown): SqlError | undefined => {
+  if (cause instanceof NativeArrivalCaptureError) return transientAppendSqlError(cause.cause)
+  if (!isSqlError(cause)) return undefined
+  return cause.reason._tag === 'ConnectionError' ||
     cause.reason._tag === 'StatementTimeoutError' ||
-    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause)))
+    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause))
+    ? cause
+    : undefined
+}
+const retryableAppendFailure = (cause: unknown): boolean => transientAppendSqlError(cause) !== undefined
+const appendRecoverySchedule = Schedule.exponential('1 second').pipe(
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.seconds(30)))),
+)
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
@@ -126,15 +134,15 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
         const errors = cause.reasons.map((reason) =>
           reason._tag === 'Fail' ? reason.error : reason._tag === 'Die' ? reason.defect : undefined,
         )
-        const first = errors[0]
-        return retryableAppendFailure(first) && errors.every(retryableAppendFailure)
+        const first = transientAppendSqlError(errors[0])
+        return first !== undefined && errors.every(retryableAppendFailure)
           ? Effect.fail(first)
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        // A managed PostgreSQL switchover can refuse connections for tens of seconds.
-        // Keep the immutable batch queued while reconnecting; the existing byte bound still backpressures ingestion.
-        schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ duration: '1 minute' })),
+        // Transient append recovery has no total retry deadline. Each attempt retains its SQL/socket deadline,
+        // and the existing compressed byte bound backpressures ingestion while this exact batch waits.
+        schedule: appendRecoverySchedule,
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),

@@ -32,6 +32,16 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: glitchtip
           podSelector:
             matchLabels:
@@ -190,6 +200,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-research
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-broker-feed
       ports:
         - port: 3128
           protocol: TCP

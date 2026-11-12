@@ -17,7 +17,12 @@ import {
   type JevBatchPlan,
   type JevBatchResult,
 } from '../jev/batch'
-import { JevBatchExpired, JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
+import {
+  JevBatchExpired,
+  JevBatchStore,
+  type JevBatchAdmissionOptions,
+  type JevBatchEvidence,
+} from '../jev/batch-evaluation'
 import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest } from '../jev/evidence'
 import {
   decodeJevResolution,
@@ -112,7 +117,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       return { plan, result } satisfies JevBatchEvidence
     }).pipe(Effect.mapError(persistError))
 
-  const begin = (input: JevBatchPlan, suppliedObservation: JevObservation) =>
+  const begin = (input: JevBatchPlan, suppliedObservation: JevObservation, options?: JevBatchAdmissionOptions) =>
     Effect.gen(function* () {
       yield* requireAutocommit
       const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
@@ -150,13 +155,17 @@ export const makeJevBatchStore = Effect.gen(function* () {
         })
         if (now < Date.parse(plan.observedAt))
           return yield* persistError('Jev batch clock regressed before observation')
-        if (now >= Date.parse(plan.expiresAt)) {
+        const expiresAt = Math.min(
+          Date.parse(plan.expiresAt),
+          options?.admissionDeadlineAt ?? Date.parse(plan.expiresAt),
+        )
+        if (now >= expiresAt) {
           yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
           return yield* new JevBatchExpired({
             batchId: plan.batchId,
             cycleId: plan.cycleId,
             observedAt: plan.observedAt,
-            expiresAt: plan.expiresAt,
+            expiresAt: utcInstantFromEpochMillis(expiresAt),
             checkedAt,
           })
         }
@@ -239,6 +248,44 @@ export const makeJevBatchStore = Effect.gen(function* () {
                   return yield* persistError('Initial visual claim could not be admitted with its request')
               }
               dispatches.push(makeJevDispatch({ request, claimedAt: checkedAt, visualClaim: initial.visualClaim }))
+            }
+            if (options?.deferProviderDispatch === true) {
+              const reference = options.sourceReference
+              const manifest = reference.manifest
+              if (
+                manifest.snapshotId !== plan.snapshotId ||
+                (yield* Effect.fromResult(canonicalHashV1Result(manifest))) !==
+                  (yield* Effect.fromResult(canonicalHashV1Result(reproduced.observation.snapshot.manifest)))
+              )
+                return yield* persistError('Deferred inference source differs from its verified live reference')
+              const referenceTable =
+                reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2'
+                  ? 'simulated_snapshot_references'
+                  : 'streaming_snapshot_references'
+              yield* sql`INSERT INTO ${sql(referenceTable)} (snapshot_id, schema_version, content_hash, observed_at, manifest)
+                VALUES (${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
+                  ${manifest.observedAt}::timestamptz, ${sql.json(manifest)})
+                ON CONFLICT (snapshot_id) DO NOTHING`
+              const [match] = yield* Schema.decodeUnknownEffect(
+                Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })]),
+                strictParseOptions,
+              )(
+                yield* sql`SELECT EXISTS (SELECT 1 FROM ${sql(referenceTable)}
+                WHERE snapshot_id = ${manifest.snapshotId} AND schema_version = ${reference.schemaVersion}
+                  AND content_hash = ${manifest.contentHash} AND observed_at = ${manifest.observedAt}::timestamptz
+                  AND manifest = ${sql.json(manifest)}) AS matches`,
+              )
+              if (!match.matches)
+                return yield* persistError('Deferred inference reference conflicts with recorded source')
+              yield* sql`INSERT INTO jev_inference_work (batch_id, dispatches, admission_deadline_at)
+                VALUES (${plan.batchId}, ${sql.json(
+                  dispatches.map(({ request, claimedAt, visualClaim }) => ({
+                    requestId: request.requestId,
+                    claimedAt,
+                    visualClaim,
+                  })),
+                )}, ${options.admissionDeadlineAt === undefined ? null : utcInstantFromEpochMillis(options.admissionDeadlineAt)}::timestamptz)`
+              return null
             }
             return dispatches
           }
@@ -697,6 +744,9 @@ export const settleExpiredTerminalJevBatches = (
               AND cycle.terminal_at IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = plan.batch_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM jev_inference_work AS work WHERE work.batch_id = plan.batch_id
               )
               ${after}
             ORDER BY cycle.terminal_at, plan.batch_id COLLATE "C"
