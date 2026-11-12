@@ -317,6 +317,7 @@ describe('native Restate execution server', () => {
           'deactivate',
           'prepareActivation',
           'status',
+          'health',
           'activateDeployment',
         ],
       },
@@ -336,9 +337,15 @@ describe('native Restate execution server', () => {
       idempotencyRetention: 7 * 24 * 60 * 60_000,
       journalRetention: 0,
     })
+    expect(services[0]?.handlers?.find(({ name }) => name === 'health')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: false,
+      idempotencyRetention: 0,
+      journalRetention: 0,
+    })
     expect(
       services[0]?.handlers
-        ?.filter(({ name }) => name !== 'activateDeployment' && name !== 'marketChanged')
+        ?.filter(({ name }) => name !== 'activateDeployment' && name !== 'marketChanged' && name !== 'health')
         .map(({ name, ingressPrivate }) => ({
           name,
           ingressPrivate,
