@@ -9,6 +9,18 @@ and the existing verified PostgreSQL CA. It has no broker or model client and re
 node services/bayn/dist/research/jev-study-export-command.js --session YYYY-MM-DD --output /private/new-session-directory
 ```
 
+The immutable `bayn-research` image also packages this command as `bayn-jev-study-export`; the trading image deliberately
+contains neither its wrapper nor its bundle. Image builds verify credential-free `--help`, and archive verification
+requires both research artifacts and rejects either artifact in the trading image. In a separately provisioned research
+process, after verifying its database read access and private storage limits as below, use:
+
+```sh
+bayn-jev-study-export --help
+bayn-jev-study-export --session YYYY-MM-DD --output /private/new-session-directory
+```
+
+Packaging the exporter does not run an export, supply missing cost evidence or establish fully costed profit.
+
 Use the native command instead of a `json_agg` over full observation payloads. PostgreSQL aggregate transition state
 can consume much more memory than the compressed stored documents. The command selects one batch ID and retrieves
 one observation at a time. Each query has a five-second server deadline. The complete read runs inside one
