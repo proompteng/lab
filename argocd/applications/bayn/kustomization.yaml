@@ -20,6 +20,9 @@ resources:
 - deployment.yaml
 - execution-bootstrap-sealedsecret.yaml
 - execution-controller.yaml
+- broker-feed.yaml
+- broker-kafka-ingress.yaml
+- broker-stream-networkpolicy.yaml
 - execution-controller-pdb.yaml
 - execution-controller-networkpolicy.yaml
 - execution-activation.yaml
@@ -34,6 +37,12 @@ resources:
 - opencode-retained-state.yaml
 - research-networkpolicy.yaml
 configMapGenerator:
+- name: bayn-broker-kafka-health
+  files:
+  - probe.sh=broker-kafka-health.sh
+  options:
+    annotations:
+      argocd.argoproj.io/sync-wave: "-2"
 - name: bayn-telemetry
   files:
   - config.alloy=telemetry.alloy
@@ -44,9 +53,12 @@ configMapGenerator:
   files:
   - squid.conf
 images:
+- name: bayn-broker-feed
+  newName: registry.ide-newton.ts.net/lab/bayn-broker-feed
+  digest: sha256:da18190b6c214c49325c1f31fcf7c6ff89dc665222de50557b38911e5b97e439
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:29cacafd1eb894b07eba58a2c50ff93f2ec05644afc31408924f950b8243a27f
+  digest: sha256:c98e0b738c38f36e1506744667dfa1398344f7208f95bba4ffe7f4b96f22bb83
 - name: bayn-research
   newName: registry.ide-newton.ts.net/lab/bayn-research
-  digest: sha256:228a80e3156e6fad2cae096732492cfbe6711bdfc56c0971393b0b2689657014
+  digest: sha256:e3ba2dd87173b82c02ad887c8625ab2eb56dd37c699f8eea4c206cbcd608f99b

@@ -16,6 +16,7 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevEvidenceError } from './evidence'
 import type { JevObservation } from './observation'
 import { utcInstantFromEpochMillis } from '../time'
+import type { MarketSnapshotReference } from '../market-data/intraday/model'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
@@ -23,10 +24,17 @@ export interface JevBatchEvidence {
 }
 
 export interface JevBatchAdmission extends JevBatchEvidence {
-  readonly dispatches: readonly JevDispatch[]
+  /** Null means admitted for durable inference; an empty array retains claimed-work recovery. */
+  readonly dispatches: readonly JevDispatch[] | null
 }
 
 export type JevBatchEvaluationOptions = EntryInferenceEvaluationOptions
+
+export type JevBatchAdmissionOptions = JevBatchEvaluationOptions &
+  (
+    | { readonly deferProviderDispatch: true; readonly sourceReference: MarketSnapshotReference }
+    | { readonly deferProviderDispatch?: never }
+  )
 
 export class JevBatchExpired extends Data.TaggedError('JevBatchExpired')<{
   readonly batchId: string
@@ -47,6 +55,7 @@ export class JevBatchStore extends Context.Service<
     readonly begin: (
       plan: JevBatchPlan,
       observation: JevObservation,
+      options?: JevBatchAdmissionOptions,
     ) => Effect.Effect<JevBatchAdmission, OperationalError | JevBatchExpired>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
     readonly complete: (
@@ -67,17 +76,31 @@ export const evaluateJevBatch = (
     const sourceObservation = structuredClone(observation)
     const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
     const store = yield* JevBatchStore
-    const saved = yield* store.begin(plan, sourceObservation)
+    const saved = yield* store.begin(plan, sourceObservation, options)
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
+    return yield* evaluateAdmittedJevBatch(saved, sourceObservation, options)
+  })
+
+/** The same admitted cohort is used by local replay and the provider-only durable worker. */
+export const evaluateAdmittedJevBatch = (
+  saved: JevBatchAdmission,
+  sourceObservation: JevObservation,
+  options: JevBatchEvaluationOptions = {},
+) =>
+  Effect.gen(function* () {
+    const store = yield* JevBatchStore
+    if (saved.result !== null) return { plan: saved.plan, result: saved.result }
+    const dispatches = saved.dispatches
+    if (dispatches === null) return { plan: saved.plan, result: null }
     const requested = saved.plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-    if (saved.dispatches.length !== requested.length) return yield* store.finish(plan.batchId)
-    const completions = yield* evaluateClaimedEntryInferences(saved.dispatches, options).pipe(
+    if (dispatches.length !== requested.length) return yield* store.finish(saved.plan.batchId)
+    const completions = yield* evaluateClaimedEntryInferences(dispatches, options).pipe(
       Effect.catchTags({
         EntryInferenceError: () => Effect.succeed(null),
         JevContractError: () => Effect.succeed(null),
       }),
     )
-    if (completions === null) return yield* store.finish(plan.batchId)
+    if (completions === null) return yield* store.finish(saved.plan.batchId)
     const byRequest = new Map(completions.map((completion) => [completion.handoff.requestId, completion]))
     const records: JevEvaluationRecord[] = []
     return yield* Effect.gen(function* () {
@@ -89,7 +112,7 @@ export const evaluateJevBatch = (
         }
         const request = candidate.request
         const completion = byRequest.get(request.requestId)
-        const dispatch = saved.dispatches.find((item) => item.request.requestId === request.requestId)
+        const dispatch = dispatches.find((item) => item.request.requestId === request.requestId)
         if (completion === undefined || dispatch === undefined)
           return yield* new JevEvidenceError({ message: 'Completed evaluations do not cover the admitted batch' })
         const receipt = yield* Effect.fromResult(

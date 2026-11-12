@@ -71,6 +71,12 @@ data:
               ]
             },
             {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/ci-amd64"
+              ]
+            },
+            {
               "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
               "paths": []
             }

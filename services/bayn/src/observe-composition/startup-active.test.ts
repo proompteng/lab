@@ -13,7 +13,6 @@ const prepare = (strategy: StrategyRuntime) =>
   prepareObserveStartup({
     accountId: 'test-account',
     authorityGenerationHash: 'b'.repeat(64),
-    pollIntervalMs: 30_000,
     reconciliationIntervalMs: 30_000,
     reconciliationPassTimeoutMs: 30_000,
     strategy,
