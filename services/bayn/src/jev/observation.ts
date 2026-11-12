@@ -225,3 +225,5 @@ export const restoreJevObservation = (input: unknown) =>
       return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
     return { observation, snapshot, contentHash }
   })
+
+export type RestoredJevObservation = Result.Result.Success<ReturnType<typeof restoreJevObservation>>

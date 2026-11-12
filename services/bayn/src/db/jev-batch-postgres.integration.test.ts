@@ -474,7 +474,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(providerCalls).toBe(firstCalls)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toEqual({
           batchId: plan.batchId,
-          observation: fixture.observation.payload,
+          source: {
+            observation: fixture.observation.payload,
+            snapshot: fixture.snapshot,
+            contentHash: plan.observationHash,
+          },
         })
         expect(yield* work.resume(plan.cycleId, 'e'.repeat(64))).toBeNull()
         expect(yield* work.pending()).toEqual([])
