@@ -112,7 +112,7 @@ spec:
           scaleSetLabels:
             - arc-amd64
           minRunners: 1
-          maxRunners: 1
+          maxRunners: 8
           listenerTemplate:
             spec:
               nodeSelector:
@@ -132,7 +132,24 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
-                kubernetes.io/hostname: talos-192-168-1-194
+              affinity:
+                nodeAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    nodeSelectorTerms:
+                      - matchExpressions:
+                          - key: kubernetes.io/hostname
+                            operator: In
+                            values:
+                              - talos-192-168-1-194
+                              - turin
+              topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                    matchLabels:
+                      actions.github.com/scale-set-name: arc-amd64
+                      app.kubernetes.io/component: runner
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -412,7 +429,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-publish
           minRunners: 1
-          maxRunners: 1
+          maxRunners: 2
           listenerTemplate:
             spec:
               nodeSelector:
@@ -433,7 +450,24 @@ spec:
               automountServiceAccountToken: false
               nodeSelector:
                 kubernetes.io/arch: amd64
-                kubernetes.io/hostname: talos-192-168-1-194
+              affinity:
+                nodeAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    nodeSelectorTerms:
+                      - matchExpressions:
+                          - key: kubernetes.io/hostname
+                            operator: In
+                            values:
+                              - talos-192-168-1-194
+                              - turin
+              topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                    matchLabels:
+                      actions.github.com/scale-set-name: arc-amd64-publish
+                      app.kubernetes.io/component: runner
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
