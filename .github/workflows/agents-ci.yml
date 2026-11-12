@@ -22,6 +22,8 @@ on:
       - 'flake.nix'
       - 'nix/images/agents.nix'
       - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/relativize-bun-cache.sh'
+      - 'patches/effect@4.0.0.patch'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/agentrun-tools.nix'
       - 'nix/packages.nix'
@@ -64,6 +66,7 @@ jobs:
       needs_local_agents_image: ${{ steps.classify.outputs.NEEDS_LOCAL_AGENTS_IMAGE }}
       image_mode: ${{ steps.classify.outputs.AGENTS_IMAGE_MODE }}
       image_targets: ${{ steps.classify.outputs.image_targets }}
+      verify_dependency_closure: ${{ steps.classify.outputs.verify_dependency_closure }}
       matched_paths: ${{ steps.classify.outputs.matched_paths }}
     steps:
       - name: Check out repository
@@ -348,6 +351,10 @@ jobs:
             substituters = https://attic.ide-newton.ts.net/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
             fallback = true
+
+      - name: Verify selected Agents dependency closure without trusting a warm cache
+        if: needs.plan.outputs.verify_dependency_closure == 'true'
+        run: bash nix/check-bun-dependency-closure.sh agents-controller x86_64-linux
 
       - name: Resolve published Agents images from GitOps values
         id: published_agents_images

@@ -503,6 +503,7 @@ const expected = {
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
+      'patches/effect@4.0.0.patch',
       'nix/images/openai-codex-cli.nix',
       'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',

@@ -236,6 +236,8 @@ targets:
       - flake.nix
       - nix/images/agents.nix
       - nix/images/bun-workspace-service.nix
+      - nix/images/relativize-bun-cache.sh
+      - patches/effect@4.0.0.patch
       - nix/images/openai-codex-cli.nix
       - nix/images/agentrun-tools.nix
       - nix/packages.nix

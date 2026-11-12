@@ -16,6 +16,7 @@ export type AgentsImageModeResult = {
   runStatic: boolean
   runIntegration: boolean
   imageTargets: AgentsImageTarget[]
+  verifyDependencyClosure: boolean
   matchedPaths: string[]
 }
 
@@ -46,6 +47,23 @@ const STATIC_EXACT_PATHS = new Set([
   'scripts/download_crd_schema.py',
 ])
 
+// Effect is the only root patch installed in the shared Agents dependency cache.
+const DEPENDENCY_EXACT_PATHS = new Set([
+  'patches/effect@4.0.0.patch',
+  'flake.lock',
+  'flake.nix',
+  'nix/packages.nix',
+  'nix/images/agents.nix',
+  'nix/images/bun-workspace-service.nix',
+  'nix/images/relativize-bun-cache.sh',
+  'services/agents/package.json',
+  'packages/agent-contracts/package.json',
+  'packages/codex/package.json',
+  'packages/cx-tools/package.json',
+  'packages/otel/package.json',
+  'packages/temporal-bun-sdk/package.json',
+])
+
 const ALL_IMAGE_EXACT_PATHS = new Set([
   'services/agents/package.json',
   'services/agents/scripts/apply_patch.py',
@@ -53,6 +71,8 @@ const ALL_IMAGE_EXACT_PATHS = new Set([
   'flake.nix',
   'nix/images/agents.nix',
   'nix/images/bun-workspace-service.nix',
+  'nix/images/relativize-bun-cache.sh',
+  'patches/effect@4.0.0.patch',
   'nix/packages.nix',
   'packages/scripts/src/shared/nix-oci-deploy.ts',
 ])
@@ -136,6 +156,7 @@ export const classifyAgentsImageMode = (paths: string[]): AgentsImageModeResult 
     runStatic,
     runIntegration,
     imageTargets,
+    verifyDependencyClosure: activePaths.some((path) => DEPENDENCY_EXACT_PATHS.has(path)),
     matchedPaths,
   }
 }
@@ -161,6 +182,7 @@ const outputLines = (result: AgentsImageModeResult) => [
   `NEEDS_LOCAL_AGENTS_IMAGE=${result.needsLocalAgentsImage}`,
   `AGENTS_IMAGE_MODE=${result.mode}`,
   `image_targets=${JSON.stringify(result.imageTargets)}`,
+  `verify_dependency_closure=${result.verifyDependencyClosure}`,
   `matched_paths=${JSON.stringify(result.matchedPaths)}`,
 ]
 
