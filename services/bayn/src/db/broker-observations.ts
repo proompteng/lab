@@ -359,13 +359,15 @@ export const makeBrokerObservationStore = (
         const row = rows[0]
         if (row === undefined) {
           const now = yield* currentUtcInstant
+          // Account timestamp maxima preserve the strict EXISTS comparisons while
+          // using the existing ordered indexes for these additional diagnostics.
           const awaiting = yield* sql`
         SELECT snapshot_hash, state_hash,
           to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt",
           EXISTS (SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
             WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= poll_started_at) AS "newerMutation",
-          EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId} AND observed_at > completed_at) AS "newerBrokerEvent",
-          EXISTS (SELECT 1 FROM broker_notification_receipts WHERE account_id = ${accountId} AND recorded_at > notification_fence_at) AS "newerNotification"
+          COALESCE((SELECT max(observed_at) FROM broker_events WHERE account_id = ${accountId}) > completed_at, false) AS "newerBrokerEvent",
+          COALESCE((SELECT max(recorded_at) FROM broker_notification_receipts WHERE account_id = ${accountId}) > notification_fence_at, false) AS "newerNotification"
         FROM broker_observations
         WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
           AND observed_at > ${now}::timestamptz - ${maximumAgeMs} * interval '1 millisecond'

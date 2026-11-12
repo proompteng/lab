@@ -967,7 +967,7 @@ describePostgres('Durable per-account broker observations', () => {
               SELECT md5('event-' || n) || md5(n::text), 'bayn.paper-broker-event.v1', md5(n::text) || md5('content-' || n),
                 'ACCOUNT', 'ALPACA', CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
                 'history-' || n, n, ${ticket.startedAt}::timestamptz - interval '60 seconds',
-                ${ticket.startedAt}::timestamptz - interval '60 seconds'
+                ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END
               FROM generate_series(1,8192) AS n`
               yield* sql`CREATE TEMP TABLE broker_notification_receipts (LIKE public.broker_notification_receipts INCLUDING ALL) ON COMMIT DROP`
               yield* sql`INSERT INTO broker_notification_receipts SELECT * FROM public.broker_notification_receipts`
@@ -975,7 +975,7 @@ describePostgres('Durable per-account broker observations', () => {
               SELECT CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
                 md5('receipt-' || n) || md5(n::text), ${revision},
                 ${ticket.startedAt}::timestamptz - interval '60 seconds',
-                ${ticket.startedAt}::timestamptz - interval '60 seconds'
+                ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END
               FROM generate_series(1,8192) AS n`
               yield* sql`ANALYZE mutation_events`
               yield* sql`ANALYZE broker_events`
@@ -994,7 +994,14 @@ describePostgres('Durable per-account broker observations', () => {
               // Store construction also builds the lazy invalidate statement;
               // it is not executed by readState and is not part of this read path.
               reads.length = 0
-              expect((yield* Effect.flip(reader.readState)).kind).toBe(BrokerReadErrorKind.ObservationPending)
+              const { result, attributes } = yield* readWithPendingFences(reader.readState)
+              expect(Result.isFailure(result)).toBe(true)
+              if (Result.isFailure(result)) expect(result.failure.kind).toBe(BrokerReadErrorKind.ObservationPending)
+              expect(attributes).toEqual({
+                'bayn.broker.observation.pending.newer_mutation': mask === 1,
+                'bayn.broker.observation.pending.newer_broker_event': false,
+                'bayn.broker.observation.pending.newer_notification': mask === 4,
+              })
               expect(reads).toHaveLength(2)
               const pending = reads[1]
               if (pending === undefined) throw new Error('Expected the existing pending query')
@@ -1040,25 +1047,28 @@ describePostgres('Durable per-account broker observations', () => {
                       'Local Read Blocks',
                     ].reduce((sum, key) => sum + Number(plan.Plan[key] ?? 0), 0)
                     expect(plan.Plan['Actual Rows']).toBe(1)
-                    return { blocks, executionMs: plan['Execution Time'] }
+                    return { blocks, executionMs: plan['Execution Time'], plan: plan.Plan }
                   }),
                 )
-              const samples = []
               for (const reversed of [false, true, false]) {
                 const first = yield* explain(reversed ? query : baselineQuery)
                 const second = yield* explain(reversed ? baselineQuery : query)
                 const baseline = reversed ? second : first
                 const diagnostic = reversed ? first : second
+                yield* Effect.logInfo('Pending-cut diagnostic query plan sample', {
+                  mask,
+                  historyRowsPerTable: 8192,
+                  diagnosticFirst: reversed,
+                  baselineBlocks: baseline.blocks,
+                  diagnosticBlocks: diagnostic.blocks,
+                  baselineExecutionMs: baseline.executionMs,
+                  diagnosticExecutionMs: diagnostic.executionMs,
+                  plans: JSON.stringify({ baseline: baseline.plan, diagnostic: diagnostic.plan }),
+                })
                 // The extra projection probes are not free. Bound their logical
                 // read amplification without asserting timing on a shared CI host.
                 expect(diagnostic.blocks).toBeLessThanOrEqual(baseline.blocks * 3 + 64)
-                samples.push({ baseline, diagnostic })
               }
-              yield* Effect.logInfo('Pending-cut diagnostic query plan fixture', {
-                mask,
-                historyRowsPerTable: 8192,
-                samples,
-              })
             }),
           )
         }),
