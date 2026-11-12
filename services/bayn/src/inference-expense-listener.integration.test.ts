@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
+import * as PgConnection from '@effect/sql-pg/PgConnection'
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Schedule, Schema } from 'effect'
 
 import { PostgresClientLive } from './db/postgres-client'
@@ -21,11 +22,31 @@ const makeRuntime = () =>
     ),
   )
 const idle = { pending: false, nextWakeAt: null }
-const ListenerRows = Schema.Tuple([Schema.Struct({ pid: Schema.Int, autocommit: Schema.Boolean })])
+const ListenerRows = Schema.Tuple([
+  Schema.Struct({ pid: Schema.Int, autocommit: Schema.Boolean, heartbeatActive: Schema.Boolean, idle: Schema.Boolean }),
+])
 const listener = (sql: PgClient.PgClient, applicationName: string) =>
-  sql`SELECT pid::integer, xact_start IS NULL AS autocommit FROM pg_stat_activity WHERE application_name=${applicationName}`.pipe(
+  sql`SELECT pid::integer, xact_start IS NULL AS autocommit,
+    state='active' AND query='SELECT 1' AS "heartbeatActive", state='idle' AS idle
+    FROM pg_stat_activity WHERE application_name=${applicationName}`.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(ListenerRows)),
     Effect.map(([row]) => row),
+  )
+const idleListener = (sql: PgClient.PgClient, applicationName: string) =>
+  listener(sql, applicationName).pipe(
+    Effect.flatMap((row) =>
+      row.heartbeatActive
+        ? Effect.fail('listener heartbeat active' as const)
+        : row.idle && row.autocommit
+          ? Effect.succeed(row)
+          : Effect.fail('listener session is not idle outside a transaction' as const),
+    ),
+    // An autocommit SELECT has xact_start while active. Only that in-flight heartbeat may settle and retry.
+    Effect.retry({
+      schedule: Schedule.spaced('10 millis'),
+      times: 50,
+      while: (failure) => failure === 'listener heartbeat active',
+    }),
   )
 
 describePostgres('inference expense LISTEN lifecycle', () => {
@@ -181,11 +202,31 @@ describePostgres('inference expense LISTEN lifecycle', () => {
           yield* Deferred.await(entered)
           const before = yield* listener(sql, applicationName)
           yield* Effect.sleep('2500 millis')
-          expect(yield* listener(sql, applicationName)).toEqual(before)
+          expect(yield* idleListener(sql, applicationName)).toEqual(before)
           expect(before.autocommit).toBe(true)
           expect(starts).toBe(1)
           yield* Fiber.interrupt(fiber)
           expect(yield* sql`SELECT pid FROM pg_stat_activity WHERE application_name=${applicationName}`).toEqual([])
+        }),
+      ),
+    )
+  })
+
+  test('idle socket observation rejects a session held in a transaction', async () => {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const applicationName = `expense-held-transaction-${crypto.randomUUID()}`
+          const connection = yield* PgConnection.make({ ...sql.config, applicationName })
+          const pinned = yield* connection.pin
+          yield* pinned.query('BEGIN')
+          yield* Effect.addFinalizer(() => pinned.query('ROLLBACK').pipe(Effect.orDie))
+          yield* pinned.query('SELECT 1')
+          const result = yield* idleListener(sql, applicationName).pipe(
+            Effect.match({ onFailure: (failure) => failure, onSuccess: () => null }),
+          )
+          expect(result).toBe('listener session is not idle outside a transaction')
         }),
       ),
     )

@@ -24,7 +24,8 @@ const describeKafka = enabled ? describe : describe.skip
 const adapterImage =
   'ghcr.io/restatedev/ingress-integration-kafka@sha256:20704c886ee4dcc4046bab1743dc424bb08b2317ce1bc6da55ce738345ce01b1'
 const kafkaImage = 'confluentinc/cp-kafka:8.1.0'
-const restateImage = 'docker.restate.dev/restatedev/restate:1.8.1'
+const restateImage =
+  'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1'
 const topic = 'bayn.broker-notifications.v1'
 const group = 'bayn-broker-notifications-restate-v1'
 const saslUser = 'bayn-local-proof'
@@ -286,6 +287,8 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
             ],
           )
           const core = yield* container(`bayn-kafka-proof-restate-${suffix}`, restateImage, [
+            '--add-host',
+            'host.docker.internal:host-gateway',
             '--network-alias',
             'restate',
             '--tmpfs',
@@ -531,6 +534,8 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
           if (proxyAddress === null || typeof proxyAddress === 'string')
             throw new Error('Missing local fault proxy address')
           const adapterArgs = [
+            '--add-host',
+            'host.docker.internal:host-gateway',
             '--platform',
             'linux/amd64',
             '--user',
