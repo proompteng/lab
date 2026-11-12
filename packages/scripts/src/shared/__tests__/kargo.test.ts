@@ -36,8 +36,17 @@ const parseHmsDurationSeconds = (duration: string): number => {
 
 const warehouses = readManifests('argocd/applications/kargo/warehouses.yaml')
 const stages = readManifests('argocd/applications/kargo/stages.yaml')
-const project = YAML.parse(readRepoFile('argocd/applications/kargo/project.yaml')) as Manifest
-const projectConfig = YAML.parse(readRepoFile('argocd/applications/kargo/project-config.yaml')) as Manifest
+const projects = readManifests('argocd/applications/kargo/project.yaml')
+const projectConfigs = readManifests('argocd/applications/kargo/project-config.yaml')
+const projectOwners = new Map([
+  ['proompteng', 'ofz'],
+  ['tengri', 'ofz'],
+  ['arc-runner', 'arc'],
+  ['hermes-toolchain', 'hermes'],
+  ['temporal-worker', 'temporal'],
+  ['torghut-webull-feed', 'torghut'],
+])
+const projectForStage = (stage: string): string => `${projectOwners.get(stage) ?? stage}-release`
 const kustomization = YAML.parse(readRepoFile('argocd/applications/kargo/kustomization.yaml')) as {
   resources?: string[]
 }
@@ -665,7 +674,7 @@ describe('Kargo direct-push GitOps contract', () => {
         admins: { claims: { email: ['admin@proompteng.ai'] } },
       },
       tls: { enabled: false, terminatedUpstream: true },
-      rollouts: { integrationEnabled: false },
+      rollouts: { integrationEnabled: true },
     })
     expect(kargoHelmValues.externalWebhooksServer).toEqual({ enabled: false })
 
@@ -744,17 +753,21 @@ describe('Kargo direct-push GitOps contract', () => {
       for (const applicationName of contract.apps) {
         expect(applications.get(applicationName)?.targetRevision).toBe(`kargo/${stageName}`)
         expect(applications.get(applicationName)?.annotations?.['kargo.akuity.io/authorized-stage']).toBe(
-          `lab-delivery:${stageName}`,
+          `${projectForStage(stageName)}:${stageName}`,
         )
       }
     }
   })
 
   it('defines automatic Warehouses with a shared Ofz release cohort', () => {
-    expect(project.apiVersion).toBe('kargo.akuity.io/v1alpha1')
-    expect(project.kind).toBe('Project')
-    expect(project.metadata?.name).toBe('lab-delivery')
-    expect(project.metadata?.namespace).toBeUndefined()
+    expect(projects.map((project) => project.metadata?.name).sort()).toEqual(
+      [...new Set(expectedStageNames.map(projectForStage))].sort(),
+    )
+    for (const project of projects) {
+      expect(project.apiVersion).toBe('kargo.akuity.io/v1alpha1')
+      expect(project.kind).toBe('Project')
+      expect(project.metadata?.namespace).toBeUndefined()
+    }
 
     const warehouseMap = byName(warehouses)
     expect([...warehouseMap.keys()].sort()).toEqual(
@@ -767,7 +780,7 @@ describe('Kargo direct-push GitOps contract', () => {
       const warehouse = warehouseMap.get(stageName)
       const sourceFromImage = contract.creationCriteria === 'image-revision'
       expect(warehouse).toBeDefined()
-      expect(warehouse?.metadata?.namespace).toBe('lab-delivery')
+      expect(warehouse?.metadata?.namespace).toBe(projectForStage(stageName))
       expect(warehouse?.spec?.interval).toBe('1m0s')
       expect(warehouse?.spec?.freightCreationPolicy).toBe('Automatic')
       const criteria = warehouse?.spec?.freightCreationCriteria as { expression?: string } | undefined
@@ -902,7 +915,7 @@ describe('Kargo direct-push GitOps contract', () => {
     const stageMap = byName(stages)
     expect([...stageMap.keys()].sort()).toEqual(expectedStageNames)
 
-    const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
+    const projectPolicies = projectConfigs.flatMap((project) => project.spec?.promotionPolicies ?? [])
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
     expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
 
@@ -913,7 +926,12 @@ describe('Kargo direct-push GitOps contract', () => {
       const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
       const pushGitRepo = 'pushGitRepo' in contract ? contract.pushGitRepo : gitRepo
       const stage = stageMap.get(stageName)
-      expect(stage?.metadata?.namespace).toBe('lab-delivery')
+      expect(stage?.metadata?.namespace).toBe(projectForStage(stageName))
+      const policy = projectConfigs.find((project) => project.metadata?.namespace === projectForStage(stageName))
+      expect(policy?.spec?.promotionPolicies).toContainEqual({
+        stageSelector: { name: stageName },
+        autoPromotionEnabled: true,
+      })
 
       const vars = Object.fromEntries(
         ((stage?.spec?.vars ?? []) as Array<{ name: string; value: string }>).map((variable) => [
@@ -1101,7 +1119,7 @@ describe('Kargo direct-push GitOps contract', () => {
     }
 
     expect(kustomization.resources).toContain('git-credentials.yaml')
-    for (const manifest of [...warehouses, ...stages, project, projectConfig]) {
+    for (const manifest of [...warehouses, ...stages, ...projects, ...projectConfigs]) {
       expect(manifest.kind).not.toBe('Namespace')
     }
     expect(expectedStageNames).not.toContain('sag')
