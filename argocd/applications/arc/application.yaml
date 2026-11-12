@@ -111,9 +111,8 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          # Temporary shared-NVMe contention mitigation; see README.md for the restoration gate.
-          minRunners: 0
-          maxRunners: 1
+          minRunners: 10
+          maxRunners: 10
           listenerTemplate:
             spec:
               nodeSelector:
@@ -133,24 +132,7 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
-              affinity:
-                nodeAffinity:
-                  requiredDuringSchedulingIgnoredDuringExecution:
-                    nodeSelectorTerms:
-                      - matchExpressions:
-                          - key: kubernetes.io/hostname
-                            operator: In
-                            values:
-                              - talos-192-168-1-194
-                              - turin
-              topologySpreadConstraints:
-                - maxSkew: 1
-                  topologyKey: kubernetes.io/hostname
-                  whenUnsatisfiable: ScheduleAnyway
-                  labelSelector:
-                    matchLabels:
-                      actions.github.com/scale-set-name: arc-amd64
-                      app.kubernetes.io/component: runner
+                kubernetes.io/hostname: turin
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -178,8 +160,10 @@ spec:
 
                       [[ "$scratch_device" && "$scratch_fstype" ]] ||
                         fail "scratch volume is not mounted"
-                      [[ "$scratch_fstype" == xfs ]] ||
-                        fail "expected a local scratch XFS volume, got filesystem $scratch_fstype"
+                      [[ "$scratch_fstype" == ext4 ]] ||
+                        fail "expected a Ceph RBD ext4 scratch volume, got filesystem $scratch_fstype"
+                      [[ "$scratch_device" =~ ^/dev/rbd[0-9]+$ ]] ||
+                        fail "expected a kernel RBD scratch device, got $scratch_device"
                       [[ "$scratch_device" != overlay && "$scratch_device" != "$root_device" ]] ||
                         fail "scratch path resolves to the runner root filesystem ($scratch_device)"
 
@@ -191,8 +175,8 @@ spec:
                       [[ "$scratch_available_kib" =~ ^[0-9]+$ ]] ||
                         fail "scratch volume has no readable capacity"
 
-                      # This local-path class has no project quota. Keep at least 45GiB free after
-                      # the image/cache copy so a runner cannot start on a nearly full NVMe volume.
+                      # The Ceph RBD claim has a real filesystem capacity limit. Keep at least 45GiB
+                      # free after the image/cache copy so a runner cannot start on a nearly full volume.
                       mkdir -p /home/runner/.cache
                       reserve_bytes=$((45 * 1024 * 1024 * 1024))
                       nix_file_bytes="$(find /nix -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
@@ -328,11 +312,11 @@ spec:
                       spec:
                         accessModes:
                           - ReadWriteOnce
-                        storageClassName: local-path-ci-amd64
+                        storageClassName: rook-ceph-block
                         volumeMode: Filesystem
                         resources:
                           requests:
-                            storage: 45Gi
+                            storage: 130Gi
               tolerations:
                 - key: workload.proompteng.ai/compute-local
                   operator: Equal
