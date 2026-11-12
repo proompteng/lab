@@ -462,6 +462,9 @@ service can run while the account processes broker updates, protection or close 
 binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
 worker from repeating paid work whose provider outcome is uncertain. Unknown outcomes retain their original expiry and
 existing expense classification; a retry cannot invent a fresh validity window.
+While a committed entry batch awaits its result, ordinary market hints wait until the earliest original batch or admission
+expiry. Broker observations and inference completion still wake the owner immediately. The expiry timer survives replay;
+market bursts cannot run redundant financial passes or move that deadline forward.
 Expired admitted work, including earlier authority generations, settles under the existing independent account
 inference-expense owner. Its SQL page scan and persisted retry backoff never run in the account's protection turn.
 
