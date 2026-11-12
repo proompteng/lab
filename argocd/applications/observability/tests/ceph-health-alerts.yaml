@@ -42,8 +42,8 @@ tests:
               team: platform
             exp_annotations:
               summary: Ceph cluster reports HEALTH_WARN
-              description: "Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable. Active checks: BLUESTORE_SLOW_OP_ALERT; PG_NOT_SCRUBBED; Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident."
-              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+              description: "Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable. Active checks: BLUESTORE_SLOW_OP_ALERT; PG_NOT_SCRUBBED; Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident. BLUESTORE_SLOW_OP_ALERT can retain a past event for bluestore_slow_ops_warn_lifetime; inspect OSD event times and current client latency before changing storage."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md#investigate-retained-bluestore-slow-operation-warnings
   - name: unavailable detail telemetry cannot hide a cluster warning
     interval: 30s
     input_series:

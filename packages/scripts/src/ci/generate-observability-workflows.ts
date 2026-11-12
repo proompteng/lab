@@ -11,14 +11,14 @@ const jobs = (value: unknown): unknown[] => {
   return Object.values(value.jobs)
 }
 
-export const imageWorkflows = (root: string): string[] => {
+export const observedWorkflows = (root: string): string[] => {
   const directory = resolve(root, '.github/workflows')
   const workflows = new Map(
     readdirSync(directory)
       .filter((name) => /\.ya?ml$/.test(name))
       .map((name) => [name, jobs(YAML.parse(readFileSync(resolve(directory, name), 'utf8')))]),
   )
-  const selected = new Set<string>()
+  const selected = new Set(workflows.has('bayn-ci.yml') ? ['bayn-ci.yml'] : [])
   const callers = new Map<string, string[]>()
   for (const [name, entries] of workflows) {
     for (const job of entries) {
@@ -52,9 +52,9 @@ export const imageWorkflows = (root: string): string[] => {
   return [...selected].sort()
 }
 
-export const imageWorkflowCatalog = (root: string): Record<string, { id: string; pattern: string }[]> => {
+export const workflowCatalog = (root: string): Record<string, { id: string; pattern: string }[]> => {
   const catalog: Record<string, { id: string; pattern: string }[]> = {}
-  for (const name of imageWorkflows(root)) {
+  for (const name of observedWorkflows(root)) {
     const document: unknown = YAML.parse(readFileSync(resolve(root, '.github/workflows', name), 'utf8'))
     if (!document || typeof document !== 'object' || !('jobs' in document)) continue
     if (!document.jobs || typeof document.jobs !== 'object') continue
@@ -76,7 +76,7 @@ export const imageWorkflowCatalog = (root: string): Record<string, { id: string;
 
 if (import.meta.main) {
   const target = resolve(repoRoot, 'argocd/applications/observability/ci/workflows.json')
-  const output = `${JSON.stringify(imageWorkflowCatalog(repoRoot), null, 2)}\n`
+  const output = `${JSON.stringify(workflowCatalog(repoRoot), null, 2)}\n`
   if (process.argv.includes('--check')) {
     if (readFileSync(target, 'utf8') !== output) {
       throw new Error(

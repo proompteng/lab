@@ -8,7 +8,7 @@ import { jevEntryQuoteExclusion } from '../jev/trading-signals'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { isContinuousMarket, observationSession } from '../market-hours'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
-import { ExecutionRiskPolicySchema } from '../risk'
+import { PolicySchema } from '../risk'
 import { NonNegativeIntegerSchema, PositiveMicrosSchema, StrictNonEmptyStringSchema } from '../schemas'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import {
@@ -37,7 +37,7 @@ export const CapitalScenarioSchema = Schema.Struct({
 })
 export const CapitalTermsSchema = Schema.Struct({
   openingCashMicros: PositiveMicrosSchema,
-  policy: ExecutionRiskPolicySchema,
+  policy: PolicySchema,
   instruments: ReplayInstrumentsSchema,
   costHurdleMarginBps: NonNegativeIntegerSchema.check(Schema.isLessThan(10_000)),
   scenarios: Schema.Array(CapitalScenarioSchema).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
