@@ -165,7 +165,8 @@ jobs:
       - name: Build and test patched Kata components
         run: |
           nix develop --file devices/galactic/extensions/kata/shell.nix \
-            --command devices/galactic/extensions/kata/build-patched-kata.sh \
+            --command bash devices/galactic/extensions/kata/with-job-docker.sh \
+            devices/galactic/extensions/kata/build-patched-kata.sh \
             .kata-source \
             "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
 

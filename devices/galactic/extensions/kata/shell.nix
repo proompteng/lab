@@ -14,7 +14,7 @@ pkgs.mkShell {
     pkgs.zstd
     pkgs.gnutar
     pkgs.git
-    pkgs.docker-client
+    pkgs.docker
     pkgs.yq-go
   ];
   buildInputs = [

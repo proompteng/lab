@@ -16,9 +16,14 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   service or persistent cache that a pull request can poison for a later release. Existing registry and GitHub cache
   scopes retain their policies.
 - The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
-  the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
+  the existing rootful build capability out of DinD without adding a sidecar, Podman, host runtime
   socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The
   `analysis-arm64` set uses the same private-process model through its workflow in `gregkonush/analysis`.
+- Kata's upstream component packager still requires Docker pull/build/run. Its command wrapper starts a private,
+  pinned Docker Engine with data, containerd/runc execution state, socket, temporary files and client configuration
+  beneath `RUNNER_TEMP`, then stops that daemon when the command exits. On Turin those paths are on Ceph; ARM64
+  retains its job storage. Bridge and iptables management are disabled, and container/build networking uses the
+  existing runner Pod namespace. The wrapper adds no Pod privilege, host socket, service or permanent daemon.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
@@ -29,7 +34,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - `analysis-arm64` keeps its 20Gi disposable workspace and one worker. Its single runner container reserves two CPUs,
   4Gi memory and 20Gi ephemeral storage, with limits of ten CPUs, 18Gi memory and 72Gi storage. These preserve the
   former runner-plus-DinD resource budget. Its workflow starts a private BuildKit OCI worker with build parallelism
-  capped at one. It has no Docker daemon, socket volume, Docker startup wait or Kubernetes container hook.
+  capped at one. Its Kubernetes Pod has no daemon sidecar, socket volume, startup wait or container hook.
 - `arc-amd64-publish` serves up to two publication runners on Ryzen and Turin, with the same host allowlist and
   soft spreading. Each single-container runner
   requests one CPU, 2Gi memory and 2Gi ephemeral storage, with limits of four CPUs, 8Gi memory and 32Gi storage. Its
