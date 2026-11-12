@@ -328,6 +328,14 @@ beforeAll(async () => {
         ...(call.request.displayName === 'Old runtime' ? { idleTimeoutMinutes: undefined } : {}),
       })
     },
+    recordAgentActivity(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
     updatePowerSettings(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -1561,6 +1569,18 @@ describe('Tengri gRPC BFF transport', () => {
       message: 'This file is not valid UTF-8 text',
       status: 415,
     })
+  })
+
+  test('binds desktop activity to the existing workspace control action and signed request', async () => {
+    const { recordAgentActivity } = await import('./grpc')
+    await recordAgentActivity(identity, 'agent-test')
+    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    const context = metadataContext()
+    expect(context.sessionId).toBe(identity.session.id)
+    expect(context.workspaceUid).toBe(workspaceUid)
+    expect(context.runtimeEpoch).toBe(runtimeEpoch)
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.RecordAgentActivity
+    expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
   })
 
   test('persists power settings through the signed gRPC contract, including disabled automatic sleep', async () => {

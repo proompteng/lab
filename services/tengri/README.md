@@ -455,7 +455,11 @@ is serialized per workspace across clients in the same guest pool. Conflicts wit
 reconcilers use exponential backoff with jitter, capped at 100 ms, within a one-second retry budget. Each attempt
 reads current lifecycle state and must win its own CAS, so parallel browser module requests can recover from a busy
 replica while a sleep reservation still rejects control. Other workspaces remain independent; no policy decision or
-admission result is cached.
+admission result is cached. Trusted keyboard, pointer and wheel interactions in the desktop, including unsent chat
+drafts, record activity through `RecordAgentActivity` using the existing workspace control permission and sleep
+admission fence. An untouched tab sends no activity. Browser events and terminal/preview traffic retain the final
+interaction in each 20-second write interval and retry transient write failures. Stored activity only moves forward;
+delayed traffic cannot replace newer activity or cross a committed automatic-sleep reservation.
 Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
 reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
 admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also

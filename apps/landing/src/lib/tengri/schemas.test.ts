@@ -7,6 +7,14 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('activity accepts only the workspace ID and rejects client clocks and authority', () => {
+    const action = { action: 'record-activity', agentId: 'agent-test' } as const
+    expect(tengriActionSchema.parse(action)).toEqual(action)
+    for (const extra of [{ at: Date.now() }, { ownerHash: 'other' }, { text: 'private draft' }]) {
+      expect(tengriActionSchema.safeParse({ ...action, ...extra }).success).toBe(false)
+    }
+  })
+
   test('scopes active-run reads to a validated conversation without changing workspace reads', () => {
     const action = { action: 'active-codex-runs', agentId: 'agent-test' } as const
     expect(tengriActionSchema.parse(action)).toEqual(action)
