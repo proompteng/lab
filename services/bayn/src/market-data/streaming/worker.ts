@@ -1,6 +1,6 @@
 import type { LoadedRuntimeConfig } from '../../config/model'
 import { Worker } from 'node:worker_threads'
-import { Deferred, Effect, Exit, Redacted } from 'effect'
+import { Deferred, Effect, Exit, Match, Redacted } from 'effect'
 
 import { observeCaptureWorker, type CaptureHealth } from './capture-health'
 import type { NativeArrivalEpoch } from './native-arrival'
@@ -120,9 +120,18 @@ export const makeThreadedKafkaProjection = (
       }
       const resume = pending.get(reply.id)
       pending.delete(reply.id)
-      if (reply._tag === 'Stopped') stopped = true
-      if (reply._tag === 'Status') lastStatus = reply.value
-      if (reply._tag === 'Read' || reply._tag === 'Checked') lastStatus = reply.status
+      Match.value(reply).pipe(
+        Match.tag('Stopped', () => {
+          stopped = true
+        }),
+        Match.tag('Status', ({ value }) => {
+          lastStatus = value
+        }),
+        Match.tag('Read', 'Checked', ({ status }) => {
+          lastStatus = status
+        }),
+        Match.orElse(() => {}),
+      )
       if (resume === undefined) return
       resume(
         reply._tag === 'Failure'

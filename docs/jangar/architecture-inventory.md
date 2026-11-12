@@ -18,7 +18,7 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | ----------- | ----------------------------------------------------------------------------------------------------------------- | ----------: | ----: | ------------: | --------: |
 | Jangar HTTP | `services/jangar/src/server/app.ts` import globs (`api/**`, `openai/**`, `health.tsx`, `ready.tsx`, and `mcp.ts`) |          74 |     0 |            74 |         0 |
 | Jangar UI   | `services/jangar/src/routes/**` TanStack file-route declarations                                                  |          96 |    19 |            74 |         3 |
-| Agents HTTP | `services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`                  |          49 |     0 |            49 |         0 |
+| Agents HTTP | `services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`                  |          50 |     0 |            50 |         0 |
 | Agents UI   | `services/agents/src/app-routes/**` TanStack Start control-plane UI route declarations                            |          15 |     5 |            10 |         0 |
 
 ## Top 20 Largest Jangar App Modules
@@ -123,7 +123,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 164 control-plane source files, 50303 LOC across 6 current boundaries.
+Summary: 164 control-plane source files, 50308 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -263,7 +263,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/control-plane-status.ts`                      |  500 |
 | `services/agents/src/server/control-plane-ui-api.ts`                      |  112 |
 | `services/agents/src/server/control-plane-watch-reliability.ts`           |  298 |
-| `services/agents/src/server/control-plane.ts`                             |  472 |
+| `services/agents/src/server/control-plane.ts`                             |  477 |
 | `services/agents/src/server/health.ts`                                    |   39 |
 | `services/agents/src/server/metrics.ts`                                   |  395 |
 | `services/agents/src/server/orchestration-controller.ts`                  | 2213 |

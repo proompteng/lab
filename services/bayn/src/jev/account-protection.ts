@@ -84,6 +84,7 @@ export const decideAccountProtection = (inputs: AccountProtectionFacts, authorit
   )
   const turnoverBudgetExhausted =
     inputs.schemaVersion === 'bayn.account-protection-inputs.v2' &&
+    policy.maxDailyTradedNotionalMicros !== null &&
     BigInt(inputs.dailyTradedNotionalMicros) >= BigInt(policy.maxDailyTradedNotionalMicros)
   if (reasons.length === 0 && !turnoverBudgetExhausted) return undefined
   const timestamps = [

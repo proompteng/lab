@@ -303,7 +303,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
         'maxNetExposureMicros',
         'maxDailyTradedNotionalMicros',
       ] as const)
-        if (legacy && BigInt(policy.riskPolicy[key]) > riskCeilings[key])
+        if (legacy && (policy.riskPolicy[key] === null || BigInt(policy.riskPolicy[key]) > riskCeilings[key]))
           return yield* invalid('Registered risk limits cannot expand the frozen qualification ceilings')
       if (
         policy.policy === JevResearchPolicy.Deployed &&
