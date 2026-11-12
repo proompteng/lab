@@ -122,30 +122,27 @@ type AgentIdGeneratorServiceDefinition = {
   readonly next: Effect.Effect<string>
 }
 
-export class AgentStoreService extends Context.Tag('agents/AgentStoreService')<
-  AgentStoreService,
-  AgentStoreServiceDefinition
->() {}
+export class AgentStoreService extends Context.Service<AgentStoreService, AgentStoreServiceDefinition>()(
+  'agents/AgentStoreService',
+) {}
 
-export class AgentKubernetesService extends Context.Tag('agents/AgentKubernetesService')<
-  AgentKubernetesService,
-  AgentKubernetesServiceDefinition
->() {}
+export class AgentKubernetesService extends Context.Service<AgentKubernetesService, AgentKubernetesServiceDefinition>()(
+  'agents/AgentKubernetesService',
+) {}
 
-export class AgentPolicyService extends Context.Tag('agents/AgentPolicyService')<
-  AgentPolicyService,
-  AgentPolicyServiceDefinition
->() {}
+export class AgentPolicyService extends Context.Service<AgentPolicyService, AgentPolicyServiceDefinition>()(
+  'agents/AgentPolicyService',
+) {}
 
-export class AgentAuditContextService extends Context.Tag('agents/AgentAuditContextService')<
+export class AgentAuditContextService extends Context.Service<
   AgentAuditContextService,
   AgentAuditContextServiceDefinition
->() {}
+>()('agents/AgentAuditContextService') {}
 
-export class AgentIdGeneratorService extends Context.Tag('agents/AgentIdGeneratorService')<
+export class AgentIdGeneratorService extends Context.Service<
   AgentIdGeneratorService,
   AgentIdGeneratorServiceDefinition
->() {}
+>()('agents/AgentIdGeneratorService') {}
 
 type AgentSubmitServices =
   | AgentStoreService
@@ -220,7 +217,7 @@ const closeStoreEffect = (store: AgentsApiStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 const makeAgentStoreService = (storeFactory: AgentsApiDependencies['storeFactory']): AgentStoreServiceDefinition => ({
   open: Effect.try({
@@ -335,9 +332,9 @@ export const submitAgentWithServicesEffect = (
 
           yield* stores.ready(activeStore)
           const kube = yield* kubernetes.client(parsed.namespace)
-          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.either)
+          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.result)
 
-          if (policyDecision._tag === 'Left') {
+          if (policyDecision._tag === 'Failure') {
             const auditEventId = yield* ids.next
             yield* stores
               .createAuditEvent(activeStore, {
@@ -348,11 +345,11 @@ export const submitAgentWithServicesEffect = (
                 details: {
                   subject: policyChecks.subject,
                   checks: policyChecks,
-                  reason: describeAgentSubmitError(policyDecision.left),
+                  reason: describeAgentSubmitError(policyDecision.failure),
                 },
               })
-              .pipe(Effect.catchAll(() => Effect.void))
-            return yield* Effect.fail(policyDecision.left)
+              .pipe(Effect.catch(() => Effect.void))
+            return yield* Effect.fail(policyDecision.failure)
           }
 
           const auditEventId = yield* ids.next
@@ -388,9 +385,9 @@ export const postAgentsHandler = async (request: Request, deps: AgentsApiDepende
   const leaderResponse = deps.requireLeaderForMutation?.()
   if (leaderResponse) return leaderResponse
 
-  const result = await Effect.runPromise(submitAgentEffect(request, deps).pipe(Effect.either))
-  if (result._tag === 'Left') {
-    return errorResponse(describeAgentSubmitError(result.left), agentSubmitStatus(result.left))
+  const result = await Effect.runPromise(submitAgentEffect(request, deps).pipe(Effect.result))
+  if (result._tag === 'Failure') {
+    return errorResponse(describeAgentSubmitError(result.failure), agentSubmitStatus(result.failure))
   }
-  return okResponse(result.right.body, result.right.status)
+  return okResponse(result.success.body, result.success.status)
 }
