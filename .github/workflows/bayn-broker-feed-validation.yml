@@ -1,0 +1,54 @@
+name: bayn-broker-feed-validation
+
+# Manual diagnostics exercise the production validation without building or publishing images.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+      - name: Verify the broker feed and shared platform
+        working-directory: services/dorvud
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep test selection and behavior unchanged; retain the assertion and cause chain.
+          cat > "$RUNNER_TEMP/bayn-broker-test-logging.gradle" <<'GRADLE'
+          allprojects {
+              tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+                  testLogging {
+                      exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                      showExceptions = true
+                      showCauses = true
+                      showStackTraces = true
+                  }
+              }
+          }
+          GRADLE
+          ./gradlew --init-script "$RUNNER_TEMP/bayn-broker-test-logging.gradle" \
+            :platform:ktlintCheck :platform:test :websockets:ktlintCheck :websockets:test
+      - name: Retain broker validation test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: bayn-broker-feed-test-reports
+          path: |
+            services/dorvud/platform/build/test-results/test/*.xml
+            services/dorvud/platform/build/reports/tests/test/
+            services/dorvud/websockets/build/test-results/test/*.xml
+            services/dorvud/websockets/build/reports/tests/test/
+          if-no-files-found: warn
+          retention-days: 7
