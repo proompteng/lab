@@ -73,7 +73,7 @@ data:
             {
               "node": "turin",
               "paths": [
-                "/var/local-path-provisioner/ci-amd64"
+                "/var/lib/kubelet/ci-amd64"
               ]
             },
             {

@@ -42,6 +42,12 @@ The topic keeps seven days of individual events without compaction, with three r
 Restate 1.8.1 or later is required. See the [upstream integration contract](https://docs.restate.dev/services/integrations/kafka)
 and [0.1.1 configuration](https://github.com/restatedev/ingress-integration-kafka/blob/v0.1.1/CONFIGURATION.md).
 
+The adapter starts in Argo sync wave 1, after the execution RestateDeployment registers in wave -1 and the
+wave-0 activation hook proves a durable successor pass. Starting the adapter alongside an unregistered endpoint
+causes Restate to reject `BaynBrokerObservations/notify` as an unknown handler and repeatedly tear down its Kafka
+ingestion streams. Kafka retains notifications and their offsets until the registered adapter starts; this ordering
+does not change the account, broker observation fence or execution authority.
+
 The receiver independently checks the current account, credentials, HMAC, Kafka identity key and session lineage.
 Notifications wake the canonical financial owner; source WebSocket frames cannot post fills or change capital authority.
 Market workers use `RESTATE_INGRESS_ORIGIN` to send authenticated advisory `marketChanged` hints directly to Restate.
@@ -70,7 +76,7 @@ consumer groups are independent.
 
 The feed is the third member of Bayn's atomic image cohort. The main-only workflow tests and publishes
 `lab/bayn`, `lab/bayn-research` and `lab/bayn-broker-feed` under the same successful source/run receipt, withholding
-every Kargo discovery alias until all three qualify. `lab-delivery/bayn` promotes all three into `kargo/bayn` and writes
+every Kargo discovery alias until all three qualify. `bayn-release/bayn` promotes all three into `kargo/bayn` and writes
 the feed's `DORVUD_SOURCE_REVISION` from the selected image. The adapter remains a reviewed upstream digest.
 Use the [release contract](../../../docs/release-automation.md); do not deploy this manifest from a worktree.
 
@@ -80,8 +86,9 @@ Rollout order and acceptance:
    topic, preserving all existing topics, identities and offsets. Verify its three replicas and minimum ISR before starting
    the new source. The existing reflected `bayn-market-data` Secret must expose both required keys in Bayn.
 2. Verify successful immutable publication of all three images, matching source/run annotations, the selected Freight,
-   automatic Bayn Stage promotion, its exact generated branch revision, and Argo's deployed images. Feed and adapter
-   start with the execution endpoint before activation; unavailable Kafka or Restate keeps the stream unproven.
+   automatic Bayn Stage promotion, its exact generated branch revision, and Argo's deployed images. The feed
+   starts with the execution endpoint; the adapter starts only after the execution activation hook succeeds.
+   Unavailable Kafka or Restate keeps the stream unproven.
 3. After the streaming endpoint registers, retire the obsolete broker polling invocations using the procedure below.
    A removed handler can hold the account object lock and block activation even though the replacement pod is healthy.
 4. Observe the feed's verified ready state and `dorvud_broker_feed_publications_total` increasing, the dedicated group's
@@ -615,7 +622,7 @@ exact reconciliation, and no broker-ledger advance before replacing the mandate.
 invoke the activation handler manually.
 
 The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
-`lab-delivery/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
+`bayn-release/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
 The automatic Stage checks out that image revision, updates the status, worker, and activation bindings from the same
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact

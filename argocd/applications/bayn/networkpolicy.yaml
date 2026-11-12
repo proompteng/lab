@@ -179,6 +179,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: bayn-egress-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: bayn-egress-proxy
     app.kubernetes.io/part-of: bayn

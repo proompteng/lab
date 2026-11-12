@@ -3,7 +3,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: proompteng
-  namespace: lab-delivery
+  namespace: ofz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -77,12 +77,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://proompteng.proompteng.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: app
-  namespace: lab-delivery
+  namespace: app-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -156,12 +165,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://app.app.svc.cluster.local:3000/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: synthesis
-  namespace: lab-delivery
+  namespace: synthesis-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -235,12 +253,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://synthesis.synthesis.svc.cluster.local:3000/api/feed
+    - name: pattern
+      value: '"items"[[:space:]]*:'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: docs
-  namespace: lab-delivery
+  namespace: docs-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -314,12 +341,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://docs.docs.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: bumba
-  namespace: lab-delivery
+  namespace: bumba-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -399,12 +435,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://kargo-smoke-bumba.jangar.svc.cluster.local:3001/readyz
+    - name: pattern
+      value: '"status"[[:space:]]*:[[:space:]]*"ok"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: oirat
-  namespace: lab-delivery
+  namespace: oirat-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -478,12 +523,23 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-discord-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: oirat
+    - name: resource
+      value: deployment/oirat
+    - name: image
+      value: registry.ide-newton.ts.net/lab/oirat@${{ imageFrom("registry.ide-newton.ts.net/lab/oirat").Digest }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: attic
-  namespace: lab-delivery
+  namespace: attic-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -557,12 +613,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://attic.attic.svc.cluster.local/
+    - name: pattern
+      value: <html>
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: froussard
-  namespace: lab-delivery
+  namespace: froussard-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -650,12 +715,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://froussard.froussard.svc.cluster.local/health/readiness
+    - name: pattern
+      value: ^OK$
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: arc-runner
-  namespace: lab-delivery
+  namespace: arc-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -704,6 +778,8 @@ spec:
           config:
             path: ./out/argocd/applications/arc/application.yaml
             updates:
+              - key: spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.1.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image
@@ -737,12 +813,20 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-runner-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: image
+      value: registry.ide-newton.ts.net/lab/arc-runner@${{ imageFrom("registry.ide-newton.ts.net/lab/arc-runner").Digest
+        }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: headlamp
-  namespace: lab-delivery
+  namespace: headlamp-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -816,12 +900,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://headlamp.headlamp.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: hermes-toolchain
-  namespace: lab-delivery
+  namespace: hermes-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -895,12 +988,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://hermes.hermes.svc.cluster.local:9119/api/status
+    - name: pattern
+      value: '"auth_required"[[:space:]]*:[[:space:]]*true'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: jangar
-  namespace: lab-delivery
+  namespace: jangar-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -996,12 +1098,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://jangar.jangar.svc.cluster.local/health
+    - name: pattern
+      value: ok|healthy
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: symphony
-  namespace: lab-delivery
+  namespace: symphony-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1092,12 +1203,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://symphony.jangar.svc.cluster.local:8080/api/v1/state
+    - name: pattern
+      value: '"running"|"counts"|"generatedAt"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: torghut
-  namespace: lab-delivery
+  namespace: torghut-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1335,12 +1455,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://torghut-ta-rest.torghut.svc.cluster.local:8081/jobs/overview
+    - name: pattern
+      value: RUNNING
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: bilig
-  namespace: lab-delivery
+  namespace: bilig-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1414,12 +1543,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://bilig-app.bilig.svc.cluster.local/healthz
+    - name: pattern
+      value: ok|healthy
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: analysis
-  namespace: lab-delivery
+  namespace: analysis-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1493,12 +1631,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://analysis.analysis.svc.cluster.local/
+    - name: pattern
+      value: <html|<!DOCTYPE|<!doctype
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: agents
-  namespace: lab-delivery
+  namespace: agents-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1627,12 +1774,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://agents.agents.svc.cluster.local/ready
+    - name: pattern
+      value: ok|ready
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: tengri
-  namespace: lab-delivery
+  namespace: ofz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1721,12 +1877,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://tengri-gateway.tengri.svc.cluster.local:8080/readyz
+    - name: pattern
+      value: HTTP_STATUS_ONLY
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: buzz
-  namespace: lab-delivery
+  namespace: buzz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1802,12 +1967,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://buzz.buzz.svc.cluster.local:8080/_readiness
+    - name: pattern
+      value: '"status"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: forgejo
-  namespace: lab-delivery
+  namespace: forgejo-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1900,12 +2074,21 @@ spec:
             sources:
             - repoURL: https://github.com/proompteng/lab.git
               desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://forgejo-http.forgejo.svc.cluster.local:3000/api/v1/version
+    - name: pattern
+      value: '"version"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: bayn
-  namespace: lab-delivery
+  namespace: bayn-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2114,12 +2297,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://bayn.bayn.svc.cluster.local/status-readyz
+    - name: pattern
+      value: ready|ok
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: restate
-  namespace: lab-delivery
+  namespace: restate-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2197,12 +2389,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://restate.restate.svc.cluster.local:9070/services
+    - name: pattern
+      value: '"services"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: devbox
-  namespace: lab-delivery
+  namespace: devbox-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2277,12 +2478,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://kargo-smoke-devbox.codex-devbox.svc.cluster.local:8080/healthz
+    - name: pattern
+      value: ^ready
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: temporal-worker
-  namespace: lab-delivery
+  namespace: temporal-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2360,12 +2570,24 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-workload-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: temporal
+    - name: resource
+      value: deployment/temporal-worker
+    - name: image
+      value: registry.ide-newton.ts.net/lab/temporal-worker@${{ imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Digest
+        }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: ofz
-  namespace: lab-delivery
+  namespace: ofz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2455,12 +2677,23 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-workload-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: ofz
+    - name: resource
+      value: deployment/ofz-api
+    - name: image
+      value: registry.ide-newton.ts.net/lab/ofz@${{ imageFrom('registry.ide-newton.ts.net/lab/ofz').Digest }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: opencode
-  namespace: lab-delivery
+  namespace: opencode-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2537,12 +2770,21 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://opencode.opencode.svc.cluster.local:4096/
+    - name: pattern
+      value: <[Hh][Tt][Mm][Ll]
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: relay
-  namespace: lab-delivery
+  namespace: relay-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2619,12 +2861,23 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-workload-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: namespace
+      value: relay
+    - name: resource
+      value: deployment/relay
+    - name: image
+      value: registry.ide-newton.ts.net/lab/relay@${{ imageFrom("registry.ide-newton.ts.net/lab/relay").Digest }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: torghut-webull-feed
-  namespace: lab-delivery
+  namespace: torghut-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -2706,3 +2959,12 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+  verification:
+    analysisTemplates:
+    - name: kargo-http-smoke
+      kind: ClusterAnalysisTemplate
+    args:
+    - name: url
+      value: http://torghut-webull-feed.torghut.svc.cluster.local/readyz
+    - name: pattern
+      value: ok|ready

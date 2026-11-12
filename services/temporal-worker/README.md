@@ -107,7 +107,7 @@ connection. The image evidence includes `routing-baseline.log`, `routing.log`, a
 ## Delivery and live verification
 
 The [image workflow](../../.github/workflows/temporal-worker-images.yml) tests and builds both native architectures.
-Only successful `main` builds publish the immutable run-qualified Kargo alias. The `lab-delivery/temporal-worker`
+Only successful `main` builds publish the immutable run-qualified Kargo alias. The `temporal-release/temporal-worker`
 Warehouse pairs the image receipt with its source commit; its Stage writes only the worker image entry and promotes
 `kargo/temporal-worker`. The existing Temporal Argo Application follows that branch. Its retained upgrade resources
 and automation remain part of the reviewed source.

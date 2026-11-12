@@ -5,7 +5,8 @@ metadata:
 data:
   controller.status.processors: "20"
   controller.operation.processors: "10"
-  controller.repo.server.timeout.seconds: "60"
+  # Allow the bounded cold fetch plus repository-lock wait and rendering.
+  controller.repo.server.timeout.seconds: "300"
   controller.resource.health.persist: "true"
   controller.k8s.client.qps: "100"
   controller.k8s.client.burst: "200"
@@ -13,6 +14,7 @@ data:
   reposerver.plugin.tar.exclusions: ".git/*;node_modules/*;tmp/*"
   reposerver.log.level: "debug"
   server.enable.gzip: "true"
+  server.repo.server.timeout.seconds: "300"
   server.insecure: "true"
   otlp.address: "observability-tempo-gateway.observability.svc.cluster.local:4317"
   otlp.insecure: "true"

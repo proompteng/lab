@@ -151,20 +151,38 @@ class AlpacaTradeUpdatesTest {
       val oversized = """{"stream":"trade_updates","data":{"note":"${"é".repeat(150_000)}"}}"""
       assertTrue(oversized.length < ALPACA_TRADE_UPDATE_MAX_FRAME_BYTES)
       assertTrue(oversized.toByteArray().size > ALPACA_TRADE_UPDATE_MAX_FRAME_BYTES)
-      withServer(routes = {
-        webSocket("/stream") {
-          acknowledge()
-          send(Frame.Binary(true, oversized.toByteArray()))
-          for (frame in incoming) Unit
-        }
-      }) { client, url ->
-        val result =
-          runCatching {
-            withTimeout(3000) {
-              client.streamAlpacaTradeUpdates(url, "key", "secret", {}, { error("oversized frame reached consumer") })
+      for (waitForTransportClose in listOf(false, true)) {
+        val peerClosed = CompletableDeferred<Unit>()
+        var updates = 0
+        withServer(routes = {
+          webSocket("/stream") {
+            try {
+              acknowledge()
+              send(Frame.Binary(true, oversized.toByteArray()))
+              for (frame in incoming) Unit
+            } finally {
+              peerClosed.complete(Unit)
             }
           }
-        assertIs<FrameTooBigException>(result.exceptionOrNull())
+        }) { client, url ->
+          withTimeout(3000) {
+            val failure =
+              runCatching {
+                client.streamAlpacaTradeUpdates(url, "key", "secret", {
+                  if (waitForTransportClose) {
+                    peerClosed.await()
+                    delay(50)
+                  }
+                }, { updates++ })
+              }.exceptionOrNull()
+            assertEquals(0, updates, "Oversized frame reached the consumer")
+            assertTrue(
+              failure is FrameTooBigException ||
+                (failure is IllegalArgumentException && failure.message == "broker frame exceeds the source limit"),
+              "Expected the transport or pre-decode byte guard to reject the frame; wait=$waitForTransportClose, failure=$failure",
+            )
+          }
+        }
       }
     }
 

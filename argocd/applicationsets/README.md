@@ -13,6 +13,12 @@ The same root also owns `home-root.yaml`, which delegates the separate home repo
 `home-repo-credentials.yaml`, which generates its repository credential. A normal repository change must preserve all
 of these root-owned resources.
 
+`agents-workspace.yaml` is a separate root-owned, manually synced Application for the protected Agent Shell workspace
+claim. It tracks `main`, renders only that PVC, and does not create or manage the existing `agents` Namespace. This
+separates the storage lifecycle from the Agents image/Freight rollout; it does not change the existing Agents
+Application. Follow [the migration gates](../../docs/agents/agents-shell-workspace-migration.md) before attaching or
+copying data to the claim.
+
 ## Normal change path
 
 1. Edit the owning ApplicationSet entry or application manifests under `argocd/applications/**`.
@@ -45,13 +51,13 @@ CD:
 ```bash
 GALACTIC_CONTEXT=galactic-lan # or galactic-tailscale
 kubectl --context "$GALACTIC_CONTEXT" apply --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/crds/applicationset-crd.yaml
 ```
 
 If the server-side apply cannot create a missing CRD, the create-only fallback is:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml \
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/crds/applicationset-crd.yaml \
   | kubectl --context "$GALACTIC_CONTEXT" create -f -
 ```
 

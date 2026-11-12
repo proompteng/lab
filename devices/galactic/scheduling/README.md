@@ -65,7 +65,7 @@ do not sync its Kargo revision before its local class and memory headroom exist.
    existing Argo applications. Confirm Ryzen's Ceph monitor remains in the three-monitor quorum and its node agents are ready.
 2. Sync the manual `local-path` application to that revision. Require `local-path-ci-amd64`, the admission policy, and its binding
    to exist before changing Ryzen's scheduling configuration. The CI class uses the existing XFS user volume at
-   `/var/mnt/local-path-provisioner` on Ryzen and `/var/local-path-provisioner/ci-amd64` on Turin with `WaitForFirstConsumer`. Both share their host system NVMe;
+   `/var/mnt/local-path-provisioner` on Ryzen and `/var/lib/kubelet/ci-amd64` on Turin with `WaitForFirstConsumer`. Both share their host system NVMe;
    the former Turin Transcend scratch device now belongs to Kafka and must not be reused.
 3. Reconcile the reviewed database, SPIRE, and Restate affinity changes through their owning GitOps branches. Confirm all
    replicas are ready before moving any existing storage client. Kargo-managed applications use their Stage-generated branch.

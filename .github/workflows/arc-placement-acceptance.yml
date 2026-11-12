@@ -1,8 +1,24 @@
 name: ARC placement acceptance
 
+# The default dispatch proves fast 10+2 slot placement, tooling and output bytes.
+# native_qualification=true adds ten nonpublishing Bayn image rebuild/inspection
+# loops after realization and a prepared-output rendezvous. Dependencies may be
+# cached; this is sustained native image work, not ten cold compilation workloads.
+# The ten-way intersection of completed work intervals must be >=1,800 seconds;
+# preparation, slot-check sleeps and gaps between iterations do not count.
+# Inspect arc-native-proof-* for per-command timings/errors
+# and arc-native-qualified-* for commonStart/commonEnd. Match that interval to the
+# API/etcd, system-device and Ceph observations required by the ARC runbook before
+# claiming throughput or storage stability. No image/alias or cache is published.
 on:
   # Run after the existing build wave clears; the readiness check has a five-minute budget.
   workflow_dispatch:
+    inputs:
+      native_qualification:
+        description: Run bounded, nonpublishing Bayn image rebuilds on all ten builders after the slot check
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -55,10 +71,10 @@ jobs:
           while (( SECONDS < deadline )); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            test "$count" = 10 && break
+            test "$count" = 12 && break
             sleep 60
           done
-          test "$count" = 10 || { echo 'Eight build and two publication slots did not become ready within five minutes' >&2; exit 1; }
+          test "$count" = 12 || { echo 'Ten build and two publication slots did not become ready within five minutes' >&2; exit 1; }
           jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
           nix eval --offline --expr '40 + 2' | grep -qx 42
           crane digest registry.ide-newton.ts.net/lab/arc-runner:latest
@@ -72,32 +88,49 @@ jobs:
           name: arc-proof-${{ github.run_attempt }}-publication-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-complete.json
           retention-days: 1
-  local-build:
-    name: Build slot ${{ matrix.slot }} local scratch build
-    timeout-minutes: 20
+  ceph-build:
+    name: Build slot ${{ matrix.slot }} Ceph scratch build
+    # Native commands stop at the earlier 95-minute work deadline, leaving time
+    # for failure receipts, artifact upload and action cleanup before this cap.
+    timeout-minutes: ${{ inputs.native_qualification && 110 || 20 }}
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 10
       matrix:
-        slot: [1, 2, 3, 4, 5, 6, 7, 8]
+        slot: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     runs-on: arc-amd64
     env:
       SLOT: ${{ matrix.slot }}
     steps:
+      - name: Record native qualification work deadline
+        if: inputs.native_qualification
+        run: |
+          mkdir -p "$RUNNER_TEMP/arc-native"
+          jq -n --argjson start "$(date +%s)" \
+            '{jobBudgetStart:$start,workDeadline:($start + 95 * 60)}' > "$RUNNER_TEMP/arc-native/budget.json"
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-buildkit
-      - name: Verify local scratch, Nix, and BuildKit output bytes
+      - name: Verify Ceph scratch, Nix, and BuildKit output bytes
         shell: bash
         run: |
           set -euo pipefail
-          case "$ARC_RUNNER_NODE_NAME" in talos-192-168-1-194|turin) ;; *) exit 1 ;; esac
-          for path in /nix /home/runner/.cache /tmp /home/runner/_work; do
-            test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = xfs
+          test "$ARC_RUNNER_NODE_NAME" = turin
+          case "$RUNNER_TEMP" in /home/runner/_work/*) ;; *) exit 1 ;; esac
+          [[ "$BUILDKIT_HOST" == "unix://$RUNNER_TEMP"/buildkit.*/buildkitd.sock ]]
+          buildkit_root="${BUILDKIT_HOST#unix://}"
+          buildkit_root="${buildkit_root%/buildkitd.sock}/cache"
+          test -d "$buildkit_root"
+          scratch_device=''
+          for path in /nix /home/runner/.cache /tmp /home/runner/_work "$RUNNER_TEMP" "$buildkit_root"; do
+            read -r device fstype < <(df -P -T "$path" | awk 'NR == 2 {print $1, $2}')
+            test "$fstype" = ext4
+            [[ "$device" =~ ^/dev/rbd[0-9]+$ ]]
+            if [[ -z "$scratch_device" ]]; then scratch_device="$device"; else test "$device" = "$scratch_device"; fi
           done
           test "$(nix eval --offline --expr '40 + 2')" = 42
           nix --version
           buildctl debug workers
-          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-local-proof.XXXXXX")"
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-ceph-proof.XXXXXX")"
           trap 'rm -rf "$proof_dir"' EXIT
           dd if=/dev/urandom of="$proof_dir/payload" bs=1M count=16 conv=fsync
           input_bytes="$(wc -c < "$proof_dir/payload")"
@@ -119,7 +152,9 @@ jobs:
           jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --argjson slot "$SLOT" \
             --argjson inputBytes "$input_bytes" --argjson outputBytes "$output_bytes" \
             --arg inputSha256 "$input_sha" --arg outputSha256 "$output_sha" \
-            '{role:"build",node:$node,pod:$pod,slot:$slot,inputBytes:$inputBytes,outputBytes:$outputBytes,inputSha256:$inputSha256,outputSha256:$outputSha256}' \
+            --arg scratchDevice "$scratch_device" --arg scratchFilesystem "$fstype" \
+            --arg runnerTemp "$RUNNER_TEMP" --arg buildkitRoot "$buildkit_root" \
+            '{role:"build",node:$node,pod:$pod,slot:$slot,inputBytes:$inputBytes,outputBytes:$outputBytes,inputSha256:$inputSha256,outputSha256:$outputSha256,scratchDevice:$scratchDevice,scratchFilesystem:$scratchFilesystem,runnerTemp:$runnerTemp,buildkitRoot:$buildkitRoot}' \
             > "$RUNNER_TEMP/arc-ready.json"
       - name: Publish ready build slot
         uses: actions/upload-artifact@v4
@@ -127,7 +162,7 @@ jobs:
           name: arc-ready-${{ github.run_attempt }}-build-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-ready.json
           retention-days: 1
-      - name: Require all eight build and two publication slots
+      - name: Require all ten build and two publication slots
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -142,10 +177,10 @@ jobs:
           while (( SECONDS < deadline )); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            test "$count" = 10 && break
+            test "$count" = 12 && break
             sleep 60
           done
-          test "$count" = 10 || { echo 'Eight build and two publication slots did not become ready within five minutes' >&2; exit 1; }
+          test "$count" = 12 || { echo 'Ten build and two publication slots did not become ready within five minutes' >&2; exit 1; }
           jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
           sleep 180
           jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
@@ -155,8 +190,59 @@ jobs:
           name: arc-proof-${{ github.run_attempt }}-build-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-complete.json
           retention-days: 1
+      - name: Require native image cache verification key
+        if: inputs.native_qualification
+        env:
+          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+        run: test -n "$ATTIC_PUBLIC_KEY"
+      - name: Set up native image qualification toolchain
+        if: inputs.native_qualification
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ github.token }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = false
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 3
+      - name: Prepare the actual Bayn image before measuring native work
+        if: inputs.native_qualification
+        run: bash nix/ci-arc-native-qualification.sh prepare
+      - name: Publish prepared native build slot
+        if: inputs.native_qualification
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-native-ready-${{ github.run_attempt }}-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-native/receipt.json
+          retention-days: 1
+      - name: Qualify sustained native image rebuild and inspection work
+        if: inputs.native_qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bash nix/ci-arc-native-qualification.sh qualify
+      - name: Publish native qualification receipts and command failures
+        if: ${{ always() && inputs.native_qualification }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-native-proof-${{ github.run_attempt }}-${{ matrix.slot }}
+          path: |
+            ${{ runner.temp }}/arc-native/*.json
+            ${{ runner.temp }}/arc-native/*.jsonl
+            ${{ runner.temp }}/arc-native/*.tsv
+            ${{ runner.temp }}/arc-native/*.log
+          if-no-files-found: error
+          retention-days: 7
   verify-placement:
-    needs: [local-build, publication-tools]
+    needs: [ceph-build, publication-tools]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -164,15 +250,102 @@ jobs:
         with:
           pattern: arc-proof-${{ github.run_attempt }}-*
           path: proof
-      - name: Verify eight builders and two publication runners overlapped
+      - name: Verify ten builders and two publication runners overlapped
         run: |
           jq -s -e '
-            length == 10 and
-            ([.[] | select(.role == "build") | .slot] | sort) == [1,2,3,4,5,6,7,8] and
+            length == 12 and
+            ([.[] | select(.role == "build") | .slot] | sort) == [1,2,3,4,5,6,7,8,9,10] and
             ([.[] | select(.role == "publication") | .slot] | sort) == [1,2] and
-            ([.[].pod] | unique | length) == 10 and
-            all(.[]; .node == "talos-192-168-1-194" or .node == "turin") and
+            ([.[].pod] | unique | length) == 12 and
+            ([.[] | select(.role == "build") | .scratchDevice] | unique | length) == 10 and
+            all(.[] | select(.role == "publication"); .node == "talos-192-168-1-194" or .node == "turin") and
             all(.[] | select(.role == "build");
+              .node == "turin" and .scratchFilesystem == "ext4" and
+              (.scratchDevice | test("^/dev/rbd[0-9]+$")) and
+              (.runnerTemp | startswith("/home/runner/_work/")) and
+              (.buildkitRoot | startswith("/home/runner/_work/")) and
               .inputBytes == 16777216 and .outputBytes == .inputBytes and .inputSha256 == .outputSha256) and
             ([.[].end] | min) - ([.[].start] | max) >= 45
           ' proof/*/arc-complete.json
+      - name: Download native qualification receipts
+        if: inputs.native_qualification
+        uses: actions/download-artifact@v4
+        with:
+          pattern: arc-native-proof-${{ github.run_attempt }}-*
+          path: native-proof
+      - name: Require thirty minutes of common native work on ten builders
+        if: inputs.native_qualification
+        env:
+          EXPECTED_SOURCE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          jq -s -e --arg source "$EXPECTED_SOURCE" '
+            def valid_iterations:
+              .iterations as $iterations |
+              ($iterations | length) > 0 and
+              all(range(0; $iterations | length);
+                . as $index | $iterations[$index] as $iteration |
+                $iteration.iteration == $index + 1 and
+                $iteration.end > $iteration.start and
+                $iteration.rebuild == true and $iteration.exitCode == 0 and
+                $iteration.image.os == "linux" and $iteration.image.architecture == "amd64" and
+                ($iteration.image.digest | test("^sha256:[0-9a-f]{64}$")) and
+                (if $index == 0 then true else $iteration.start >= $iterations[$index - 1].end end));
+
+            # Ordered nonoverlapping intervals permit at most one active interval per runner.
+            # Group simultaneous starts/ends before the sweep, so adjacent intervals neither
+            # double-count time nor create a false gap. Only ten-way active time contributes.
+            def common_native_work_seconds:
+              [.[] | .iterations[] | {time:.start,change:1}, {time:.end,change:-1}] |
+              group_by(.time) |
+              map({time:.[0].time,change:(map(.change) | add)}) |
+              reduce .[] as $event ({active:0,previous:null,seconds:0};
+                (if .active == 10 then .seconds += $event.time - .previous else . end) |
+                .active += $event.change |
+                .previous = $event.time) |
+              .seconds;
+
+            if (
+              length == 10 and
+              ([.[].slot] | sort) == [1,2,3,4,5,6,7,8,9,10] and
+              ([.[].pod] | unique | length) == 10 and
+              ([.[].scratchDevice] | unique | length) == 10 and
+              all(.[];
+                .schemaVersion == "arc.native-image-qualification.v1" and
+                .status == "passed" and .exitCode == 0 and
+                .sourceRevision == $source and .packageAttr == "bayn-image" and .role == "build" and
+                .node == "turin" and .scratchFilesystem == "ext4" and
+                (.scratchDevice | test("^/dev/rbd[0-9]+$")) and
+                valid_iterations and
+                .nativeStart == .iterations[0].start and
+                .nativeEnd == .iterations[-1].end and
+                .nativeEnd - .nativeStart >= 2100)
+            ) | not then
+              error("Native receipts must describe ten distinct Turin RBD builders with successful, ordered, nonoverlapping rebuild/inspection iterations at the dispatch source")
+            else
+              common_native_work_seconds as $seconds |
+              if $seconds < 1800 then
+                error("Common native rebuild/inspection work was only \($seconds) seconds after excluding iteration gaps; at least 1800 seconds are required")
+              else
+                {sourceRevision:.[0].sourceRevision,builders:length,
+                  commonStart:([.[].nativeStart] | max),commonEnd:([.[].nativeEnd] | min),
+                  commonNativeWorkSeconds:$seconds,
+                  completedRebuilds:([.[].iterations | length] | add)}
+              end
+            end
+          ' native-proof/*/receipt.json \
+            | tee native-qualification.json
+          {
+            echo '### Native image rebuild and inspection qualification'
+            echo 'Ten builders completed the bounded, nonpublishing Bayn workload. Slot occupancy and native work are separate proofs.'
+            echo '```json'
+            cat native-qualification.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish aggregate native qualification
+        if: inputs.native_qualification
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-native-qualified-${{ github.run_attempt }}
+          path: native-qualification.json
+          retention-days: 7

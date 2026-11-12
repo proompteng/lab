@@ -299,7 +299,22 @@ describe('enabled app inventory', () => {
 
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
     expect(inventory.applicationSetEntryCount).toBeGreaterThan(0)
-    expect(inventory.directApplicationCount).toBe(1)
+    expect(inventory.directApplicationCount).toBe(2)
+    expect(
+      inventory.entries
+        .filter((candidate) => candidate.sourceKind === 'direct-application')
+        .map((candidate) => candidate.name)
+        .sort(),
+    ).toEqual(['agents-workspace', 'home-root'])
+    expect(entry('agents-workspace')).toMatchObject({
+      class: 'vendor-manifest',
+      sourceKind: 'direct-application',
+      sourceFile: 'argocd/applicationsets/agents-workspace.yaml',
+      path: 'argocd/applications/agents-workspace',
+      repoImages: [],
+      hasHelmChart: false,
+      workflowPaths: [],
+    })
     expect(inventory.entries).toHaveLength(inventory.applicationSetEntryCount + inventory.directApplicationCount)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)
@@ -445,11 +460,11 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.5.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.6.1/manifests/ha/install.yaml')
     expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
-    expect(applicationSetsReadme.split('argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme.split('argo-cd/v3.6.1/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
     expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
-    expect(argoCdReadme).toContain('## Argo CD v3.5.2 upgrade')
+    expect(argoCdReadme).toContain('## Argo CD v3.6.1 upgrade')
     expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
     expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
     expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')

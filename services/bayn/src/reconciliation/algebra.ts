@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
@@ -390,10 +391,8 @@ export const verifyAccountingHistory = (
           cause,
         }),
       )
-      const { contentHash, ...material } = transaction
-      const expectedContentHash = expected.transaction.contentHash
-      // Reconstruction already hashes expected material; verify both the stored body and its claimed hash.
-      if ((yield* accountingHash(material)) !== expectedContentHash || contentHash !== expectedContentHash)
+      // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
+      if (!isDeepStrictEqual(transaction, expected.transaction))
         return yield* fail({
           _tag: 'AccountingTransactionMismatch',
           transactionId: transaction.transactionId,
