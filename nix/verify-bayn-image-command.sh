@@ -74,13 +74,13 @@ if [[ "${role}" = trading ]]; then
   test -x "$(resolve_image_entry /bin/bayn-forward-performance)"
   test -x "$(resolve_image_entry /bin/bayn-control-opening)"
   test -f "$(resolve_image_entry /app/services/bayn/dist/jev-compiler-dependencies.json)"
-  for command in python python3 git bun crane bayn-research bayn-gepa bayn-backtest bayn-system-assessment; do
+  for command in python python3 git bun crane bayn-research bayn-gepa bayn-backtest bayn-system-assessment bayn-jev-study-export; do
     if [[ -e "${rootfs}/bin/${command}" || -L "${rootfs}/bin/${command}" ]]; then
       echo "Trading image contains research executable ${command}." >&2
       exit 1
     fi
   done
-  for command in restate-research-server research-command control-study-command system-assessment-command; do
+  for command in restate-research-server research-command control-study-command system-assessment-command jev-study-export-command; do
     if [[ -e "${rootfs}/app/services/bayn/dist/${command}.js" ]]; then
       echo "Trading image contains research bundle ${command}." >&2
       exit 1
@@ -103,11 +103,11 @@ if [[ "${role}" = trading ]]; then
     fi
   done
 else
-  for command in system-assessment forward-performance research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export gepa gepa-native; do
+  for command in system-assessment forward-performance research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export jev-study-export gepa gepa-native; do
     test -x "$(resolve_image_entry "/bin/bayn-${command}")"
   done
   for command in restate-research-server system-assessment-command forward-performance-command research-command \
-    webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command native-arrival-export-command; do
+    webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command native-arrival-export-command jev-study-export-command; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done
   for receipt in jev-compiler-dependencies frozen-control-compiler; do
