@@ -64,8 +64,8 @@ import ./bun-workspace-service.nix {
   serviceName = "jangar";
   packageName = "@proompteng/jangar";
   depsHash = {
-    x86_64-linux = "sha256-g+NcDR7U0X3Kifr3JP2YK208XwcO0gqoxDwchah8Wl4=";
-    aarch64-linux = "sha256-jehrAb7t0fXod+VOBIHaZFvYjpn6U9a9MAhO5dhSNJY=";
+    x86_64-linux = "sha256-GBAgn3hcZtN3prDRTMcbXJDqwM6Y1IkgjMhGA7s+Exg=";
+    aarch64-linux = "sha256-o95b3l3DY8ekb3tdx8K5d5gvu5gpsz3/ErzrXArqay4=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
