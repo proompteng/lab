@@ -25,6 +25,7 @@ describe('Kargo release smoke verification', () => {
       const template = templates.find((t) => t.metadata.name === verification.analysisTemplates[0].name)
       expect(template, stage.metadata.name).toBeDefined()
       expect(verification.analysisTemplates[0].kind).toBe('ClusterAnalysisTemplate')
+      for (const arg of verification.args) expect(arg.value, `${stage.metadata.name}/${arg.name}`).not.toBe('')
       expect(verification.args.map((a: any) => a.name).sort()).toEqual(
         template!.spec.args.map((a: any) => a.name).sort(),
       )
@@ -84,7 +85,7 @@ describe('Kargo release smoke verification', () => {
       expect(await run('/ready', '^ready$')).toBe(0)
       expect(await run('/wrong', '^ready$')).not.toBe(0)
       expect(await run('/failed', '^ready$')).not.toBe(0)
-      expect(await run('/empty', '')).toBe(0)
+      expect(await run('/empty', 'HTTP_STATUS_ONLY')).toBe(0)
       expect(await run('/empty', '^ready$')).not.toBe(0)
     } finally {
       server.stop(true)
