@@ -46,6 +46,16 @@ Validate actual login/installer closure and an authenticated Panel-to-Wings `/ap
 
 Cloud-init installs Docker CE from its signed upstream Ubuntu repository and verifies the pinned Wings binary before enabling its service. Bootstrap is first-boot initialization: future guest software/configuration changes require an explicit in-guest update or a planned replacement preserving game data. Never recreate a used root disk as an update mechanism.
 
+Wings uses `docker.network.network_mtu: 1400`, matching the observed pod and guest interface MTU.
+The default 1500-byte Docker bridge stalled TLS handshakes to Steam while the same endpoint
+worked from the guest. A disposable 1400-byte bridge verified HTTP 200 with certificate
+verification enabled. For an existing guest, stop active game/install containers before
+stopping Wings, changing only this configuration field, and recreating the empty
+`pelican_nw` bridge. Preserve all volumes, credentials and Docker's other networks;
+Wings recreates its bridge with the configured MTU when restarted. This is an in-guest
+repair, not a Talos change or VM replacement. Validate an HTTPS request from a container,
+not just from the guest, after the repair.
+
 ## Persistence and recovery
 
 Back up the Panel PVC, the `pelican-bootstrap` Secret (especially `APP_KEY`), and the Wings disk together. Ceph replication and retention are not off-cluster backups. No backup schedule or external backup destination is created by this application.
