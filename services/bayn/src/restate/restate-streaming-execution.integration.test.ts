@@ -209,6 +209,165 @@ const queueFixture = () => {
 }
 
 describeRestate('Real always-replay streaming execution', () => {
+  test('successful event turns replace one original deadline while failed probes retain its owner', async () => {
+    const targets = localRestateTargets()
+    const controllerKey = sha256(randomUUID())
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const config = {
+      controllerKey,
+      planHash: 'b'.repeat(64),
+      sourceRevision: 'c'.repeat(40),
+      operationTimeoutMs: 5_000,
+      activationAuthorizationHash: Result.getOrThrow(executionActivationAuthorizationHash(token)),
+    }
+    const activation = {
+      schemaVersion: 'bayn.execution-controller-activation.v1',
+      controllerKey,
+      epoch: 1,
+      firstSequence: 0,
+      planHash: config.planHash,
+      sourceRevision: config.sourceRevision,
+    }
+    const deadlineMs = Date.now() + 35_000
+    const deadline = new Date(deadlineMs).toISOString()
+    let failuresLeft = 0
+    let failedAttempts = 0
+    const passes: Array<{ readonly sequence: number; readonly at: number }> = []
+    const runtime = {
+      prepareActivation: async () => undefined,
+      projectState: async () => undefined,
+      log: async () => undefined,
+      advance: async (command: { readonly sequence: number }) => {
+        if (failuresLeft > 0) {
+          failuresLeft -= 1
+          failedAttempts += 1
+          throw new Error('Controlled advance failure before completion')
+        }
+        const at = Date.now()
+        passes.push({ sequence: command.sequence, at })
+        return {
+          completedAt: new Date(at).toISOString(),
+          outcome: {
+            _tag: ExecutionControllerOutcome.Waiting,
+            receiptHash: sha256(`${controllerKey}:${command.sequence}`),
+            nextDelayMs: 1,
+            ...(at < deadlineMs ? { nextWakeAt: deadline } : {}),
+          },
+        }
+      },
+    }
+    const controller = () => alwaysReplay(makeBaynExecutionController(config, runtime))
+    const bridge = alwaysReplay(
+      restate.service({
+        name: 'DeadlineReplacementTestBridge',
+        handlers: {
+          activate: (ctx: restate.Context) =>
+            ctx.genericCall({
+              service: 'BaynExecutionController',
+              method: 'activate',
+              key: controllerKey,
+              parameter: activation,
+              inputSerde: brokerObservationJsonSerde,
+              outputSerde: brokerObservationJsonSerde,
+            }),
+          status: (ctx: restate.Context) =>
+            ctx.genericCall({
+              service: 'BaynExecutionController',
+              method: 'status',
+              key: controllerKey,
+              parameter: {},
+              inputSerde: brokerObservationJsonSerde,
+              outputSerde: brokerObservationJsonSerde,
+            }),
+        },
+      }),
+    )
+    const invoke = (method: string) => json(`${targets.ingress}/DeadlineReplacementTestBridge/${method}`, {})
+    const status = invoke('status').pipe(
+      Effect.map((value) => Result.getOrThrow(decodeExecutionControllerState(value))),
+    )
+    const inventory = (condition: string) =>
+      json(
+        `${targets.admin}/query`,
+        {
+          query: `SELECT COUNT(*) AS total FROM sys_invocation WHERE target = 'BaynExecutionController/${controllerKey}/tick' AND (${condition})`,
+        },
+        { accept: 'application/json' },
+      ).pipe(
+        Effect.map((value) => {
+          const [row] = Schema.decodeUnknownSync(
+            Schema.Struct({ rows: Schema.Array(Schema.Struct({ total: Schema.Number })) }),
+          )(value).rows
+          if (row === undefined) throw new Error('Missing deadline inventory')
+          return row.total
+        }),
+      )
+    const scheduled = inventory("status = 'scheduled'")
+    const busy = inventory("status NOT IN ('completed', 'scheduled')")
+    const producerId = randomUUID()
+    const event = (sequence: number): MarketChangedWakeup => ({
+      schemaVersion: 'bayn.execution-wakeup.v1',
+      _tag: 'MarketChanged',
+      sourceRevision: config.sourceRevision,
+      producerId,
+      sequence,
+      reason: MarketChangeReason.Data,
+      eventId: marketChangedEventId(producerId, sequence),
+    })
+    const publish = (sequence: number) =>
+      publishMarketChange(targets.ingress, config, event(sequence), Redacted.make(token))
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* register([controller(), bridge])
+          yield* invoke('activate')
+          yield* waitFor(() => status.pipe(Effect.map((value) => value.nextSequence === 1)))
+          for (let sequence = 1; sequence <= 25; sequence++) {
+            if (sequence === 13) yield* register([controller(), bridge])
+            yield* publish(sequence)
+            yield* waitFor(() => status.pipe(Effect.map((value) => value.nextSequence === sequence + 1)))
+          }
+          yield* waitFor(() => busy.pipe(Effect.map((value) => value === 0)))
+          expect(Date.now()).toBeLessThan(deadlineMs)
+          expect(yield* scheduled).toBe(1)
+          expect((yield* status).nextDueAt).toBe(deadline)
+          expect(passes).toHaveLength(26)
+          // A lost public acknowledgement must reuse the private event and preserve the one existing deadline.
+          yield* publish(25)
+          expect(passes).toHaveLength(26)
+          expect(yield* scheduled).toBe(1)
+
+          // An accelerated ordinary failure transfers to its retry; success retires the previous deadline.
+          failuresLeft = 1
+          yield* publish(26)
+          yield* waitFor(() => status.pipe(Effect.map((value) => value.nextSequence === 27)))
+          yield* waitFor(() => busy.pipe(Effect.map((value) => value === 0)))
+          expect(failedAttempts).toBe(1)
+          expect(yield* scheduled).toBe(1)
+          expect((yield* status).nextDueAt).toBe(deadline)
+
+          // Explicit catch-up probes deliberately stop after exhaustion. They must not cancel the established owner.
+          failuresLeft = 3
+          yield* invoke('activate')
+          yield* waitFor(() => Effect.sync(() => failedAttempts === 4))
+          yield* waitFor(() => busy.pipe(Effect.map((value) => value === 0)))
+          expect(yield* scheduled).toBe(1)
+          expect((yield* status).nextSequence).toBe(27)
+          expect((yield* status).nextDueAt).toBe(deadline)
+
+          // No further hints arrive: the original deadline, not a renewed window, must still execute.
+          yield* Effect.sleep(Math.max(0, deadlineMs - Date.now()))
+          yield* waitFor(() => status.pipe(Effect.map((value) => value.nextDueAt === undefined)))
+          expect(passes).toHaveLength(28)
+          expect(passes.at(-1)?.sequence).toBe(27)
+          expect(passes.at(-1)?.at).toBeGreaterThanOrEqual(deadlineMs)
+          yield* waitFor(() => busy.pipe(Effect.map((value) => value === 0)))
+          expect(yield* scheduled).toBe(0)
+        }),
+      ),
+    )
+  }, 50_000)
+
   test('source handover retries the same immutable hint and a repeated acknowledgement joins its original private wake', async () => {
     const fixture = queueFixture()
     const producerId = randomUUID()

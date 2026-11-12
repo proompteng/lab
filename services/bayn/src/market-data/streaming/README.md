@@ -16,10 +16,12 @@ retries the same event identity and bytes. The authenticated Restate gateway wai
 metadata handler to complete. It does not wait for the financial tick that handler schedules. Waiting backpressures the
 publisher while source incorporation and its latest pending change continue independently. Hints from one producer reject duplicate or regressed
 sequences; unrelated physical workers' epochs, sequences and clocks are not comparable.
-The private wake deduplicates by event identity. Public gateway retries use fresh invocations so a rejected old
-deployment cannot cache a registration precondition across a source handover; uncertain acknowledgements still resend
-the same immutable event. Malformed inputs, local source mismatches and unauthorized requests fail permanently.
-Each active publisher has at most one distinct private wake outstanding. Abandoned process incarnations can leave
+Public requests and private wakes deduplicate by immutable event identity. The public handler retains active work but
+expires completed results immediately, so HTTP timeouts join one public waiter and an old deployment's completed
+registration rejection cannot poison source handover. The private wake retains its seven-day deduplication. Uncertain
+acknowledgements resend the same event, key and bytes. Malformed inputs, local source mismatches and unauthorized requests
+fail permanently. Each active publisher has at most one public waiter and one distinct private wake outstanding.
+Abandoned process incarnations can leave
 already accepted durable wakes behind; this is not a global bound across arbitrary process churn.
 
 Startup, failed source recovery and successful bootstrap emit hints even when topics are quiet. Recovery signals do not

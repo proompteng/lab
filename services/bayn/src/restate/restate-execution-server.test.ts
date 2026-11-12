@@ -109,7 +109,7 @@ test('market hint transport preserves exact payload without caching a rejected s
   expect(received).toEqual(
     Array.from({ length: 2 }, () => ({
       path: `/BaynExecutionController/${controllerKey}/marketChanged`,
-      key: null,
+      key: `bayn-market-hint-${event.eventId}`,
       body: JSON.stringify(event),
     })),
   )

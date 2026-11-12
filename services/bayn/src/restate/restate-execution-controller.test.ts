@@ -1,11 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 
-import { TerminalError, type ObjectSharedContext, type ObjectContext } from '@restatedev/restate-sdk'
+import {
+  InvocationIdParser,
+  TerminalError,
+  type ObjectSharedContext,
+  type ObjectContext,
+} from '@restatedev/restate-sdk'
 import { Result } from 'effect'
 
 import {
   executionControllerMaximumRecoveryWindow,
   executionControllerSuccessorPassCompleted,
+  decodeExecutionControllerState,
   type ExecutionControllerState,
 } from '../execution/controller'
 import { TransientExecutionFailure } from '../execution/advance'
@@ -77,6 +83,32 @@ type Delivery = {
 }
 
 const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) => {
+  const privateState = new Map<string, Map<string, unknown>>()
+  let sends = 0
+  const contextWithPrivateState = (context: TestContext): TestContext => {
+    let retained = privateState.get(context.key)
+    if (retained === undefined) {
+      retained = new Map()
+      privateState.set(context.key, retained)
+    }
+    const values = retained
+    return {
+      ...context,
+      get: async (key: string) => (key === 'controller' ? context.get('controller') : (values.get(key) ?? null)),
+      set: (key: string, value: ExecutionControllerState | string) => {
+        if (key === 'controller') context.set('controller', Result.getOrThrow(decodeExecutionControllerState(value)))
+        else values.set(key, value)
+      },
+      clear: (key: string) => values.delete(key),
+      genericSend: (delivery: Parameters<TestContext['genericSend']>[0]) => {
+        const handle: unknown = context.genericSend(delivery)
+        if (typeof handle === 'object' && handle !== null && 'invocationId' in handle) return handle
+        return { invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_test${++sends}`)) }
+      },
+      invocation: (id: Parameters<TestContext['invocation']>[0]) =>
+        context.invocation?.(id) ?? { cancel: () => undefined },
+    } as unknown as TestContext
+  }
   const object = (
     controller as unknown as {
       readonly object: {
@@ -96,6 +128,10 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
   ).object
   return {
     ...object,
+    tick: (context: TestContext, candidate: unknown) => object.tick(contextWithPrivateState(context), candidate),
+    rotate: (context: TestContext, candidate: unknown) => object.rotate(contextWithPrivateState(context), candidate),
+    deactivate: (context: TestContext, candidate: unknown) =>
+      object.deactivate(contextWithPrivateState(context), candidate),
     activateDeployment: (context: ObjectSharedContext, candidate: unknown) =>
       object.activateDeployment(
         {
@@ -111,6 +147,93 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
 }
 
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
+
+test('a successful successor retires its old deadline and an executing deadline never cancels itself', async () => {
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+  }
+  let invocationId = 'inv_initial'
+  let sent = 0
+  let idle = false
+  let projectionFails = false
+  const cancelled: string[] = []
+  const object = handlers(
+    makeBaynExecutionController(config, {
+      prepareActivation: async () => undefined,
+      projectState: async () => {
+        if (projectionFails) throw new Error('Controlled deactivation projection failure')
+      },
+      log: async () => undefined,
+      advance: async () => ({
+        completedAt: '2026-08-13T18:00:01.000Z',
+        outcome: {
+          _tag: ExecutionControllerOutcome.Waiting,
+          receiptHash: 'd'.repeat(64),
+          nextDelayMs: 1,
+          ...(idle ? {} : { nextWakeAt: '2026-08-13T18:00:31.000Z' }),
+        },
+      }),
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    run: async <A>(_name: string, action: () => Promise<A>) => action(),
+    genericSend: () => ({
+      invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_deadline${++sent}`)),
+    }),
+    invocation: (id: string) => ({ cancel: () => cancelled.push(id) }),
+    request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
+  } as unknown as TestContext
+  const advance = () =>
+    object.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: state.epoch,
+      sequence: state.nextSequence,
+    })
+  await advance()
+  expect(cancelled).toEqual([])
+  expect(sent).toBe(1)
+  invocationId = 'inv_accelerated'
+  await advance()
+  expect(cancelled).toEqual(['inv_deadline1'])
+  expect(sent).toBe(2)
+  invocationId = 'inv_deadline2'
+  idle = true
+  await advance()
+  expect(cancelled).toEqual(['inv_deadline1'])
+  expect(sent).toBe(2)
+  expect(state.nextDueAt).toBeUndefined()
+  expect(state.nextSequence).toBe(7)
+  idle = false
+  await advance()
+  expect(sent).toBe(3)
+  const deactivation = {
+    schemaVersion: 'bayn.execution-controller-deactivation.v1',
+    controllerKey,
+    epoch: state.epoch,
+    planHash,
+    sourceRevision,
+  }
+  projectionFails = true
+  const deactivationFailure = await object.deactivate(context, deactivation).catch((cause: unknown) => cause)
+  expect(deactivationFailure).toMatchObject({ message: 'Controlled deactivation projection failure' })
+  expect(cancelled).toEqual(['inv_deadline1'])
+  expect(state.active).toBe(true)
+  projectionFails = false
+  await object.deactivate(context, deactivation)
+  expect(cancelled).toEqual(['inv_deadline1', 'inv_deadline3'])
+  expect(state.active).toBe(false)
+})
 
 test('a prepared inference is durably dispatched and releases the account owner without ordinary chaining', async () => {
   let state: ExecutionControllerState = {

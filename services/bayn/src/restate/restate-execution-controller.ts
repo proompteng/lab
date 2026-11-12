@@ -35,6 +35,8 @@ import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from '.
 import { decodeExecutionWakeup, MarketChangedSchema, marketChangedEventId } from '../execution/events'
 
 const stateKey = 'controller'
+const deadlineTickStateKey = 'deadlineTick'
+const DeadlineTickInvocationSchema = Schema.String.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/))
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   type: 'object',
   properties: {
@@ -204,7 +206,7 @@ const executionAdvanceRunFailure = (cause: unknown, issuedAt: string): restate.T
   })
 }
 
-type ControllerObjectState = { readonly controller: ExecutionControllerState }
+type ControllerObjectState = { readonly controller: ExecutionControllerState; readonly deadlineTick: string }
 
 const terminal = (message: string): restate.TerminalError =>
   new restate.TerminalError(message, {
@@ -320,6 +322,17 @@ const readState = async (
     : decodeOrTerminal(decodeExecutionControllerState(candidate), 'execution controller state failed validation')
 }
 
+const retireDeadlineTick = async (ctx: restate.ObjectContext<ControllerObjectState>): Promise<void> => {
+  const candidate = await ctx.get(deadlineTickStateKey)
+  if (candidate === null) return
+  const invocationId = decodeOrTerminal(
+    Schema.decodeUnknownResult(DeadlineTickInvocationSchema, strictParseOptions)(candidate),
+    'execution controller deadline invocation failed validation',
+  )
+  ctx.clear(deadlineTickStateKey)
+  if (invocationId !== ctx.request().id) ctx.invocation(restate.InvocationIdParser.fromString(invocationId)).cancel()
+}
+
 export const executionControllerTickIdempotencyKey = (epoch: number, sequence: number, attempt: number): string =>
   `bayn-execution-controller-${epoch}-${sequence}-${attempt}`
 
@@ -346,7 +359,7 @@ const scheduleTick = (
   sourceCatchUpRevision?: string,
   retryWindowHash?: string,
   recoveryWindow?: number,
-): void => {
+): restate.InvocationHandle => {
   let idempotencyKey: string
   if (retryWindowHash !== undefined) {
     idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
@@ -375,7 +388,7 @@ const scheduleTick = (
     ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
     ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
   }
-  ctx.genericSend({
+  return ctx.genericSend({
     service: 'BaynExecutionController',
     method: 'tick',
     key: ctx.key,
@@ -494,7 +507,10 @@ export const makeBaynExecutionController = (
             () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
             executionControllerAdvanceRunOptions,
           )
-          if (decision._tag === 'Activated') ctx.set(stateKey, decision.state)
+          if (decision._tag === 'Activated') {
+            await retireDeadlineTick(ctx)
+            ctx.set(stateKey, decision.state)
+          }
           scheduleTick(
             ctx,
             decision.state,
@@ -646,6 +662,9 @@ export const makeBaynExecutionController = (
           const completed = decisionOrTerminal(
             completeExecutionControllerTick(state, tick, result, config.sourceRevision),
           )
+          // Only a successful pass replaces the original deadline owner. Failed catch-up probes intentionally
+          // leave its established delivery/recovery lineage intact; a normally firing timer never cancels itself.
+          await retireDeadlineTick(ctx)
           ctx.set(stateKey, completed)
 
           if (
@@ -687,8 +706,19 @@ export const makeBaynExecutionController = (
           const scheduleAt = clock.currentTimeMillisUnsafe()
           const completionDelay =
             completed.nextDueAt === undefined ? undefined : Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt)
-          if (completionDelay !== undefined)
-            scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined)
+          if (completionDelay !== undefined) {
+            const successor = scheduleTick(
+              ctx,
+              completed,
+              completionDelay,
+              0,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+            )
+            ctx.set(deadlineTickStateKey, await successor.invocationId)
+          }
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             completionToScheduleMs: scheduleAt - Date.parse(result.completedAt),
             controllerKey: ctx.key,
@@ -790,7 +820,7 @@ export const makeBaynExecutionController = (
       marketChanged: restate.handlers.object.shared(
         {
           ingressPrivate: false,
-          idempotencyRetention: executionControllerActivationRetentionMs,
+          idempotencyRetention: 0,
           journalRetention: 0,
           retryPolicy: executionControllerCommandRetryPolicy,
         },
@@ -851,6 +881,7 @@ export const makeBaynExecutionController = (
             executionControllerAdvanceRunOptions,
           )
           if (decision._tag === 'Deactivated') {
+            await retireDeadlineTick(ctx)
             ctx.set(stateKey, decision.state)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller deactivated', {
               controllerKey: ctx.key,

@@ -444,9 +444,10 @@ it does not recreate a lost request's identity or claim that another worker rece
 The authenticated public `marketChanged` gateway awaits private `wake`. That short exclusive handler records the hint
 and durably schedules any required financial tick; the gateway does not wait for that tick to run. While the account
 is busy, source incorporation continues and newer hints coalesce locally. Each stable publisher can have one outstanding
-private wake. A parent process that crashes can leave its accepted wake behind, so this is not a global bound across
-arbitrary process restarts. The private call deduplicates the event identity. The public request deliberately has no
-Restate idempotency key, so an old registered deployment's source-mismatch response cannot poison a later retry.
+private wake and one public waiter, including across HTTP timeouts. A parent process that crashes can leave its accepted
+wake behind, so this is not a global bound across arbitrary process restarts. The public request uses the immutable
+event identity with zero completion retention: live retries join one invocation, while an old deployment's completed
+source-mismatch response cannot poison registration handover. The private wake retains its seven-day deduplication.
 
 A hint cannot supply prices, make an unavailable source usable, or grant order authority. The owner selects and verifies
 its current projection, preserving actual source and receipt evidence. A new worker replays bounded Kafka history rather
@@ -479,6 +480,8 @@ any earlier maximum-hold or execution-close deadline. These timers bound evaluat
 quotes, accounting discrepancies and unresolved mutations still fail closed.
 
 Persisted absolute deadlines are never moved forward by completion projection, journal replay or source redelivery.
+Successful event turns replace one completion-deadline timer, cancelling superseded invocations. Failed source catch-up
+probes leave the established normal or recovery lineage intact.
 The send boundary calculates a transport delay from the original deadline with a one-millisecond minimum. The retained
 `nextDelayMs` receipt field is canonical and capped at one day; it does not create a periodic timer or replace a later
 absolute deadline. Attempt receipt timestamps remain in the bounded durable advance and failure metadata. A committed

@@ -65,9 +65,10 @@ export const publishMarketChange = (
         `${ingressOrigin}/BaynExecutionController/${encodeURIComponent(config.controllerKey)}/marketChanged`,
         {
           method: 'POST',
-          // Only the private wake is idempotent; source registration preconditions must be checked again.
+          // Deduplicate live waiters. Public completions expire immediately so registration is checked again.
           headers: {
             'content-type': 'application/json',
+            'idempotency-key': `bayn-market-hint-${event.eventId}`,
             authorization: `Bearer ${Redacted.value(activationToken)}`,
           },
           body,
