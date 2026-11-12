@@ -1,7 +1,7 @@
 name: ARC placement acceptance
 
 on:
-  # Run after the existing build wave clears; some native builds exceed the 90 minute rendezvous budget.
+  # Run after the existing build wave clears; the readiness check has a five-minute budget.
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ jobs:
   publication-tools:
     name: Publication slot ${{ matrix.slot }}
     runs-on: arc-amd64-publish
-    timeout-minutes: 110
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           prefix="arc-ready-$RUN_ATTEMPT-"
-          deadline=$((SECONDS + 90 * 60))
+          deadline=$((SECONDS + 5 * 60))
           count=0
           while (( SECONDS < deadline )); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
@@ -58,7 +58,7 @@ jobs:
             test "$count" = 10 && break
             sleep 60
           done
-          test "$count" = 10 || { echo 'Eight build and two publication slots did not become ready within 90 minutes' >&2; exit 1; }
+          test "$count" = 10 || { echo 'Eight build and two publication slots did not become ready within five minutes' >&2; exit 1; }
           jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
           nix eval --offline --expr '40 + 2' | grep -qx 42
           crane digest registry.ide-newton.ts.net/lab/arc-runner:latest
@@ -74,7 +74,7 @@ jobs:
           retention-days: 1
   local-build:
     name: Build slot ${{ matrix.slot }} local scratch build
-    timeout-minutes: 110
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -137,7 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           prefix="arc-ready-$RUN_ATTEMPT-"
-          deadline=$((SECONDS + 90 * 60))
+          deadline=$((SECONDS + 5 * 60))
           count=0
           while (( SECONDS < deadline )); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
@@ -145,7 +145,7 @@ jobs:
             test "$count" = 10 && break
             sleep 60
           done
-          test "$count" = 10 || { echo 'Eight build and two publication slots did not become ready within 90 minutes' >&2; exit 1; }
+          test "$count" = 10 || { echo 'Eight build and two publication slots did not become ready within five minutes' >&2; exit 1; }
           jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
           sleep 180
           jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
@@ -165,4 +165,14 @@ jobs:
           pattern: arc-proof-${{ github.run_attempt }}-*
           path: proof
       - name: Verify eight builders and two publication runners overlapped
-        run: bash .github/scripts/verify-arc-placement.sh proof
+        run: |
+          jq -s -e '
+            length == 10 and
+            ([.[] | select(.role == "build") | .slot] | sort) == [1,2,3,4,5,6,7,8] and
+            ([.[] | select(.role == "publication") | .slot] | sort) == [1,2] and
+            ([.[].pod] | unique | length) == 10 and
+            all(.[]; .node == "talos-192-168-1-194" or .node == "turin") and
+            all(.[] | select(.role == "build");
+              .inputBytes == 16777216 and .outputBytes == .inputBytes and .inputSha256 == .outputSha256) and
+            ([.[].end] | min) - ([.[].start] | max) >= 45
+          ' proof/*/arc-complete.json
