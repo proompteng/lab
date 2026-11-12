@@ -1990,8 +1990,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                 _tag: 'Failure',
                 failure: { _tag: 'JevAwaitingEvidence' },
               })
-              expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toBe(
-                true,
+              expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual(
+                [],
               )
             }
           }),
@@ -2217,9 +2217,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const store = yield* JevBatchStore
         yield* store.begin(plan, fixture.observation.payload)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([plan.batchId])
-        expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toBe(false)
+        expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([
+          plan,
+        ])
         yield* TestClock.setTime(observed + fixture.protocol.inferenceValidityMs)
-        expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toBe(true)
+        expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([])
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([])
       }).pipe(atObservation),
     )
