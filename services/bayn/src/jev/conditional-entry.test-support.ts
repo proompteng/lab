@@ -1,3 +1,4 @@
+import { nativeChartInference } from './retained-chart.test-support'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result } from 'effect'
@@ -7,13 +8,10 @@ import {
   retainedConditionalChartAssessmentsFromResponse as chartAssessmentsFromResponse,
   makeRetainedConditionalChartDecisionsRequest as makeChartDecisionsRequest,
 } from './retained-conditional-chart-questions'
-import { decodeJevResponse, prepareJevRequest } from './contract'
+import { decodeJevResponse, prepareJevRequest, retainedJevModel } from './contract'
 import { deriveEntryDispositionForChart } from './entry-inference'
 import { verifyEntryInferenceSource, type EntryInferenceMaterial } from './entry-inference-input'
-import {
-  entryEvaluationRequestFixture as currentRequestFixture,
-  nativeChartInference,
-} from './entry-inference.test-support'
+import { entryEvaluationRequestFixture as currentRequestFixture } from './entry-inference.test-support'
 import { makeRetainedFundedEntryJudgmentRequest as makeEntryJudgmentRequest } from './retained-funded-entry-questions'
 import {
   decodeConditionalEvaluationRequest,
@@ -30,8 +28,10 @@ export const entryEvaluationRequestFixture = (observedAt?: string, symbol?: stri
     schemaVersion: 'bayn.entry-inference-input.v3' as const,
     protocol: {
       ...current.request.protocol,
+      model: retainedJevModel,
       executionModel: retainedIntradayExecutionModel,
       schemaVersion: 'bayn.jev.protocol.v24' as const,
+      entrySignalPolicy: 'openai-decisions-then-jev' as const,
       inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,

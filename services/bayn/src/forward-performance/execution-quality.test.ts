@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 
 import { test } from 'bun:test'
 import { Result } from 'effect'
+import { canonicalHashV1Result } from '../hash'
 
 import { makeForwardPerformanceExecutionMeasurements } from './execution-quality'
-import { executionQualityFixture } from './execution-quality.test-support'
+import { executionQualityFixture, partialExecutionQualityFixture } from './execution-quality.test-support'
 import { makeForwardPerformanceReport } from './report'
 
 const measure = (input: ReturnType<typeof executionQualityFixture>) =>
@@ -13,7 +14,12 @@ const measure = (input: ReturnType<typeof executionQualityFixture>) =>
 test('preserves the synthetic complete report and evidence hashes across input order', () => {
   const input = executionQualityFixture(10)
   const report = Result.getOrThrow(makeForwardPerformanceReport(input, []))
-  assert.equal(report.reportHash, 'a22ecd7b88d70657c754cd9fe39bde780977b32abfc5121e7566a359f906893e')
+  assert.equal(report.reportHash, 'e1a0745b65ecace9f1716e7e7c478486d65f46609cac0ca7619c4a2fa4d28003')
+  assert.equal(report.receipt.receiptHash, 'f4d8eead77745a0354ca0efdb6d6d3b737ac0013a1a1a83761f00a07300d0f26')
+  assert.equal(
+    Result.getOrThrow(canonicalHashV1Result(report.receipt)),
+    'e0c14bb31545ab1b216e7cc0b14aa58ab06ba706f4e59fc3c45fc56536e17a9a',
+  )
   assert.equal(report.receipt.executionQuality.status, 'MEASURED')
   assert.deepEqual(
     Result.getOrThrow(
@@ -104,4 +110,51 @@ test('execution evidence hash failures retain their exact error before reading c
       actualType: 'string',
     },
   })
+})
+
+test('partial executions retain exact opportunity costs and report hashes across volume order', () => {
+  const input = partialExecutionQualityFixture(10)
+  const original = structuredClone(input)
+  const expected = measure(input)
+  assert.equal(expected.executionQuality.status, 'MEASURED')
+  assert.equal(expected.observedCapacity.status, 'MEASURED')
+  assert.equal(expected.executionQuality.implementationShortfall?.opportunityShortfallMicros, '-30000000')
+  assert.deepEqual(
+    measure({
+      ...input,
+      executionEvidence: input.executionEvidence.toReversed(),
+      marketVolumeEvidence: input.marketVolumeEvidence.toReversed(),
+    }),
+    expected,
+  )
+  assert.deepEqual(input, original)
+})
+
+test('partial executions reject missing, duplicate and mismatched market-volume identities', () => {
+  const input = partialExecutionQualityFixture(2)
+  const volume = input.marketVolumeEvidence[0]
+  assert(volume !== undefined)
+  for (const marketVolumeEvidence of [
+    input.marketVolumeEvidence.slice(1),
+    [...input.marketVolumeEvidence, volume],
+    [volume, ...input.marketVolumeEvidence, volume],
+    [{ ...volume, symbol: 'AAPL' }, ...input.marketVolumeEvidence.slice(1)],
+  ]) {
+    const measured = measure({ ...input, marketVolumeEvidence })
+    assert.equal(measured.executionQuality.status, 'UNDETERMINED')
+    assert.deepEqual(measured.executionQuality.reasonCodes, ['TERMINAL_PRICE_EVIDENCE_GAP'])
+  }
+})
+
+test('partial execution volume matching is rebuilt for each measurement', () => {
+  const input = partialExecutionQualityFixture(1)
+  const volume = input.marketVolumeEvidence[0]
+  assert(volume !== undefined)
+  const volumes = [...input.marketVolumeEvidence]
+  const current = { ...input, marketVolumeEvidence: volumes }
+  assert.equal(measure(current).executionQuality.status, 'MEASURED')
+  volumes.push(volume)
+  assert.deepEqual(measure(current).executionQuality.reasonCodes, ['TERMINAL_PRICE_EVIDENCE_GAP'])
+  volumes.pop()
+  assert.equal(measure(current).executionQuality.status, 'MEASURED')
 })

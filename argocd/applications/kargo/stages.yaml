@@ -617,6 +617,16 @@ spec:
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
               - key: spec.template.spec.containers.0.env.16.value
                 value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/froussard/approval-worker.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.3.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.4.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
         - uses: git-commit
           as: commit
           config:
@@ -1910,6 +1920,8 @@ spec:
       value: ./out
     - name: imageRepo
       value: registry.ide-newton.ts.net/lab/bayn
+    - name: researchImageRepo
+      value: registry.ide-newton.ts.net/lab/bayn-research
   requestedFreight:
     - origin:
         kind: Warehouse
@@ -1968,6 +1980,9 @@ spec:
               - image: bayn-main
                 newName: ${{ vars.imageRepo }}
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
+              - image: bayn-research
+                newName: ${{ vars.researchImageRepo }}
+                digest: ${{ imageFrom(vars.researchImageRepo).Digest }}
         - uses: yaml-update
           if: ${{ outputs.baynDeployment.hasLineage }}
           config:
@@ -2582,6 +2597,93 @@ spec:
           config:
             apps:
               - name: relay
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: torghut-webull-feed
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/torghut-webull-feed
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/torghut-webull-feed
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: torghut-webull-feed
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-webull-feed
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-webull-feed/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.0.value
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: spec.template.spec.containers.0.env.1.value
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(torghut-webull-feed): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: torghut-webull-feed
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git

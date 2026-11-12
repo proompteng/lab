@@ -4,7 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
 import { SystemAssessmentError } from './economics'
 import { executionOrderPlans } from './execution-plans'
-import type { SystemSourceCut } from './source-cut'
+import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
 
 export const decisionPersistenceAssumptions = [
   'PostgreSQL admission receipts attest that the bound immutable decision transaction was already committed.',
@@ -12,25 +12,34 @@ export const decisionPersistenceAssumptions = [
   'Routing timestamps retain the original mutation producer clock and identify an upper bound on decision commitment.',
 ] as const
 
+export const indexDecisionAdmissionMutations = (mutations: SystemSourceCut['mutations']) => {
+  const events = new Map<string, SystemSourceCut['mutations'][number]>()
+  const routing = new Map<string, SystemSourceCut['mutations'][number]>()
+  for (const row of mutations) {
+    events.set(row.event.eventId, row)
+    const { event } = row
+    if (event.routing === undefined) continue
+    const previous = routing.get(event.mutationId)
+    if (
+      previous === undefined ||
+      (previous.event.routing !== undefined && event.routing.startedAt < previous.event.routing.startedAt)
+    )
+      routing.set(event.mutationId, row)
+  }
+  return { events, routing }
+}
+
 /** A committed admission followed by routing supplies an upper bound, not an invented commit timestamp. */
-export const decisionAdmissionWitnesses = (cut: SystemSourceCut, generationHash: string) =>
+export const decisionAdmissionWitnesses = (
+  cut: Pick<SystemSourceCut, 'decisions' | 'protectionIntents' | 'decisionAdmissions' | 'asOf'>,
+  generationHash: string,
+  { events, routing }: ReturnType<typeof indexDecisionAdmissionMutations>,
+) =>
   Result.gen(function* () {
     const plans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
     const sources = new Set<string>()
     const witnesses: SystemSourceCut['durableObservations'][number][] = []
     const documents = new Map(cut.decisions.map(({ document }) => [document.contentHash, document]))
-    const events = new Map(cut.mutations.map((row) => [row.event.eventId, row]))
-    const routing = new Map<string, SystemSourceCut['mutations'][number]>()
-    for (const row of cut.mutations) {
-      const { event } = row
-      if (event.routing === undefined) continue
-      const previous = routing.get(event.mutationId)
-      if (
-        previous === undefined ||
-        (previous.event.routing !== undefined && event.routing.startedAt < previous.event.routing.startedAt)
-      )
-        routing.set(event.mutationId, row)
-    }
     const retained = new Set<string>()
     for (const receipt of cut.decisionAdmissions) {
       const { sourceHash, ...material } = receipt

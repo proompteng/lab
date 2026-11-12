@@ -1,23 +1,24 @@
 import {
   Cause,
+  Clock,
   Context,
   Data,
-  Deferred,
   Effect,
   Exit,
-  Fiber,
   Layer,
   ManagedRuntime,
   Metric,
   Option,
-  Ref,
   Result,
   Scope,
   ScopedRef,
   type Tracer,
 } from 'effect'
 
-import { prepareAutonomousApplication, type ApplicationPlan } from '../app'
+import type { ApplicationPlan } from '../app'
+import type { OperationalError } from '../errors'
+import type { CycleRunnerError } from '../cycle/runner/model'
+import type { ExecutionBuild } from '../build'
 import {
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
@@ -35,27 +36,24 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
+  executionControllerPlanHash,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
-import { sha256 } from '../hash'
-import {
-  type RecoveryFirstCycleAdvance,
-  type RecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverOwner,
-  type RecoveryFirstRuntime,
-} from '../observe-composition/model'
+import { type RecoveryFirstCycleAdvance, type RecoveryFirstRuntime } from '../observe-composition/model'
 import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
-import { makeAutonomousServiceRuntime } from './autonomous-runtime'
+import { makeExecutionCycleDriver } from './autonomous-runtime'
+import { nativeActivationPreflight } from './native-activation-preflight'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
   WorkerMarketProjectionLive,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -66,36 +64,20 @@ export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecuti
 export interface NativeExecutionRuntimeResource {
   readonly config: ExecutionControllerConfig
   readonly runtime: NativeExecutionRuntime
+  readonly readMarketReadiness: () => Promise<boolean>
 }
 
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
   operationTimeoutMs * 5
 
-/**
- * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
- * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
- */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
-
 export type BoundRecoveryFirstCycleDriver = {
-  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner/model').CycleRunnerError>
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError>
   readonly nextDelayMs: number
 }
 
-export class PublishedExecutionCycleDriver extends Context.Service<
-  PublishedExecutionCycleDriver,
-  RecoveryFirstCycleDriverSlot
->()('@proompteng/bayn/composition/native-execution-runtime/PublishedExecutionCycleDriver') {}
-
-export type RecoveryFirstCycleDriverSlotState =
-  | { readonly _tag: 'Pending' }
-  | { readonly _tag: 'Ready'; readonly driver: BoundRecoveryFirstCycleDriver }
-  | { readonly _tag: 'Failed'; readonly error: NativeExecutionRuntimeError }
-
-export interface RecoveryFirstCycleDriverSlot {
-  readonly state: Ref.Ref<RecoveryFirstCycleDriverSlotState>
-  readonly ready: Deferred.Deferred<void, NativeExecutionRuntimeError>
-}
+export class ExecutionCycleDriver extends Context.Service<ExecutionCycleDriver, BoundRecoveryFirstCycleDriver>()(
+  '@proompteng/bayn/composition/native-execution-runtime/ExecutionCycleDriver',
+) {}
 
 interface ExecutionEffectRunner {
   readonly runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) => Promise<A>
@@ -117,8 +99,16 @@ export const executionControllerConfig = (
     sourceRevision: plan.config.build.sourceRevision,
   })
 
-const bindRecoveryFirstCycleDriver = (
-  driver: RecoveryFirstCycleDriver,
+export const bindRecoveryFirstCycleDriver = (
+  driver: {
+    readonly advance: Effect.Effect<
+      RecoveryFirstCycleAdvance,
+      CycleRunnerError | OperationalError,
+      RecoveryFirstRuntime
+    >
+    readonly nextDelayMs: number
+  },
+  executionBuild: ExecutionBuild,
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
@@ -184,51 +174,13 @@ const bindRecoveryFirstCycleDriver = (
           ...advanced,
           observation: {
             ...advanced.observation,
+            executionBuild,
             jevObservationReferences: { hashes: [...hashes].sort(), complete },
           },
         }
       }),
       nextDelayMs: driver.nextDelayMs,
     })),
-  )
-
-export const captureRecoveryFirstCycleDriver =
-  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverOwner =>
-  (driver) =>
-    bindRecoveryFirstCycleDriver(driver).pipe(
-      Effect.flatMap((bound) =>
-        Ref.set(slot.state, { _tag: 'Ready', driver: bound }).pipe(
-          Effect.andThen(Deferred.succeed(slot.ready, undefined)),
-          Effect.andThen(Effect.never),
-          Effect.ensuring(
-            Ref.update(slot.state, (state) =>
-              state._tag === 'Ready' && state.driver === bound ? ({ _tag: 'Pending' } as const) : state,
-            ),
-          ),
-        ),
-      ),
-    )
-
-export const failRecoveryFirstCycleDriverSlot = (
-  slot: RecoveryFirstCycleDriverSlot,
-  error: NativeExecutionRuntimeError,
-): Effect.Effect<void> =>
-  Ref.set(slot.state, { _tag: 'Failed', error }).pipe(Effect.andThen(Deferred.fail(slot.ready, error)), Effect.asVoid)
-
-export const readRecoveryFirstCycleDriverSlot = (
-  slot: RecoveryFirstCycleDriverSlot,
-): Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError> =>
-  Ref.get(slot.state).pipe(
-    Effect.flatMap((state) => {
-      switch (state._tag) {
-        case 'Ready':
-          return Effect.succeed(state.driver)
-        case 'Failed':
-          return Effect.fail(state.error)
-        case 'Pending':
-          return Effect.fail(runtimeError('initialize', 'native execution runtime driver is unavailable'))
-      }
-    }),
   )
 
 const projectionFailure = (cause: unknown): TransientExecutionFailure =>
@@ -274,6 +226,7 @@ const retainedProjectedPass = (
     !executionControllerStatusHasCompletion(stored) ||
     stored.controllerKey !== controllerKey ||
     stored.planHash !== state.planHash ||
+    stored.epoch !== state.epoch ||
     stored.lastSequence !== completion.sequence ||
     stored.lastOutcome !== completion.outcome ||
     stored.lastReceiptHash !== completion.receiptHash ||
@@ -474,64 +427,36 @@ const logEffect = (
   )
 }
 
-const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
-  makeAutonomousServiceRuntime(plan, {
-    ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
-  }).pipe(
-    Effect.flatMap(({ runtime }) => prepareAutonomousApplication(runtime)),
-    Effect.flatMap(({ cycleFiber }) =>
-      Fiber.await(cycleFiber).pipe(
-        Effect.flatMap((exit) =>
-          failRecoveryFirstCycleDriverSlot(
-            slot,
-            runtimeError('initialize', 'native execution cycle stopped before the worker was disposed', exit),
-          ),
-        ),
-      ),
-    ),
-    Effect.scoped,
-    Effect.catchCause((cause) =>
-      failRecoveryFirstCycleDriverSlot(
-        slot,
-        runtimeError('initialize', 'native execution runtime preparation failed', cause),
-      ),
-    ),
-  )
-
-export const awaitNativeExecutionRuntimeDriver = (
-  slot: RecoveryFirstCycleDriverSlot,
+export const makeExecutionCycleDriverLive = <E, R>(
   operationTimeoutMs: number,
-): Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError> =>
-  Deferred.await(slot.ready).pipe(
-    Effect.timeoutOrElse({
-      duration: nativeExecutionRuntimeInitializationTimeoutMs(operationTimeoutMs),
-      orElse: () =>
-        Effect.fail(runtimeError('initialize', 'native execution runtime did not publish its cycle driver in time')),
-    }),
-    Effect.andThen(readRecoveryFirstCycleDriverSlot(slot)),
-  )
-
-export const makePublishedExecutionCycleDriverLive = <R>(
-  operationTimeoutMs: number,
-  prepare: (slot: RecoveryFirstCycleDriverSlot) => Effect.Effect<void, never, R>,
+  prepare: Effect.Effect<BoundRecoveryFirstCycleDriver, E, R>,
 ) =>
   Layer.effect(
-    PublishedExecutionCycleDriver,
-    Effect.gen(function* () {
-      const slot: RecoveryFirstCycleDriverSlot = {
-        state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-        ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-      }
-      yield* prepare(slot).pipe(Effect.forkScoped({ startImmediately: true }))
-      yield* awaitNativeExecutionRuntimeDriver(slot, operationTimeoutMs)
-      return slot
-    }),
+    ExecutionCycleDriver,
+    prepare.pipe(
+      Effect.mapError((cause) => runtimeError('initialize', 'native execution runtime preparation failed', cause)),
+      Effect.timeoutOrElse({
+        duration: nativeExecutionRuntimeInitializationTimeoutMs(operationTimeoutMs),
+        orElse: () => Effect.fail(runtimeError('initialize', 'native execution driver preparation timed out')),
+      }),
+    ),
   )
 
-export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlan) =>
-  makePublishedExecutionCycleDriverLive(plan.config.operationTimeoutMs, (slot) => startRuntimePreparation(plan, slot))
+export const ExecutionCycleDriverLive = (plan: ApplicationPlan) =>
+  makeExecutionCycleDriverLive(
+    plan.config.operationTimeoutMs,
+    makeExecutionCycleDriver(plan, nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs)).pipe(
+      Effect.flatMap(({ driver, context }) =>
+        bindRecoveryFirstCycleDriver(driver, {
+          sourceRevision: plan.config.build.sourceRevision,
+          imageRepository: plan.config.build.imageRepository,
+          imageDigest: plan.config.build.imageDigest,
+        }).pipe(Effect.provideContext(context)),
+      ),
+    ),
+  )
 
-type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
+type NativeExecutionManagedServices = ExecutionCycleDriver | ExecutionControllerStatusStore
 
 type NativeExecutionManagedRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | NativeExecutionManagedServices, E>
 type NativeExecutionProjectionRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | ExecutionControllerStatusStore, E>
@@ -544,14 +469,10 @@ const runManagedNativeExecutionAdvance = <R, E>(
   parent: Tracer.ExternalSpan | undefined,
 ): Promise<ExecutionAdvanceStepResult> => {
   const advance = Effect.all({
-    driverSlot: PublishedExecutionCycleDriver,
+    driver: ExecutionCycleDriver,
     statusStore: ExecutionControllerStatusStore,
   }).pipe(
-    Effect.flatMap(({ driverSlot, statusStore }) =>
-      readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
-        Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
-      ),
-    ),
+    Effect.flatMap(({ driver, statusStore }) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
   )
   return executionRunner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), {
     signal,
@@ -599,6 +520,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   projectionRunner: NativeExecutionProjectionRuntime<ProjectionR, ProjectionE>,
   hostRunner: ExecutionEffectRunner,
   planHash: string,
+  prepareActivation: NativeExecutionRuntime['prepareActivation'],
 ): NativeExecutionRuntime => {
   const replaceFailedRuntime = (cause: unknown): Promise<never> =>
     hostRunner
@@ -612,6 +534,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
       })
 
   return {
+    prepareActivation,
     advance: (command, signal) => {
       const parent = currentOpenTelemetryParentSpan()
       const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
@@ -634,9 +557,36 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
 
 export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<KafkaMarketProjection, E, R>) =>
   Layer.build(projection).pipe(
-    Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+    Effect.map((context) => {
+      const market = Context.get(context, KafkaMarketProjection)
+      return { market, layer: Layer.succeed(KafkaMarketProjection, market) }
+    }),
     Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
   )
+
+export const awaitNativeMarketProjectionReady = (projection: typeof KafkaMarketProjection.Service) =>
+  Effect.gen(function* () {
+    while (true) {
+      const status = yield* projection.status
+      const now = yield* Clock.currentTimeMillis
+      const readiness = kafkaHandoffReadiness(status, now)
+      if (readiness === KafkaHandoffReadiness.Ready) return
+      if (readiness !== KafkaHandoffReadiness.Waiting)
+        return yield* runtimeError(
+          'initialize',
+          'successor market history is unavailable; predecessor was not deactivated',
+          {
+            readiness,
+            ...status,
+          },
+        )
+      yield* Effect.sleep(
+        status.bootstrapDeadlineAtMs === null
+          ? 1000
+          : Math.max(1, Math.min(1000, status.bootstrapDeadlineAtMs - now + 1)),
+      )
+    }
+  })
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlan,
@@ -647,7 +597,9 @@ export const acquireNativeExecutionRuntime = (
       Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
       Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
     )
-    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
+    const { layer: prewarmedProjection, market } = yield* prewarmNativeMarketProjection(
+      WorkerMarketProjectionLive(plan),
+    )
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -657,7 +609,7 @@ export const acquireNativeExecutionRuntime = (
     )
     const executionResources = Layer.merge(
       sharedResources,
-      PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
+      ExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
     // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
     // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
@@ -677,6 +629,15 @@ export const acquireNativeExecutionRuntime = (
       projectionManaged,
       logManaged,
       config.planHash,
+      (signal) =>
+        projectionManaged.runPromise(
+          awaitNativeMarketProjectionReady(market).pipe(Effect.andThen(nativeActivationPreflight(plan))),
+          { signal },
+        ),
     )
-    return { config, runtime }
+    return {
+      config,
+      runtime,
+      readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
+    }
   })

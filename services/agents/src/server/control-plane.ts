@@ -31,6 +31,11 @@ type ControlPlaneRuntimeOptions = {
 
 const routeSources: RouteSourceSpec[] = [
   {
+    file: 'src/routes/mcp/relay/$target.ts',
+    sourceUrl: new URL('../routes/mcp/relay/$target.ts', import.meta.url),
+    load: () => import('../routes/mcp/relay/$target'),
+  },
+  {
     file: 'src/routes/mcp.ts',
     sourceUrl: new URL('../routes/mcp.ts', import.meta.url),
     load: () => import('../routes/mcp'),
@@ -156,9 +161,24 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/memory-operations'),
   },
   {
+    file: 'src/routes/v1/context.ts',
+    sourceUrl: new URL('../routes/v1/context.ts', import.meta.url),
+    load: () => import('../routes/v1/context'),
+  },
+  {
     file: 'src/routes/v1/memory-notes.ts',
     sourceUrl: new URL('../routes/v1/memory-notes.ts', import.meta.url),
     load: () => import('../routes/v1/memory-notes'),
+  },
+  {
+    file: 'src/routes/v1/memory-notes/retire.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes/retire.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes/retire'),
+  },
+  {
+    file: 'src/routes/v1/memory-notes/$id.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes/$id.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes/$id'),
   },
   {
     file: 'src/routes/v1/memory-notes/count.ts',

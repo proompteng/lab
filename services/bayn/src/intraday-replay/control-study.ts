@@ -18,7 +18,7 @@ import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
-import type { JevProtocol } from '../jev/protocol'
+import { defaultJevProtocolDocument, type JevProtocol } from '../jev/protocol'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { observedQuoteAt } from '../market-data/streaming/projection'
 import {
@@ -26,9 +26,16 @@ import {
   type StrategyMarketSnapshot,
   type VerifiedStrategyMarketSnapshot,
 } from '../market-data/streaming/snapshot'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
-import type { Policy } from '../risk'
-import { IsoDateSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
+import { makeExecutionRiskPolicy, resolveExecutionRiskPolicy } from '../execution/risk-policy'
+import { BrokerEnvironment } from '../broker/identity'
+import { PolicySchema, type Policy } from '../risk'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  PositiveMicrosSchema,
+  strictParseOptions,
+} from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
@@ -76,7 +83,10 @@ export type ControlStudyManagement =
     }
 
 export const ControlStudyInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.control-study-input.v9'),
+  schemaVersion: Schema.Literal('bayn.control-study-input.v10'),
+  riskEnvironment: Schema.Enum(BrokerEnvironment),
+  riskPolicy: Schema.optionalKey(PolicySchema),
+  openingPeakEquityMicros: PositiveMicrosSchema,
   costObjective: Schema.Literals(['ALL_COSTS', 'KNOWN_COST_DIAGNOSTIC']),
   entry: Schema.Enum(ControlEntryMode),
   management: Schema.Enum(ControlManagementMode),
@@ -100,7 +110,7 @@ export const ControlStudyInputSchema = Schema.Struct({
 )
 
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v12',
+  schemaVersion: 'bayn.control-study-definition.v13',
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
@@ -119,6 +129,9 @@ export const controlStudyDefinition = {
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
   turnover:
     'The input selects immediate adjustment or entry plus expected exit at the reference price and adverse allowance. The reserve is not a hard bound on future prices; mandatory reducing exits are unchanged.',
+  risk: 'The frozen input explicitly selects the native live or sandbox risk profile. No implicit environment default may change turnover or drawdown limits relative to the candidate.',
+  openingRisk:
+    'Every portfolio starts with the declared pre-existing broker equity peak. An inherited drawdown cannot be erased by starting the comparison. External-cost accrual starts at this experiment boundary and remains separate from broker risk.',
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   management:
@@ -906,6 +919,26 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
         new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
       )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    const sourceRisk = yield* input.riskPolicy === undefined
+      ? makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe, input.riskEnvironment)
+      : resolveExecutionRiskPolicy(
+          input.riskPolicy.accountId,
+          defaultJevProtocolDocument.universe,
+          input.riskEnvironment,
+          yield* canonicalHashV1Result(input.riskPolicy),
+        )
+    // Replay has its own synthetic account. Preserve every approved native limit and only rebind that identity.
+    const risk = yield* Schema.decodeUnknownResult(
+      PolicySchema,
+      strictParseOptions,
+    )({
+      ...sourceRisk,
+      accountId: prepared.identity.accountId,
+    })
+    if (BigInt(input.openingPeakEquityMicros) < BigInt(prepared.input.openingCashMicros))
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Opening broker peak cannot be below flat opening equity' }),
+      )
     if (prepared.brokerSessions.length === 0)
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control interval must contain a complete regular broker session' }),
@@ -946,7 +979,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       )
     const definition = {
       ...(input.ridge !== undefined ? ridgeControlStudyDefinition : policyDefinition),
-      schemaVersion: 'bayn.control-study-definition.v12',
+      schemaVersion: controlStudyDefinition.schemaVersion,
       entry: input.entry,
       opportunityAccounting: opportunityAccountingDefinition,
       nativeEntry:
@@ -956,7 +989,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control polling and routing latency must each be at most one minute' }),
       )
-    return { input, prepared, falsification, definition, dataCostMicros }
+    return { input, prepared, risk, falsification, definition, dataCostMicros }
   })
 
 export const runControlStudy = (
@@ -966,7 +999,7 @@ export const runControlStudy = (
   management: ControlStudyManagement,
 ) =>
   Effect.gen(function* () {
-    const { input, prepared, falsification, definition, dataCostMicros } = yield* Effect.fromResult(
+    const { input, prepared, risk, falsification, definition, dataCostMicros } = yield* Effect.fromResult(
       prepareControlStudy(raw, receipt),
     )
     if (input.management !== management.mode)
@@ -975,9 +1008,6 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry requires exactly one measured provider binding',
       })
-    const risk = yield* Effect.fromResult(
-      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe),
-    )
     const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)
@@ -1049,10 +1079,14 @@ export const runControlStudy = (
         const source = yield* openBacktestSource(arrivalsPath, prepared.input.source, runId, receipt)
         const market: ControlMarket = {
           advanceTo: (atMs) =>
-            source.advanceTo(atMs).pipe(
-              Effect.andThen(TestClock.setTime(atMs)),
-              Effect.mapError((cause) => new ControlStudyFailure({ message: 'Cannot advance control source', cause })),
-            ),
+            source
+              .advanceTo(atMs, (work) => work)
+              .pipe(
+                Effect.andThen(TestClock.setTime(atMs)),
+                Effect.mapError(
+                  (cause) => new ControlStudyFailure({ message: 'Cannot advance control source', cause }),
+                ),
+              ),
           quoteAt: (symbol, atMs) =>
             source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
           snapshot: (query) =>
@@ -1068,8 +1102,8 @@ export const runControlStudy = (
         const results = []
         let capital: ControlCapital = {
           cashMicros: prepared.input.openingCashMicros,
-          peakBrokerEquityMicros: prepared.input.openingCashMicros,
-          peakNetEquityMicros: prepared.input.openingCashMicros,
+          peakBrokerEquityMicros: input.openingPeakEquityMicros,
+          peakNetEquityMicros: input.openingPeakEquityMicros,
           accruedExternalCostMicros: '0',
         }
         for (const session of prepared.brokerSessions) {

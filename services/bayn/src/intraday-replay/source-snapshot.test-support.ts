@@ -19,7 +19,7 @@ NodeRuntime.runMain(
       validateBacktestSourceReceipt(yield* fs.readFileString('/evidence/receipt.json'), process.argv[2]),
     )
     const source = yield* openBacktestSource('/evidence/arrivals.ndjson.gz', input.manifest, input.runId, receipt)
-    yield* source.advanceTo(source.manifest.lastAvailableAtMs)
+    yield* source.advanceTo(source.manifest.lastAvailableAtMs, (work) => work)
     yield* source.finish
     yield* fs.writeFileString(
       '/result/source-opened.json',

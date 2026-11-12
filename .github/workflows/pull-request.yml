@@ -153,6 +153,7 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
           node .github/scripts/install-tengri-chromium.mjs
           bun run --cwd apps/landing test
+          PLATFORM_UI_SCREENSHOT_DIR=/tmp/admin-portal-screenshots bun run --cwd apps/landing test:admin
           bun run --filter landing build
           bun run --cwd apps/landing test:e2e
           bun run --cwd apps/landing format:check
@@ -166,6 +167,7 @@ jobs:
         with:
           name: landing-browser-${{ github.run_attempt }}
           path: |
+            /tmp/admin-portal-screenshots
             apps/landing/playwright-report
             apps/landing/test-results
             /tmp/tengri-vscode.*/guest.log

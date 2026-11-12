@@ -30,6 +30,7 @@ const retained = (
       ...current.request.protocol,
       executionModel: retainedIntradayExecutionModel,
       schemaVersion: 'bayn.jev.protocol.v24' as const,
+      entrySignalPolicy: 'openai-decisions-then-jev' as const,
       lookbackMinutes: 30 as const,
       candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash,

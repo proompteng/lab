@@ -3,13 +3,18 @@ import { Effect, Layer, Option, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 import type { Fragment } from 'effect/sql/Statement'
 import { JevPurpose } from '../../jev/portfolio'
+import { MutationOperation, type CancelReceipt } from '../../broker/alpaca-mutations/model'
+import { canonicalHashV1Result } from '../../hash'
 
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../contracts'
 import { Sha256Schema as Sha256, strictParseOptions } from '../../schemas'
 import { WriterFence, WriterFenceError } from '../writer-fence'
+import { expiredRiskClockRejection } from '../risk-clock'
 import {
   IntentStore,
   IntentStoreError,
+  NativeProtectionCancelCommandSchema,
+  NativeProtectionCancelReceiptSchema,
   classifyExistingCommit,
   decideIntentInsert,
   decideIntentTransition,
@@ -26,6 +31,10 @@ import {
   type ExistingCommitFailure,
   type IntentReceipt,
   type IntentStoreService,
+  type NativeProtectionCancelCommand,
+  type NativeProtectionCancelReceipt,
+  type ProtectionCancelAcceptance,
+  type ProtectionCancelAdmission,
   type PreparedCommit,
   type StoredIntent,
   type StoredRowsFailure,
@@ -33,6 +42,27 @@ import {
 } from './domain'
 
 const decodeIntentIdResult = Schema.decodeUnknownResult(Sha256, strictParseOptions)
+
+const nativeProtectionCancelRowSchema = Schema.Struct({
+  intent_id: Sha256,
+  account_id: Schema.String,
+  broker_order_id: Schema.String,
+  requested_at: Schema.String,
+  request_hash: Schema.NullOr(Sha256),
+  request_id: Schema.NullOr(Schema.String),
+  response_status: Schema.NullOr(Schema.Int),
+  response_content_hash: Schema.NullOr(Sha256),
+  observed_at: Schema.NullOr(Schema.String),
+  routing: Schema.NullOr(Schema.Unknown),
+})
+const decodeNativeProtectionCancelRow = Schema.decodeUnknownResult(nativeProtectionCancelRowSchema, strictParseOptions)
+
+type NativeProtectionCancelRow = typeof nativeProtectionCancelRowSchema.Type
+
+type NativeProtectionCancelState = {
+  readonly command: NativeProtectionCancelCommand
+  readonly receipt?: NativeProtectionCancelReceipt
+}
 
 const selectRows = (sql: PgClient.PgClient, predicate: Fragment) => sql`
   SELECT
@@ -204,6 +234,186 @@ const runRead = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, Inte
 
 const runCommit = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, IntentStoreError | WriterFenceError, R> =>
   effect.pipe(Effect.mapError(classifyCommitCause))
+
+const runProtectionCancel = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, IntentStoreError | WriterFenceError, R> =>
+  effect.pipe(
+    Effect.mapError((cause) =>
+      cause instanceof WriterFenceError ? cause : classifyIntentCause('protection-cancel', cause),
+    ),
+  )
+
+const protectionCancelStateQuery = (
+  sql: PgClient.PgClient,
+  intentId: string,
+  brokerOrderId: string,
+  requestedAt?: string,
+) => sql`
+  SELECT
+    command.intent_id,
+    command.account_id,
+    command.broker_order_id,
+    to_char(command.requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS requested_at,
+    receipt.request_hash,
+    receipt.request_id,
+    receipt.response_status::integer AS response_status,
+    receipt.response_content_hash,
+    to_char(receipt.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at,
+    receipt.routing
+  FROM native_protection_cancel_commands AS command
+  LEFT JOIN native_protection_cancel_receipts AS receipt
+    ON receipt.intent_id = command.intent_id
+    AND receipt.broker_order_id = command.broker_order_id
+    AND receipt.requested_at = command.requested_at
+  WHERE command.intent_id = ${intentId} AND command.broker_order_id = ${brokerOrderId}
+    AND (${requestedAt === undefined} OR command.requested_at = ${requestedAt ?? null}::timestamptz)
+  ORDER BY command.requested_at DESC
+  LIMIT 1
+`
+
+const decodeProtectionCancelState = (
+  row: NativeProtectionCancelRow,
+): Result.Result<NativeProtectionCancelState, IntentStoreError> => {
+  const commandResult = Schema.decodeUnknownResult(
+    NativeProtectionCancelCommandSchema,
+    strictParseOptions,
+  )({
+    intentId: row.intent_id,
+    accountId: row.account_id,
+    brokerOrderId: row.broker_order_id,
+    requestedAt: row.requested_at,
+  })
+  if (Result.isFailure(commandResult))
+    return Result.fail(
+      storeError('decode', 'protection-cancel', 'native protection cancel command is invalid', commandResult.failure),
+    )
+  const command = commandResult.success
+  const receiptValues = [
+    row.request_hash,
+    row.request_id,
+    row.response_status,
+    row.response_content_hash,
+    row.observed_at,
+  ]
+  if (receiptValues.every((value) => value === null)) return Result.succeed({ command })
+  if (receiptValues.some((value) => value === null))
+    return Result.fail(storeError('decode', 'protection-cancel', 'native protection cancel receipt is incomplete'))
+  const receiptResult = Schema.decodeUnknownResult(
+    NativeProtectionCancelReceiptSchema,
+    strictParseOptions,
+  )({
+    command,
+    requestHash: row.request_hash,
+    evidence: {
+      requestId: row.request_id,
+      status: row.response_status,
+      contentHash: row.response_content_hash,
+      observedAt: row.observed_at,
+      ...(row.routing === null ? {} : { routing: row.routing }),
+    },
+  })
+  if (Result.isFailure(receiptResult))
+    return Result.fail(
+      storeError('decode', 'protection-cancel', 'native protection cancel receipt is invalid', receiptResult.failure),
+    )
+  const expectedRequestHash = protectionCancelRequestHash(command.brokerOrderId)
+  if (Result.isFailure(expectedRequestHash)) return Result.fail(expectedRequestHash.failure)
+  if (receiptResult.success.requestHash !== expectedRequestHash.success)
+    return Result.fail(storeError('conflict', 'protection-cancel', 'native protection cancel request hash mismatch'))
+  const expectedContentHash = canonicalHashV1Result(null)
+  if (Result.isFailure(expectedContentHash))
+    return Result.fail(
+      storeError(
+        'invariant',
+        'protection-cancel',
+        'native protection cancel response cannot be hashed',
+        expectedContentHash.failure,
+      ),
+    )
+  if (receiptResult.success.evidence.contentHash !== expectedContentHash.success)
+    return Result.fail(storeError('conflict', 'protection-cancel', 'native protection cancel response hash mismatch'))
+  if (Date.parse(receiptResult.success.evidence.observedAt) < Date.parse(command.requestedAt))
+    return Result.fail(
+      storeError('conflict', 'protection-cancel', 'native protection cancel receipt predates its command'),
+    )
+  return Result.succeed({ command, receipt: receiptResult.success })
+}
+
+const readLatestProtectionCancel = (
+  sql: PgClient.PgClient,
+  intentId: string,
+  brokerOrderId: string,
+  requestedAt?: string,
+): Effect.Effect<Option.Option<NativeProtectionCancelState>, IntentStoreError> =>
+  protectionCancelStateQuery(sql, intentId, brokerOrderId, requestedAt).pipe(
+    Effect.mapError((cause) => classifyIntentCause('protection-cancel', cause)),
+    Effect.flatMap((rows) => {
+      const row = rows[0]
+      if (row === undefined) return Effect.succeed(Option.none())
+      return Effect.fromResult(decodeNativeProtectionCancelRow(row)).pipe(
+        Effect.mapError((cause) =>
+          storeError('decode', 'protection-cancel', 'native protection cancel row is invalid', cause),
+        ),
+        Effect.flatMap((decoded) =>
+          Effect.fromResult(decodeProtectionCancelState(decoded)).pipe(Effect.map(Option.some)),
+        ),
+      )
+    }),
+  )
+
+const protectionCancelRequestHash = (brokerOrderId: string): Result.Result<string, IntentStoreError> =>
+  Result.mapError(canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId }), (cause) =>
+    storeError('invariant', 'protection-cancel', 'native protection cancel request cannot be hashed', cause),
+  )
+
+const validateProtectionCancelReceipt = (
+  command: NativeProtectionCancelCommand,
+  receipt: CancelReceipt,
+): Effect.Effect<NativeProtectionCancelReceipt, IntentStoreError> => {
+  if (receipt.brokerOrderId !== command.brokerOrderId)
+    return Effect.fail(storeError('conflict', 'protection-cancel', 'native protection cancel receipt order mismatch'))
+  if (receipt.evidence.status !== 204)
+    return Effect.fail(
+      storeError('conflict', 'protection-cancel', 'native protection cancel receipt is not an HTTP 204'),
+    )
+  const expectedHash = protectionCancelRequestHash(command.brokerOrderId)
+  if (Result.isFailure(expectedHash)) return Effect.fail(expectedHash.failure)
+  if (receipt.requestHash !== expectedHash.success)
+    return Effect.fail(storeError('conflict', 'protection-cancel', 'native protection cancel request hash mismatch'))
+  const expectedContentHash = canonicalHashV1Result(null)
+  if (Result.isFailure(expectedContentHash))
+    return Effect.fail(
+      storeError(
+        'invariant',
+        'protection-cancel',
+        'native protection cancel response cannot be hashed',
+        expectedContentHash.failure,
+      ),
+    )
+  if (receipt.evidence.contentHash !== expectedContentHash.success)
+    return Effect.fail(storeError('conflict', 'protection-cancel', 'native protection cancel response hash mismatch'))
+  if (Date.parse(receipt.evidence.observedAt) < Date.parse(command.requestedAt))
+    return Effect.fail(
+      storeError('conflict', 'protection-cancel', 'native protection cancel receipt predates its command'),
+    )
+  return Effect.fromResult(
+    Schema.decodeUnknownResult(
+      NativeProtectionCancelReceiptSchema,
+      strictParseOptions,
+    )({
+      command,
+      requestHash: receipt.requestHash,
+      evidence: receipt.evidence,
+    }),
+  ).pipe(
+    Effect.mapError((cause) =>
+      storeError('decode', 'protection-cancel', 'native protection cancel receipt is invalid', cause),
+    ),
+  )
+}
+
+const protectionCancelReceiptEquivalent = Schema.toEquivalence(NativeProtectionCancelReceiptSchema)
 
 const decodeStoredEffect = (
   operation: IntentStoreError['operation'],
@@ -387,7 +597,19 @@ const transitionIntent = (sql: PgClient.PgClient, intent: Intent, decision: Risk
       END
     WHERE intent_id = ${intent.intentId} AND state = ${IntentState.Planned}
     RETURNING intent_id
-  `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
+  `.pipe(
+    Effect.mapError((cause) => {
+      const expired = expiredRiskClockRejection(cause, {
+        intentId: intent.intentId,
+        decisionId: decision.decisionId,
+        decidedAt: decision.decidedAt,
+        expiresAt: decision.expiresAt,
+      })
+      return expired === undefined
+        ? classifyIntentCause('commit', cause)
+        : storeError('invariant', 'commit', 'risk decision expired before its intent transition', expired)
+    }),
+  )
 }
 
 type ResolvedIntent = { readonly _tag: 'Replay'; readonly receipt: IntentReceipt } | { readonly _tag: 'Pending' }
@@ -512,7 +734,7 @@ const makeStore = Effect.gen(function* () {
         ),
       ),
     beginProtectionCancel: (intentId, brokerOrderId, observedAt, exitTarget) =>
-      runCommit(
+      runProtectionCancel(
         fence.transaction(
           Effect.gen(function* () {
             const portfolio = exitTarget?.evidence.portfolio
@@ -539,10 +761,137 @@ const makeStore = Effect.gen(function* () {
             AND (c.requested_at > ${observedAt}::timestamptz - interval '5 seconds' OR c.requested_at > latest.observed_at))
         RETURNING broker_order_id
       `
-            return rows.length === 1
+            if (rows.length > 1)
+              return yield* storeError(
+                'invariant',
+                'protection-cancel',
+                'multiple native protection cancel commands inserted',
+              )
+            const state = yield* readLatestProtectionCancel(sql, intentId, brokerOrderId)
+            return Option.match(state, {
+              onNone: () => ({ _tag: 'NotEligible' }) as const,
+              onSome: (current) =>
+                current.receipt === undefined
+                  ? rows.length === 1
+                    ? ({ _tag: 'New', command: current.command } as const)
+                    : ({ _tag: 'PendingUnknown', command: current.command } as const)
+                  : ({ _tag: 'Accepted', receipt: current.receipt } as const),
+            }) satisfies ProtectionCancelAdmission
           }),
         ),
       ),
+    recordProtectionCancelAccepted: (
+      command,
+      receipt,
+    ): Effect.Effect<ProtectionCancelAcceptance, IntentStoreError | WriterFenceError> => {
+      return validateProtectionCancelReceipt(command, receipt).pipe(
+        Effect.flatMap((accepted) => {
+          const write: Effect.Effect<ProtectionCancelAcceptance, IntentStoreError | WriterFenceError> =
+            runProtectionCancel(
+              fence.transaction(
+                Effect.gen(function* () {
+                  yield* sql`
+                  INSERT INTO native_protection_cancel_receipts (
+                    intent_id, account_id, broker_order_id, requested_at,
+                    request_hash, request_id, response_status, response_content_hash, routing, observed_at
+                  )
+                  SELECT
+                    command.intent_id,
+                    command.account_id,
+                    command.broker_order_id,
+                    command.requested_at,
+                    ${accepted.requestHash},
+                    ${accepted.evidence.requestId},
+                    ${accepted.evidence.status},
+                    ${accepted.evidence.contentHash},
+                    ${accepted.evidence.routing === undefined ? null : JSON.stringify(accepted.evidence.routing)}::jsonb,
+                    ${accepted.evidence.observedAt}::timestamptz
+                  FROM native_protection_cancel_commands AS command
+                  WHERE command.intent_id = ${accepted.command.intentId}
+                    AND command.account_id = ${accepted.command.accountId}
+                    AND command.broker_order_id = ${accepted.command.brokerOrderId}
+                    AND command.requested_at = ${accepted.command.requestedAt}::timestamptz
+                  ON CONFLICT (intent_id, broker_order_id, requested_at) DO NOTHING
+                `
+                  const state = yield* readLatestProtectionCancel(
+                    sql,
+                    accepted.command.intentId,
+                    accepted.command.brokerOrderId,
+                    accepted.command.requestedAt,
+                  )
+                  if (Option.isNone(state))
+                    return yield* storeError(
+                      'conflict',
+                      'protection-cancel',
+                      'native protection cancel command is missing',
+                    )
+                  if (state.value.receipt === undefined)
+                    return yield* storeError(
+                      'conflict',
+                      'protection-cancel',
+                      'native protection cancel receipt was not persisted',
+                    )
+                  if (!protectionCancelReceiptEquivalent(state.value.receipt, accepted))
+                    return yield* storeError(
+                      'conflict',
+                      'protection-cancel',
+                      'native protection cancel receipt conflicts with durable evidence',
+                    )
+                  return state.value.receipt
+                }),
+              ),
+            ).pipe(Effect.map((persisted) => ({ _tag: 'Accepted', receipt: persisted }) as const))
+          return write.pipe(
+            Effect.catch(
+              (
+                failure: IntentStoreError | WriterFenceError,
+              ): Effect.Effect<ProtectionCancelAcceptance, IntentStoreError | WriterFenceError> => {
+                if (failure instanceof IntentStoreError && failure.failure !== 'query') return Effect.fail(failure)
+                return readLatestProtectionCancel(
+                  sql,
+                  command.intentId,
+                  command.brokerOrderId,
+                  command.requestedAt,
+                ).pipe(
+                  Effect.mapError((reconciliationFailure) =>
+                    reconciliationFailure.failure === 'query' ? failure : reconciliationFailure,
+                  ),
+                  Effect.flatMap(
+                    (state): Effect.Effect<ProtectionCancelAcceptance, IntentStoreError | WriterFenceError> => {
+                      if (Option.isNone(state)) return Effect.succeed({ _tag: 'PendingUnknown', command } as const)
+                      const durableReceipt = state.value.receipt
+                      if (durableReceipt === undefined)
+                        return Effect.succeed({ _tag: 'PendingUnknown', command } as const)
+                      return validateProtectionCancelReceipt(command, {
+                        requestHash: durableReceipt.requestHash,
+                        brokerOrderId: durableReceipt.command.brokerOrderId,
+                        evidence: durableReceipt.evidence,
+                      }).pipe(
+                        Effect.flatMap((validatedState) =>
+                          protectionCancelReceiptEquivalent(accepted, {
+                            command,
+                            requestHash: validatedState.requestHash,
+                            evidence: validatedState.evidence,
+                          })
+                            ? Effect.succeed({ _tag: 'Accepted', receipt: durableReceipt } as const)
+                            : Effect.fail(
+                                storeError(
+                                  'conflict',
+                                  'protection-cancel',
+                                  'native protection cancel receipt conflicts with the broker evidence',
+                                ),
+                              ),
+                        ),
+                      )
+                    },
+                  ),
+                )
+              },
+            ),
+          )
+        }),
+      )
+    },
   } satisfies IntentStoreService
 })
 

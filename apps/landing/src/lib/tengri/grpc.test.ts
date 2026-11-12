@@ -103,7 +103,24 @@ let catalogRequestStarted: (() => void) | null = null
 let catalogRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
+let codexRunReadStarted: (() => void) | null = null
+let codexRunReadCancelled: (() => void) | null = null
 let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
+
+function waitForCodexRunReadCancellation(
+  call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+  callback: grpc.sendUnaryData<Record<string, unknown>>,
+) {
+  codexRunReadStarted?.()
+  const timer = setTimeout(
+    () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'test run read was not cancelled'), null),
+    2_000,
+  )
+  call.on('cancelled', () => {
+    clearTimeout(timer)
+    codexRunReadCancelled?.()
+  })
+}
 
 beforeAll(async () => {
   fixture = await createSpiffeFixture()
@@ -495,6 +512,10 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.id === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -511,10 +532,22 @@ beforeAll(async () => {
               ],
       })
     },
+    recoverCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.agentId === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -717,11 +750,28 @@ beforeAll(async () => {
         }),
         eventSequence: threadId === 'invalid-sequence' ? '18446744073709551615' : '42',
       })
-      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor'
+      const generated = threadId === 'thread-generated'
+      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor' || generated
       call.write({
         part: 'CODEX_HISTORY_PART_ITEMS',
         rawJson: JSON.stringify({
-          data: paged ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }] : [],
+          data: generated
+            ? [
+                {
+                  turnId: 'turn-1',
+                  item: {
+                    id: 'exec-cat',
+                    type: 'imageGeneration',
+                    status: 'completed',
+                    savedPath: '/home/nanoagent/.codex/generated_images/thread-generated/exec-cat.png',
+                    result:
+                      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  },
+                },
+              ]
+            : paged
+              ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }]
+              : [],
           nextCursor: null,
         }),
         eventSequence: threadId === 'outdated-item-cursor' ? '41' : '52',
@@ -777,6 +827,15 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('recovers the exact accepted run through the current signed session without sending input', async () => {
+    const { recoverCodexRun } = await import('./grpc')
+    const runId = '11111111-1111-4111-8111-111111111111'
+    const operationId = '22222222-2222-4222-8222-222222222222'
+    await recoverCodexRun(identity, 'agent-test', runId, operationId)
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', runId, operationId })
+    expect(receivedMetadata?.get('x-tengri-signature')).toHaveLength(1)
+  })
+
   test('identifies a recorded control that was rejected before native dispatch', async () => {
     const { steerCodexTurn } = await import('./grpc')
     expect(
@@ -803,8 +862,25 @@ describe('Tengri gRPC BFF transport', () => {
         state: { phase: 'running', turnId: 'turn-selected' },
       },
     ])
-    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: '' })
     expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
+  })
+  test('carries the selected conversation in the signed active-run request', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    const runs = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.threadId).toBe('thread-selected')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
+    expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+    expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
+  })
+  test('rejects an out-of-scope active-run response instead of treating the selected conversation as idle', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await rejection(getActiveCodexRuns(identity, 'agent-test', 'thread-another'))).toMatchObject({
+      message: 'Invalid active run scope',
+      status: 503,
+    })
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
@@ -1715,6 +1791,41 @@ describe('Tengri gRPC BFF transport', () => {
     codexAccountRequestCancelled = null
   })
 
+  test.each(['active runs', 'run status'] as const)('cancels %s gRPC when the browser request aborts', async (kind) => {
+    const { getActiveCodexRuns, getCodexRun } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      codexRunReadStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      codexRunReadCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = (
+      kind === 'active runs'
+        ? getActiveCodexRuns(identity, 'codex-run-read-cancel', 'thread-selected', controller.signal)
+        : getCodexRun(identity, 'codex-run-read-cancel', '11111111-1111-4111-8111-111111111111', controller.signal)
+    ).catch((error: unknown) => error)
+    try {
+      await started
+      controller.abort()
+      expect(
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Run read cancellation timed out')), 500),
+          ),
+        ]),
+      ).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+      await Promise.race([
+        cancelled,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Run read gRPC was not cancelled')), 500)),
+      ])
+    } finally {
+      codexRunReadStarted = null
+      codexRunReadCancelled = null
+    }
+  })
+
   test('cancels the model catalog gRPC when the browser request aborts', async () => {
     const { listCodexModels } = await import('./grpc')
     const started = new Promise<void>((resolve) => {
@@ -1854,13 +1965,42 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
     const thread = await restoredThread('thread-test')
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test' })
     expect(thread).toEqual({
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test","historyMode":"paginated","turns":[]}}',
       eventSequence: 42,
       itemEventSequences: {},
     })
+  })
+
+  test('serves generated image bytes through the authorized native history read', async () => {
+    const { readCodexGeneratedImage } = await import('./grpc')
+    const path = '/home/nanoagent/.codex/generated_images/thread-generated/exec-cat.png'
+    const image = await readCodexGeneratedImage(identity, 'agent-test', path, new AbortController().signal)
+    expect(image.mediaType).toBe('image/png')
+    expect(image.content.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-generated' })
+    expect(
+      await rejection(
+        readCodexGeneratedImage(
+          identity,
+          'agent-test',
+          path.replace('exec-cat', 'other'),
+          new AbortController().signal,
+        ),
+      ),
+    ).toMatchObject({ status: 404 })
+    expect(
+      await rejection(
+        readCodexGeneratedImage(
+          identity,
+          'agent-test',
+          '/home/nanoagent/.codex/auth.json',
+          new AbortController().signal,
+        ),
+      ),
+    ).toMatchObject({ status: 400 })
   })
 
   test('rejects an invalid event cursor returned with a thread snapshot', async () => {

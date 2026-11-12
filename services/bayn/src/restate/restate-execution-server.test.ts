@@ -5,7 +5,11 @@ import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
-import { makeRestateExecutionEndpointHandler, restateExecutionServerConfig } from './restate-execution-server'
+import {
+  makeRestateExecutionEndpointHandler,
+  restateExecutionServerConfig,
+  withNativeStartupReadiness,
+} from './restate-execution-server'
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -42,11 +46,11 @@ const readDiscovery = (session: ClientHttp2Session): Promise<unknown> =>
     request.end()
   })
 
-const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<number> =>
+const readUnsignedDiscoveryStatus = (session: ClientHttp2Session, path = '/discover'): Promise<number> =>
   new Promise((resolve, reject) => {
     const request = session.request({
       ':method': 'GET',
-      ':path': '/discover',
+      ':path': path,
       accept: 'application/vnd.restate.endpointmanifest.v4+json',
     })
     let status: number | undefined
@@ -63,12 +67,58 @@ const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<numbe
   })
 
 describe('native Restate execution server', () => {
+  test('each physical worker must warm before startup readiness, while broker transport remains available during recovery', async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const warm = [false, false]
+          const clients: ClientHttp2Session[] = []
+          let delegated = 0
+          for (const index of [0, 1]) {
+            const server = createHttp2Server(
+              withNativeStartupReadiness(
+                (_request, response) => {
+                  delegated += 1
+                  response.writeHead(200).end()
+                },
+                async () => warm[index] === true,
+              ),
+            )
+            yield* acquireRestateHttp2Server(server, 0)
+            const address = server.address()
+            if (address === null || typeof address === 'string') throw new Error('No test TCP listener')
+            clients.push(
+              yield* Effect.acquireRelease(
+                Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`)),
+                (client) => Effect.sync(() => client.close()),
+              ),
+            )
+          }
+          const statuses = (path: string) =>
+            Promise.all(clients.map((client) => readUnsignedDiscoveryStatus(client, path)))
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([503, 503])
+          expect(yield* Effect.promise(() => statuses('/broker-observation'))).toEqual([200, 200])
+          warm[0] = true
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([200, 503])
+          warm[1] = true
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([200, 200])
+          warm[0] = false
+          warm[1] = false
+          expect(yield* Effect.promise(() => statuses('/startup-ready'))).toEqual([200, 200])
+          expect(yield* Effect.promise(() => statuses('/broker-observation'))).toEqual([200, 200])
+          expect(delegated).toBe(4)
+        }),
+      ),
+    )
+  })
+
   test('discovers two owners and a shared authenticated deployment activation with seven-day receipts', async () => {
     const handler = makeRestateExecutionEndpointHandler(
       { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
       {
         advance: () => Promise.reject(new Error('discovery must not advance execution')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       },
       'd'.repeat(64),
@@ -122,12 +172,12 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
+        handlers: ['activate', 'rotate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
       },
       { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
     ])
     expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
-      ty: 'EXCLUSIVE',
+      ty: 'SHARED',
       ingressPrivate: true,
     })
     expect(services[0]?.handlers?.find(({ name }) => name === 'activateDeployment')).toMatchObject({
@@ -145,6 +195,7 @@ describe('native Restate execution server', () => {
         })),
     ).toEqual([
       { name: 'activate', ingressPrivate: true },
+      { name: 'rotate', ingressPrivate: true },
       { name: 'tick', ingressPrivate: true },
       { name: 'deactivate', ingressPrivate: true },
       { name: 'prepareActivation', ingressPrivate: true },
@@ -190,6 +241,7 @@ describe('native Restate execution server', () => {
       {
         advance: () => Promise.reject(new Error('unsigned discovery must not advance execution')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       },
       'd'.repeat(64),

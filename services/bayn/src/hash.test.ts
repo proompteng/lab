@@ -1,15 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
+import fc from 'fast-check'
 
 import {
   canonicalHashV1Result,
   canonicalJsonV1Result,
   canonicalJsonWithHashV1Result,
   renderCanonicalJsonFailure,
+  sha256,
   stableU128,
   stableU64,
   type CanonicalJsonFailure,
 } from './hash'
+import { checkProperty } from './testing/property-test-support'
 
 const failureOf = <A>(result: Result.Result<A, CanonicalJsonFailure>): CanonicalJsonFailure => {
   expect(Result.isFailure(result)).toBe(true)
@@ -30,6 +33,62 @@ describe('canonical hashing', () => {
     expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body: canonical, hash }))
     expect(Result.getOrThrow(canonicalHashV1Result({ b: 2, a: 1 }))).toBe(
       Result.getOrThrow(canonicalHashV1Result({ a: 1, b: 2 })),
+    )
+  })
+
+  test('matches JSON scalar encoding at finite-number formatting boundaries', () => {
+    const numbers = [
+      0,
+      -0,
+      Number.MIN_VALUE,
+      -Number.MIN_VALUE,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MIN_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER,
+      1e-7,
+      1e-6,
+      1e20,
+      1e21,
+      Math.PI,
+    ]
+    for (const value of numbers) {
+      const body = JSON.stringify(value)
+      expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+    }
+  })
+
+  test('preserves every JSON escape in values and keys alongside unescaped Unicode', () => {
+    const values = [
+      '',
+      'ordinary evidence text / 2026-09-04T14:30:02.000Z',
+      '"',
+      '\\',
+      'line\nbreak\tand\rreturn',
+      'é e\u0301 😀 \u2028 \u2029 \ufeff',
+      ...Array.from({ length: 32 }, (_, code) => String.fromCharCode(code)),
+    ]
+    for (const value of values) {
+      const input = { [value]: [value, value + ' tail'] }
+      const body = JSON.stringify(input)
+      expect(canonicalJsonWithHashV1Result(input)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+    }
+  })
+
+  test('property: scalar encoding stays byte-identical to JSON for finite numbers and well-formed Unicode', () => {
+    checkProperty(
+      'canonical-json-scalar-encoding',
+      fc.property(
+        fc.double({ noNaN: true, noDefaultInfinity: true }),
+        fc.fullUnicodeString({ maxLength: 80 }),
+        fc.fullUnicodeString({ maxLength: 80 }),
+        (number, key, value) => {
+          const input = { [key]: [number, value] }
+          const body = JSON.stringify(input)
+          expect(canonicalJsonWithHashV1Result(input)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+        },
+      ),
+      2000,
     )
   })
 
@@ -251,6 +310,152 @@ describe('canonical hashing', () => {
     const second = { nested: { a: '', z: -0 }, emptyObject: {}, emptyArray: [] }
     expect(canonicalJsonV1Result(first)).toEqual(canonicalJsonV1Result(second))
     expect(canonicalHashV1Result(first)).toEqual(canonicalHashV1Result(second))
+  })
+
+  test('preserves mixed nested failure paths after completed siblings', () => {
+    const hidden = Object.defineProperty({}, 'leaf', { enumerable: false, value: 1 })
+    let getterCalls = 0
+    const accessor = Object.defineProperty({}, 'leaf', {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1
+        return 1
+      },
+    })
+    const symbolic = { [Symbol('leaf')]: true }
+    const cyclic: Record<string, unknown> = {}
+    cyclic['self'] = cyclic
+    const sparse: unknown[] = []
+    sparse.length = 1
+    const base = '$.outer[1].0'
+    const cases = [
+      [{ okay: [1], ['z\ud800']: true }, base, 'invalid-unicode-key', 'string'],
+      [hidden, `${base}.leaf`, 'non-data-property', 'object-property'],
+      [accessor, `${base}.leaf`, 'non-data-property', 'object-property'],
+      [symbolic, base, 'symbol-key', 'object'],
+      [Object.create({ inherited: true }), base, 'non-plain-object', 'object'],
+      [cyclic, `${base}.self`, 'cycle', 'object'],
+      [sparse, base, 'non-dense-array', 'array'],
+      [
+        { 'key.with[brackets]': [{ value: Number.NaN }] },
+        `${base}.key.with[brackets][0].value`,
+        'non-finite-number',
+        'number',
+      ],
+      [{ leaf: ['\ud800'] }, `${base}.leaf[0]`, 'invalid-unicode-surrogate', 'string'],
+      [{ leaf: [undefined] }, `${base}.leaf[0]`, 'non-json-type', 'undefined'],
+    ] as const
+    for (const [value, path, reason, actualType] of cases) {
+      const input = { outer: [{ completed: [{ okay: true }] }, { '0': value }] }
+      expect(failureOf(canonicalJsonV1Result(input))).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path,
+        reason,
+        actualType,
+      })
+      expect(canonicalJsonV1Result({ outer: [{ okay: true }] })).toEqual(Result.succeed('{"outer":[{"okay":true}]}'))
+    }
+    expect(getterCalls).toBe(0)
+  })
+
+  test('retains the precise nested reflection operation, path and cause', () => {
+    type IntrospectionFailure = Extract<CanonicalJsonFailure, { reason: 'introspection-failed' }>
+    const cause = new Error('nested reflection unavailable')
+    const fail = (): never => {
+      throw cause
+    }
+    const check = (
+      value: unknown,
+      operation: IntrospectionFailure['operation'],
+      actualType: IntrospectionFailure['actualType'],
+      suffix = '',
+    ) => {
+      const failure = failureOf(canonicalJsonV1Result({ outer: [{ completed: {} }, { value }] }))
+      expect(failure).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: `$.outer[1].value${suffix}`,
+        reason: 'introspection-failed',
+        actualType,
+        operation,
+        cause,
+      })
+      expect(failure.reason === 'introspection-failed' && failure.cause).toBe(cause)
+    }
+    check(new Proxy({}, { getPrototypeOf: fail }), 'prototype', 'object')
+    check(new Proxy({}, { ownKeys: fail }), 'own-keys', 'object')
+    check(new Proxy({ leaf: true }, { getOwnPropertyDescriptor: fail }), 'property-descriptor', 'object', '.leaf')
+    check(new Proxy([1], { get: fail }), 'array-length', 'array')
+    check(new Proxy([1], { ownKeys: fail }), 'enumerable-own-keys', 'array')
+
+    let ownKeysCalls = 0
+    check(
+      new Proxy([1], {
+        ownKeys: (target) => {
+          ownKeysCalls += 1
+          return ownKeysCalls === 1 ? Reflect.ownKeys(target) : fail()
+        },
+      }),
+      'own-keys',
+      'array',
+    )
+    expect(ownKeysCalls).toBe(2)
+
+    let descriptorCalls = 0
+    check(
+      new Proxy([1], {
+        getOwnPropertyDescriptor: (target, key) => {
+          if (key === '0') {
+            descriptorCalls += 1
+            if (descriptorCalls === 2) return fail()
+          }
+          return Object.getOwnPropertyDescriptor(target, key)
+        },
+      }),
+      'property-descriptor',
+      'array',
+      '[0]',
+    )
+    expect(descriptorCalls).toBe(2)
+
+    const revoked = Proxy.revocable({}, {})
+    revoked.revoke()
+    expect(failureOf(canonicalJsonV1Result({ outer: [revoked.proxy] }))).toEqual({
+      _tag: 'CanonicalJsonFailure',
+      path: '$.outer[0]',
+      reason: 'introspection-failed',
+      actualType: 'object',
+      operation: 'array-classification',
+      cause: expect.any(TypeError),
+    })
+  })
+
+  test('keeps reentrant serialization paths independent inside reflection traps', () => {
+    const innerResults: Result.Result<string, CanonicalJsonFailure>[] = []
+    const value = new Proxy(
+      { leaf: Number.NaN },
+      {
+        getOwnPropertyDescriptor: (target, key) => {
+          innerResults.push(canonicalJsonV1Result({ inner: [{ leaf: undefined }] }))
+          innerResults.push(canonicalJsonV1Result({ ready: [true] }))
+          return Object.getOwnPropertyDescriptor(target, key)
+        },
+      },
+    )
+    expect(failureOf(canonicalJsonV1Result({ outer: [value] }))).toEqual({
+      _tag: 'CanonicalJsonFailure',
+      path: '$.outer[0].leaf',
+      reason: 'non-finite-number',
+      actualType: 'number',
+    })
+    expect(innerResults).toEqual([
+      Result.fail({
+        _tag: 'CanonicalJsonFailure',
+        path: '$.inner[0].leaf',
+        reason: 'non-json-type',
+        actualType: 'undefined',
+      }),
+      Result.succeed('{"ready":[true]}'),
+    ])
   })
 
   test('produces stable non-zero TigerBeetle identifiers', () => {

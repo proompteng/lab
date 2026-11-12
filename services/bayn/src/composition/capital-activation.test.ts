@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from '../jev/protocol'
 import { expect, test } from 'bun:test'
 import { Effect, Redacted, Result } from 'effect'
 
@@ -21,7 +22,7 @@ import {
   makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
 } from '../execution/contracts'
-import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store'
+import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store/contract'
 import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
 import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
@@ -30,6 +31,8 @@ import { canonicalHashV1Result } from '../hash'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import {
   configuredCapitalActivation,
+  readBoundCapitalActivationGeneration,
+  researchCapitalRecoveryRequestIsCompatible,
   prepareOrRecoverResearchCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
   validateResearchCapitalPreflight,
@@ -107,6 +110,49 @@ const plan = (serialized?: string): ApplicationPlan => ({
   strategyProtocolHash: strategy.protocolHash,
 })
 
+const generation = (mandate: ResearchCapitalActivationRequest, previousGenerationHash: string) => {
+  const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(mandate)
+  return Result.getOrThrow(
+    makeResearchCapitalGrantGenerationResult({
+      ...proof,
+      schemaVersion: 'bayn.paper-authority-generation.v3',
+      maximum: Authority.Execution,
+      previousGenerationHash,
+      reconciliationId: '2'.repeat(64),
+      reconciliationContentHash: '3'.repeat(64),
+    }),
+  )
+}
+
+test('a compatible sealed request cannot label a durable generation created by another request', async () => {
+  const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const other = request({}, 'b'.repeat(64))
+  expect(Result.isSuccess(configuredCapitalActivation(plan(JSON.stringify(other))))).toBeTrue()
+  for (const matching of [true, false]) {
+    const retained = generation(matching ? current : other, 'a'.repeat(64))
+    const authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: '2026-11-09T14:29:59.000Z',
+    }
+    const result = await Effect.runPromise(
+      readBoundCapitalActivationGeneration(plan(JSON.stringify(current)), current, null, null, {
+        readAuthorityState: Effect.succeed(authority),
+        readResearchAuthorityGeneration: (hash) => {
+          expect(hash).toBe(retained.generationHash)
+          return Effect.succeed(retained)
+        },
+      }).pipe(Effect.result),
+    )
+    expect(Result.isSuccess(result)).toBe(matching)
+  }
+})
+
 test('rejects an otherwise valid sealed mandate for the previous strategy before runtime preparation', () => {
   for (const [field, message] of [
     ['behaviorHash', 'capital activation request strategy identity does not match the current strategy'],
@@ -122,6 +168,32 @@ test('retains the exact compatible mandate without changing its account or risk 
   expect(configuredCapitalActivation(plan(JSON.stringify(current)))).toEqual(
     Result.succeed({ request: current, buildContinuation: null, buildLineage: null }),
   )
+})
+
+test('v39 requires a reviewed strategy rebind even when the v38 account, grant class and risk remain identical', () => {
+  const previousStrategy = {
+    ...strategy,
+    parameterSchemaVersion: 'bayn.jev.protocol.v38',
+    parameterHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        ...retainedJevProtocolV39Document,
+        schemaVersion: 'bayn.jev.protocol.v38',
+      }),
+    ),
+  }
+  const previous = request({
+    ...previousStrategy,
+    protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(previousStrategy)),
+  })
+  const current = request()
+  expect(previous.broker).toEqual(current.broker)
+  expect(previous.riskPolicyHash).toBe(current.riskPolicyHash)
+  expect(previous.limits).toEqual(current.limits)
+  expect(previous.grant._tag).toBe(current.grant._tag)
+  expect(previous.strategy.behaviorHash).toBe(current.strategy.behaviorHash)
+  expect(Result.isFailure(configuredCapitalActivation(plan(JSON.stringify(previous))))).toBe(true)
+  expect(Result.isFailure(researchCapitalRecoveryRequestIsCompatible(previous, plan()))).toBe(true)
+  expect(previous.requestHash).not.toBe(current.requestHash)
 })
 
 test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {
@@ -259,19 +331,6 @@ test('a cutover mandate rearms through current proof and exact reconciliation be
   )
   const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
   const retired = request({ behaviorHash: 'f'.repeat(64), parameterSchemaVersion: 'bayn.jev.protocol.v18' })
-  const generation = (mandate: ResearchCapitalActivationRequest, previousGenerationHash: string) => {
-    const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(mandate)
-    return Result.getOrThrow(
-      makeResearchCapitalGrantGenerationResult({
-        ...proof,
-        schemaVersion: 'bayn.paper-authority-generation.v3',
-        maximum: Authority.Execution,
-        previousGenerationHash,
-        reconciliationId: '2'.repeat(64),
-        reconciliationContentHash: '3'.repeat(64),
-      }),
-    )
-  }
   const previous = generation(retired, 'a'.repeat(64))
   const successorHash = Result.getOrThrow(
     executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: previous.generationHash }),
@@ -423,5 +482,62 @@ test('a cutover mandate rearms through current proof and exact reconciliation be
       expect(authority.generationHash).toBe(previous.generationHash)
       expect(history.size).toBe(1)
     }
+  }
+})
+
+test('an incomplete reconciliation retains only the exact restricted generation for cancellation recovery', async () => {
+  const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const retained = generation(current, 'a'.repeat(64))
+  for (const scenario of ['bound', 'operator-hold', 'foreign-request'] as const) {
+    const authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: scenario === 'operator-hold' ? 'operator hold' : 'reconciliation pass incomplete',
+      version: 2,
+      updatedAt: '2026-11-10T16:49:33.128Z',
+    }
+    const forbidden = Effect.die(
+      'restricted recovery must not reconcile, activate or clear authority during acquisition',
+    )
+    const store: AuthorityGenerationStoreShape = {
+      readAuthorityState: Effect.succeed(authority),
+      readResearchAuthorityGeneration: () => Effect.succeed(retained),
+      readOrInitializeObserveAuthority: () => forbidden,
+      readAuthorityGenerationLineage: () => forbidden,
+      ensureAuthorityGeneration: () => forbidden,
+    }
+    const result = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        plan(),
+        scenario === 'foreign-request' ? request({}, 'b'.repeat(64)) : current,
+        null,
+        null,
+        store,
+        { activateResearchCapitalGrant: () => forbidden },
+        Effect.fail(
+          new OperationalError({
+            component: 'http',
+            operation: 'reconciliation',
+            retryable: false,
+            message: 'unavailable full history',
+          }),
+        ),
+        1000,
+      ).pipe(Effect.result),
+    )
+    expect(result).toEqual(
+      scenario === 'bound' ? Result.succeed(retained) : expect.objectContaining({ _tag: 'Failure' }),
+    )
+    expect(authority).toMatchObject({
+      generationHash: retained.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      version: 2,
+    })
   }
 })

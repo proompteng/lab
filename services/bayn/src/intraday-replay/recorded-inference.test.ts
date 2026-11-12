@@ -3,12 +3,11 @@ import { Cause, Clock, Deferred, Effect, Exit, Fiber, Redacted, Result } from 'e
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import { makeInitialChartStageRequest } from '../jev/staged-chart-questions'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { JevFailure, jevModel, prepareJevRequest } from '../jev/contract'
 import { entryEvaluationRequestFixture, nativeChartInference } from '../jev/entry-inference.test-support'
 import { utcInstantFromEpochMillis } from '../time'
-import { stageResponseIdentity } from '../jev/staged-checkpoint'
 import {
   makeRecordedInferenceProviders,
   validateReplayInferenceRecording,
@@ -32,8 +31,8 @@ const response = {
   answers: { enter: { type: 'noul' as const, noul: 0.7 } },
   usage: { input_tokens: 100, output_tokens: 0 },
 }
-const call = (): Extract<ReplayInferenceCall, { readonly stage: 'JEV' }> => ({
-  schemaVersion: 'bayn.replay-inference-call.v2',
+const call = (): ReplayInferenceCall & { readonly stage: 'JEV' } => ({
+  schemaVersion: 'bayn.replay-inference-call.v4',
   stage: 'JEV',
   request: request.request,
   requestHash: request.requestHash,
@@ -271,80 +270,65 @@ test.each(['INTERRUPTED', 'DEFECT'] as const)(
   },
 )
 
-test.each(['CHART', 'BASE_START'] as const)(
-  '%s evidence uses the measured replay clock without provider dispatch',
-  async (stage) => {
-    const evaluation = entryEvaluationRequestFixture(observedAt)
-    const chart = Result.getOrThrow(makeNativeChartEvidence(evaluation.request.chartSource))
-    const source = { chart, protocol: evaluation.request.protocol, funding: evaluation.request.funding }
-    const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
-    const prepared = (() => {
-      if (stage === 'CHART') return initial
-      const next = Result.getOrThrow(
-        makeSelectedBaseStartStageRequest(
-          source,
-          stageResponseIdentity(nativeChartInference(initial.request, providerAt)),
-        ),
-      )
-      if (next.status !== 'PREPARED') throw new Error('Missing requested base stage')
-      return next
-    })()
-    const inference = nativeChartInference(prepared.request, providerAt)
-    const retainedCall: ReplayInferenceCall = {
-      ...call(),
+test.each(['CHART'] as const)('%s evidence uses the measured replay clock without provider dispatch', async (stage) => {
+  const evaluation = entryEvaluationRequestFixture(observedAt)
+  const chart = Result.getOrThrow(makeNativeChartEvidence(evaluation.request.chartSource))
+  const source = { chart, protocol: evaluation.request.protocol, funding: evaluation.request.funding }
+  const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
+  const prepared = initial
+  const inference = nativeChartInference(prepared.request, providerAt)
+  const retainedCall: ReplayInferenceCall = {
+    ...call(),
+    ...(stage === 'CHART'
+      ? { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'CHART' as const }
+      : { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'BASE_START' as const }),
+    request: prepared.request,
+    requestHash: inference.requestHash,
+    outcome: { status: 'RECEIVED', inference },
+  }
+  const relabeled = recording([
+    {
+      ...retainedCall,
       ...(stage === 'CHART'
-        ? { schemaVersion: 'bayn.replay-inference-call.v2' as const, stage: 'CHART' as const }
-        : { schemaVersion: 'bayn.replay-inference-call.v3' as const, stage: 'BASE_START' as const }),
-      request: prepared.request,
-      requestHash: inference.requestHash,
-      outcome: { status: 'RECEIVED', inference },
-    }
-    const relabeled = recording([
-      {
-        ...retainedCall,
-        ...(stage === 'CHART'
-          ? { schemaVersion: 'bayn.replay-inference-call.v3' as const, stage: 'BASE_START' as const }
-          : { schemaVersion: 'bayn.replay-inference-call.v2' as const, stage: 'CHART' as const }),
-      },
-    ])
-    expect(Result.isFailure(validateReplayInferenceRecording(relabeled, hash(relabeled)))).toBe(true)
-    const recorded: ReplayInferenceCall[] = []
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const f = yield* fixture([retainedCall])
-        const started = yield* Deferred.make<void>()
-        const timing = yield* makeReplayInferenceTiming({
-          providers: {
-            ...f.providers,
-            chart: {
-              evaluate: (raw, budget) =>
-                Deferred.succeed(started, undefined).pipe(Effect.andThen(f.providers.chart.evaluate(raw, budget))),
-            },
+        ? { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'BASE_START' as const }
+        : { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'CHART' as const }),
+    },
+  ])
+  expect(Result.isFailure(validateReplayInferenceRecording(relabeled, hash(relabeled)))).toBe(true)
+  const recorded: ReplayInferenceCall[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture([retainedCall])
+      const started = yield* Deferred.make<void>()
+      const timing = yield* makeReplayInferenceTiming({
+        providers: {
+          ...f.providers,
+          jev: {
+            evaluate: (raw, budget) =>
+              Deferred.succeed(started, undefined).pipe(Effect.andThen(f.providers.jev.evaluate(raw, budget))),
           },
-          budget: makeReplayInferenceBudget(1),
-          providerClock: f.providerClock,
-          advanceTo: (at) => f.marketClock.setTime(at),
-          advanceDeadlineTo: (at) => f.marketClock.setTime(at),
-          excludedSourceMillis: Effect.succeed(0),
-          measureDatabaseTime: (operation) => operation,
-          retain: (value) =>
-            Effect.sync(() => {
-              recorded.push(value)
-            }),
-        }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
-        const evaluated = yield* timing
-          .run(timing.clients.chart.evaluate(prepared.request, 1000))
-          .pipe(Effect.forkChild)
-        yield* Deferred.await(started)
-        yield* f.providerClock.adjust(50)
-        const result = yield* Fiber.join(evaluated)
-        expect(result.response).toEqual(inference.response)
-        expect(Date.parse(result.completedAt) - Date.parse(observedAt)).toBe(50)
-        expect(recorded).toHaveLength(1)
-        expect(recorded[0]?.outcome.status).toBe('RECEIVED')
-        expect(recorded[0]?.stage).toBe(stage)
-        yield* f.assertSupported
-      }).pipe(Effect.scoped),
-    )
-  },
-)
+        },
+        budget: makeReplayInferenceBudget(1),
+        providerClock: f.providerClock,
+        advanceTo: (at) => f.marketClock.setTime(at),
+        advanceDeadlineTo: (at) => f.marketClock.setTime(at),
+        excludedSourceMillis: Effect.succeed(0),
+        measureDatabaseTime: (operation) => operation,
+        retain: (value) =>
+          Effect.sync(() => {
+            recorded.push(value)
+          }),
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      const evaluated = yield* timing.run(timing.clients.jev.evaluate(prepared.request, 1000)).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* f.providerClock.adjust(50)
+      const result = yield* Fiber.join(evaluated)
+      expect(result.response).toEqual(inference.response)
+      expect(Date.parse(result.completedAt) - Date.parse(observedAt)).toBe(50)
+      expect(recorded).toHaveLength(1)
+      expect(recorded[0]?.outcome.status).toBe('RECEIVED')
+      expect(recorded[0]?.stage).toBe(stage)
+      yield* f.assertSupported
+    }).pipe(Effect.scoped),
+  )
+})

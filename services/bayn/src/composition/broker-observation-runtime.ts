@@ -23,16 +23,68 @@ import type { ApplicationPlan } from '../app'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
-import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
+import { brokerSnapshotCacheConfig, makeBrokerObservationCapture } from '../broker/alpaca/snapshot-cache'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { canonicalHashV1Result } from '../hash'
-import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
+import { OrderStatus } from '../broker/alpaca/model'
+import {
+  FillActivityRelation,
+  FillMismatchOrderRole,
+  ReconciliationError,
+} from '../simulation-reconciliation/broker-reconciler-model'
+
+const diagnosticData = (value: unknown, key: string): unknown =>
+  typeof value === 'object' && value !== null ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
+
+const snapshotFailureAnnotations = (failure: unknown): Readonly<Record<string, string>> => {
+  const cause = diagnosticData(failure, 'cause')
+  if (!isNativeError(cause) || Object.getPrototypeOf(cause) !== ReconciliationError.prototype) return {}
+  const detail = diagnosticData(cause, 'failure')
+  if (diagnosticData(detail, '_tag') !== 'Snapshot') return {}
+  const reason = diagnosticData(detail, 'reason')
+  if (
+    typeof reason !== 'string' ||
+    !['HistoryChanged', 'FillActivitiesPending', 'AccountBaselineMissing', 'TradingDayChanged'].includes(reason)
+  )
+    return {}
+  const annotations: Record<string, string> = { 'broker.snapshot_failure_reason': reason }
+  if (reason !== 'FillActivitiesPending') return annotations
+  const mismatch = diagnosticData(detail, 'fillMismatch')
+  for (const [field, key, allowed] of [
+    ['activityRelation', 'broker.fill_activity_relation', Object.values(FillActivityRelation)],
+    ['orderRole', 'broker.fill_mismatch_order_role', Object.values(FillMismatchOrderRole)],
+    ['orderStatus', 'broker.fill_mismatch_order_status', Object.values(OrderStatus)],
+  ] as const) {
+    const value = diagnosticData(mismatch, field)
+    if (typeof value === 'string' && allowed.some((entry) => entry === value)) annotations[key] = value
+  }
+  return annotations
+}
+
+export const brokerPollFailureAnnotations = (failure: unknown): Readonly<Record<string, string>> => {
+  const unknown = { 'broker.poll_failure_reason': 'unknown' }
+  if (!isNativeError(failure)) return unknown
+  try {
+    // Inspect fixed data fields on the wrapper and its direct typed reconciliation cause only.
+    // Never read accessors, messages, payloads, or recursively traverse causes.
+    const reason: unknown = Object.getOwnPropertyDescriptor(failure, 'pollFailureReason')?.value
+    return typeof reason === 'string' && Object.values(BrokerPollFailureReason).some((value) => value === reason)
+      ? {
+          'broker.poll_failure_reason': reason,
+          ...(reason === BrokerPollFailureReason.SnapshotRejected ? snapshotFailureAnnotations(failure) : {}),
+        }
+      : unknown
+  } catch {
+    return unknown
+  }
+}
 
 export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): Readonly<Record<string, string>> => {
   const unknown = {
@@ -120,10 +172,13 @@ export const acquireBrokerObservationRuntime = (
       Layer.provide(pollingHttp),
       Layer.provideMerge(telemetry),
     )
-    const acquireBroker = Effect.acquireRelease(
-      Effect.sync(() => ManagedRuntime.make(brokerResources)),
-      (value) => value.disposeEffect,
-    )
+    const acquireBroker = Effect.gen(function* () {
+      const runtime = yield* Effect.acquireRelease(
+        Effect.sync(() => ManagedRuntime.make(brokerResources)),
+        (value) => value.disposeEffect,
+      )
+      return { runtime, capture: yield* makeBrokerObservationCapture }
+    })
     const brokerRuntimes = yield* ScopedRef.fromAcquire(acquireBroker)
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
     const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, config.maxAgeMs - config.pollIntervalMs)
@@ -184,18 +239,17 @@ export const acquireBrokerObservationRuntime = (
             }
             return yield* settleCompletedBrokerObservationPoll(
               Effect.gen(function* () {
+                let sessionVerified = false
                 const capture = Effect.gen(function* () {
                   const broker = yield* ScopedRef.get(brokerRuntimes)
                   const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
                   const annotations = yield* References.CurrentLogAnnotations
                   return yield* Effect.promise((captureSignal) =>
-                    broker.runPromiseExit(
+                    broker.runtime.runPromiseExit(
                       Effect.gen(function* () {
-                        return yield* captureBrokerObservation(
-                          (yield* BrokerSession).read,
-                          ticket.startedAt,
-                          captureTimeoutMs,
-                        )
+                        const session = yield* BrokerSession
+                        sessionVerified = true
+                        return yield* broker.capture(session.read, ticket, captureTimeoutMs)
                       }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                       { signal: captureSignal },
                     ),
@@ -224,12 +278,30 @@ export const acquireBrokerObservationRuntime = (
                   Effect.timeoutOrElse({
                     duration: captureTimeoutMs,
                     orElse: () =>
-                      Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
+                      Effect.fail(
+                        observationUnavailable(
+                          sessionVerified
+                            ? 'Broker observation polling exceeded its deadline'
+                            : 'Broker observation acquisition exceeded its deadline',
+                          undefined,
+                          sessionVerified
+                            ? BrokerPollFailureReason.PollDeadline
+                            : BrokerPollFailureReason.AcquisitionDeadline,
+                        ),
+                      ),
                   }),
-                  // Stop lazy layer acquisition on every failed exit before any known-work quota settlement.
-                  Effect.onExit((exit) =>
-                    Exit.isFailure(exit) ? ScopedRef.set(brokerRuntimes, acquireBroker) : Effect.void,
-                  ),
+                  Effect.onExit((exit) => {
+                    if (Exit.isSuccess(exit)) return Effect.void
+                    const retryableReadFailure =
+                      exit.cause.reasons.length > 0 &&
+                      exit.cause.reasons.every((reason) => reason._tag === 'Fail' && reason.error.retryable)
+                    // A rejected or timed-out cut already discards its retained history. Keep the verified
+                    // connection for the next quota-paced poll instead of repeating startup preflight.
+                    // Acquisition failures and uncertain exits must still stop their lazy resource scope.
+                    return sessionVerified && retryableReadFailure
+                      ? Effect.void
+                      : ScopedRef.set(brokerRuntimes, acquireBroker)
+                  }),
                   Effect.result,
                 )
                 if (Result.isFailure(result)) {
@@ -239,6 +311,7 @@ export const acquireBrokerObservationRuntime = (
                       'broker.operation': result.failure.operation,
                       'broker.failure_kind': result.failure.kind,
                       'broker.retryable': result.failure.retryable,
+                      ...brokerPollFailureAnnotations(result.failure),
                       ...(result.failure.status === undefined ? {} : { 'broker.http_status': result.failure.status }),
                     }),
                   )
@@ -286,6 +359,7 @@ export const acquireBrokerObservationRuntime = (
             // interrupted capture's quota debt; only its still-owned unfinished projection is fenced.
             Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.interrupt(reservation.captureId))),
             withObservedStage('bayn.broker.observation.poll', {
+              slowAfterMs: null,
               attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
             }),
             Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),

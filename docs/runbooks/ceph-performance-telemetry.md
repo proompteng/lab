@@ -77,6 +77,87 @@ This telemetry change does not repair PCIe training or establish a client-latenc
 
 ## Diagnose the bottleneck
 
+### Investigate retained BlueStore slow-operation warnings
+
+For `CephClusterHealthWarning`, start with `ceph health detail` and identify the affected OSD and check name.
+`BLUESTORE_SLOW_OP_ALERT` retains slow-operation indications for `bluestore_slow_ops_warn_lifetime` seconds.
+The current default is 86400 seconds, with a threshold of one indication. Read both effective values before
+interpreting an alert's age. A retained warning can outlast the slow operation by a day.
+See [Ceph's health-check reference](https://docs.ceph.com/en/umbrella/rados/operations/health-checks/#bluestore-slow-op-alert).
+
+For an affected `osd.0`, run these read-only commands. Replace the OSD ID with the one reported by health detail.
+
+```sh
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd.0 bluestore_slow_ops_warn_lifetime
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd.0 bluestore_slow_ops_warn_threshold
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell osd.0 dump_ops_in_flight
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell osd.0 dump_scrub_reservations
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd metadata 0 -f json
+```
+
+Read the affected pod's `/var/log/ceph/ceph-osd.0.log` and rotated `.gz` files.
+Container stdout can omit an older event after rotation. Use `zgrep` for `slow operation observed` and `slow aio`,
+then sort by the log timestamp. Record the last event's function, duration, and I/O count.
+`ceph healthcheck history ls` reports when a check was last observed active, not when the underlying operation occurred.
+The manager's health metric timestamp also measures the scrape, so neither timestamp establishes a new slow operation.
+
+Compare the event window with the OSD's client latency, scrub read bytes, host disk queue, and BlueFS fsync means below.
+The four `ceph_bluestore_slow_*_count` counters identify some slow paths, but do not cover every BlueStore warning.
+An empty `dump_ops_in_flight` or a zero commit-latency snapshot does not exclude intermittent delays.
+For completed client stalls, inspect `dump_historic_ops` and separate local commit time from replica acknowledgement time.
+
+Use `bluestore_bdev_dev_node`, `bluefs_db_dev_node`, and `device_ids` from OSD metadata to locate the data and DB devices.
+Resolve both device-mapper paths with `lsblk -s -o NAME,TYPE,ROTA` inside the affected OSD pod before reading SMART data.
+Run `smartctl -a -j` against each verified parent device and compare error counters with an earlier sample.
+HDD data with an NVMe DB still requires HDD reads during deep scrub. Healthy NVMe latency does not prove healthy data reads.
+A passing SMART summary does not exclude a storage fault. Check media errors, pending sectors, timeouts, link errors,
+temperature, and kernel errors alongside the latency evidence.
+
+Keep detection thresholds, retention, integrity checks, and the committed scrub policy while investigating.
+Before a scrub or mClock experiment, capture equal-duration client latency and scrub-progress baselines under representative load.
+Change one setting through reviewed GitOps, verify its effective value, and require advancing deep-scrub completion timestamps.
+Reject a candidate that worsens application deadlines or scrub debt, and restore the exact previous value through GitOps.
+The previous single-object scrub-batch trial was reverted to the explicit five-object baseline in
+[PR #15463](https://github.com/proompteng/lab/pull/15463). Review that evidence before repeating the same change.
+
+### Metadata-device latency and scrub progress
+
+Retain the native BlueFS SST/WAL write bytes, read bytes, log-compaction duration,
+BlueStore transaction-throttle duration, and replicated-scrub read/intersection/blocked counters.
+These counters are already exposed by the OSD exporters; their collection needs no OSD restart,
+additional permissions, RocksDB tracing, or change to `osd_max_scrubs=3`.
+The central Alloy allowlist retains 13 additional metric names, bounded by existing daemon identity.
+
+```promql
+ceph_storage:bluefs_sst_write_bytes_per_second:rate5m
+ceph_storage:bluefs_wal_write_bytes_per_second:rate5m
+ceph_storage:bluefs_read_bytes_per_second:rate5m
+ceph_storage:bluefs_fsync_seconds:mean5m
+ceph_storage:bluestore_throttle_seconds:mean5m
+ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+ceph_storage:osd_scrub_blocked_ops_per_second:rate5m
+```
+
+Resolve each OSD's `block.db` through its actual device-mapper slaves before comparing its
+BlueFS fsync and metadata-write rates with NVMe latency. Device names can change after reboot.
+SST writes include both memtable flush and RocksDB compaction; they do not identify the cause alone.
+BlueFS `compact_lat` and `compact_lock_lat` describe BlueFS **log** compaction, not RocksDB
+SST compaction. Missing RocksDB statistics are not evidence of zero compaction.
+The exporter labels cumulative latency sums as gauges; use their paired cumulative counts,
+verify continuity, and exclude reset windows for literal first/last comparisons. Never interpret
+these means as request percentiles or subtract unrelated latency populations.
+
+Scrub read bytes include replica reads. Their cluster sum is not unique logical coverage, and a
+successful-scrub counter can include shallow scrubs. Check PG deep-scrub completion timestamps
+and reservation age independently. Zero direct scrub-blocked operations does not exclude shared
+disk contention. Preserve normal useful workload and all integrity checks during comparisons.
+
+After the configuration-digest rollout, require fresh advancing series from all six OSDs in Mimir
+and successful rule evaluation. Verify active byte counters rather than just `up`. Removing the
+added allowlist alternatives and recording rules through GitOps rolls back this instrumentation;
+it does not change Ceph scheduling or repair a hardware fault.
+
 The objectstore gateways use Beast with `tcp_nodelay=1` through `gateway.rgwCommandFlags.rgw_frontends` in
 `argocd/applications/rook-ceph/cluster-values.yaml`. The explicit frontend retains Rook's existing container port
 8080 behind Service port 80; update that override when changing gateway listeners. Ceph's

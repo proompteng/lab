@@ -38,6 +38,66 @@ test('Bayn cache alerts evaluate healthy, missing, failed and low-traffic observ
   })
 }, 30_000)
 
+test('Bayn operation telemetry alerts reject clock-skewed heartbeats before aggregating replicas', () => {
+  const manifest = YAML.parse(
+    readFileSync(
+      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
+      'utf8',
+    ),
+  )
+  const rules: { groups: { rules: { alert?: string; expr: string }[] }[] } = YAML.parse(
+    manifest.data['graf-rules.yaml'],
+  )
+  const expression = rules.groups
+    .flatMap((group) => group.rules)
+    .find((rule) => rule.alert === 'BaynOperationMetricsUnavailable')?.expr
+  if (expression === undefined) throw new Error('Bayn operation telemetry alert is missing')
+  const services = ['bayn', 'bayn-execution-controller']
+  const observations = [
+    { name: 'future-only heartbeat cannot establish freshness', offsets: [3600], unavailable: true },
+    { name: 'future heartbeat cannot hide a stale replica', offsets: [3600, -91], unavailable: true },
+    { name: 'future heartbeat does not invalidate a healthy replica', offsets: [3600, 0], unavailable: false },
+    { name: 'five seconds ahead remains within clock tolerance', offsets: [5], unavailable: false },
+    { name: 'six seconds ahead is outside clock tolerance', offsets: [6], unavailable: true },
+    { name: 'ninety-second freshness boundary is preserved', offsets: [-90], unavailable: false },
+    { name: 'older heartbeat remains unavailable', offsets: [-91], unavailable: true },
+  ]
+  runPromtool({
+    'rules.yaml': manifest.data['graf-rules.yaml'],
+    'tests.yaml': YAML.stringify({
+      rule_files: ['rules.yaml'],
+      evaluation_interval: '15s',
+      tests: services.flatMap((service) =>
+        observations.map((observation) => ({
+          name: `${service}: ${observation.name}`,
+          interval: '15s',
+          input_series: [
+            {
+              series: 'bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}',
+              values: '1+0x20',
+            },
+            ...services.flatMap((observedService) =>
+              (observedService === service ? observation.offsets : [0]).map((offset, index) => ({
+                series: `bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="${observedService}",source_revision="current",pod="pod-${index}"}`,
+                values: `${offset}+15x20`,
+              })),
+            ),
+          ],
+          promql_expr_test: [
+            {
+              expr: expression,
+              eval_time: '3m',
+              exp_samples: observation.unavailable
+                ? [{ labels: `{service="${service}",source_revision="current"}`, value: 1 }]
+                : [],
+            },
+          ],
+        })),
+      ),
+    }),
+  })
+}, 30_000)
+
 type MetricPanel = {
   readonly type: 'stat' | 'timeseries' | 'bargauge' | 'logs'
   readonly title: string

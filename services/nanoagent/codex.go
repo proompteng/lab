@@ -1387,10 +1387,16 @@ func codexReplayMessage(raw json.RawMessage) json.RawMessage {
 		json.Unmarshal(params["item"], &item) != nil {
 		return raw
 	}
-	if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
+	changed := false
+	if string(item["type"]) == `"imageGeneration"` {
+		var result string
+		if json.Unmarshal(item["result"], &result) == nil && result != "" {
+			item["result"] = json.RawMessage(`"[Image output]"`)
+			changed = true
+		}
+	} else if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
 		return raw
 	}
-	changed := false
 	projectImages := func(container map[string]json.RawMessage, field string) {
 		var content []json.RawMessage
 		if json.Unmarshal(container[field], &content) != nil {
@@ -1574,18 +1580,24 @@ const (
 )
 
 func isMissingCodexConversation(method string, params json.RawMessage, err error) bool {
-	if method != "thread/resume" {
+	var prefix string
+	switch method {
+	case "thread/resume":
+		prefix = codexMissingRolloutMessagePrefix
+	case "thread/read":
+		prefix = "thread not loaded: "
+	default:
 		return false
 	}
 	var rpcError *codexRPCError
 	if !errors.As(err, &rpcError) || rpcError.code != -32600 {
 		return false
 	}
-	threadID, ok := codexResumeThreadID(params)
-	return ok && rpcError.message == codexMissingRolloutMessagePrefix+threadID
+	threadID, ok := codexThreadID(params)
+	return ok && rpcError.message == prefix+threadID
 }
 
-func codexResumeThreadID(params json.RawMessage) (string, bool) {
+func codexThreadID(params json.RawMessage) (string, bool) {
 	var input struct {
 		ThreadID string `json:"threadId"`
 	}

@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schedule, Schema } from 'effect'
+import { Effect, Schedule, Schema, Stream } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
@@ -10,9 +10,11 @@ import {
   NativeArrivalEpochSchema,
   nativeArrivalCaptureId,
   type NativeArrivalChunk,
+  type NativeArrivalEpoch,
 } from '../market-data/streaming/native-arrival'
 import type { NativeArrivalStore } from '../market-data/streaming/native-arrival-journal'
 import { Sha256Schema, strictParseOptions } from '../schemas'
+import { withObservedStage } from '../telemetry'
 
 const PersistedChunk = Schema.Struct({
   content_hash: Sha256Schema,
@@ -21,8 +23,12 @@ const PersistedChunk = Schema.Struct({
 })
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
+const CannotConnectNow = Schema.Struct({ code: Schema.Literal('57P03') })
 const retryableAppendFailure = (cause: unknown): cause is SqlError =>
-  isSqlError(cause) && (cause.reason._tag === 'ConnectionError' || cause.reason._tag === 'StatementTimeoutError')
+  isSqlError(cause) &&
+  (cause.reason._tag === 'ConnectionError' ||
+    cause.reason._tag === 'StatementTimeoutError' ||
+    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause)))
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
@@ -123,11 +129,13 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        times: 2,
-        schedule: Schedule.spaced('100 millis'),
+        // A managed PostgreSQL switchover can refuse connections for tens of seconds.
+        // Keep the immutable batch queued while reconnecting; the existing byte bound still backpressures ingestion.
+        schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ duration: '1 minute' })),
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),
+      withObservedStage('bayn.native-arrival.append', { dependency: 'postgresql', slowAfterMs: 1_000 }),
     ),
   end: (end) =>
     sql
@@ -166,32 +174,39 @@ export const readNativeArrivalEpoch = (sql: PgClient.PgClient, captureId: string
     return epoch
   }).pipe(Effect.mapError(error))
 
-/** Each read bounds memory; callers retain the exact last verified ordinal between pages. */
-export const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: string, afterOrdinal: number) =>
-  Effect.gen(function* () {
-    const id = yield* Schema.decodeUnknownEffect(Sha256Schema)(captureId)
-    const epoch = yield* readNativeArrivalEpoch(sql, id)
-    const after = yield* Schema.decodeUnknownEffect(
-      Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
-    )(afterOrdinal)
-    const rows = yield* Schema.decodeUnknownEffect(
-      Schema.Array(PersistedChunk),
-      strictParseOptions,
-    )(
-      yield* sql`SELECT content_hash,header,compressed FROM native_arrival_chunks
-        WHERE capture_id=${id} AND ordinal>${after} ORDER BY ordinal LIMIT 32`,
-    )
-    const chunks: NativeArrivalChunk[] = []
-    for (const row of rows) {
-      const header = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(NativeArrivalChunkHeaderSchema),
+/** Pages retain compressed bytes; only the consumed chunk is decoded at a time. */
+export const streamNativeArrivalChunkPage = (sql: PgClient.PgClient, epoch: NativeArrivalEpoch, afterOrdinal: number) =>
+  Stream.fromEffect(
+    Effect.gen(function* () {
+      const after = yield* Schema.decodeUnknownEffect(
+        Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+      )(afterOrdinal)
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(PersistedChunk),
         strictParseOptions,
-      )(row.header)
-      const chunk = { header, contentHash: row.content_hash, compressed: row.compressed }
-      const records = yield* Effect.fromResult(decodeNativeArrivalChunk(chunk))
-      if (records.some((record) => record.receipt.consumerEpoch !== epoch.bootstrap.epoch))
-        return yield* error('Native chunk belongs to a different consumer epoch')
-      chunks.push(chunk)
-    }
-    return chunks
-  }).pipe(Effect.mapError(error))
+      )(
+        yield* sql`SELECT content_hash,header,compressed FROM native_arrival_chunks
+        WHERE capture_id=${epoch.captureId} AND ordinal>${after} ORDER BY ordinal LIMIT 32`,
+      )
+      return rows
+    }),
+  ).pipe(
+    Stream.flatMap(Stream.fromIterable),
+    Stream.mapEffect((row) =>
+      Effect.gen(function* () {
+        const header = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(NativeArrivalChunkHeaderSchema),
+          strictParseOptions,
+        )(row.header)
+        const chunk = { header, contentHash: row.content_hash, compressed: row.compressed }
+        const records = yield* Effect.fromResult(decodeNativeArrivalChunk(chunk))
+        if (
+          header.captureId !== epoch.captureId ||
+          records.some((record) => record.receipt.consumerEpoch !== epoch.bootstrap.epoch)
+        )
+          return yield* error('Native chunk belongs to a different consumer epoch')
+        return { ...chunk, records }
+      }),
+    ),
+    Stream.mapError(error),
+  )

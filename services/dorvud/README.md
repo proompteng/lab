@@ -9,6 +9,7 @@ Dorvud ingests market data, calculates technical signals, and archives source re
 - `technical-analysis`: shared payloads, serializers, and calculation utilities used by the Flink job.
 - `platform`: shared envelopes, timestamps, and Kafka configuration.
 - `hyperliquid-feed`: the separate Hyperliquid ingestion module.
+- [`webull-feed`](webull-feed/README.md): free Webull US stock/ETF ingestion into its own Kafka topic and raw archive.
 - `flink-integration`: integration support.
 
 Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
@@ -249,6 +250,10 @@ closes on shutdown, normal completion, and startup failure. Heap and thread gaug
 `/metrics` scrape; GC pause counters and maxima come from JVM notifications. No new per-record timing or observer
 loop runs in Kafka publication. Torghut Alloy retains these meters with the existing `job="torghut"`,
 `namespace="torghut"`, `service="torghut-ws"`, and pod labels every thirty seconds.
+
+Missing upstream market events keep readiness false without escalating channel starvation into a process restart.
+The existing WebSocket idle watchdog owns reconnection. Authentication, Kafka and trade-update failures retain their bounded
+liveness escalation, and market-data freshness checks remain required for readiness.
 
 During a stall, align `torghut_ws_kafka_send_latency_seconds_{count,sum,max}`, send errors, readiness, pod restarts,
 `jvm_memory_used_bytes{area="heap"}`, `jvm_memory_max_bytes{area="heap"}`, `jvm_gc_pause_seconds_{count,sum,max}`,

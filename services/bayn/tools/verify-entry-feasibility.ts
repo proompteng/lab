@@ -10,10 +10,9 @@ import { makeInitialChartStageRequest } from '../src/jev/staged-chart-questions'
 import { IsoDateSchema } from '../src/schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from '../src/jev/chart-evidence'
 import { JevClient } from '../src/jev/client'
-import { DecisionsClient } from '../src/jev/decisions'
 import { decodeEntryInferenceCompletion } from '../src/jev/entry-inference-evidence'
 import { prepareEntryInferenceInput } from '../src/jev/entry-inference-input'
-import { EntryInferenceJournal, type EntryHandoff } from '../src/jev/entry-inference'
+import { EntryInferenceJournal, hasFeasibleEntrySource, type EntryHandoff } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from '../src/jev/resolution'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
@@ -70,8 +69,9 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     const evaluationHash = evaluation === null ? null : yield* Effect.fromResult(canonicalHashV1Result(evaluation))
     // Original model responses retain their contracts; the dispatch probe never calls either provider.
     const protocol = {
-      ...input.protocol,
+      ...defaultJevProtocolDocument,
       schemaVersion: defaultJevProtocolDocument.schemaVersion,
+      entrySignalPolicy: defaultJevProtocolDocument.entrySignalPolicy,
       executionModel: defaultJevProtocolDocument.executionModel,
       inputDefinition: defaultJevProtocolDocument.inputDefinition,
       lookbackMinutes: defaultJevProtocolDocument.lookbackMinutes,
@@ -113,7 +113,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       original.handoff?.visualRequestHash !== visualSource.requestHash
     )
       return yield* fail('The current chart stage differs from the original native request')
-    const feasible = visualSource.sourceFeasible
+    const feasible = yield* Effect.fromResult(hasFeasibleEntrySource(current.input, chart))
     if (evaluation !== null && evaluation.proposals.length > 0) {
       if (!feasible) return yield* fail('Feasibility gate drops an originally funded proposal')
       fundedRequests++
@@ -135,9 +135,8 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       terminals: StagedCheckpoint['terminals'][number][]
       skips: StagedCheckpoint['skips'][number][]
     } = { claims: [], terminals: [], skips: [] }
-    const recordHandoff: (handoff: EntryHandoff) => Effect.Effect<{ readonly dispatchAllowed: boolean }> = (handoff) =>
+    const recordHandoff: (handoff: EntryHandoff) => Effect.Effect<{ readonly dispatchAllowed: boolean }> = (_handoff) =>
       Effect.sync(() => {
-        if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
         committedHandoffs++
         return { dispatchAllowed: true }
       })
@@ -165,24 +164,15 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
               if (terminal !== null) checkpoint.terminals.push(terminal)
               const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
               if (successor.kind === 'NONE') return { requestId, dispatchAllowed: false }
-              if (successor.kind === 'VISUAL') {
-                checkpoint.claims.push(successor.claim)
-                return { requestId, dispatchAllowed: true }
-              }
               return { requestId, ...(yield* recordHandoff(successor.handoff)) }
             }),
           ),
       }),
-      Effect.provideService(DecisionsClient, {
-        evaluate: () =>
-          Effect.sync(() => {
-            attemptedChartBranches++
-          }).pipe(Effect.andThen(Effect.die('OFFLINE_CHART_BRANCH_SENTINEL'))),
-      }),
       Effect.provideService(JevClient, {
-        evaluate: () =>
+        evaluate: (request) =>
           Effect.sync(() => {
-            attemptedJevBranches++
+            if (typeof request === 'object' && request !== null && 'assets' in request) attemptedChartBranches++
+            else attemptedJevBranches++
           }).pipe(Effect.andThen(Effect.die('OFFLINE_JEV_BRANCH_SENTINEL'))),
       }),
       Effect.exit,
@@ -242,7 +232,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
         ),
       )
       if (
-        quotes.length !== 3 ||
+        quotes.length !== 2 ||
         quotes.some(
           (q) => q.line.usageStatus !== InferenceUsageStatus.NotDispatched || q.line.estimatedCostPicoUsd !== '0',
         )

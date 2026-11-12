@@ -3,7 +3,12 @@ import { Data } from 'effect'
 export class AgentsShellRuntimeError extends Data.TaggedError('AgentsShellRuntimeError')<{
   readonly message: string
   readonly cause?: unknown
-  readonly code?: 'CAPACITY_BUSY' | 'IDEMPOTENCY_CONFLICT' | 'SHUTTING_DOWN' | 'REPO_SESSION_FORBIDDEN'
+  readonly code?:
+    | 'CAPACITY_BUSY'
+    | 'IDEMPOTENCY_CONFLICT'
+    | 'SHUTTING_DOWN'
+    | 'REPO_SESSION_FORBIDDEN'
+    | 'KUBECTL_REQUIRES_ADMIN'
   readonly retryAfterMs?: number
 }> {}
 

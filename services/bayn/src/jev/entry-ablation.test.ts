@@ -2,15 +2,10 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { makeNativeChartEvidence } from './chart-evidence'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
-import { decodeDecisionsResponse, type DecisionsRequest } from './decisions'
 import { selectEntryAblationProposal } from './entry-ablation'
-import { deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { entryCompletionFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { EntrySetup } from './entry-proposals'
-import { stageResponseIdentity } from './staged-checkpoint'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './evidence'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
@@ -39,78 +34,7 @@ const fixture = () => {
       requestHash: prepared.requestHash,
     }),
   )
-  const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
-  const visualRequest = Result.getOrThrow(
-    makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
-  )
-  const anchors: Readonly<Record<string, number>> = { support_anchor: 6, resistance_anchor: 2, base_last_bar: 4 }
-  const responseFor = (prepared: DecisionsRequest) =>
-    Result.getOrThrow(
-      decodeDecisionsResponse(prepared, {
-        model: prepared.model,
-        answers: prepared.questions.map((question) => {
-          if (question.type === 'predicate') return { type: 'predicate', name: question.name, probability: 0.8 }
-          const minute = question.name.startsWith('base_first_bar') ? 5 : anchors[question.name]
-          const bar = chart.bars.find((candidate) => candidate.minuteBeforeWindowEnd === minute)
-          const choice = question.choices.find((candidate) => candidate.value === bar?.id) ?? question.choices[0]
-          if (choice === undefined) throw new Error(`Missing funded source choice for ${question.name}`)
-          return {
-            type: 'choice',
-            name: question.name,
-            choice: choice.value,
-            confidence: 0.8,
-            probabilities: question.choices.map((candidate) => ({
-              value: candidate.value,
-              probability: candidate.value === choice.value ? 1 : 0,
-            })),
-          }
-        }),
-        usage: {
-          input_tokens: 100,
-          input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-          output_tokens: 0,
-          total_tokens: 100,
-        },
-      }),
-    )
-  const response = responseFor(visualRequest.request)
-  const visual = {
-    requestHash: visualRequest.requestHash,
-    responseHash: hash(response),
-    response,
-    startedAt: request.observedAt,
-    completedAt: request.observedAt,
-  }
-  const baseRequest = Result.getOrThrow(
-    makeSelectedBaseStartStageRequest(
-      { chart, protocol: request.request.protocol, funding: request.request.funding },
-      stageResponseIdentity(visual),
-    ),
-  )
-  if (baseRequest.status !== 'PREPARED') throw new Error('Expected a funded selected-base request')
-  const baseResponse = responseFor(baseRequest.request)
-  const baseInference = {
-    requestHash: baseRequest.requestHash,
-    responseHash: hash(baseResponse),
-    response: baseResponse,
-    startedAt: request.observedAt,
-    completedAt: request.observedAt,
-  }
-  const disposition = Result.getOrThrow(deriveEntryHandoffDisposition(request.request, visual, baseInference))
-  const handoffMaterial = {
-    schemaVersion: 'bayn.entry-handoff.v4' as const,
-    requestId: request.requestId,
-    inputHash: request.requestHash,
-    visualRequestHash: visualRequest.requestHash,
-    recordedAt: request.observedAt,
-    disposition,
-    baseStart: { status: 'RECEIVED' as const, inference: baseInference },
-  }
-  const completion: EntryInferenceCompletion = {
-    handoff: { ...handoffMaterial, handoffHash: hash(handoffMaterial) },
-    completedAt: request.observedAt,
-    jev: { status: 'OMITTED_BY_POLICY' },
-  }
+  const completion = entryCompletionFixture(request)
   const receipt = Result.getOrThrow(
     makeJevEvaluationReceipt(request, {
       schemaVersion: 'bayn.jev-evaluation-receipt.v3',
@@ -130,11 +54,11 @@ test('removing Jev selects the least modeled loss from reproduced funded chart p
   if (disposition.status !== 'READY') throw new Error('Expected two funded source proposals')
   expect(disposition.evaluation.proposals).toHaveLength(2)
   const selected = Result.getOrThrow(selectEntryAblationProposal(input))
-  expect(selected.proposal?.source.setup).toBe(EntrySetup.BaseBreakout)
+  expect(selected.proposal?.source.setup).toBe(EntrySetup.SupportRecovery)
   const expected = disposition.evaluation.proposals.find(
-    (proposal) => proposal.source.setup === EntrySetup.BaseBreakout,
+    (proposal) => proposal.source.setup === EntrySetup.SupportRecovery,
   )
-  if (expected === undefined) throw new Error('Expected the independently funded breakout')
+  if (expected === undefined) throw new Error('Expected the independently funded recovery')
   expect(selected.proposal).toEqual(expected)
   expect(input.completion.jev).toEqual({ status: 'OMITTED_BY_POLICY' })
 })

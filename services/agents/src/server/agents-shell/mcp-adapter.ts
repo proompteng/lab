@@ -47,6 +47,7 @@ export type EffectTool<I = any, O = any> = {
   inputJsonSchema?: Record<string, unknown>
   outputSchema?: Schema.Schema<O, any, never>
   auditResult?: boolean
+  auditArguments?: boolean
   annotations: ToolAnnotations
   scopes: string[]
   securitySchemes: OAuth2SecurityScheme[]
@@ -78,7 +79,7 @@ const formatParseError = (error: ParseResult.ParseError) => ParseResult.TreeForm
 
 const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =>
   Effect.runPromise(
-    Schema.decodeUnknown(tool.inputSchema)(value).pipe(
+    Schema.decodeUnknown(tool.inputSchema, { onExcessProperty: 'error' })(value).pipe(
       Effect.mapError(
         (error) =>
           new Error(`Input validation error: Invalid arguments for tool ${tool.name}: ${formatParseError(error)}`),
@@ -127,6 +128,9 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
       structuredContent: {
         code: error.code,
         message: error.message,
+        ...(error.code === 'KUBECTL_REQUIRES_ADMIN'
+          ? { layer: 'tool-policy', requiredTool: 'kubectl_admin', executionStarted: false }
+          : {}),
         ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
       },
     }
@@ -191,7 +195,7 @@ export const installEffectToolHandlers = (
         }
         const startedAuditErrors = runner.audit('tool_call_started', auth, {
           authorized,
-          ...(authorized && !requestError ? { arguments: input } : {}),
+          ...(authorized && !requestError && tool?.auditArguments !== false ? { arguments: input } : {}),
         })
         let result: CallToolResult
         try {

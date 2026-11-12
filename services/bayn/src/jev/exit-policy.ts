@@ -14,7 +14,7 @@ export const JevPositionExitPolicySchema = Schema.Struct({
 })
 
 export const jevPositionExitPolicy = <Plans extends Readonly<Record<string, FundedEntryExitPlan>>>(
-  protocol: JevProtocol,
+  protocol: Pick<JevProtocol, 'maximumHoldingMinutes'>,
   plans: Plans,
 ) => ({
   schemaVersion: 'bayn.position-exit-policy.v5' as const,

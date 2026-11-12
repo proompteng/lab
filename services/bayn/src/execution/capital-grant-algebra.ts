@@ -573,3 +573,8 @@ export const capitalGrantFailureDetails = (failure: CapitalGrantAlgebraFailure):
       }
   }
 }
+
+export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
+  authority.maximum === Authority.Observe && authority.effective === Authority.Observe
+    ? Result.succeed(authority.generationHash)
+    : Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority')

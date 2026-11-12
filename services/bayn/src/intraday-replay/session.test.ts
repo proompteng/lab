@@ -155,12 +155,15 @@ test('unavailable decision evidence is counted separately from lifecycle waits a
 
 test('expected warmup, valid no-trade and lifecycle waits preserve complete decision coverage', async () => {
   const observations: RetainedAutonomousCyclePassObservation[] = [
-    ...[
-      DecisionReadinessReason.AccountProtection,
-      DecisionReadinessReason.LookbackWarmup,
-      DecisionReadinessReason.NoEligibleCandidate,
-      DecisionReadinessReason.SignalWindowObserved,
-    ].map((reason) => ({
+    ...(
+      [
+        DecisionReadinessReason.AccountProtection,
+        DecisionReadinessReason.TurnoverBudgetExhausted,
+        DecisionReadinessReason.LookbackWarmup,
+        DecisionReadinessReason.NoEligibleCandidate,
+        DecisionReadinessReason.SignalWindowObserved,
+      ] as const
+    ).map((reason) => ({
       result: 'SUCCESS' as const,
       outcome: 'RECOVERED' as const,
       recoveryAction: 'WAITING' as const,
@@ -200,9 +203,58 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
   expect(outcome.unavailableDecisionPassCount).toBe(0)
   expect(outcome.readinessCounts).toEqual({
     ACCOUNT_PROTECTION: 1,
+    TURNOVER_BUDGET_EXHAUSTED: 1,
     LOOKBACK_WARMUP: 1,
     NO_ELIGIBLE_CANDIDATE: 1,
     SIGNAL_WINDOW_OBSERVED: 1,
+  })
+})
+
+test('risk-expiry recovery remains unavailable decision work', async () => {
+  const clock = (ms: number) => utcInstantFromEpochMillis(ms)
+  const outcome = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(2000)
+      return yield* driveReplaySession(
+        {
+          nextDelayMs: 1,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((now) => ({
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'RECOVERED' as const,
+                recoveryAction: 'WAITING' as const,
+                observedAt: clock(now),
+                readiness: {
+                  reason: DecisionReadinessReason.ExecutionRiskExpired as const,
+                  message: 'Risk expired before binding',
+                  riskClockRejection: {
+                    schemaVersion: 'bayn.intent-risk-clock-rejection.v1' as const,
+                    violation: 'EXPIRED' as const,
+                    intentId: 'a'.repeat(64),
+                    decisionId: 'b'.repeat(64),
+                    decidedAt: clock(0),
+                    updatedAt: clock(1),
+                    expiresAt: clock(1000),
+                    checkedAt: clock(now),
+                  },
+                },
+              },
+            })),
+          ),
+        },
+        (at) => TestClock.setTime(at),
+        2000,
+        2002,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(outcome).toMatchObject({
+    passCount: 3,
+    failedPassCount: 0,
+    unavailableDecisionPassCount: 3,
+    readinessCounts: { EXECUTION_RISK_EXPIRED: 3 },
   })
 })
 

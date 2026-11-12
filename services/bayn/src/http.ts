@@ -1,3 +1,4 @@
+import { currentEntryMarkets } from './execution/trading-scope'
 import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
@@ -10,6 +11,7 @@ import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { CycleState, CycleTerminalReason } from './cycle/model'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
+import { decodeInputReadiness } from './market-data/intraday/input-readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
@@ -139,6 +141,7 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
       reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
     } as const
   }
+  const inputReadiness = decodeInputReadiness(pass.readiness?.inputReadiness)
   return {
     result: pass.result,
     observedAt: pass.observedAt,
@@ -161,6 +164,7 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
               ? {}
               : { requiredFeature: pass.readiness.requiredFeature }),
             ...(pass.readiness.snapshotQuery === undefined ? {} : { snapshotQuery: pass.readiness.snapshotQuery }),
+            ...(inputReadiness === undefined ? {} : { inputReadiness }),
           },
         }),
   } as const
@@ -354,6 +358,7 @@ export const statusFacts = (
   const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
   return {
     service: 'bayn',
+    tradingScope: { entryMarkets: currentEntryMarkets, existingPositionExits: 'NORMAL_CAPITAL_AND_RISK_CHECKS' },
     operational: {
       status: state.status,
       ready: runtimeReady,
@@ -569,7 +574,9 @@ const executionPrerequisitesReady = (state: RuntimeState, runtimeReady: boolean)
 }
 
 export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean =>
-  state.cycle.current?.phase === CycleState.Active && executionPrerequisitesReady(state, runtimeReady)
+  state.cycle.current?.phase === CycleState.Active &&
+  state.cycle.current.executionCalendarSchemaVersion !== 'bayn.continuous-market-hours.v1' &&
+  executionPrerequisitesReady(state, runtimeReady)
 
 enum ExecutionSessionCondition {
   Unavailable = 'UNAVAILABLE',
@@ -603,7 +610,8 @@ const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number)
   if (
     pass?.result !== 'SUCCESS' ||
     pass.outcome !== 'ADMISSION_WAITING' ||
-    pass.readiness?.reason !== DecisionReadinessReason.AccountProtection ||
+    (pass.readiness?.reason !== DecisionReadinessReason.AccountProtection &&
+      pass.readiness?.reason !== DecisionReadinessReason.TurnoverBudgetExhausted) ||
     pass.admissionProtection === undefined ||
     state.cycle.current !== null ||
     state.cycle.unfinishedCycleCount !== 0 ||
@@ -662,6 +670,10 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   }
   if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
   if (session === null) return result(ExecutionSessionCondition.Unavailable)
+  if (session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1')
+    return result(
+      state.cycle.current === null ? ExecutionSessionCondition.Closed : ExecutionSessionCondition.RecoveryOnly,
+    )
   if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
   if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
     return result(
@@ -690,12 +702,19 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
     Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
       ? pass.readiness
       : undefined
-  if (readiness?.reason === DecisionReadinessReason.AccountProtection) return result(ExecutionSessionCondition.Blocked)
+  if (
+    readiness?.reason === DecisionReadinessReason.AccountProtection ||
+    readiness?.reason === DecisionReadinessReason.TurnoverBudgetExhausted
+  )
+    return result(ExecutionSessionCondition.Blocked)
   if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
   if (readiness !== undefined) {
     if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
       return result(ExecutionSessionCondition.Abstaining)
-    if (readiness.reason === DecisionReadinessReason.InferenceUnavailable)
+    if (
+      readiness.reason === DecisionReadinessReason.InferenceUnavailable ||
+      readiness.reason === DecisionReadinessReason.InferenceExpired
+    )
       return result(ExecutionSessionCondition.EvaluationUnavailable)
     if (
       readiness.reason !== DecisionReadinessReason.DecisionPending &&

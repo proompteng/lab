@@ -1,89 +1,106 @@
+import {
+  getMemoryNoteFromAgentsService,
+  readMemoryNote,
+  listMemoryNotesFromAgentsService,
+  parseListMemoryNotesInput,
+  parseRetrieveMemoryNotesInput,
+  retrieveMemoryNotesFromAgentsService,
+  type AgentsMemoryNoteRecord,
+} from '@proompteng/agent-contracts'
 import { getFlagValue, parseCliFlags, parseCommaList, resolveAgentsBaseUrl } from './cli'
 
-type MemoryRecord = {
-  id: string
-  namespace: string
-  summary: string | null
-  content: string
-  tags: string[]
-  metadata?: Record<string, unknown>
-  distance?: number
-}
-
 const flags = parseCliFlags(process.argv.slice(2))
-
-const queryValue = getFlagValue(flags, 'query')
+const supported = new Set([
+  'query',
+  'query-file',
+  'latest',
+  'id',
+  'cursor',
+  'offset',
+  'task-name',
+  'repository',
+  'tags',
+  'model',
+  'after',
+  'before',
+  'include-retired',
+  'limit',
+  'json',
+])
+for (const key of Object.keys(flags)) if (!supported.has(key)) throw new Error(`unsupported flag --${key}`)
 const queryFile = getFlagValue(flags, 'query-file')
-
-if (!queryValue && !queryFile) {
-  throw new Error('either --query or --query-file is required')
+const query = getFlagValue(flags, 'query') ?? (queryFile ? await Bun.file(queryFile).text() : '')
+const id = getFlagValue(flags, 'id')
+const latest = flags.latest === true
+if ((latest && (query || queryFile || id)) || (id && (query || queryFile)))
+  throw new Error('Choose one of --latest, --id or --query')
+if (flags.cursor !== undefined && !latest) throw new Error('--cursor requires --latest')
+if (flags.offset !== undefined && !id) throw new Error('--offset requires --id')
+if (flags.offset === true) throw new Error('--offset requires a value')
+const env = { ...process.env, AGENTS_SERVICE_BASE_URL: resolveAgentsBaseUrl() }
+const filters = {
+  namespace: getFlagValue(flags, 'task-name'),
+  repository: getFlagValue(flags, 'repository'),
+  tags: parseCommaList(getFlagValue(flags, 'tags')),
+  model: getFlagValue(flags, 'model'),
+  createdAfter: getFlagValue(flags, 'after'),
+  createdBefore: getFlagValue(flags, 'before'),
+  includeRetired: flags['include-retired'] === true,
+  limit: getFlagValue(flags, 'limit') ?? 5,
 }
-
-let queryText: string
-if (queryValue) {
-  queryText = queryValue
-} else if (queryFile) {
-  queryText = await Bun.file(queryFile).text()
+const printNote = (row: AgentsMemoryNoteRecord) => {
+  console.log(
+    `\n${row.namespace} (${row.id})\ncreated: ${row.createdAt}\nrepository: ${row.metadata.repository ?? 'unrecorded'}; commit: ${row.metadata.commit ?? 'unrecorded'}; model: ${row.metadata.noteModel ?? 'unrecorded'}\nsummary: ${row.summary ?? ''}\ntags: ${row.tags.join(', ')}`,
+  )
+  if (row.retiredAt)
+    console.log(
+      `retired: ${row.retiredAt}; reason: ${row.retirementReason}; replacement: ${row.replacementId ?? 'none'}`,
+    )
+  console.log(row.content.slice(0, 4000))
+  if (row.content.length > 4000) console.log(`[truncated; use --id ${row.id} for full content]`)
+}
+if (latest) {
+  const parsed = parseListMemoryNotesInput({ ...filters, cursor: getFlagValue(flags, 'cursor') }, 5)
+  if (!parsed.ok) throw new Error(parsed.message)
+  const response = await listMemoryNotesFromAgentsService(parsed.value, env)
+  if (!response.ok) throw new Error(`Agents memory list failed (${response.status}): ${response.error}`)
+  const page = response.body
+  if (flags.json === true) console.log(JSON.stringify(page))
+  else {
+    for (const note of page.memories)
+      console.log(
+        `\n${note.id} · ${note.createdAt}\n${note.summary}${note.summaryTruncated ? ' [summary truncated]' : ''}\nrepository: ${note.repository ?? 'unrecorded'}; commit: ${note.commit ?? 'unrecorded'}`,
+      )
+    if (!page.memories.length) console.log('no memories matched your request')
+    if (page.nextCursor) console.log(`\nnext page: repeat these filters with --cursor ${page.nextCursor}`)
+  }
+} else if (id) {
+  const response = await getMemoryNoteFromAgentsService(id, env)
+  if (!response.ok) throw new Error(`Agents memory read failed (${response.status}): ${response.error}`)
+  if (!response.body.memory) throw new Error('Agents memory API returned no note')
+  const page = readMemoryNote(response.body.memory, Number(getFlagValue(flags, 'offset') ?? 0))
+  if (flags.json === true) console.log(JSON.stringify(page))
+  else {
+    console.log(
+      `\n${page.memory.id} · ${page.memory.createdAt}\n${page.memory.summary}\nrepository: ${page.memory.repository ?? 'unrecorded'}; commit: ${page.memory.commit ?? 'unrecorded'}; model: ${page.memory.model ?? 'unrecorded'}`,
+    )
+    if (page.memory.retiredAt)
+      console.log(
+        `retired: ${page.memory.retiredAt}; reason: ${page.memory.retirementReason}; replacement: ${page.memory.replacementId ?? 'none'}`,
+      )
+    console.log(page.content)
+    if (page.nextOffset !== null) console.log(`\nnext chunk: --id ${id} --offset ${page.nextOffset}`)
+  }
 } else {
-  throw new Error('either --query or --query-file is required')
-}
-if (!queryText.trim()) {
-  throw new Error('query text cannot be empty')
-}
-
-const repositoryRef = getFlagValue(flags, 'repository-ref')
-const source = getFlagValue(flags, 'source')
-const taskName = getFlagValue(flags, 'task-name')
-const tags = parseCommaList(getFlagValue(flags, 'tags'))
-const limitRaw = Number(getFlagValue(flags, 'limit') ?? '5')
-if (Number.isNaN(limitRaw)) {
-  throw new Error('--limit must be a positive number')
-}
-const limit = Math.max(1, Math.floor(limitRaw))
-
-const ignoredFlags: Array<[string, string | undefined]> = [
-  ['repository-ref', repositoryRef],
-  ['source', source],
-  ['tags', tags.length ? 'provided' : undefined],
-]
-
-const ignored = ignoredFlags.filter(([, value]) => value)
-if (ignored.length > 0) {
-  const names = ignored.map(([name]) => `--${name}`).join(', ')
-  console.warn(`Ignoring unused flags for Agents memory note API: ${names}`)
-}
-
-const baseUrl = resolveAgentsBaseUrl()
-const endpoint = new URL('/v1/memory-notes', baseUrl)
-endpoint.searchParams.set('query', queryText)
-if (taskName) {
-  endpoint.searchParams.set('namespace', taskName)
-}
-endpoint.searchParams.set('limit', String(limit))
-
-const response = await fetch(endpoint.toString(), {
-  method: 'GET',
-  headers: { accept: 'application/json' },
-})
-
-if (!response.ok) {
-  const body = await response.text()
-  throw new Error(`Agents memory retrieve failed (${response.status}): ${body}`)
-}
-
-const payload = (await response.json()) as { ok?: boolean; memories?: MemoryRecord[] }
-const rows = payload.memories ?? []
-
-if (!rows.length) {
-  console.log('no memories matched your query')
-} else {
-  rows.forEach((row, index) => {
-    console.log(`\n[${index + 1}] ${row.namespace} (${row.id})`)
-    console.log(`  summary: ${row.summary ?? ''}`)
-    console.log(`  tags: ${Array.isArray(row.tags) ? row.tags.join(', ') : ''}`)
-    if (row.distance != null) {
-      console.log(`  distance: ${Number(row.distance).toFixed(4)}`)
-    }
-    console.log(`  content preview: ${String(row.content).slice(0, 200).replace(/\s+/g, ' ')}\n`)
-  })
+  const parsed = parseRetrieveMemoryNotesInput({ ...filters, query }, 5)
+  if (!parsed.ok) throw new Error(parsed.message)
+  const response = await retrieveMemoryNotesFromAgentsService(parsed.value, env)
+  if (!response.ok) throw new Error(`Agents memory retrieve failed (${response.status}): ${response.error}`)
+  if (!response.body.ok) throw new Error('Agents memory API did not return success')
+  if (flags.json === true) console.log(JSON.stringify(response.body))
+  else {
+    const rows = response.body.memories ?? []
+    if (!rows.length) console.log('no memories matched your request')
+    for (const note of rows) printNote(note)
+  }
 }

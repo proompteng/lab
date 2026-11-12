@@ -62,6 +62,12 @@ on:
       - '.github/actionlint.yaml'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
+      - .github/workflows/**
+      - .github/actions/setup-nix-toolchain/**
+      - nix/ci-*.sh
+      - nix/oci-*.sh
+      - nix/cache-push.sh
+      - nix/check-bun-dependency-closure.sh
   pull_request:
     paths:
       - 'packages/scripts/**'
@@ -122,6 +128,12 @@ on:
       - 'kubernetes/rook-ceph-rwx-benchmarks/README.md'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
+      - .github/workflows/**
+      - .github/actions/setup-nix-toolchain/**
+      - nix/ci-*.sh
+      - nix/oci-*.sh
+      - nix/cache-push.sh
+      - nix/check-bun-dependency-closure.sh
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -137,11 +149,11 @@ jobs:
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install --yes lua5.4
-        curl --fail --location --silent --show-error https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz --output "${RUNNER_TEMP}/prometheus.tar.gz"
+        curl --fail --location --silent --show-error --retry 3 --header 'Accept: application/octet-stream' https://api.github.com/repos/prometheus/prometheus/releases/assets/272786097 --output "${RUNNER_TEMP}/prometheus.tar.gz"
         echo "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  ${RUNNER_TEMP}/prometheus.tar.gz" | sha256sum --check --strict
         tar --extract --gzip --file "${RUNNER_TEMP}/prometheus.tar.gz" --directory "${RUNNER_TEMP}" prometheus-3.5.0.linux-amd64/promtool
         sudo install "${RUNNER_TEMP}/prometheus-3.5.0.linux-amd64/promtool" /usr/local/bin/promtool
-        curl --fail --location --silent --show-error https://github.com/grafana/alloy/releases/download/v1.19.2/alloy-linux-amd64.zip --output "${RUNNER_TEMP}/alloy.zip"
+        curl --fail --location --silent --show-error --retry 3 --header 'Accept: application/octet-stream' https://api.github.com/repos/grafana/alloy/releases/assets/531359402 --output "${RUNNER_TEMP}/alloy.zip"
         echo "3694ea4e1044b367e1c21ffe28117f209c5989fa5e604d000321809f871ab701  ${RUNNER_TEMP}/alloy.zip" | sha256sum --check --strict
         unzip -q "${RUNNER_TEMP}/alloy.zip" -d "${RUNNER_TEMP}/alloy"
         sudo install "${RUNNER_TEMP}/alloy/alloy-linux-amd64" /usr/local/bin/alloy

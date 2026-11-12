@@ -204,7 +204,13 @@ mod tests {
         duplicate["actions"].as_array_mut().unwrap().push(action);
         assert!(PolicyCatalog::parse(&serde_json::to_vec(&duplicate).unwrap()).is_err());
         let mut wildcard = original;
-        wildcard["resources"][0]["relations"][0]["subjects"] = json!(["*"]);
+        let resource = wildcard["resources"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|resource| resource["kind"] == "kubernetes.namespace")
+            .unwrap();
+        resource["relations"][0]["subjects"] = json!(["*"]);
         assert!(PolicyCatalog::parse(&serde_json::to_vec(&wildcard).unwrap()).is_err());
     }
 
@@ -228,7 +234,13 @@ mod tests {
                 .grant_relation
                 .is_none()
         );
-        catalog["actions"][0]["grantRelation"] = json!("administrator");
+        let action = catalog["actions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|action| action["id"] == "kubernetes.status.read")
+            .unwrap();
+        action["grantRelation"] = json!("administrator");
         assert!(PolicyCatalog::parse(&serde_json::to_vec(&catalog).unwrap()).is_err());
     }
 }

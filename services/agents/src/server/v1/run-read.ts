@@ -48,6 +48,8 @@ export type RunReadApiDependencies = {
   kubeClientFactory?: () => KubernetesClient
   defaultNamespace?: string
   requireLeaderForMutation?: () => Response | null
+  env?: NodeJS.ProcessEnv
+  fetch?: typeof fetch
 }
 
 type RunReadStorageOperation =
@@ -109,6 +111,11 @@ type RunReadStoreServiceDefinition = {
 }
 
 type RunReadKubernetesServiceDefinition = {
+  readonly readTelemetry: (
+    kube: KubernetesClient,
+    resource: Record<string, unknown>,
+    namespace: string,
+  ) => Effect.Effect<Record<string, unknown>, RunReadKubeError>
   readonly client: (namespace: string) => Effect.Effect<KubernetesClient, RunReadKubeError>
   readonly getResource: (
     kube: KubernetesClient,
@@ -218,6 +225,10 @@ export const makeRunReadLayer = (deps: RunReadApiDependencies) =>
   Layer.mergeAll(
     Layer.succeed(RunReadStoreService, makeRunReadStoreService(deps.storeFactory)),
     Layer.succeed(RunReadKubernetesService, {
+      readTelemetry: (kube, resource, namespace) =>
+        kubeEffect('read-telemetry', 'runner-telemetry', namespace, () =>
+          withRunnerTelemetry(kube, resource, namespace, { env: deps.env, fetch: deps.fetch }),
+        ),
       client: (namespace) =>
         Effect.try({
           try: () => getKubeClient(deps),
@@ -248,6 +259,13 @@ export const makeRunReadLayer = (deps: RunReadApiDependencies) =>
     }),
   )
 
+const validateAgentRunIdentity = (record: AgentRunRecord, resource: Record<string, unknown> | null) => {
+  const expectedUid = asString(readNested(record.payload, ['resource', 'metadata', 'uid']))
+  return resource && expectedUid && asString(readNested(resource, ['metadata', 'uid'])) !== expectedUid
+    ? Effect.fail(new RunReadConflictError({ message: 'AgentRun resource identity no longer matches its projection' }))
+    : Effect.void
+}
+
 const refreshAgentRecordFromResourceEffect = (
   stores: RunReadStoreServiceDefinition,
   store: RunReadApiStore,
@@ -255,12 +273,7 @@ const refreshAgentRecordFromResourceEffect = (
   resource: Record<string, unknown> | null,
 ): Effect.Effect<AgentRunRecord, RunReadError> =>
   Effect.gen(function* () {
-    const expectedUid = asString(readNested(record.payload, ['resource', 'metadata', 'uid']))
-    if (resource && expectedUid && asString(readNested(resource, ['metadata', 'uid'])) !== expectedUid) {
-      return yield* Effect.fail(
-        new RunReadConflictError({ message: 'AgentRun resource identity no longer matches its projection' }),
-      )
-    }
+    yield* validateAgentRunIdentity(record, resource)
     const cancelling = Boolean(record.payload.cancellation)
     const observedPhase = resource ? extractStatusPhase(resource) : null
     const terminal = observedPhase && ['succeeded', 'failed', 'cancelled'].includes(observedPhase.toLowerCase())
@@ -342,11 +355,8 @@ export const getAgentRunWithServicesEffect = (
           const resource = record.externalRunId
             ? yield* kubernetes.getResource(kube, 'AgentRun', record.externalRunId, resourceNamespace)
             : null
-          const observed = resource
-            ? yield* kubeEffect('read-telemetry', 'configmaps', resourceNamespace, () =>
-                withRunnerTelemetry(kube, resource, resourceNamespace),
-              )
-            : null
+          yield* validateAgentRunIdentity(record, resource)
+          const observed = resource ? yield* kubernetes.readTelemetry(kube, resource, resourceNamespace) : null
           const agentRun = yield* refreshAgentRecordFromResourceEffect(stores, activeStore, record, observed)
           return { agentRun, resource: observed }
         }),

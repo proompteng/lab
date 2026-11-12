@@ -18,6 +18,24 @@ const responseClient = (body: unknown, status = 200) =>
   )
 
 describe('Jev inference transport', () => {
+  test('historical Jev receipts cannot dispatch the retired model', async () => {
+    let calls = 0
+    const http = HttpClient.make(() => {
+      calls++
+      return Effect.die('Retired model reached the transport')
+    })
+    const result = await Effect.runPromise(
+      run(
+        JevClient.pipe(
+          Effect.flatMap((client) => client.evaluate({ ...requestFixture, model: 'jev-1.13.0' }, 1000)),
+          Effect.result,
+        ),
+        http,
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(calls).toBe(0)
+  })
   test.each([200, 429])(
     'redacts sensitive HTTP headers while retaining trace diagnostics for status %i',
     async (status) => {
@@ -79,6 +97,23 @@ describe('Jev inference transport', () => {
     expect(Date.parse(result.completedAt)).toBeGreaterThanOrEqual(Date.parse(result.startedAt))
   })
 
+  test('opts into images only for a source-bound request carrying its chart asset', async () => {
+    const reference = `bayn_chart_image_${'a'.repeat(64)}`
+    const input = {
+      ...requestFixture,
+      state: { chart: reference },
+      assets: { [reference]: { type: 'image', format: 'png', data_base64: 'aGVsbG8=' } },
+    }
+    const http = HttpClient.make((request) => {
+      expect(request.headers['typesafe-danger-zone-images']).toBe('true')
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(responseFixture()))))
+    })
+    const result = await Effect.runPromise(
+      run(JevClient.pipe(Effect.flatMap((client) => client.evaluate(input, 1000))), http),
+    )
+    expect(result.requestHash).toBe(Result.getOrThrow(canonicalHashV1Result(input)))
+  })
+
   test.each([401, 422, 429, 529])('retains status %i without retry or alternate model', async (status) => {
     const result = await Effect.runPromise(
       run(Effect.result(evaluate), responseClient({ error: 'unavailable' }, status)),
@@ -90,6 +125,36 @@ describe('Jev inference transport', () => {
       expect(JSON.stringify(result.failure)).not.toContain(Redacted.value(key))
     }
   })
+
+  test.each(['{invalid', 'x'.repeat(8193)])(
+    'retains header diagnostics when failure body is unusable',
+    async (body) => {
+      let calls = 0
+      const http = HttpClient.make((request) => {
+        calls += 1
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(body, {
+              status: 529,
+              headers: { 'request-id': 'provider-request-529', 'retry-after': '2' },
+            }),
+          ),
+        )
+      })
+      const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+      expect(calls).toBe(1)
+      if (Result.isSuccess(result)) throw new Error('Expected provider failure')
+      expect(result.failure.status).toBe(529)
+      expect(result.failure.providerDiagnostics).toEqual({
+        schemaVersion: 'bayn.jev-provider-diagnostics.v1',
+        requestId: 'provider-request-529',
+        retryAfter: { kind: 'DELAY', seconds: 2 },
+      })
+      expect(result.failure.responseHash).toBeUndefined()
+      expect(result.failure.rejectedResponse).toBeUndefined()
+    },
+  )
 
   test.each([422, 503, 529])(
     'preserves metered failure body for status %i without authorizing inference',
@@ -199,7 +264,15 @@ describe('Jev inference transport', () => {
       },
     })
     const http = HttpClient.make((request) =>
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, {
+            status: 503,
+            headers: { 'request-id': 'unfinished-provider-request' },
+          }),
+        ),
+      ),
     )
     await Effect.runPromise(
       Effect.scoped(
@@ -214,6 +287,7 @@ describe('Jev inference transport', () => {
             if (Result.isFailure(result)) {
               expect(result.failure.failure).toBe(JevFailure.Timeout)
               expect(result.failure.rejectedResponse).toBeUndefined()
+              expect(result.failure.providerDiagnostics?.requestId).toBe('unfinished-provider-request')
             }
           } else yield* Fiber.interrupt(fiber)
           expect(cancelled).toBe(1)
