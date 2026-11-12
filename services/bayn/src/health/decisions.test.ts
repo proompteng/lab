@@ -160,11 +160,6 @@ test.each([
     status: { ...completedController, nextDueAt: 'invalid' },
     error: 'Restate execution-controller projection has an invalid completion schedule',
   },
-  {
-    name: 'deadline before completion',
-    status: { ...completedController, nextDueAt: new Date(Date.parse(checkedAt) - 1).toISOString() },
-    error: 'Restate execution-controller projection has an invalid completion schedule',
-  },
 ] satisfies readonly { name: string; status: ExecutionControllerStatus; error: string }[])(
   '$name cannot establish controller readiness',
   ({ status, error }) => {
@@ -174,20 +169,28 @@ test.each([
   },
 )
 
-test('a scheduled completion retains its original overdue boundary', () => {
-  const scheduled = { ...completedController, nextDueAt: checkedAt }
-  const deadline = Date.parse(checkedAt) + config.cycleStallThresholdMs
-  expect(readinessResponseDecision(controllerTransition(scheduled, deadline - 1).next)).toMatchObject({
-    status: 200,
-    body: { ready: true },
-  })
-  const overdue = controllerTransition(scheduled, deadline)
-  expect(overdue.health.dependencies.cycleRunner).toMatchObject({
-    status: 'UNAVAILABLE',
-    error: `Restate execution controller is overdue by ${config.cycleStallThresholdMs}ms`,
-  })
-  expect(readinessResponseDecision(overdue.next)).toMatchObject({ status: 503, body: { ready: false } })
-})
+test.each([0, 1, 1_000])(
+  'a deadline elapsed by %dms at completion retains its original overdue boundary',
+  (elapsedMs) => {
+    const nextDueAtMs = Date.parse(checkedAt) - elapsedMs
+    const scheduled = { ...completedController, nextDueAt: new Date(nextDueAtMs).toISOString() }
+    const completed = controllerTransition(scheduled)
+    expect(completed.health.dependencies.cycleRunner).toMatchObject({ status: 'AVAILABLE', error: null })
+    expect(readinessResponseDecision(completed.next)).toMatchObject({ status: 200, body: { ready: true } })
+    expect(completed.next.executionController?.status).toMatchObject({ nextDueAt: scheduled.nextDueAt })
+    const deadline = nextDueAtMs + config.cycleStallThresholdMs
+    expect(readinessResponseDecision(controllerTransition(scheduled, deadline - 1).next)).toMatchObject({
+      status: 200,
+      body: { ready: true },
+    })
+    const overdue = controllerTransition(scheduled, deadline)
+    expect(overdue.health.dependencies.cycleRunner).toMatchObject({
+      status: 'UNAVAILABLE',
+      error: `Restate execution controller is overdue by ${config.cycleStallThresholdMs}ms`,
+    })
+    expect(readinessResponseDecision(overdue.next)).toMatchObject({ status: 503, body: { ready: false } })
+  },
+)
 
 test('status health without a direct market probe removes the prior signal result and reports unknown data', () => {
   const result = transition(results)

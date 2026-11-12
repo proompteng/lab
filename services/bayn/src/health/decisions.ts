@@ -94,10 +94,7 @@ const cycleLoopHealth = (
     }
     const completedAtMs = Date.parse(status.completedAt)
     const nextDueAtMs = status.nextDueAt === undefined ? undefined : Date.parse(status.nextDueAt)
-    if (
-      !Number.isFinite(completedAtMs) ||
-      (nextDueAtMs !== undefined && (!Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs))
-    ) {
+    if (!Number.isFinite(completedAtMs) || (nextDueAtMs !== undefined && !Number.isFinite(nextDueAtMs))) {
       return unavailable('Restate execution-controller projection has an invalid completion schedule')
     }
     if (clock._tag === 'Unavailable') return previous
