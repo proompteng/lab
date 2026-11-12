@@ -118,10 +118,10 @@ export type AgentsControlPlaneStatusService = {
   ) => Effect.Effect<AgentsControlPlaneStatus, AgentsControlPlaneStatusError>
 }
 
-export class AgentsControlPlaneStatusApi extends Context.Tag('AgentsControlPlaneStatusApi')<
+export class AgentsControlPlaneStatusApi extends Context.Service<
   AgentsControlPlaneStatusApi,
   AgentsControlPlaneStatusService
->() {}
+>()('AgentsControlPlaneStatusApi') {}
 
 const runtimeEvidenceUnavailableMessage = 'runtime evidence collection is not available'
 

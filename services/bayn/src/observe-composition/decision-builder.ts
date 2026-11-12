@@ -1,3 +1,4 @@
+import { buildExecutionDecision, buildObserveShadowDecision } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
   isProtectedEntryTarget,
@@ -63,13 +64,7 @@ import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { accountEntryProtectionReasons, BrokerMode, type Policy, type State, type EntryQuoteFreshness } from '../risk'
-import {
-  buildObserveShadowDecision,
-  buildExecutionDecision,
-  type ExecutionDecisionInput,
-  type ShadowDecisionError,
-  type ShadowDeltaRiskInput,
-} from '../shadow-decision'
+import { type ExecutionDecisionInput, type ShadowDecisionError, type ShadowDeltaRiskInput } from '../shadow-decision'
 import {
   ExecutionMarketDataBindingSchema,
   reconciledPositionLiquidationBindingSchemaVersion,
@@ -621,6 +616,28 @@ const validateEntryDecisionContext = <R>(
   return Result.succeed(undefined)
 }
 
+const requireEntryTurnoverCapacity = <R>(
+  input: ObserveDecisionInput<R>,
+  facts: Pick<ObserveDecisionFacts, 'reconciliation' | 'evaluatedAt'>,
+  requiredAuthority: DecisionAuthorityRequirement,
+): Result.Result<void, ObserveDecisionAwaitingSignal> =>
+  requiredAuthority === Authority.Execution &&
+  input.policy.maxDailyTradedNotionalMicros !== null &&
+  BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros) >=
+    BigInt(input.policy.maxDailyTradedNotionalMicros)
+    ? Result.fail(
+        new ObserveDecisionAwaitingSignal({
+          message: 'The daily turnover budget is exhausted; new entries await fresh session capacity',
+          readiness: {
+            reason: DecisionReadinessReason.TurnoverBudgetExhausted,
+            message: 'The daily turnover budget is exhausted; new entries await fresh session capacity',
+          },
+          observedAt: facts.evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        }),
+      )
+    : Result.succeed(undefined)
+
 export const readObserveDecisionFacts = <R>(
   input: ObserveDecisionInput<R>,
   preparation: ObserveDecisionReadPreparation,
@@ -674,6 +691,7 @@ export const readObserveDecisionFacts = <R>(
         })
       }
     }
+    yield* Effect.fromResult(requireEntryTurnoverCapacity(input, { reconciliation, evaluatedAt }, requiredAuthority))
     const brokerRead = yield* BrokerRead
     const readCalendar: Effect.Effect<{ readonly value: MarketHours }, OperationalError> =
       input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -941,6 +959,9 @@ const compileObserveStrategyDecision = <R>(
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingAt = yield* currentUtcInstant
+    yield* Effect.fromResult(
+      requireEntryTurnoverCapacity(input, { reconciliation, evaluatedAt: pricingAt }, requiredAuthority),
+    )
     const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
     const brokerHeadroomExhaustedAt = (at: number) =>
       pricingReconciliation?.freshUntil !== undefined &&
@@ -1342,7 +1363,10 @@ export function buildStrategyCycleDecision<R>(
                 dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
                 maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
                 maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
-                maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
+                maxDailyTradedNotionalMicros:
+                  input.policy.maxDailyTradedNotionalMicros === null
+                    ? null
+                    : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                 targetWeights: planningTargetWeights,
                 positions: facts.reconciliation.brokerState.positions,

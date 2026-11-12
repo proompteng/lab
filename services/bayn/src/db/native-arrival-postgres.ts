@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schedule, Schema, Stream } from 'effect'
+import { Array as Arr, Effect, Schedule, Schema, Stream } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
@@ -23,8 +23,12 @@ const PersistedChunk = Schema.Struct({
 })
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
+const CannotConnectNow = Schema.Struct({ code: Schema.Literal('57P03') })
 const retryableAppendFailure = (cause: unknown): cause is SqlError =>
-  isSqlError(cause) && (cause.reason._tag === 'ConnectionError' || cause.reason._tag === 'StatementTimeoutError')
+  isSqlError(cause) &&
+  (cause.reason._tag === 'ConnectionError' ||
+    cause.reason._tag === 'StatementTimeoutError' ||
+    (cause.reason._tag === 'UnknownError' && Schema.is(CannotConnectNow)(cause.reason.cause)))
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
@@ -93,7 +97,10 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
           let batch: typeof additions = []
           let bytes = 0
           for (const addition of additions) {
-            if (batch.length > 0 && (batch.length >= 16 || bytes + addition.compressed.byteLength > 1024 * 1024)) {
+            if (
+              Arr.isArrayNonEmpty(batch) &&
+              (batch.length >= 16 || bytes + addition.compressed.byteLength > 1024 * 1024)
+            ) {
               yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
               batch = []
               bytes = 0
@@ -101,7 +108,7 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
             batch.push(addition)
             bytes += addition.compressed.byteLength
           }
-          if (batch.length > 0) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
+          if (Arr.isArrayNonEmpty(batch)) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
           if (additions.length === 0) {
             // A visible prior COMMIT may still be waiting for its synchronous standby. Transactional WAL
             // makes this acknowledgement wait for the configured durability even when no rows are new.
@@ -125,8 +132,9 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
           : Effect.failCause(cause)
       }),
       Effect.retry({
-        times: 2,
-        schedule: Schedule.spaced('100 millis'),
+        // A managed PostgreSQL switchover can refuse connections for tens of seconds.
+        // Keep the immutable batch queued while reconnecting; the existing byte bound still backpressures ingestion.
+        schedule: Schedule.spaced('1 second').pipe(Schedule.upTo({ duration: '1 minute' })),
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),

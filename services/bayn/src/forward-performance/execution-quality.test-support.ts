@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto'
+import assert from 'node:assert/strict'
+import { Result } from 'effect'
 
-import type { ForwardPerformanceEvidenceInput, ForwardPerformanceExecutionEvidence } from './model'
+import { canonicalHashV1Result } from '../hash'
+import type {
+  ForwardPerformanceDailyMarketVolumeEvidence,
+  ForwardPerformanceEvidenceInput,
+  ForwardPerformanceExecutionEvidence,
+} from './model'
 
 /** Synthetic completed fills only; no account, broker, database or market-data reads. */
 export const executionQualityFixture = (
@@ -126,4 +133,58 @@ export const executionQualityFixture = (
     openPositionCount: 0,
     cashYieldEvidenceRequired: false,
   }
+}
+
+/** Synthetic partial fills with the recorded daily evidence needed to price the unfilled remainder. */
+export const partialExecutionQualityFixture = (count: number) => {
+  const input = executionQualityFixture(count)
+  const marketVolumeEvidence = input.executionEvidence.map((execution) => {
+    const material: Omit<ForwardPerformanceDailyMarketVolumeEvidence, 'contentHash'> = {
+      schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1',
+      cycleId: execution.cycleId,
+      decisionSnapshotId: '1'.repeat(64),
+      decisionSnapshotAsOfSession: '2026-07-19',
+      symbol: execution.symbol,
+      executionSessionDate: '2026-07-20',
+      windowOpenedAt: '2026-07-20T13:30:00.000Z',
+      windowClosedAt: '2026-07-20T20:00:00.000Z',
+      evidenceCutoffAt: '2026-07-20T20:10:00.000Z',
+      quantityAtoms: '100000000000',
+      closePriceMicros: '103000000',
+      snapshotId: '2'.repeat(64),
+      manifestContentHash: '3'.repeat(64),
+      barsContentHash: '4'.repeat(64),
+      finalizedAt: '2026-07-20T20:05:00.000Z',
+      universeId: 'cross-asset-taa-v1',
+      universeSymbolHash: '5'.repeat(64),
+      requestedStart: '2026-01-02',
+      evaluationStart: '2026-01-02',
+      calendarVersion: 'synthetic-calendar-v1',
+      source: 'alpaca',
+      sourceFeed: 'sip',
+      adjustment: 'all',
+    }
+    return { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  })
+  const executionEvidence = input.executionEvidence.map((execution, index) => {
+    const volume = marketVolumeEvidence[index]
+    assert(volume !== undefined && execution.intent !== undefined && execution.terminalOrder !== undefined)
+    const terminal = {
+      schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1' as const,
+      cycleId: execution.cycleId,
+      symbol: execution.symbol,
+      executionSessionDate: volume.executionSessionDate,
+      priceMicros: volume.closePriceMicros,
+      observedAt: volume.finalizedAt,
+      sourceEvidenceHash: volume.contentHash,
+    }
+    return {
+      ...execution,
+      plannedQuantityAtoms: '2000000000',
+      intent: { ...execution.intent, quantityAtoms: '2000000000', terminalOutcome: 'CANCELED' as const },
+      terminalOrder: { ...execution.terminalOrder, quantityAtoms: '2000000000', status: 'CANCELED' as const },
+      terminalReferencePrice: { ...terminal, contentHash: Result.getOrThrow(canonicalHashV1Result(terminal)) },
+    }
+  })
+  return { ...input, executionEvidence, marketVolumeEvidence }
 }

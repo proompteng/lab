@@ -92,6 +92,7 @@ const FinishInputSchema = Schema.Struct({
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
+const DecisionInputDigestRowsSchema = Schema.Tuple([Schema.Struct({ document_digest: Sha256Schema })])
 const DecisionEvidenceMismatchSchema = Schema.Tuple([
   Schema.Struct({ mismatch: Schema.NullOr(Schema.Enum(DecisionEvidenceMismatch)) }),
 ])
@@ -136,6 +137,10 @@ export const decodeObservedAt = Schema.decodeUnknownEffect(UtcInstantSchema, str
 export const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
 
 export const decodeDecisionEvidenceMatch = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
+export const decodeDecisionInputDigestRows = Schema.decodeUnknownEffect(
+  DecisionInputDigestRowsSchema,
+  strictParseOptions,
+)
 export const decodeDecisionEvidenceMismatch = Schema.decodeUnknownEffect(
   DecisionEvidenceMismatchSchema,
   strictParseOptions,

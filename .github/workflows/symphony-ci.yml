@@ -3,6 +3,7 @@ name: symphony
 on:
   pull_request:
     paths:
+      - 'patches/effect@4.1.4.patch'
       - 'services/symphony/**'
       - 'packages/scripts/src/symphony/**'
       - 'argocd/applications/symphony/**'

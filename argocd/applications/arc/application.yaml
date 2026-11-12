@@ -68,7 +68,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ccc3ba63dfa5d6e9256ab413a57c91c5dfdf9b2cd25fbca567a15e14999d4c46
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:899b2d113437c97b98ec6f5862675255583e0d5f565812094b3ca0a5acffa8e6
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -112,7 +112,7 @@ spec:
           scaleSetLabels:
             - arc-amd64
           minRunners: 1
-          maxRunners: 1
+          maxRunners: 8
           listenerTemplate:
             spec:
               nodeSelector:
@@ -132,7 +132,24 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
-                kubernetes.io/hostname: talos-192-168-1-194
+              affinity:
+                nodeAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    nodeSelectorTerms:
+                      - matchExpressions:
+                          - key: kubernetes.io/hostname
+                            operator: In
+                            values:
+                              - talos-192-168-1-194
+                              - turin
+              topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                    matchLabels:
+                      actions.github.com/scale-set-name: arc-amd64
+                      app.kubernetes.io/component: runner
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -142,7 +159,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ccc3ba63dfa5d6e9256ab413a57c91c5dfdf9b2cd25fbca567a15e14999d4c46
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:899b2d113437c97b98ec6f5862675255583e0d5f565812094b3ca0a5acffa8e6
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -260,7 +277,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ccc3ba63dfa5d6e9256ab413a57c91c5dfdf9b2cd25fbca567a15e14999d4c46
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:899b2d113437c97b98ec6f5862675255583e0d5f565812094b3ca0a5acffa8e6
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -370,7 +387,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ccc3ba63dfa5d6e9256ab413a57c91c5dfdf9b2cd25fbca567a15e14999d4c46
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:899b2d113437c97b98ec6f5862675255583e0d5f565812094b3ca0a5acffa8e6
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -412,7 +429,7 @@ spec:
           scaleSetLabels:
             - arc-amd64-publish
           minRunners: 1
-          maxRunners: 1
+          maxRunners: 2
           listenerTemplate:
             spec:
               nodeSelector:
@@ -433,7 +450,24 @@ spec:
               automountServiceAccountToken: false
               nodeSelector:
                 kubernetes.io/arch: amd64
-                kubernetes.io/hostname: talos-192-168-1-194
+              affinity:
+                nodeAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    nodeSelectorTerms:
+                      - matchExpressions:
+                          - key: kubernetes.io/hostname
+                            operator: In
+                            values:
+                              - talos-192-168-1-194
+                              - turin
+              topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                    matchLabels:
+                      actions.github.com/scale-set-name: arc-amd64-publish
+                      app.kubernetes.io/component: runner
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -448,7 +482,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:ccc3ba63dfa5d6e9256ab413a57c91c5dfdf9b2cd25fbca567a15e14999d4c46
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:899b2d113437c97b98ec6f5862675255583e0d5f565812094b3ca0a5acffa8e6
                   securityContext:
                     privileged: false
                   command: [ "/home/runner/run.sh" ]

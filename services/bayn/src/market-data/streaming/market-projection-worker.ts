@@ -1,16 +1,18 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Context, Effect, Exit, FiberMap, FiberSet, Layer, Logger, Redacted, Scope } from 'effect'
+import { Cause, Clock, Context, Effect, Exit, Fiber, FiberMap, FiberSet, Layer, Logger, Redacted, Scope } from 'effect'
 
-import { NativeArrivalArchiveLive } from '../../db/native-arrival-archive'
+import { PostgresClientLive } from '../../db/postgres-client'
 import { makeNativeArrivalStore } from '../../db/native-arrival-postgres'
+import { initializeErrorTracking } from '../../error-tracking'
 import { makeConfiguredTelemetryRuntimeLayer } from '../../telemetry'
 import { KafkaMarketFailure, makeKafkaMarketProjection } from './kafka'
 import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { compactStreamingProjection } from './query-cut'
 import { snapshotCutMeasurement, snapshotFailureMeasurement } from './telemetry'
 import { nativeArrivalCaptureId } from './native-arrival'
+import { makeCaptureHealth } from './capture-health'
 import { makeNativeArrivalJournal } from './native-arrival-journal'
 import type { ProjectionWorkerOptions, ProjectionWorkerRequest, ProjectionWorkerResponse } from './worker'
 
@@ -26,6 +28,7 @@ export const serveProjectionWorker = (
     yield* send({ _tag: 'Ready', value: yield* projection.status })
     return yield* Effect.callback<void>((_resume) => {
       const onMessage = (request: ProjectionWorkerRequest) => {
+        if (request.operation === 'health-ack') return
         if (request.operation === 'cancel') {
           run(FiberMap.remove(requests, request.id))
           return
@@ -113,16 +116,48 @@ export const serveProjectionWorker = (
 
 export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: NonNullable<typeof parentPort>) =>
   Effect.gen(function* () {
+    initializeErrorTracking('bayn-market-projection')
     const scope = yield* Scope.make()
     yield* Effect.addFinalizer((exit) => Scope.close(scope, exit))
-    const archive = NativeArrivalArchiveLive({
-      ...options.archive,
-      postgres: { ...options.archive.postgres, url: Redacted.make(options.archive.postgres.url) },
-    })
+    const health = makeCaptureHealth()
+    let awaitingHealthAck = false
+    const acknowledge = (request: ProjectionWorkerRequest) => {
+      if (request.operation === 'health-ack') awaitingHealthAck = false
+    }
+    port.on('message', acknowledge)
+    const reportHealth = Effect.gen(function* () {
+      const monotonic = Number(yield* Clock.monotonicTimeNanos) / 1_000_000_000
+      const now = (yield* Clock.currentTimeMillis) / 1000
+      port.postMessage({
+        _tag: 'CaptureHealth',
+        health: health.sample(monotonic, now),
+      } satisfies ProjectionWorkerResponse)
+      awaitingHealthAck = true
+    }).pipe(Effect.catchDefect(() => Effect.logWarning('Native capture health delivery failed')))
+    const sampler = yield* Effect.forever(
+      Effect.suspend(() => (awaitingHealthAck ? Effect.void : reportHealth)).pipe(
+        Effect.andThen(Effect.sleep('15 seconds')),
+      ),
+    ).pipe(Effect.forkIn(scope))
+    // One final bounded frame follows journal finalization, before the stop acknowledgement.
+    yield* Scope.addFinalizer(
+      scope,
+      Fiber.interrupt(sampler).pipe(
+        Effect.andThen(reportHealth),
+        Effect.ensuring(Effect.sync(() => port.off('message', acknowledge))),
+      ),
+    )
+    const database = PostgresClientLive(
+      {
+        ...options.database,
+        postgres: { ...options.database.postgres, url: Redacted.make(options.database.postgres.url) },
+      },
+      { maxConnections: 1, applicationName: 'bayn-native-arrival' },
+    )
     const parent = yield* Effect.context<never>()
     const outerScope = yield* Effect.scope
     const context = yield* Layer.buildWithScope(
-      archive.pipe(
+      database.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-market-projection')),
       ),
@@ -135,7 +170,7 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
       options.sources,
       undefined,
       undefined,
-      (bootstrap, sources) =>
+      health.wrap((bootstrap, sources) =>
         Effect.gen(function* () {
           const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(options.build, bootstrap, sources))
           return yield* makeNativeArrivalJournal(
@@ -149,6 +184,7 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
             store,
           )
         }),
+      ),
     ).pipe(Effect.provideContext(services))
     return yield* serveProjectionWorker(projection, Scope.close(scope, Exit.void), port).pipe(
       Effect.provideContext(Context.add(services, Scope.Scope, outerScope)),
@@ -156,7 +192,7 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
   })
 
 if (import.meta.main && parentPort !== null) {
-  // The parent passes only the existing Kafka/archive credentials and public source identity.
+  // The parent passes only the existing Kafka/PostgreSQL credentials and public source identity.
   const options = workerData as ProjectionWorkerOptions
   NodeRuntime.runMain(
     Layer.effectDiscard(

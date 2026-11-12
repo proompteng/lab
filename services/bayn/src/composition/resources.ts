@@ -35,7 +35,6 @@ import { JournalLive } from '../ledger'
 import { IntradayMarketData } from '../market-data/intraday/model'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { makeThreadedKafkaProjection, projectionWorkerOptions } from '../market-data/streaming/worker'
-import { nativeArrivalArchiveConfig } from '../db/native-arrival-archive'
 import type { DatabaseError } from '../db/database-error'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { operationalError, type OperationalError } from '../errors'
@@ -100,22 +99,19 @@ export const WorkerMarketProjectionLive = (
       )
     : Layer.effect(
         KafkaMarketProjection,
-        Effect.gen(function* () {
-          const archive = yield* Effect.fromResult(nativeArrivalArchiveConfig(plan.config))
-          return yield* makeThreadedKafkaProjection(
-            projectionWorkerOptions(kafka, archive, workerStreamingUniverse(plan), plan.config.build),
-          ).pipe(
-            Effect.mapError((cause) =>
-              operationalError({
-                component: 'market-data',
-                operation: 'load',
-                message: 'Kafka projection thread could not start',
-                cause,
-              }),
-            ),
-          )
-        }),
-      )
+        makeThreadedKafkaProjection(
+          projectionWorkerOptions(kafka, plan.config, workerStreamingUniverse(plan), plan.config.build),
+        ).pipe(
+          Effect.mapError((cause) =>
+            operationalError({
+              component: 'market-data',
+              operation: 'load',
+              message: 'Kafka projection thread could not start',
+              cause,
+            }),
+          ),
+        ),
+      ).pipe(Layer.provide(PostgresMigrationsLive(plan.config).pipe(Layer.provide(ApplicationPlatformLive))))
 }
 
 const WorkerMarketDataLive = (

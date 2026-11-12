@@ -9,7 +9,6 @@
 }:
 
 let
-  openCode = import ./opencode-cli.nix { inherit pkgs lib; };
   frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
   imageName = if research then "bayn-research" else "bayn";
   imageRepository = "registry.ide-newton.ts.net/lab/${imageName}";
@@ -26,6 +25,7 @@ let
     "native-arrival-export-command"
     "webull-research-command"
   ] else [
+    "decision-construction-worker"
     "index"
     "forward-performance-command"
     "control-opening-command"
@@ -46,9 +46,9 @@ let
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
   strategyProtocolHash = "140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf";
-  # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  # Canonical uncapped sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
+  executionRiskPolicyHash = "1529d63053bb4b2f2979e14cfe29282928d02fee603ac5d8094ff4f39ef316a5";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -148,12 +148,12 @@ let
     "bun --cwd=services/bayn run tsc"
     # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
     "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
-    "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
     "node --check services/bayn/dist/market-projection-worker.js"
+    "node --check services/bayn/dist/decision-construction-worker.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/system-assessment-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"

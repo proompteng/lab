@@ -1,5 +1,5 @@
-import { ConfigProvider, Effect } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
+import { ConfigProvider, Effect, Option } from 'effect'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 export const historyFixtureRequest = {
   schemaVersion: 'bayn.alpaca-backfill.v1',
@@ -13,8 +13,7 @@ export const historyFixtureCredentials = ConfigProvider.fromUnknown({
   BAYN_ALPACA_SECRET_KEY: 'fixture-secret',
 })
 export const historyFixtureHttp = HttpClient.make((request) => {
-  const url = new URL(request.url)
-  for (const [key, value] of request.urlParams) url.searchParams.set(key, value)
+  const url = Option.getOrThrow(HttpClientRequest.toUrl(request))
   const symbols = (url.searchParams.get('symbols') ?? '').split(',')
   const date = (url.searchParams.get('start') ?? '2026-09-11').slice(0, 10)
   const sessionStart = Date.parse(`${date}T13:30:00Z`)
