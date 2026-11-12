@@ -122,6 +122,8 @@ def main() -> None:
     for name in ("paperless-tika", "paperless-gotenberg"):
         converter = resource("Deployment", name)["spec"]["template"]["spec"]
         assert "@sha256:" in converter["containers"][0]["image"]
+        if name == "paperless-gotenberg":
+            assert converter["securityContext"]["runAsUser"] == 1001
 
     print(
         f"PASS: {len(items)} resources; Flamingo, secrets, RBD, backup, ingress, and rootless pod"
