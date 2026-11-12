@@ -102,7 +102,6 @@ export const runtimeConfigSource = Config.all({
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
-  cyclePollIntervalMs: operationalThreshold('BAYN_CYCLE_POLL_INTERVAL_MS', 30_000),
   authorityGenerationHash: Config.option(Config.schema(Sha256Schema, 'BAYN_AUTHORITY_GENERATION_HASH')),
   brokerProvider: Config.schema(Schema.Enum(BrokerProvider), 'BAYN_BROKER_PROVIDER').pipe(
     Config.withDefault(BrokerProvider.Alpaca),
@@ -157,7 +156,6 @@ export const runtimeConfigSource = Config.all({
       cycleStallThresholdMs: config.cycleStallThresholdMs,
       reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
       unknownMutationThresholdMs: config.unknownMutationThresholdMs,
-      cyclePollIntervalMs: config.cyclePollIntervalMs,
       authorityGenerationHash: Option.getOrUndefined(config.authorityGenerationHash),
       configuredAlpaca: {
         provider: config.brokerProvider,

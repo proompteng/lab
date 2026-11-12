@@ -294,6 +294,7 @@ test('only a matching unused expired capture releases speculative debt after inv
   const line = stdout.split('\n').find((value) => value.startsWith('CAPTURE_CLAIM_RESULT='))
   if (line === undefined) throw new Error(`Capture claim worker returned no result: ${stdout}`)
   const result = JSON.parse(line.slice('CAPTURE_CLAIM_RESULT='.length))
+  expect(result.consistencyWait).toEqual({ _tag: 'QuotaWait', nextPollNotBeforeMs: result.consistencyDeadline })
   expect(result.expired).toMatchObject({
     _tag: 'Unavailable',
     nextPollNotBeforeMs: expect.any(Number),

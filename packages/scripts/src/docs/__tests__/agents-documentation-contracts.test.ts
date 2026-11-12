@@ -204,7 +204,7 @@ describe('Agents documentation contracts', () => {
     expect(jangarDocs).not.toContain('MEMORY_SCHEMA="${MEMORY_SCHEMA:-jangar_primitives}"')
     expect(agent).not.toContain('deliveryId:')
     expect(runbook).toContain('kargo/agents')
-    expect(runbook).toContain('lab-delivery')
+    expect(runbook).toContain('agents-release/agents')
     expect(runbook).toContain('orchestrations.orchestration.proompteng.ai')
     expect(runbook).not.toContain('orchestrations.agents.proompteng.ai')
     expect(runbook).not.toContain('Nitro')
