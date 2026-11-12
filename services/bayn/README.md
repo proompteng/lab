@@ -1532,6 +1532,11 @@ does not regain trading permission. Native passes retain their independent fresh
 Controller completion persists only an explicit absolute domain deadline. A completed pass without one waits for
 a stream event. Worker completion, persistence and transport time never reset the original deadline; an elapsed wake
 runs on the next bounded continuation. A failed post-pass projection check selects its explicit recovery deadline.
+Failed reconciliation and waits for a pending or post-mutation broker observation retain that same deadline as a
+market-hint eligibility boundary. Quote bursts cannot replace financial recovery with repeated failed passes.
+Broker publications and inference completions still wake the owner immediately; the original timer remains the
+fallback. A market-data decision failure remains responsive to new source input. This gate introduces no new
+delay, changes no observation's freshness and preserves any earlier protection or expiry deadline.
 These wake times grant no execution authority and retain fresh reconciliation,
 quote, risk and submission checks.
 

@@ -305,12 +305,21 @@ export const completeExecutionControllerTick = (
     wakeAcceptedAt: _previousWakeAcceptedAt,
     ...completedState
   } = state
-  const availableAt =
-    result.observation?.result !== 'SUCCESS'
+  const observation = result.observation
+  // Quotes cannot repair a missing financial cut. Preserve its existing recovery deadline against market
+  // bursts; broker publications and inference completions still bypass this market-only eligibility gate.
+  const awaitingBroker =
+    observation?.result === 'FAILURE'
+      ? observation.operation === 'reconcile'
+      : observation?.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+        observation?.waitReason === 'POST_MUTATION_RECONCILIATION'
+  const availableAt = awaitingBroker
+    ? result.outcome.nextWakeAt
+    : observation?.result !== 'SUCCESS'
       ? undefined
-      : result.observation.outcome === 'WINDOW_CLOSED'
+      : observation.outcome === 'WINDOW_CLOSED'
         ? result.outcome.nextWakeAt
-        : result.observation.readiness?.availableAt
+        : observation.readiness?.availableAt
   return Result.succeed({
     ...completedState,
     nextSequence: state.nextSequence + 1,

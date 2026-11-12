@@ -417,6 +417,69 @@ describe('execution controller decisions', () => {
   })
 
   test.each([
+    { result: 'FAILURE', operation: 'reconcile', failure: 'market-data', message: 'Broker observation unavailable' },
+    { result: 'SUCCESS', outcome: 'WAITING', waitReason: 'BROKER_OBSERVATION_PENDING' },
+    { result: 'SUCCESS', outcome: 'RECOVERED', recoveryAction: 'WAITING', waitReason: 'BROKER_OBSERVATION_PENDING' },
+    { result: 'SUCCESS', outcome: 'RECOVERED', recoveryAction: 'WAITING', waitReason: 'POST_MUTATION_RECONCILIATION' },
+  ] as const)(
+    'broker-dependent completion preserves its existing deadline against market hints (%j)',
+    (observation) => {
+      const nextWakeAt = '2026-08-13T18:00:30.000Z'
+      const complete = (wakeAt: string | undefined) =>
+        Result.getOrThrow(
+          completeExecutionControllerTick(
+            activated(),
+            { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+            {
+              ...completedResult,
+              observation: { ...observation, observedAt: completedResult.completedAt },
+              outcome: {
+                ...completedResult.outcome,
+                nextDelayMs: 1,
+                ...(wakeAt === undefined ? {} : { nextWakeAt: wakeAt }),
+              },
+            },
+            sourceRevision,
+          ),
+        )
+
+      const state = complete(nextWakeAt)
+      expect(state.marketEligibleAt).toBe(nextWakeAt)
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      expect(state.lastCompletion?.receiptHash).toBe(completedResult.outcome.receiptHash)
+      expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
+      // A closer protection/expiry deadline remains the owner; no new delay is derived from the retained hint.
+      expect(complete('2026-08-13T18:00:02.000Z').marketEligibleAt).toBe('2026-08-13T18:00:02.000Z')
+      expect(complete(completedResult.completedAt).marketEligibleAt).toBeUndefined()
+      expect(complete(undefined).marketEligibleAt).toBeUndefined()
+      expect(complete(undefined).nextDueAt).toBeUndefined()
+    },
+  )
+
+  test('a market-data decision failure remains responsive to newly arriving market input', () => {
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        activated(),
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          ...completedResult,
+          observation: {
+            result: 'FAILURE',
+            observedAt: completedResult.completedAt,
+            operation: 'build-decision',
+            failure: 'market-data',
+            message: 'Market projection rebuilding',
+          },
+          outcome: { ...completedResult.outcome, nextWakeAt: '2026-08-13T18:00:30.000Z' },
+        },
+        sourceRevision,
+      ),
+    )
+    expect(state.nextDueAt).toBe('2026-08-13T18:00:30.000Z')
+    expect(state.marketEligibleAt).toBeUndefined()
+  })
+
+  test.each([
     { wakeAt: '2026-08-13T18:00:04.000Z', dueAt: '2026-08-13T18:00:04.000Z' },
     { wakeAt: '2026-08-13T18:00:02.000Z', dueAt: '2026-08-13T18:00:02.000Z' },
     { wakeAt: '2026-08-13T18:00:03.000Z', dueAt: '2026-08-13T18:00:03.000Z' },

@@ -446,6 +446,118 @@ test('the authenticated market gateway awaits only its small private wake and re
   expect(deliveries).toHaveLength(1)
 })
 
+test.each(['broker', 'inference', 'deadline'] as const)(
+  'broker-recovery market bursts preserve the deadline while %s can resume execution',
+  async (resume) => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const startedAt = fixtureTransportClock.currentTimeMillisUnsafe()
+    let now = startedAt
+    let advances = 0
+    const nextWakeAt = new Date(startedAt + 30_000).toISOString()
+    const deliveries: Array<{ service: string; method: string; parameter: unknown; delay?: number }> = []
+    const object = handlers(
+      makeBaynExecutionController(
+        config,
+        {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: async () => {
+            advances += 1
+            return {
+              completedAt: new Date(now).toISOString(),
+              observation: {
+                result: 'FAILURE',
+                operation: 'reconcile',
+                failure: 'market-data',
+                message: 'Broker observation is unavailable or invalidated by a mutation',
+                observedAt: new Date(now).toISOString(),
+              },
+              outcome: {
+                _tag: ExecutionControllerOutcome.Blocked,
+                receiptHash: 'd'.repeat(64),
+                nextDelayMs: 1,
+                nextWakeAt,
+              },
+            }
+          },
+        },
+        [],
+        { currentTimeMillisUnsafe: () => now },
+      ),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: (typeof deliveries)[number]) => deliveries.push(delivery),
+      date: { now: async () => now },
+      request: () => ({ id: 'broker-recovery-owner', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+    // Recreate persisted state as on replay; both physical publishers continue changing throughout the wait.
+    state = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    const replacementProducer = '22222222-2222-4222-8222-222222222222'
+    for (let sequence = 1; sequence <= 100; sequence++) {
+      now += 10
+      await object.wake(context, marketChange(sequence))
+      await object.wake(context, marketChange(sequence, replacementProducer))
+    }
+    expect(advances).toBe(1)
+    expect(deliveries).toEqual([
+      expect.objectContaining({ service: 'BaynExecutionController', method: 'tick', delay: 30_000 }),
+    ])
+    expect(state.nextDueAt).toBe(nextWakeAt)
+    expect(state.wakeScheduledSequence).toBeUndefined()
+    if (resume === 'broker') {
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'BrokerObservation',
+        sourceRevision,
+        eventId: 'e'.repeat(64),
+        snapshotHash: 'e'.repeat(64),
+        observedAt: new Date(now).toISOString(),
+      })
+    } else if (resume === 'inference') {
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'InferenceCompleted',
+        sourceRevision,
+        eventId: 'e'.repeat(64),
+        epoch: 1,
+        jobId: 'e'.repeat(64),
+        batchId: 'e'.repeat(64),
+        cycleId: 'f'.repeat(64),
+        authorityGenerationHash: '1'.repeat(64),
+        expiresAt: new Date(startedAt + 60_000).toISOString(),
+        completedAt: new Date(now).toISOString(),
+      })
+    } else {
+      now = Date.parse(nextWakeAt)
+      await object.wake(context, marketChange(101))
+    }
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[1]).toMatchObject({
+      service: 'BaynExecutionController',
+      method: 'tick',
+      parameter: { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 5 },
+    })
+    await object.tick(context, deliveries[1]?.parameter)
+    expect(advances).toBe(2)
+  },
+)
+
 test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
   let state: ExecutionControllerState = {
     schemaVersion: 1,
