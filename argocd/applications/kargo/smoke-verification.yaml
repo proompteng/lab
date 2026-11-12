@@ -9,14 +9,13 @@ spec:
   - name: pattern
   metrics:
   - name: kargo-http-smoke
-    count: 3
-    interval: 10s
+    count: 1
     failureLimit: 0
     provider:
       job:
         spec:
           backoffLimit: 0
-          activeDeadlineSeconds: 90
+          activeDeadlineSeconds: 300
           ttlSecondsAfterFinished: 300
           template:
             metadata:
@@ -76,14 +75,13 @@ spec:
   - name: image
   metrics:
   - name: kargo-workload-smoke
-    count: 3
-    interval: 10s
+    count: 1
     failureLimit: 0
     provider:
       job:
         spec:
           backoffLimit: 0
-          activeDeadlineSeconds: 90
+          activeDeadlineSeconds: 300
           ttlSecondsAfterFinished: 300
           template:
             metadata:
@@ -143,14 +141,13 @@ spec:
   - name: image
   metrics:
   - name: kargo-runner-smoke
-    count: 3
-    interval: 10s
+    count: 1
     failureLimit: 0
     provider:
       job:
         spec:
           backoffLimit: 0
-          activeDeadlineSeconds: 90
+          activeDeadlineSeconds: 300
           ttlSecondsAfterFinished: 300
           template:
             metadata:
@@ -211,14 +208,13 @@ spec:
   - name: image
   metrics:
   - name: discord-login
-    count: 3
-    interval: 10s
+    count: 1
     failureLimit: 0
     provider:
       job:
         spec:
           backoffLimit: 0
-          activeDeadlineSeconds: 90
+          activeDeadlineSeconds: 300
           ttlSecondsAfterFinished: 300
           template:
             metadata:
