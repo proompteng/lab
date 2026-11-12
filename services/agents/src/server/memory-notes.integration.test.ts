@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
+import { asRecord } from '@proompteng/agent-contracts'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -23,7 +24,13 @@ import type { AgentsDatabase } from './db'
 import { createPostgresMemoriesStore } from './memory-notes-store'
 import * as initial from './migrations/20260521_agents_memory_notes'
 import * as retirement from './migrations/20261111_agents_memory_note_retirement'
-import { getMemoryNotesHandler, postMemoryNotesHandler, postRetireMemoryNoteHandler } from './v1/memory-notes'
+import * as saveKeys from './migrations/20261112_agents_memory_save_keys'
+import {
+  getMemoryNoteHandler,
+  getMemoryNotesHandler,
+  postMemoryNotesHandler,
+  postRetireMemoryNoteHandler,
+} from './v1/memory-notes'
 import { postRepoContextHandler } from './v1/repo-context'
 
 vi.mock('./kysely-migrations', () => ({ ensureMigrations: async () => undefined }))
@@ -54,6 +61,16 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
     await sql`CREATE EXTENSION pgcrypto`.execute(db)
     await initial.up(db)
     await retirement.up(db)
+    for (const [id, date] of [
+      ['11111111-1111-4111-8111-111111111111', '2026-01-01'],
+      ['22222222-2222-4222-8222-222222222222', '2026-01-02'],
+    ]) {
+      await sql`INSERT INTO memories.entries (id, task_name, content, summary, tags, metadata, source, embedding, encoder_model, created_at)
+        VALUES (${id}::uuid, 'legacy-keep', 'Legacy content remains unchanged.', 'Legacy summary', ARRAY['b','a'],
+        '{"repository":"proompteng/lab","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'::jsonb,
+        'agents.memory-notes', '[0,1,0]'::vector, 'test', ${date}::timestamptz)`.execute(db)
+    }
+    await saveKeys.up(db)
     store = createPostgresMemoriesStore({
       url: testUrl.toString(),
       createDb: () => db,
@@ -93,11 +110,13 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
                     ],
                   }),
               })
-            : request.url?.startsWith('/v1/memory-notes/retire')
-              ? await postRetireMemoryNoteHandler(req, deps)
-              : request.method === 'POST'
-                ? await postMemoryNotesHandler(req, deps)
-                : await getMemoryNotesHandler(req, deps)
+            : request.method === 'GET' && /^\/v1\/memory-notes\/[^/?]+$/.test(request.url ?? '')
+              ? await getMemoryNoteHandler(req, new URL(req.url).pathname.split('/').at(-1) ?? '', deps)
+              : request.url?.startsWith('/v1/memory-notes/retire')
+                ? await postRetireMemoryNoteHandler(req, deps)
+                : request.method === 'POST'
+                  ? await postMemoryNotesHandler(req, deps)
+                  : await getMemoryNotesHandler(req, deps)
         response.writeHead(result.status, { 'content-type': 'application/json' })
         response.end(await result.text())
       } catch (error) {
@@ -213,6 +232,114 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
     expect(stale.memory.state).toBe('ready')
   })
 
+  it('backfills replay keys while preserving historical duplicate rows', async () => {
+    const first = await store.persist({
+      namespace: 'legacy-keep',
+      content: 'Legacy content remains unchanged.',
+      summary: 'Legacy summary',
+      tags: ['a', 'b'],
+      metadata: { commit: 'a'.repeat(40), repository: 'proompteng/lab' },
+    })
+    expect(first.id).toBe('11111111-1111-4111-8111-111111111111')
+    expect(await store.count({ namespace: 'legacy-keep' })).toBe(2)
+    expect((await store.get('22222222-2222-4222-8222-222222222222'))?.content).toBe(first.content)
+  })
+
+  it('saves, retries, lists and opens an exact note through the Bun CLI', async () => {
+    const run = async (script: 'save' | 'retrieve', ...args: string[]) => {
+      const { stdout } = await promisify(execFile)(
+        'bun',
+        [resolve('..', 'memories', `${script}.ts`), ...args, '--json'],
+        {
+          env: { ...process.env, MEMORIES_AGENTS_URL: baseUrl },
+        },
+      )
+      return JSON.parse(stdout)
+    }
+    const args = [
+      '--task-name',
+      'cli-workflow',
+      '--repository',
+      'proompteng/lab',
+      '--commit',
+      'a'.repeat(40),
+      '--content',
+      'Durable CLI evidence.',
+      '--summary',
+      'CLI replay evidence',
+    ]
+    const first = await run('save', ...args)
+    expect(await run('save', ...args)).toEqual(first)
+    const read = await run('retrieve', '--id', first.memory.id)
+    expect(read.content).toBe('Durable CLI evidence.')
+    expect(read.memory).toMatchObject({ repository: 'proompteng/lab', commit: 'a'.repeat(40) })
+    const page = await run('retrieve', '--latest', '--task-name', 'cli-workflow')
+    expect(page).toMatchObject({ memories: [{ id: first.memory.id }], nextCursor: null })
+    expect(page.memories[0]).not.toHaveProperty('content')
+    await expect(run('save', ...args, '--metadata', '{}')).rejects.toThrow('unsupported flag --metadata')
+    await expect(run('retrieve', '--id', '00000000-0000-4000-8000-000000000000')).rejects.toThrow('404')
+  })
+
+  it('deduplicates concurrent saves, metadata key order and tag order without resurrecting retired notes', async () => {
+    const input = {
+      namespace: 'retry-test',
+      content: 'Durable retry evidence.',
+      tags: ['b', 'a'],
+      metadata: { repository: 'proompteng/lab', commit: 'a'.repeat(40) },
+    }
+    const [first, retry] = await Promise.all([
+      store.persist(input),
+      store.persist({
+        ...input,
+        tags: ['a', 'b', 'a'],
+        metadata: { commit: 'a'.repeat(40), repository: 'proompteng/lab' },
+      }),
+    ])
+    expect(first).toEqual(retry)
+    expect(await store.count({ namespace: 'retry-test' })).toBe(1)
+    const retired = await store.retire({ id: first.id, reason: 'Replaced by verified evidence.' })
+    expect(await store.persist(input)).toEqual(retired)
+    expect(await store.count({ namespace: 'retry-test' })).toBe(1)
+  })
+
+  it('pages without losing tied or sub-millisecond timestamps, even when the cursor note is retired', async () => {
+    for (let index = 0; index < 5; index++) {
+      const note = await store.persist({
+        namespace: 'paging-test',
+        content: `Page note ${index}`,
+        metadata: { repository: 'proompteng/lab' },
+      })
+      await sql`UPDATE memories.entries SET created_at = ${`2026-11-11T12:00:00.12345${Math.floor(index / 2)}Z`}::timestamptz WHERE id = ${note.id}::uuid`.execute(
+        db,
+      )
+    }
+    const expected = await db
+      .selectFrom('memories.entries')
+      .select('id')
+      .where('task_name', '=', 'paging-test')
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .execute()
+    const seen: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = await store.list({ namespace: 'paging-test', limit: 1, cursor })
+      expect(page.memories).toHaveLength(1)
+      const note = page.memories[0]
+      if (!note) throw new Error('Missing page note')
+      expect(note).not.toHaveProperty('content')
+      expect(note).not.toHaveProperty('metadata')
+      seen.push(note.id)
+      if (seen.length === 1) await store.retire({ id: note.id, reason: 'Cursor stability check.' })
+      cursor = page.nextCursor ?? undefined
+      expect(seen.length).toBeLessThanOrEqual(5)
+    } while (cursor)
+    expect(seen).toEqual(expected.map((row) => row.id))
+    await expect(store.list({ cursor: '00000000-0000-4000-8000-000000000000' })).rejects.toThrow(
+      'cursor note not found',
+    )
+  })
+
   it('retires atomically, preserves history and rejects incompatible retries and replacements', async () => {
     const old = await seed('MCTS old instruction to retire.')
     const replacement = await seed('MCTS corrected instruction.')
@@ -233,7 +360,7 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
         (row) => row.id === old.id,
       ),
     ).toBe(false)
-    expect((await store.list({ includeRetired: true })).find((row) => row.id === old.id)).toEqual(first)
+    expect(await store.get(old.id)).toEqual(first)
     await expect(store.retire({ ...input, reason: 'Changed reason' })).rejects.toThrow('already retired')
     const newer = await seed('MCTS another current note.')
     await expect(
@@ -263,15 +390,18 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
       await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
       try {
+        const content = 'MCTS candidate binding preserves matching metrics. 🦊漢字\n'.repeat(350)
+        const saveInput = {
+          namespace: `mcp-${new URL(resource).hostname}`,
+          content,
+          summary: 'MCTS candidate binding',
+          tags: ['mcts'],
+          repository: 'proompteng/lab',
+          commit: 'a'.repeat(40),
+        }
         const saved = await client.callTool({
           name: 'memory_save',
-          arguments: {
-            namespace: 'mcp-evaluation',
-            content: 'MCTS candidate binding must preserve matching metrics.'.repeat(200),
-            summary: 'MCTS candidate binding',
-            tags: ['mcts'],
-            metadata: { repository: 'proompteng/lab' },
-          },
+          arguments: saveInput,
         })
         expect(saved.isError).not.toBe(true)
         expect(Buffer.byteLength(JSON.stringify(saved))).toBeLessThan(4096)
@@ -280,6 +410,25 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
         ) as {
           memory: { id: string }
         }
+        const replay = await client.callTool({ name: 'memory_save', arguments: saveInput })
+        expect(replay.structuredContent).toMatchObject({ memory: { id: savedBody.memory.id } })
+        let offset = 0
+        let complete = ''
+        let reads = 0
+        while (true) {
+          const read = await client.callTool({ name: 'memory_get', arguments: { id: savedBody.memory.id, offset } })
+          expect(read.isError).not.toBe(true)
+          expect(Buffer.byteLength(JSON.stringify(read))).toBeLessThanOrEqual(4096)
+          const page = asRecord(read.structuredContent)
+          if (!page || typeof page.content !== 'string') throw new Error('Missing note content')
+          complete += page.content
+          if (page.nextOffset === null) break
+          if (typeof page.nextOffset !== 'number') throw new Error('Missing content cursor')
+          expect(page.nextOffset).toBeGreaterThan(offset)
+          offset = page.nextOffset
+          if (++reads > 100) throw new Error('Note reader did not make progress')
+        }
+        expect(complete).toBe(content.trim())
         const retired = await client.callTool({
           name: 'memory_retire',
           arguments: { id: savedBody.memory.id.toUpperCase(), reason: 'Synthetic integration-test note retired.' },
@@ -287,6 +436,12 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
         expect(retired.isError).not.toBe(true)
         expect(retired.structuredContent).toHaveProperty('memory.retiredAt', expect.any(String))
         expect(Buffer.byteLength(JSON.stringify(retired))).toBeLessThan(4096)
+        const historical = await client.callTool({ name: 'memory_get', arguments: { id: savedBody.memory.id } })
+        expect(historical.structuredContent).toHaveProperty('memory.retiredAt', expect.any(String))
+        expect(historical.structuredContent).toHaveProperty(
+          'memory.retirementReason',
+          'Synthetic integration-test note retired.',
+        )
         const list = await client.callTool({
           name: 'memory_list',
           arguments: { repository: 'proompteng/lab', model: 'test-model', limit: 2 },
@@ -294,6 +449,22 @@ describe.skipIf(!url)('Memory notes on PostgreSQL through API, CLI and MCP', () 
         expect(list.isError).not.toBe(true)
         expect(list.structuredContent).toHaveProperty('memories', expect.any(Array))
         expect(list.structuredContent).toMatchObject({ memories: [expect.any(Object), expect.any(Object)] })
+        expect(Buffer.byteLength(JSON.stringify(list))).toBeLessThanOrEqual(4096)
+        const cursor = asRecord(list.structuredContent)?.nextCursor
+        if (typeof cursor !== 'string') throw new Error('Missing list cursor')
+        const following = await client.callTool({
+          name: 'memory_list',
+          arguments: { repository: 'proompteng/lab', model: 'test-model', limit: 2, cursor },
+        })
+        expect(following.isError).not.toBe(true)
+        expect(following.structuredContent).not.toMatchObject({ memories: [{ id: cursor }] })
+        const invalidSave = await client.callTool({ name: 'memory_save', arguments: { ...saveInput, commit: 'short' } })
+        expect(invalidSave.isError).toBe(true)
+        const oldShape = await client.callTool({
+          name: 'memory_save',
+          arguments: { ...saveInput, metadata: { repository: 'other/repo' } },
+        })
+        expect(oldShape.isError).toBe(true)
         const search = await client.callTool({
           name: 'retrieve_context',
           arguments: {

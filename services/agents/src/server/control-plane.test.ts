@@ -29,6 +29,13 @@ afterEach(() => {
 })
 
 describe('Agents control-plane runtime', () => {
+  it('registers the exact-note read route in the production runtime', async () => {
+    process.env.AGENTS_CONTROLLER_ENABLED = '0'
+    const runtime = await createAgentsControlPlaneRuntime()
+    const response = await runtime.handleHttpRequest(new Request('http://agents.test/v1/memory-notes/invalid'))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toHaveProperty('error', 'id must be a UUID.')
+  })
   it.each(['/v1/context', '/v1/memory-notes/retire'])('registers %s in the production route list', async (path) => {
     process.env.AGENTS_CONTROLLER_ENABLED = '0'
     const runtime = await createAgentsControlPlaneRuntime()
