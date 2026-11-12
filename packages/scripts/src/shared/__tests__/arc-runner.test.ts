@@ -1,5 +1,15 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -68,9 +78,9 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
     expect(arcApplication).not.toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
-    expect(armBlock).toContain('emptyDir:')
-    expect(armBlock).toContain('sizeLimit: 130Gi')
-    expect(armBlock).not.toContain('volumeClaimTemplate:')
+    expect(armBlock).toContain('storageClassName: rook-ceph-block')
+    expect(armBlock).toContain('storage: 130Gi')
+    expect(armBlock).not.toContain('emptyDir:')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
     const analysisBlock = runnerScaleSetBlock('analysis-arm64')
     expect(analysisBlock).toContain('emptyDir:')
@@ -140,6 +150,7 @@ describe('ARC Nix runner toolchain', () => {
               { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
               { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
               { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
+              { name: 'scratch', mountPath: '/var/tmp', subPath: 'var-tmp' },
               workMount,
             ]),
           }),
@@ -169,7 +180,105 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('keeps ten warm AMD64 runners while preserving the other runner pools', () => {
+  it('mounts separate large-file scratch and creates private Rust cache homes after copy verification', () => {
+    const amd64 = YAML.parse(arcApplication).spec.sources[2].helm.valuesObject.template.spec
+    const runner = amd64.containers[0]
+    const mounts = runner.volumeMounts as { name: string; mountPath: string; subPath: string }[]
+    expect(mounts.find((mount) => mount.mountPath === '/var/tmp')).toEqual({
+      name: 'scratch',
+      mountPath: '/var/tmp',
+      subPath: 'var-tmp',
+    })
+    expect(mounts.find((mount) => mount.mountPath === '/tmp')?.subPath).toBe('tmp')
+    for (const [name, value] of [
+      ['CARGO_HOME', '/home/runner/.cache/cargo'],
+      ['RUSTUP_HOME', '/home/runner/.cache/rustup'],
+    ]) {
+      expect(runner.env).toContainEqual({ name, value })
+      expect(mounts.some((mount) => mount.name === 'scratch' && value.startsWith(mount.mountPath + '/'))).toBe(true)
+    }
+    const script = amd64.initContainers[0].args[0] as string
+    const createCaches = 'mkdir -p "$stage/cache/cargo" "$stage/cache/rustup"'
+    expect(script.indexOf(createCaches)).toBeGreaterThan(script.indexOf('partial cache copy:'))
+    expect(script.indexOf('chown -R 1001:1001 "$stage/nix" "$stage/cache"')).toBeGreaterThan(
+      script.indexOf(createCaches),
+    )
+    expect(script.indexOf('post_copy_available_kib=')).toBeGreaterThan(script.indexOf(createCaches))
+    expect(script).toContain('mv "$stage/var-tmp" "$scratch/var-tmp"')
+    const modeCommands = script
+      .split('\n')
+      .filter((line) =>
+        [
+          createCaches,
+          'chmod 00700 "$stage/cache/cargo" "$stage/cache/rustup"',
+          'chmod 01777 "$stage/var-tmp"',
+        ].includes(line.trim()),
+      )
+    expect(modeCommands).toHaveLength(3)
+    const stage = mkdtempSync(join(tmpdir(), 'arc-cache-modes-'))
+    try {
+      mkdirSync(join(stage, 'cache'))
+      mkdirSync(join(stage, 'var-tmp'))
+      chmodSync(join(stage, 'cache'), 0o2770)
+      chmodSync(join(stage, 'var-tmp'), 0o3777)
+      const result = spawnSync('bash', ['-euc', modeCommands.join('\n')], {
+        encoding: 'utf8',
+        env: { ...process.env, stage },
+        timeout: 10_000,
+      })
+      expect(result.status, result.stderr).toBe(0)
+      expect(statSync(join(stage, 'var-tmp')).mode & 0o7777).toBe(0o1777)
+      for (const name of ['cargo', 'rustup']) {
+        const path = join(stage, 'cache', name)
+        expect(statSync(path).mode & 0o7777).toBe(0o700)
+        expect(statSync(path).uid).toBe(process.getuid?.())
+        expect(statSync(path).dev).toBe(statSync(stage).dev)
+      }
+    } finally {
+      rmSync(stage, { recursive: true, force: true })
+    }
+  })
+
+  it('gives ARM64 the same verified Ceph scratch without changing its scheduling or runner budget', () => {
+    const application = YAML.parse(arcApplication)
+    const arm = application.spec.sources[1].helm.valuesObject
+    const amd = application.spec.sources[2].helm.valuesObject
+    const pod = arm.template.spec
+    const runner = pod.containers[0]
+    expect(arm.runnerScaleSetName).toBe('arc-arm64')
+    expect(arm.scaleSetLabels).toEqual(['arc-arm64'])
+    expect({ min: arm.minRunners, max: arm.maxRunners }).toEqual({ min: 1, max: 8 })
+    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+    expect(pod.serviceAccountName).toBe('arc-arm64-gha-rs-kube-mode')
+    expect(pod.tolerations).toBeUndefined()
+    expect(pod.affinity).toBeUndefined()
+    expect(pod.securityContext).toEqual(amd.template.spec.securityContext)
+    expect(pod.initContainers).toEqual(amd.template.spec.initContainers)
+    expect(runner.volumeMounts).toEqual(amd.template.spec.containers[0].volumeMounts)
+    expect(runner.resources).toEqual({
+      requests: { cpu: '4', memory: '16Gi', 'ephemeral-storage': '10Gi' },
+      limits: { cpu: '20', memory: '32Gi', 'ephemeral-storage': '130Gi' },
+    })
+    expect(runner.securityContext).toEqual({ privileged: true })
+    expect(runner.command).toEqual(['/home/runner/run.sh'])
+    expect(runner.image).toBe(amd.template.spec.containers[0].image)
+    expect(pod.containers).toHaveLength(1)
+    expect(pod.volumes).toHaveLength(1)
+    const claim = pod.volumes[0].ephemeral.volumeClaimTemplate
+    expect(pod.volumes[0].name).toBe('scratch')
+    expect(claim.spec).toEqual(amd.template.spec.volumes[0].ephemeral.volumeClaimTemplate.spec)
+    expect(claim.metadata.labels).toEqual({
+      'actions.github.com/scale-set-name': 'arc-arm64',
+      'storage.proompteng.ai/durability': 'rebuildable',
+    })
+    for (const name of ['CARGO_HOME', 'RUSTUP_HOME']) {
+      expect(runner.env.find((entry: { name: string }) => entry.name === name)).toEqual(
+        amd.template.spec.containers[0].env.find((entry: { name: string }) => entry.name === name),
+      )
+    }
+  })
+
+  it('keeps ten warm AMD64 runners while preserving all runner pool capacities', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 10')
@@ -330,7 +439,7 @@ fi
       expect(block).not.toContain('storage: 20Gi')
     }
 
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('sizeLimit: 130Gi')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('storage: 130Gi')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
     expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
   })
