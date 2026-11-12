@@ -23,6 +23,7 @@ const podCgroup = '/kubepods/burstable/pod-fixture'
 const leafCgroup = podCgroup + '/runner'
 type FixtureOptions = {
   exitCode?: number
+  commands?: string[]
   failStartup?: boolean
   cgroup?: string
   memory?: string
@@ -151,7 +152,14 @@ const fixture = (options: FixtureOptions = {}) => {
   const payload = [
     'if [[ "$REPLACE_PID" == 1 ]]; then printf "%s" "$OUTSIDER_PID" > "$(cat "$FIXTURE_ROOT/pidfile-path")"; fi',
     'export DOCKER_HOST=unix:///foreign.sock DOCKER_CONFIG=/foreign/config DOCKER_CONTEXT=foreign BUILDX_BUILDER=foreign',
-    'docker pull fixture && docker run --rm fixture /bin/true && docker build -t fixture . && docker buildx build -t fixture .',
+    (
+      options.commands ?? [
+        'docker pull fixture',
+        'docker run --rm fixture /bin/true',
+        'docker build -t fixture .',
+        'docker buildx build -t fixture .',
+      ]
+    ).join(' && ') + ' || exit "$?"',
     'exit "$PAYLOAD_EXIT"',
   ].join('\n')
   const result = spawnSync('bash', [fixtureWrapper, 'bash', '-c', payload], {
@@ -237,6 +245,49 @@ describe('Kata job-owned Docker runtime', () => {
         const pid = readFileSync(join(root, 'daemon-pid'), 'utf8')
         expect(existsSync('/proc/' + pid)).toBe(false)
         expect(existsSync(join(state, 'dockerd.log'))).toBe(true)
+      } finally {
+        cleanup()
+      }
+    })
+  }
+
+  it('preserves upstream host-network options without injecting duplicates', () => {
+    const commands = [
+      'docker run --net=host --rm fixture /bin/true',
+      'docker run --net host --rm fixture /bin/true',
+      'docker run --network=host --rm fixture /bin/true',
+      'docker run --network host --rm fixture /bin/true',
+      'docker build --network=host -t fixture .',
+      'docker buildx build --network host -t fixture .',
+    ]
+    const { root, result, cleanup } = fixture({ commands })
+    try {
+      expect(result.error).toBeUndefined()
+      expect(result.status).toBe(0)
+      expect(readFileSync(join(root, 'cli'), 'utf8').trim().split('\n')).toEqual([
+        'run|--cgroup-parent=' + podCgroup + '|--net=host|--rm|fixture|/bin/true|',
+        'run|--cgroup-parent=' + podCgroup + '|--net|host|--rm|fixture|/bin/true|',
+        'run|--cgroup-parent=' + podCgroup + '|--network=host|--rm|fixture|/bin/true|',
+        'run|--cgroup-parent=' + podCgroup + '|--network|host|--rm|fixture|/bin/true|',
+        'build|--cgroup-parent=' + podCgroup + '|--network=host|-t|fixture|.|',
+        'buildx|build|--cgroup-parent=' + podCgroup + '|--network|host|-t|fixture|.|',
+      ])
+    } finally {
+      cleanup()
+    }
+  })
+
+  for (const command of [
+    'docker run --net=bridge fixture /bin/true',
+    'docker build --network none .',
+    'docker buildx build --network=bridge .',
+  ]) {
+    it('rejects conflicting upstream network mode: ' + command, () => {
+      const { root, result, cleanup } = fixture({ commands: [command] })
+      try {
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('requires host networking inside its Pod')
+        expect(existsSync(join(root, 'cli'))).toBe(false)
       } finally {
         cleanup()
       }

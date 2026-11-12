@@ -77,19 +77,42 @@ unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH BUILDX_BUILDER BUILDKIT_
     "$docker_cli" "$docker_host" "$docker_config" "$cgroup_parent"
   cat <<'DOCKER_CLI'
 unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH BUILDX_BUILDER BUILDKIT_HOST
+configure_host_network() {
+  local argument expects_network=false
+  network_args=(--network=host)
+  for argument; do
+    if [[ "$expects_network" == true ]]; then
+      [[ "$argument" == host ]] || { echo 'Kata packaging requires host networking inside its Pod' >&2; return 1; }
+      network_args=()
+      expects_network=false
+      continue
+    fi
+    case "$argument" in
+      --) break ;;
+      --network|--net) expects_network=true ;;
+      --network=*|--net=*)
+        [[ "${argument#*=}" == host ]] || { echo 'Kata packaging requires host networking inside its Pod' >&2; return 1; }
+        network_args=()
+        ;;
+    esac
+  done
+  [[ "$expects_network" == false ]] || { echo 'Kata packaging requires an explicit host network value' >&2; return 1; }
+}
 if [[ $# -gt 0 ]]; then
   case "$1" in
     run|build)
       subcommand="$1"
       shift
+      configure_host_network "$@"
       exec "$docker_cli" --host "$docker_host" --config "$docker_config" \
-        "$subcommand" --network=host --cgroup-parent="$docker_cgroup" "$@"
+        "$subcommand" "${network_args[@]}" --cgroup-parent="$docker_cgroup" "$@"
       ;;
     buildx)
       if [[ $# -gt 1 && "$2" == build ]]; then
         shift 2
+        configure_host_network "$@"
         exec "$docker_cli" --host "$docker_host" --config "$docker_config" \
-          buildx build --network=host --cgroup-parent="$docker_cgroup" "$@"
+          buildx build "${network_args[@]}" --cgroup-parent="$docker_cgroup" "$@"
       fi
       ;;
   esac
