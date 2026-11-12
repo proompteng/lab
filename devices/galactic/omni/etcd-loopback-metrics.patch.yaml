@@ -1,0 +1,6 @@
+# Unapplied maintenance proposal; intentionally not referenced by cluster-template.yaml.
+# Follow etcd-metrics-maintenance.md. Never apply to all control-plane machines at once.
+cluster:
+  etcd:
+    extraArgs:
+      listen-metrics-urls: http://127.0.0.1:2381

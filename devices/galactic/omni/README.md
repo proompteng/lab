@@ -10,6 +10,9 @@ All three machines report valid Image Factory schematic metadata. Future version
 lifecycle with `maxParallelism: 1`, after fencing standalone workspaces for retained-home recovery.
 Individual control-plane locks are unsupported.
 
+The [etcd metrics maintenance proposal](etcd-metrics-maintenance.md) stages an unreferenced loopback-listener patch.
+It requires a separately reviewed, one-member-at-a-time maintenance window; it does not enable a listener or scrape.
+
 Do not pre-upgrade hosts while a locked Omni cluster still desires an older version, then assume an atomic target
 and unlock update safely adopts them. On Omni 1.11.0, the status controller can briefly see the old derived install
 target after unlock and stage a downgrade. This happened to Turin during the 1.14.5 handoff. A manual same-version
