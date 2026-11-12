@@ -76,6 +76,14 @@ runs:
         set -euo pipefail
         mkdir -p "${HOME}/.config/nix"
         nix_config="${EXTRA_NIX_CONFIG}"
+        if [ "${LAB_ARC_RUNNER_TOOLCHAIN:-}" = 1 ]; then
+          # CSI fsGroup can make ARC job storage setgid. Nix's syscall filter
+          # rejects chmod with that inherited bit during readonly source unpacking.
+          nix_build_dir="$(mktemp -d "${RUNNER_TEMP:?}/nix-build.XXXXXX")"
+          chmod 00700 "${nix_build_dir}"
+          test "$(stat -c %a "${nix_build_dir}")" = 700
+          nix_config="${nix_config}"$'\n'"build-dir = ${nix_build_dir}"
+        fi
         if [ -n "${NIX_GITHUB_TOKEN}" ]; then
           echo "::add-mask::${NIX_GITHUB_TOKEN}"
           nix_config="${nix_config}"$'\n'"extra-access-tokens = github.com=${NIX_GITHUB_TOKEN}"
