@@ -392,6 +392,7 @@ const expected = {
     apps: ['attic'],
     includePaths: [
       'nix/images/attic.nix',
+      'nix/images/attic-stream-nars.patch',
       'docs/nix-cache.md',
       'docs/nix-oci-real-image-build-adoption-plan.md',
       'argocd/applications/attic',
