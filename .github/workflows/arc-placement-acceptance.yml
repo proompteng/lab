@@ -1,6 +1,7 @@
 name: ARC placement acceptance
 
 on:
+  # Run after the existing build wave clears; the readiness check has a five-minute budget.
   workflow_dispatch:
 
 permissions:
@@ -13,12 +14,34 @@ concurrency:
 
 jobs:
   publication-tools:
-    name: Verify publication runner
+    name: Publication slot ${{ matrix.slot }}
     runs-on: arc-amd64-publish
-    timeout-minutes: 10
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        slot: [1, 2]
+    env:
+      SLOT: ${{ matrix.slot }}
     steps:
       - uses: actions/checkout@v6
-      - name: Verify publication while the build slot is occupied
+      - name: Verify publication runner isolation
+        run: |
+          set -euo pipefail
+          case "$ARC_RUNNER_NODE_NAME" in talos-192-168-1-194|turin) ;; *) exit 1 ;; esac
+          test ! -S /var/run/docker.sock
+          test -z "${DOCKER_HOST:-}"
+          test -z "${BUILDKIT_HOST:-}"
+          jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --argjson slot "$SLOT" \
+            '{role:"publication",node:$node,pod:$pod,slot:$slot}' > "$RUNNER_TEMP/arc-ready.json"
+      - name: Publish ready publication slot
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-ready-${{ github.run_attempt }}-publication-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-ready.json
+          retention-days: 1
+      - name: Verify publication while all runner slots are occupied
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -27,59 +50,67 @@ jobs:
         run: |
           set -euo pipefail
           prefix="arc-ready-$RUN_ATTEMPT-"
-          for _ in $(seq 1 90); do
+          deadline=$((SECONDS + 5 * 60))
+          count=0
+          while (( SECONDS < deadline )); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            test "$count" = 1 && break
-            sleep 5
+            test "$count" = 12 && break
+            sleep 60
           done
-          test "$count" = 1
-          sleep 10
-          start="$(date +%s)"
-          test "$ARC_RUNNER_NODE_NAME" = talos-192-168-1-194
-          test ! -S /var/run/docker.sock
-          test -z "${DOCKER_HOST:-}"
-          test -z "${BUILDKIT_HOST:-}"
+          test "$count" = 12 || { echo 'Ten build and two publication slots did not become ready within five minutes' >&2; exit 1; }
+          jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
           nix eval --offline --expr '40 + 2' | grep -qx 42
           crane digest registry.ide-newton.ts.net/lab/arc-runner:latest
           docker buildx imagetools inspect registry.ide-newton.ts.net/lab/arc-runner:latest
           cosign version
-          jq -n --arg pod "$ACTIONS_RUNNER_POD_NAME" --argjson start "$start" --argjson end "$(date +%s)" \
-            '{pod:$pod,start:$start,end:$end}' > "$RUNNER_TEMP/arc-publication.json"
-      - uses: actions/upload-artifact@v4
+          sleep 180
+          jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
+      - name: Publish publication concurrency proof
+        uses: actions/upload-artifact@v4
         with:
-          name: arc-publication-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/arc-publication.json
+          name: arc-proof-${{ github.run_attempt }}-publication-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-complete.json
           retention-days: 1
-  local-build:
-    name: Slot ${{ matrix.slot }} local scratch build
-    timeout-minutes: 30
+  ceph-build:
+    name: Build slot ${{ matrix.slot }} Ceph scratch build
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 10
       matrix:
-        slot: [1]
+        slot: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     runs-on: arc-amd64
     env:
       SLOT: ${{ matrix.slot }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-buildkit
-      - name: Verify local scratch, Nix, and BuildKit
+      - name: Verify Ceph scratch, Nix, and BuildKit output bytes
         shell: bash
         run: |
           set -euo pipefail
-          test "$ARC_RUNNER_NODE_NAME" = talos-192-168-1-194
-          for path in /nix /home/runner/.cache /tmp /home/runner/_work; do
-            test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = xfs
+          test "$ARC_RUNNER_NODE_NAME" = turin
+          case "$RUNNER_TEMP" in /home/runner/_work/*) ;; *) exit 1 ;; esac
+          [[ "$BUILDKIT_HOST" == "unix://$RUNNER_TEMP"/buildkit.*/buildkitd.sock ]]
+          buildkit_root="${BUILDKIT_HOST#unix://}"
+          buildkit_root="${buildkit_root%/buildkitd.sock}/cache"
+          test -d "$buildkit_root"
+          scratch_device=''
+          for path in /nix /home/runner/.cache /tmp /home/runner/_work "$RUNNER_TEMP" "$buildkit_root"; do
+            read -r device fstype < <(df -P -T "$path" | awk 'NR == 2 {print $1, $2}')
+            test "$fstype" = ext4
+            [[ "$device" =~ ^/dev/rbd[0-9]+$ ]]
+            if [[ -z "$scratch_device" ]]; then scratch_device="$device"; else test "$device" = "$scratch_device"; fi
           done
           test "$(nix eval --offline --expr '40 + 2')" = 42
           nix --version
           buildctl debug workers
-          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-local-proof.XXXXXX")"
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-ceph-proof.XXXXXX")"
           trap 'rm -rf "$proof_dir"' EXIT
-          dd if=/dev/zero of="$proof_dir/payload" bs=1M count=16 conv=fsync
-          sha256sum "$proof_dir/payload"
+          dd if=/dev/urandom of="$proof_dir/payload" bs=1M count=16 conv=fsync
+          input_bytes="$(wc -c < "$proof_dir/payload")"
+          input_sha="$(sha256sum "$proof_dir/payload" | awk '{print $1}')"
           cat > "$proof_dir/Dockerfile" <<'DOCKERFILE'
           FROM busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
           COPY payload /payload
@@ -89,16 +120,25 @@ jobs:
           DOCKERFILE
           buildctl build --frontend dockerfile.v0 --local "context=$proof_dir" --local "dockerfile=$proof_dir" \
             --output "type=local,dest=$proof_dir/output"
-          test "$(wc -c < "$proof_dir/output/payload")" = 16777216
-          jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --arg slot "$SLOT" \
-            '{node:$node,pod:$pod,slot:$slot}' > "$RUNNER_TEMP/arc-ready.json"
-      - name: Publish ready slot
+          output_bytes="$(wc -c < "$proof_dir/output/payload")"
+          output_sha="$(sha256sum "$proof_dir/output/payload" | awk '{print $1}')"
+          test "$input_bytes" = 16777216
+          test "$output_bytes" = "$input_bytes"
+          test "$output_sha" = "$input_sha"
+          jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --argjson slot "$SLOT" \
+            --argjson inputBytes "$input_bytes" --argjson outputBytes "$output_bytes" \
+            --arg inputSha256 "$input_sha" --arg outputSha256 "$output_sha" \
+            --arg scratchDevice "$scratch_device" --arg scratchFilesystem "$fstype" \
+            --arg runnerTemp "$RUNNER_TEMP" --arg buildkitRoot "$buildkit_root" \
+            '{role:"build",node:$node,pod:$pod,slot:$slot,inputBytes:$inputBytes,outputBytes:$outputBytes,inputSha256:$inputSha256,outputSha256:$outputSha256,scratchDevice:$scratchDevice,scratchFilesystem:$scratchFilesystem,runnerTemp:$runnerTemp,buildkitRoot:$buildkitRoot}' \
+            > "$RUNNER_TEMP/arc-ready.json"
+      - name: Publish ready build slot
         uses: actions/upload-artifact@v4
         with:
-          name: arc-ready-${{ github.run_attempt }}-${{ matrix.slot }}
+          name: arc-ready-${{ github.run_attempt }}-build-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-ready.json
           retention-days: 1
-      - name: Require the build slot
+      - name: Require all ten build and two publication slots
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -108,49 +148,47 @@ jobs:
         run: |
           set -euo pipefail
           prefix="arc-ready-$RUN_ATTEMPT-"
-          for _ in $(seq 1 90); do
+          deadline=$((SECONDS + 5 * 60))
+          count=0
+          while (( SECONDS < deadline )); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            if test "$count" = 1; then
-              jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
-              sleep 60
-              jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
-              exit 0
-            fi
-            sleep 5
+            test "$count" = 12 && break
+            sleep 60
           done
-          echo 'The Ryzen shared-label runner slot did not become ready' >&2
-          exit 1
-      - name: Publish concurrency proof
+          test "$count" = 12 || { echo 'Ten build and two publication slots did not become ready within five minutes' >&2; exit 1; }
+          jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
+          sleep 180
+          jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
+      - name: Publish build concurrency proof
         uses: actions/upload-artifact@v4
         with:
-          name: arc-proof-${{ github.run_attempt }}-${{ matrix.slot }}
+          name: arc-proof-${{ github.run_attempt }}-build-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-complete.json
           retention-days: 1
   verify-placement:
-    needs: [local-build, publication-tools]
+    needs: [ceph-build, publication-tools]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
           pattern: arc-proof-${{ github.run_attempt }}-*
           path: proof
-      - uses: actions/download-artifact@v4
-        with:
-          name: arc-publication-${{ github.run_attempt }}
-          path: publication
-      - name: Verify the build and publication slots overlapped on Ryzen
-        shell: bash
+      - name: Verify ten builders and two publication runners overlapped
         run: |
-          set -euo pipefail
           jq -s -e '
-            length == 1 and
-            ([.[].slot] | unique | length) == 1 and
-            ([.[].pod] | unique | length) == 1 and
-            all(.[]; .node == "talos-192-168-1-194") and
+            length == 12 and
+            ([.[] | select(.role == "build") | .slot] | sort) == [1,2,3,4,5,6,7,8,9,10] and
+            ([.[] | select(.role == "publication") | .slot] | sort) == [1,2] and
+            ([.[].pod] | unique | length) == 12 and
+            ([.[] | select(.role == "build") | .scratchDevice] | unique | length) == 10 and
+            all(.[] | select(.role == "publication"); .node == "talos-192-168-1-194" or .node == "turin") and
+            all(.[] | select(.role == "build");
+              .node == "turin" and .scratchFilesystem == "ext4" and
+              (.scratchDevice | test("^/dev/rbd[0-9]+$")) and
+              (.runnerTemp | startswith("/home/runner/_work/")) and
+              (.buildkitRoot | startswith("/home/runner/_work/")) and
+              .inputBytes == 16777216 and .outputBytes == .inputBytes and .inputSha256 == .outputSha256) and
             ([.[].end] | min) - ([.[].start] | max) >= 45
-          ' proof/*/arc-complete.json
-          jq -s -e --slurpfile publication publication/arc-publication.json '
-            $publication[0].start >= ([.[].start] | max) and
-            $publication[0].end <= ([.[].end] | min)
           ' proof/*/arc-complete.json

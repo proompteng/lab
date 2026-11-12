@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Ref, Result, Schedule } from 'effect'
+import { Config, Effect, Ref, Result, Schedule } from 'effect'
+import { HttpClient } from 'effect/http'
 
 import { makeApplicationPlan, type ApplicationPlan } from '../app'
 import { BrokerSession } from '../broker/alpaca/session'
@@ -12,11 +13,13 @@ import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-a
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
 import { checkHealth } from '../health/program'
+import { makeExecutionControllerHealthReader } from '../health/controller-client'
 import { type CycleObservationBinding } from '../health/model'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { initialState, type RuntimeState } from '../runtime-state'
 import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
+import { InternalHttpOriginSchema } from '../restate/restate-invocation-client'
 import {
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
@@ -214,6 +217,18 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
     const activationRequestRequired = plan.config.execution.brokerAccess === BrokerAccess.Mutation
     const controller = readOnlyExecutionControllerBinding(plan)
+    const controllerProbe =
+      controller === undefined
+        ? undefined
+        : {
+            controllerKey: controller.controllerKey,
+            read: makeExecutionControllerHealthReader(
+              yield* HttpClient.HttpClient,
+              yield* Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN'),
+              controllerStatus.read,
+              observePlan.config.operationTimeoutMs,
+            ),
+          }
     const state = yield* Ref.make(
       initialState({
         broker: {
@@ -253,9 +268,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
               },
               undefined,
               cycleObservation,
-              controller === undefined
-                ? undefined
-                : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+              controllerProbe,
             ),
           ),
         ),

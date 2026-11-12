@@ -1,5 +1,5 @@
 import { MarketKind } from '../instruments'
-import { marketHistoryMinutes } from '../market-data/history'
+import { marketHistoryMinutes, marketQuoteMaximumAgeMs } from '../market-data/history'
 import { JevMarketProfilesSchema, jevMarketProfiles, jevUniverse, jevCandidateSymbols } from './markets'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result, Schema } from 'effect'
@@ -50,7 +50,7 @@ const protocolFields = (entryQuestionPolicyHash: string) => ({
   positionPolicy: Schema.Literal('long-only'),
   decisionDelaySeconds: Schema.Literal(intradayDecisionDelaySeconds),
   maximumDecisionLagMs: PositiveIntegerSchema,
-  maximumQuoteAgeMs: Schema.Literal(10_000),
+  maximumQuoteAgeMs: Schema.Literal(marketQuoteMaximumAgeMs),
   candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
   warmupMinutesAfterOpen: Schema.Literal(0),
   entryCutoffMinutesBeforeClose: Schema.Literal(5),
@@ -402,7 +402,7 @@ export const defaultJevProtocolDocument = Object.freeze({
   }),
   decisionDelaySeconds: intradayDecisionDelaySeconds,
   maximumDecisionLagMs: 60_000,
-  maximumQuoteAgeMs: 10_000,
+  maximumQuoteAgeMs: marketQuoteMaximumAgeMs,
   candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,

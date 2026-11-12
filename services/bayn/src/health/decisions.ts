@@ -63,6 +63,7 @@ const cycleLoopHealth = (
   clock: HealthProbeClock,
   stallThresholdMs: number,
   required: boolean,
+  expectedSourceRevision: string,
 ): DependencyHealth => {
   const checkedAt = clock._tag === 'Available' ? clock.checkedAt : null
   const available = (): DependencyHealth => ({ status: 'AVAILABLE', checkedAt, error: null })
@@ -77,7 +78,7 @@ const cycleLoopHealth = (
     if (controllerResult._tag === 'Unavailable') {
       return unavailable(controllerResult.error)
     }
-    const status = controllerResult.value
+    const { status, operational } = controllerResult.value
     if (status === null) return unavailable('Restate lifecycle has not completed its first durable pass')
     if (status.controllerKey !== controller.controllerKey) {
       return unavailable('Restate execution-controller projection identity differs from the configured controller')
@@ -86,6 +87,18 @@ const cycleLoopHealth = (
       return unavailable('Restate execution-controller projection plan differs from the configured controller')
     }
     if (!status.active) return unavailable('Restate execution controller is durably inactive')
+    if (operational === null) return unavailable('Restate execution-controller operational state is unavailable')
+    if (operational.controllerKey !== controller.controllerKey)
+      return unavailable('Restate execution-controller operational identity differs from the configured controller')
+    if (operational.planHash !== controller.planHash)
+      return unavailable('Restate execution-controller operational plan differs from the configured controller')
+    if (operational.sourceRevision !== expectedSourceRevision)
+      return unavailable('Restate execution-controller operational source differs from the configured build')
+    if (operational.epoch !== status.epoch)
+      return unavailable('Restate execution-controller operational epoch differs from its completion projection')
+    if (status.nextSequence < operational.nextSequence)
+      return unavailable('Restate execution-controller completion projection is behind its operational state')
+    if (!operational.active) return unavailable('Restate execution controller is durably inactive')
     if (!executionControllerStatusHasCompletion(status)) {
       return unavailable('Restate lifecycle has not completed its first durable pass')
     }
@@ -93,17 +106,27 @@ const cycleLoopHealth = (
       return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
     }
     const completedAtMs = Date.parse(status.completedAt)
-    const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
-    if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
+    const nextDueAtMs = status.nextDueAt === undefined ? undefined : Date.parse(status.nextDueAt)
+    const operationalDueAtMs = operational.nextDueAt === undefined ? undefined : Date.parse(operational.nextDueAt)
+    const wakeAcceptedAtMs =
+      operational.pendingWake === undefined ? undefined : Date.parse(operational.pendingWake.acceptedAt)
+    const obligations = [nextDueAtMs, operationalDueAtMs, wakeAcceptedAtMs].filter(
+      (at): at is number => at !== undefined,
+    )
+    if (!Number.isFinite(completedAtMs) || obligations.some((at) => !Number.isFinite(at))) {
       return unavailable('Restate execution-controller projection has an invalid completion schedule')
     }
     if (clock._tag === 'Unavailable') return previous
     if (completedAtMs > clock.checkedAtMs) {
       return unavailable('Restate execution-controller completion time is in the future')
     }
-    const overdueMs = clock.checkedAtMs - nextDueAtMs
-    if (overdueMs >= stallThresholdMs) {
-      return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+    if (wakeAcceptedAtMs !== undefined && wakeAcceptedAtMs > clock.checkedAtMs)
+      return unavailable('Restate execution-controller wake acceptance time is in the future')
+    if (obligations.length > 0) {
+      const overdueMs = clock.checkedAtMs - Math.min(...obligations)
+      if (overdueMs >= stallThresholdMs) {
+        return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+      }
     }
     return available()
   }
@@ -144,7 +167,7 @@ const deriveExecutionControllerStatus = (
   return result._tag === 'Available'
     ? {
         ...current,
-        status: result.value,
+        status: result.value.status,
         readAvailable: true,
         checkedAt,
         error: null,
@@ -341,6 +364,7 @@ export const deriveHealthTransition = (current: RuntimeState, input: HealthTrans
     input.clock,
     input.config.cycleStallThresholdMs,
     input.broker !== undefined,
+    input.config.build.sourceRevision,
   )
   const projectedCurrent: RuntimeState =
     executionController === undefined

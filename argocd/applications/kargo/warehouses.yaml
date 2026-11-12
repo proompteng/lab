@@ -1,8 +1,9 @@
+---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: app
-  namespace: lab-delivery
+  namespace: app-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -50,7 +51,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: synthesis
-  namespace: lab-delivery
+  namespace: synthesis-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -98,7 +99,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: docs
-  namespace: lab-delivery
+  namespace: docs-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -146,7 +147,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: bumba
-  namespace: lab-delivery
+  namespace: bumba-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -191,7 +192,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: oirat
-  namespace: lab-delivery
+  namespace: oirat-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -236,7 +237,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: froussard
-  namespace: lab-delivery
+  namespace: froussard-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -282,7 +283,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: arc-runner
-  namespace: lab-delivery
+  namespace: arc-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -326,7 +327,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: attic
-  namespace: lab-delivery
+  namespace: attic-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -363,7 +364,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: headlamp
-  namespace: lab-delivery
+  namespace: headlamp-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -399,7 +400,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: hermes-toolchain
-  namespace: lab-delivery
+  namespace: hermes-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -436,7 +437,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: jangar
-  namespace: lab-delivery
+  namespace: jangar-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -482,7 +483,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: symphony
-  namespace: lab-delivery
+  namespace: symphony-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -521,7 +522,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: torghut
-  namespace: lab-delivery
+  namespace: torghut-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -594,7 +595,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: bilig
-  namespace: lab-delivery
+  namespace: bilig-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -623,7 +624,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: analysis
-  namespace: lab-delivery
+  namespace: analysis-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -650,7 +651,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: agents
-  namespace: lab-delivery
+  namespace: agents-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -754,7 +755,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: buzz
-  namespace: lab-delivery
+  namespace: buzz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -790,7 +791,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: forgejo
-  namespace: lab-delivery
+  namespace: forgejo-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -824,7 +825,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: bayn
-  namespace: lab-delivery
+  namespace: bayn-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -840,10 +841,15 @@ spec:
       imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['ai.proompteng.github-actions-run-id'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['ai.proompteng.github-actions-run-id'] &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['ai.proompteng.github-actions-run-id'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['ai.proompteng.github-actions-run-id'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['ai.proompteng.github-actions-run-id'] &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Tag &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Tag == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Tag &&
       imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source']
+      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed').Annotations['org.opencontainers.image.source'] == imageFrom('registry.ide-newton.ts.net/lab/bayn-research').Annotations['org.opencontainers.image.source']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bayn
@@ -863,12 +869,21 @@ spec:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/bayn-broker-feed
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: restate
-  namespace: lab-delivery
+  namespace: restate-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -908,7 +923,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: devbox
-  namespace: lab-delivery
+  namespace: devbox-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -952,7 +967,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: temporal-worker
-  namespace: lab-delivery
+  namespace: temporal-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -991,7 +1006,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: ofz
-  namespace: lab-delivery
+  namespace: ofz-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1062,7 +1077,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: opencode
-  namespace: lab-delivery
+  namespace: opencode-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1087,7 +1102,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: relay
-  namespace: lab-delivery
+  namespace: relay-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
@@ -1112,7 +1127,7 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
   name: torghut-webull-feed
-  namespace: lab-delivery
+  namespace: torghut-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:

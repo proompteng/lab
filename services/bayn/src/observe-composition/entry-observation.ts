@@ -10,7 +10,7 @@ import { JevDecisionEvidenceSchema } from '../jev/decision'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevAwaitingEvidence, evaluateJevObservationFromSnapshot } from '../jev/runtime'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
-import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { strictParseOptions } from '../schemas'
@@ -41,7 +41,7 @@ type Evaluation = ReturnType<
 export type EntryObservation = (
   context: EntryObservationContext,
 ) => Effect.Effect<
-  { readonly snapshot: VerifiedStrategyMarketSnapshot; readonly decision: ProtectedEntryTarget },
+  { readonly snapshot: StrategyMarketSnapshot; readonly decision: ProtectedEntryTarget },
   Effect.Error<Evaluation> | Schema.SchemaError | JevContractError,
   Effect.Services<Evaluation>
 >

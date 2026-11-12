@@ -6,3 +6,6 @@ resources:
   - git-credentials.yaml
   - warehouses.yaml
   - stages.yaml
+  - smoke-verification.yaml
+  - smoke-rbac.yaml
+  - smoke-access.yaml

@@ -40,13 +40,13 @@ remain eligible on Ryzen. The monitor placement retains all three hosts with
 4. Check fresh Altra and Turin NIC temperatures and run the [100G routing acceptance](../network/README.md).
    Require temperatures below the reported critical threshold before adding client traffic. Historical peaks do not
    establish the current temperature, and a negotiated 100G link alone does not prove sustained operation.
-5. Keep the existing CPU/GPU memory split for the initial ARC move. Ryzen has 128GiB installed, with 64GiB reserved
-   for the GPU and 61.8GiB allocatable. The initial two-Ryzen/three-Turin migration passed native acceptance; the
-   authorized expansion places three AMD64 runners on Ryzen and six on Turin. Each reserves 16Gi and four logical
-   CPUs. The 2026-10-12 inventory measured 11.94GiB and 6.57 logical CPUs for retained Ryzen workloads, giving about
-   59.94GiB and 18.57 logical CPUs with three runners. The user permits memory overcommit; their combined limits
-   remain 96Gi. Verify fresh requests and local filesystem free space before promotion. A later all-five move requires the
-   [Bosgame memory repartition](../../ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
+5. Keep the existing CPU/GPU memory split. Ryzen has about 61.8GiB allocatable; three 16Gi runners
+   would require 48Gi before accounting for the existing workloads. The current ARC target is eight AMD64 builders total, eligible on Ryzen
+   and Turin, with one idle runner. Host spread is a preference; fresh memory requests determine the actual split.
+   Keep the 16Gi request and 32Gi limit per builder and two lightweight publication slots. Verify node free space
+   and I/O under representative builds; no fixed five-Turin/three-Ryzen split is assumed. A later GPU memory
+   repartition is a separate change described in the
+   [Bosgame memory guide](../../ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
 
 Three Ceph-backed database clusters, SPIRE server, and Restate retain three replicas but use preferred host separation
 because only two application storage-client hosts remain. Bayn PostgreSQL must retain one instance on Altra and one
@@ -65,7 +65,8 @@ do not sync its Kargo revision before its local class and memory headroom exist.
    existing Argo applications. Confirm Ryzen's Ceph monitor remains in the three-monitor quorum and its node agents are ready.
 2. Sync the manual `local-path` application to that revision. Require `local-path-ci-amd64`, the admission policy, and its binding
    to exist before changing Ryzen's scheduling configuration. The CI class uses the existing XFS user volume at
-   `/var/mnt/local-path-provisioner` on Ryzen and the Transcend scratch volume on Turin with `WaitForFirstConsumer`.
+   `/var/mnt/local-path-provisioner` on Ryzen and `/var/lib/kubelet/ci-amd64` on Turin with `WaitForFirstConsumer`. Both share their host system NVMe;
+   the former Turin Transcend scratch device now belongs to Kafka and must not be reused.
 3. Reconcile the reviewed database, SPIRE, and Restate affinity changes through their owning GitOps branches. Confirm all
    replicas are ready before moving any existing storage client. Kargo-managed applications use their Stage-generated branch.
 4. Render, validate, dry-run, and sync the reviewed Omni template using the [Omni procedure](../omni/README.md).
@@ -79,15 +80,15 @@ do not sync its Kargo revision before its local class and memory headroom exist.
    [Forgejo runner procedure](../../../argocd/applications/forgejo-runners/README.md) before its move.
 7. Promote the reviewed ARC configuration through the existing `arc-runner` Kargo Stage after Ceph clients have left Ryzen.
    Keep the ARM64 sets on Altra; raise the normal `arc-arm64` maximum from five to eight and retain the separate
-   analysis set's one-slot limit. Let busy AMD64 runners finish normally. One nine-runner `arc-amd64` set uses
-   `local-path-ci-amd64`, whose node maps select Turin Transcend or Ryzen local scratch. Host spread is a preference;
+   analysis set's one-slot limit. Let busy AMD64 runners finish normally. One eight-runner `arc-amd64` set uses
+   `local-path-ci-amd64`, whose node maps select the explicit Turin CI directory or Ryzen local scratch. Host spread is a preference;
    16Gi memory reservations and fresh node headroom determine the split. A full Ryzen must not block available Turin
    capacity. Require no node pressure and verify free scratch capacity before promotion. Altra's ARM64 runners retain node-local workspaces; inspect its filesystem
    headroom and native image reclamation before increasing concurrency.
 8. Run `python3 devices/galactic/scheduling/verify-placement.py --context galactic-lan --verify`.
    Require no application Ceph client on Ryzen, an AMD64 runner using only its local scratch claim, and the Ryzen monitor in quorum.
    Execute a non-publishing AMD64 CI job that writes scratch files, builds and runs a container, and executes Nix binaries.
-   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during the nine-slot acceptance run.
+   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during the eight-build/two-publication acceptance run.
    Its local scratch partition shares the physical NVMe with `/var`.
 
 ## Live acceptance on 2026-10-12 UTC
