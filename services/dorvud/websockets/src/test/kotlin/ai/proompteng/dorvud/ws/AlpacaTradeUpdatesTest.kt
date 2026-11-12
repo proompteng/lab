@@ -164,7 +164,12 @@ class AlpacaTradeUpdatesTest {
               client.streamAlpacaTradeUpdates(url, "key", "secret", {}, { error("oversized frame reached consumer") })
             }
           }
-        assertIs<FrameTooBigException>(result.exceptionOrNull())
+        val failure = result.exceptionOrNull()
+        assertTrue(
+          failure is FrameTooBigException ||
+            (failure is IllegalArgumentException && failure.message == "broker frame exceeds the source limit"),
+          "Expected the transport or pre-decode byte guard to reject the frame; received $failure",
+        )
       }
     }
 
