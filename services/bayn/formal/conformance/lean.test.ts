@@ -2192,13 +2192,15 @@ formal('pinned Lean executable conformance', () => {
         [500, 30_000].map((normalDelay) => ({ ...c, inputState, normalDelay })),
       ),
     )
+    expect(pendingInputCases).toHaveLength(6_720)
     expect(
       model(
         pendingInputCases.map((c) => ({
-          operation: 'pendingMarketInputsContinuation',
-          pending: c.inputState === 'INITIAL' || c.inputState === 'LATER',
+          operation: 'sourceWindowContinuation',
+          known: false,
           cycle: encodeCycle(c.cycle),
           now: String(c.now),
+          availableAt: String(c.now + 1),
           normalDelay: c.normalDelay,
         })),
       ),

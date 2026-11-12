@@ -80,6 +80,8 @@ export const bindLatencyReplayInput = (
 ) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    if (registration.obligations.configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+      return yield* fail('Polling latency replay cannot establish a streaming runtime registration')
     const definition = registration.policies.find((p) => p.policy === input.policy)
     const first = registration.calendar.sessions[0]
     const last = registration.calendar.sessions.at(-1)

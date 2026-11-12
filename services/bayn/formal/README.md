@@ -358,15 +358,14 @@ an active, unbound cycle inside its original unused-entry window; `expired_infer
 rejects a retry at or after that deadline. The reachable example admits a fresh retry and rejects the exact expiry.
 Another 1,680 executable comparisons cover waiting classification, cycle state, bindings, open time, and expiry.
 The native controller regression retains the captured late-commit work durations through scheduling and restart:
-the ordinary idle delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
+a thirty-second delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
 These proofs do not guarantee storage or provider latency; a retried response still has to pass the existing checks.
 
-`pending_inputs_retry_retains_original_admission` maps the query-bound `SNAPSHOT_UNAVAILABLE` continuation in the
-same function. It bounds each recheck by one second, the ordinary cadence and the remaining original admission;
-`pending_inputs_cannot_retry_after_original_deadline` excludes an expired lease. Another 3,360 executable comparisons
-cover the query marker, states, bindings, clocks and two ordinary cadences. A missing query does not accelerate an
-unclassified outage. The post-pass projection health check still replaces this hint with the source failure's backoff.
-Pending inputs remain operationally incomplete; neither waiting nor a timely recheck establishes a valid decision.
+`missing_source_boundary_never_polls` maps source waits without a known future `availableAt` in the same function.
+Missing initial inputs, later unconsumed inputs, consumed windows and unavailable sources await their stream rather
+than scheduling ordinary retries. Another 6,720 executable comparisons retain the query markers, states, bindings,
+original clocks and two delay bounds. The separate original admission-expiry deadline remains enforced.
+Pending inputs remain operationally incomplete; neither waiting nor a timely wake establishes a valid decision.
 The recovery driver publishes the absolute wake instant with the delay. Its composition regression exercises the
 real driver; native controller tests retain that instant across persistence work and projected replay, so durable
 publication cannot restart the source wait from a later clock.
@@ -402,10 +401,12 @@ and discard after mutation, bound cycles and failures. Reuse never changes final
 `source_window_wake_preserves_original_admission` covers a committed, source-excluded window with a known next
 signal time. `evaluateJevObservationFromSnapshot` retains the source failure and supplies that time from the consumed
 window and protocol. The recovery driver can wake early only while the entry is active, unbound, and within its
-original lease. The wake equals the supplied future time and precedes both the original expiry and ordinary poll.
+original lease. The wake equals the supplied future time and precedes both the original expiry and supplied delay bound.
 `source_window_cannot_wake_at_original_expiry` rejects the exact expiry. The reachable example retains the observed
-4,471 ms wait with 26,136 ms left on the original lease; the ordinary 30-second delay would miss it. Source failures
-without a known next time keep their existing backoff, and a committed window cannot be reevaluated.
+4,471 ms wait with 26,136 ms left on the original lease; a 30-second delay would miss it.
+`source_window_wake_requires_a_known_boundary` and `source_window_wake_precedes_original_expiry` make the known clock
+and strict original expiry requirements explicit. Source failures without a known next time await stream evidence,
+and a committed window cannot be reevaluated.
 
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision

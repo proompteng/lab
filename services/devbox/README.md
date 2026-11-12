@@ -62,6 +62,12 @@ Codex version changes reuse those layers too. The dependency installer itself
 remains an input to its installation layer.
 Build commands use the runner Pod's network. Its 1400-byte MTU avoids the nested
 Docker bridge's 1500-byte MTU, which can stall HTTPS artifact downloads.
+Both Nix build steps mount the CI cache configuration read-only through BuildKit.
+They use signed Attic substitutions first, then `cache.nixos.org` for upstream
+packages, with the existing `ATTIC_PUBLIC_KEY` repository variable. The registry
+layer cache does not configure Nix inside a rebuilt layer. The cache configuration
+is available only during those build steps; the workstation image retains its own
+runtime Nix configuration without the cluster-internal Attic endpoint.
 
 The `devbox` Warehouse and Stage bind the image to its source commit and successful
 workflow run. Kargo updates `argocd/applications/devbox` on `kargo/devbox`; the

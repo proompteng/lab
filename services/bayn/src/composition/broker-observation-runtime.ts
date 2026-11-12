@@ -30,6 +30,7 @@ import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '.
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
+import { verifyBrokerNotification } from '../broker/notifications'
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
@@ -142,7 +143,8 @@ export const acquireBrokerObservationRuntime = (
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
-    readonly pollIntervalMs: number
+    readonly maxAgeMs: number
+    readonly freshnessLeadMs: number
   },
   never,
   Scope.Scope | ValkeyCache
@@ -181,7 +183,7 @@ export const acquireBrokerObservationRuntime = (
     })
     const brokerRuntimes = yield* ScopedRef.fromAcquire(acquireBroker)
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
-    const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, config.maxAgeMs - config.pollIntervalMs)
+    const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, Math.floor(config.maxAgeMs / 2))
     const store = Effect.map(PgClient.PgClient, (sql) =>
       makeBrokerObservationStore(
         sql,
@@ -192,8 +194,20 @@ export const acquireBrokerObservationRuntime = (
       ),
     )
     return {
-      pollIntervalMs: config.pollIntervalMs,
+      maxAgeMs: config.maxAgeMs,
+      freshnessLeadMs: captureTimeoutMs,
       runtime: {
+        verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, plan.config.alpaca, nowMs),
+        recordNotification: (signal, receipt) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.recordNotification(receipt)),
+            { signal },
+          ),
+        invalidate: (signal) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.invalidate),
+            { signal },
+          ),
         activate: (signal, nextPollNotBeforeMs) =>
           managed.runPromise(
             Effect.flatMap(store, (value) => value.activate(nextPollNotBeforeMs)),
@@ -349,6 +363,7 @@ export const acquireBrokerObservationRuntime = (
                 return {
                   _tag: 'Published',
                   snapshotHash,
+                  observedAt: result.success.observedAt,
                   nextPollNotBeforeMs,
                 } as const
               }),

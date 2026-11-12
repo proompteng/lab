@@ -20,17 +20,6 @@ const decodeEmbeddedBuildMetadata = Schema.decodeUnknownResult(EmbeddedBuildMeta
 const fail = <A>(failure: RuntimeConfigResolutionFailure): Result.Result<A, RuntimeConfigResolutionFailure> =>
   Result.fail(failure)
 
-const validateCycleTiming = (
-  parsed: ParsedRuntimeConfig,
-): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> =>
-  parsed.cyclePollIntervalMs < parsed.cycleStallThresholdMs
-    ? Result.succeed(parsed)
-    : fail({
-        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
-        cyclePollIntervalMs: parsed.cyclePollIntervalMs,
-        cycleStallThresholdMs: parsed.cycleStallThresholdMs,
-      })
-
 const validateExecutionReconciliationTiming = (
   parsed: ParsedRuntimeConfig,
   execution: ExecutionPolicy,
@@ -201,7 +190,6 @@ const baseConfig = (
   cycleStallThresholdMs: parsed.cycleStallThresholdMs,
   reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
   unknownMutationThresholdMs: parsed.unknownMutationThresholdMs,
-  cyclePollIntervalMs: parsed.cyclePollIntervalMs,
   alpaca,
   kafka: parsed.kafka,
   jevKey: parsed.jevKey,
@@ -229,8 +217,6 @@ export const resolveRuntimeConfig = (
   input: RuntimeConfigResolutionInput,
 ): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
   const parsed = input.parsed
-  const timing = validateCycleTiming(parsed)
-  if (Result.isFailure(timing)) return Result.fail(timing.failure)
   const alpaca = decodeAlpaca(parsed)
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
   if (alpaca.success === undefined) return Result.fail({ _tag: 'MissingAlpacaCredentials' })

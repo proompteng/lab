@@ -1922,6 +1922,8 @@ spec:
       value: registry.ide-newton.ts.net/lab/bayn
     - name: researchImageRepo
       value: registry.ide-newton.ts.net/lab/bayn-research
+    - name: brokerFeedImageRepo
+      value: registry.ide-newton.ts.net/lab/bayn-broker-feed
   requestedFreight:
     - origin:
         kind: Warehouse
@@ -1983,6 +1985,9 @@ spec:
               - image: bayn-research
                 newName: ${{ vars.researchImageRepo }}
                 digest: ${{ imageFrom(vars.researchImageRepo).Digest }}
+              - image: bayn-broker-feed
+                newName: ${{ vars.brokerFeedImageRepo }}
+                digest: ${{ imageFrom(vars.brokerFeedImageRepo).Digest }}
         - uses: yaml-update
           if: ${{ outputs.baynDeployment.hasLineage }}
           config:
@@ -2068,6 +2073,19 @@ spec:
                 value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
               - key: spec.template.metadata.labels.app\.kubernetes\.io/version
                 value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
+        - uses: yaml-parse
+          as: baynBrokerFeed
+          config:
+            path: ./src/argocd/applications/bayn/broker-feed.yaml
+            outputs:
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'DORVUD_SOURCE_REVISION'))
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/broker-feed.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynBrokerFeed.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.brokerFeedImageRepo).Annotations['org.opencontainers.image.revision'] }}
         - uses: git-commit
           as: commit
           config:

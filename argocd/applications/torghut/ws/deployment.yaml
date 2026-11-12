@@ -21,7 +21,7 @@ spec:
         app: torghut-ws
       annotations:
         kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
-        torghut.proompteng.ai/ws-config-generation: bayn-jev-latest-iex-v1
+        torghut.proompteng.ai/ws-config-generation: bayn-iex-single-session-qualification-v1
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:fe69f4e0215dce2c02dd6ff577dd437b395463040a21b072bf73e7eb99812660
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:94f9e9d8e6121cd477973e0ae0550916d8c9290ca28d4f6b7f5db2db5804a77d
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -72,9 +72,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: kargo-sha-dfe158c618f22f96e91eec4c564435d810a45c49
+              value: kargo-sha-7a82e9906f2c1c73695f2323aea5ce7786de0bd2
             - name: TORGHUT_WS_COMMIT
-              value: dfe158c618f22f96e91eec4c564435d810a45c49
+              value: 7a82e9906f2c1c73695f2323aea5ce7786de0bd2
             - name: JAVA_TOOL_OPTIONS
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=25.0 -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError
             - name: DORVUD_GLITCHTIP_DSN

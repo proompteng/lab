@@ -21,6 +21,8 @@ export type RawMarketEvent =
   | { readonly kind: RawMarketEventKind.Trade; readonly value: IntradayTrade }
   | { readonly kind: RawMarketEventKind.Ignored }
 
+export const kafkaProducerClockSkewAllowanceMs = 5_000
+
 export interface KafkaMarketRecord {
   readonly timestampMs?: number
   readonly topic: string
@@ -167,7 +169,8 @@ export const decodeRawMarketRecord = (
       envelope.ingestTs === envelope.eventTs ? eventAt : yield* canonicalRawTimestamp(envelope.ingestTs)
     if (
       record.timestampMs !== undefined &&
-      (!Number.isSafeInteger(record.timestampMs) || Math.abs(record.timestampMs - Date.parse(ingestedAt)) > 5000)
+      (!Number.isSafeInteger(record.timestampMs) ||
+        Math.abs(record.timestampMs - Date.parse(ingestedAt)) > kafkaProducerClockSkewAllowanceMs)
     )
       return yield* Result.fail(fail('Kafka timestamp violates the producer clock contract'))
     if (crypto) {
