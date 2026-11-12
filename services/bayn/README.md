@@ -338,6 +338,15 @@ before capturing the fresh snapshot required to start execution. The same databa
 with measured request debt in PostgreSQL, so losing the Restate result cannot repeat HTTP or discard outstanding quota.
 The database generation continues to fence publication after mutations and rotation.
 
+When the existing pending-cut query selects a recent same-revision observation, its
+`bayn.broker.observation.fence` span includes three fixed boolean attributes under
+`bayn.broker.observation.pending`: `newer_mutation`, `newer_broker_event`, and
+`newer_notification`. They describe fences matched by that selected row in the pending query's
+database snapshot, not a unique root cause or the earlier admission query's snapshot. More than
+one fence may match. The trace does not prove that subsequent cache materialization succeeded,
+and an empty pending result remains unexplained by these attributes. No identifiers, payloads,
+additional queries, changed admission predicates, or altered error/retry behavior are introduced.
+
 The observation owner's child runtimes share the worker's configured logger and tracer. The capture operation inherits
 the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
 `bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
