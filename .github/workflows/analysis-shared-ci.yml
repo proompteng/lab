@@ -34,6 +34,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Application output returns encrypted to its private source run; public jobs expose orchestration metadata.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  DOCKER_BUILD_SUMMARY: 'false'
   SOURCE_SHA: ${{ inputs.source_sha }}
   SOURCE_REF: ${{ inputs.source_ref }}
   UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -46,12 +49,15 @@ jobs:
     steps:
       - name: Validate immutable source inputs
         shell: bash
+        env:
+          LOG_RECIPIENT: ${{ vars.ANALYSIS_CI_LOG_CERT }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$UPSTREAM_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$UPSTREAM_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$SOURCE_REF" == refs/heads/* || "$SOURCE_REF" == refs/tags/* ]]
+          test -n "$LOG_RECIPIENT"
       - name: Checkout analysis at the requested commit
         uses: actions/checkout@v6
         with:
@@ -65,9 +71,35 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$RUNNER_ARCH" = ARM64
+          test -f .github/actions/validate-analysis/run.sh
+          test -f .github/actions/publish-analysis/run.sh
           printf 'Analysis commit: %s\nCommon ARM worker: %s\n' "$SOURCE_SHA" "$ACTIONS_RUNNER_POD_NAME" >> "$GITHUB_STEP_SUMMARY"
       - name: Validate analysis
         uses: ./.github/actions/validate-analysis
+      - name: Encrypt application output for the private repository
+        id: encrypt
+        if: always()
+        shell: bash
+        env:
+          LOG_RECIPIENT: ${{ vars.ANALYSIS_CI_LOG_CERT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$LOG_RECIPIENT"
+          printf '%s\n' "$LOG_RECIPIENT" > "$RUNNER_TEMP/analysis-log-recipient.pem"
+          test -f "$RUNNER_TEMP/analysis-ci.log" || : > "$RUNNER_TEMP/analysis-ci.log"
+          openssl cms -encrypt -binary -aes-256-gcm -outform DER \
+            -in "$RUNNER_TEMP/analysis-ci.log" -out "$RUNNER_TEMP/analysis-ci.log.p7m" \
+            -recip "$RUNNER_TEMP/analysis-log-recipient.pem" \
+            -keyopt rsa_padding_mode:oaep -keyopt rsa_oaep_md:sha256 -keyopt rsa_mgf1_md:sha256
+      - name: Upload encrypted application output
+        if: always() && steps.encrypt.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-analysis-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analysis-ci.log.p7m
+          if-no-files-found: error
+          retention-days: 1
 
   admit-publish:
     needs: validate
@@ -125,3 +157,27 @@ jobs:
         uses: ./.github/actions/publish-analysis
         with:
           source-sha: ${{ inputs.source_sha }}
+      - name: Encrypt application output for the private repository
+        id: encrypt
+        if: always()
+        shell: bash
+        env:
+          LOG_RECIPIENT: ${{ vars.ANALYSIS_CI_LOG_CERT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$LOG_RECIPIENT"
+          printf '%s\n' "$LOG_RECIPIENT" > "$RUNNER_TEMP/analysis-log-recipient.pem"
+          test -f "$RUNNER_TEMP/analysis-ci.log" || : > "$RUNNER_TEMP/analysis-ci.log"
+          openssl cms -encrypt -binary -aes-256-gcm -outform DER \
+            -in "$RUNNER_TEMP/analysis-ci.log" -out "$RUNNER_TEMP/analysis-ci.log.p7m" \
+            -recip "$RUNNER_TEMP/analysis-log-recipient.pem" \
+            -keyopt rsa_padding_mode:oaep -keyopt rsa_oaep_md:sha256 -keyopt rsa_mgf1_md:sha256
+      - name: Upload encrypted application output
+        if: always() && steps.encrypt.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-analysis-${{ github.job }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analysis-ci.log.p7m
+          if-no-files-found: error
+          retention-days: 1
