@@ -56,6 +56,12 @@ The Chrome display reconnects a dropped VNC transport against the same authentic
 backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
 failures stop immediately; closing the viewer cancels any retry without reporting an application error.
 
+The browser's stdio and authenticated HTTP MCP transports share one `computer` implementation and exclusive agent
+driver. Human takeover blocks screenshots and input and invalidates requests still awaiting browser startup.
+[Private ChatGPT connection](../../docs/tengri/browser.md#private-chatgpt-connection) documents the owner-approved
+connection download, bounded preview grant and local OpenAI tunnel helper. Run its validation with
+`python3 -m unittest discover -s services/nanoagent -p browser_mcp_tunnel_test.py` from the repository root.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
@@ -140,6 +146,10 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Desktop replay replaces inline MCP, dynamic-tool and native image-generation bytes with an image marker before
+applying its event-size limit. Generated-image completion keeps its status, saved path and prompt. The native image
+and conversation remain unchanged; omitting binary data from replay does not mean generation failed.
 
 Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
 start or resume, including automatic recovery after a native process restart. This excludes remote execution apps

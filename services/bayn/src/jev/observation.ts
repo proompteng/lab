@@ -13,7 +13,7 @@ import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
-import { JevObservationSchema } from './observation-contract'
+import { JevObservationSchema, RetainedJevObservationSchema } from './observation-contract'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
@@ -31,12 +31,12 @@ const invalidObservation = (
     ...(cause === undefined ? {} : { cause }),
   })
 
-export const reproduceJevCandidateObservation = (input: unknown) =>
+const reproduceObservation = <
+  Observation extends typeof JevObservationSchema.Type | typeof RetainedJevObservationSchema.Type,
+>(
+  observation: Observation,
+) =>
   Result.gen(function* () {
-    const observation = yield* Schema.decodeUnknownResult(
-      JevObservationSchema,
-      strictParseOptions,
-    )(input).pipe(Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)))
     const candidates =
       observation.portfolio.purpose === 'ENTRY'
         ? []
@@ -168,6 +168,25 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
     ),
   )
 
+export const reproduceJevCandidateObservation = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    JevObservationSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    Result.flatMap(reproduceObservation),
+  )
+
+// Financial evidence reader only; current observation and execution admission remain strict.
+export const reproduceRetainedJevCandidateObservation = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    RetainedJevObservationSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    Result.flatMap(reproduceObservation),
+  )
+
 export const makeJevObservation = (input: {
   readonly cycleId: string
   readonly authorityGenerationHash: string
@@ -192,3 +211,19 @@ export const makeJevObservation = (input: {
   })
 
 export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']
+
+/** Restore the current typed graph while retaining the exact admitted source identity. */
+export const restoreJevObservation = (input: unknown) =>
+  Result.gen(function* () {
+    const { snapshot, contentHash, ...source } = yield* reproduceJevCandidateObservation(input)
+    const observation: JevObservation = {
+      ...source,
+      manifest: snapshot.manifest,
+      rows: yield* persistIntradayRecordRows(snapshot),
+    }
+    if ((yield* canonicalHashV1Result(observation)) !== contentHash)
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
+    return { observation, snapshot, contentHash }
+  })
+
+export type RestoredJevObservation = Result.Result.Success<ReturnType<typeof restoreJevObservation>>

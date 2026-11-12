@@ -58,6 +58,9 @@ export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, '
             technicalFeaturesTopic: Config.option(nonEmptyString('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC')).pipe(
               Config.map(Option.getOrUndefined),
             ),
+            webullBarsTopic: Config.option(nonEmptyString('BAYN_KAFKA_WEBULL_BARS_TOPIC')).pipe(
+              Config.map(Option.getOrUndefined),
+            ),
             username: nonEmptyString('BAYN_KAFKA_USERNAME'),
             password: secretString('BAYN_KAFKA_PASSWORD'),
             groupPrefix: nonEmptyString('BAYN_KAFKA_GROUP_PREFIX').pipe(Config.withDefault('bayn-market-v1')),
@@ -99,7 +102,6 @@ export const runtimeConfigSource = Config.all({
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
-  cyclePollIntervalMs: operationalThreshold('BAYN_CYCLE_POLL_INTERVAL_MS', 30_000),
   authorityGenerationHash: Config.option(Config.schema(Sha256Schema, 'BAYN_AUTHORITY_GENERATION_HASH')),
   brokerProvider: Config.schema(Schema.Enum(BrokerProvider), 'BAYN_BROKER_PROVIDER').pipe(
     Config.withDefault(BrokerProvider.Alpaca),
@@ -111,7 +113,6 @@ export const runtimeConfigSource = Config.all({
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   jevKey: Config.option(secretString('BAYN_JEV_API_KEY')),
-  openAiKey: Config.option(secretString('BAYN_OPENAI_API_KEY')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
   alpacaProxyUrl: nonEmptyString('BAYN_ALPACA_PROXY_URL').pipe(Config.withDefault('http://bayn-egress-proxy:3128')),
   alpacaRetryAttempts: Config.schema(RetryAttempts, 'BAYN_ALPACA_RETRY_ATTEMPTS').pipe(Config.withDefault(2)),
@@ -124,10 +125,6 @@ export const runtimeConfigSource = Config.all({
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
     Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
   ),
-  nativeArrivalPostgresUrl: Config.option(Config.Redacted('BAYN_NATIVE_ARRIVAL_POSTGRES_URL')),
-  nativeArrivalPostgresCaPath: nonEmptyString('BAYN_NATIVE_ARRIVAL_POSTGRES_CA_PATH').pipe(
-    Config.withDefault('/var/run/secrets/bayn/native-arrival-postgres/ca.crt'),
-  ),
   tigerBeetleClusterId: Config.schema(Schema.BigIntFromString, 'BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
     Config.withDefault(2001n),
   ),
@@ -138,7 +135,6 @@ export const runtimeConfigSource = Config.all({
     (config): ParsedRuntimeConfig => ({
       kafka: config.kafka,
       jevKey: Option.getOrUndefined(config.jevKey),
-      openAiKey: Option.getOrUndefined(config.openAiKey),
       host: config.host,
       port: config.port,
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),
@@ -160,7 +156,6 @@ export const runtimeConfigSource = Config.all({
       cycleStallThresholdMs: config.cycleStallThresholdMs,
       reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
       unknownMutationThresholdMs: config.unknownMutationThresholdMs,
-      cyclePollIntervalMs: config.cyclePollIntervalMs,
       authorityGenerationHash: Option.getOrUndefined(config.authorityGenerationHash),
       configuredAlpaca: {
         provider: config.brokerProvider,
@@ -183,13 +178,6 @@ export const runtimeConfigSource = Config.all({
         tls: config.postgresTls,
         caPath: config.postgresCaPath,
       },
-      nativeArrivalPostgres: Option.isSome(config.nativeArrivalPostgresUrl)
-        ? {
-            url: config.nativeArrivalPostgresUrl.value,
-            tls: config.postgresTls,
-            caPath: config.nativeArrivalPostgresCaPath,
-          }
-        : undefined,
       tigerBeetle: {
         clusterId: config.tigerBeetleClusterId,
         replicaAddresses: config.tigerBeetleReplicaAddresses,

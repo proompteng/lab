@@ -22,6 +22,8 @@ global:
   deleteHooks:
     enabled: false
 spire-server:
+  jwtIssuer: https://oidc.proompteng.ai
+  defaultJwtSvidTTL: 5m
   replicaCount: 3
   podDisruptionBudget:
     enabled: true
@@ -129,6 +131,21 @@ spire-server:
             - k8s:container-name:proompteng
           ttl: 2m
           fallback: false
+        platform-admin:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/platform-admin
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: platform-admin
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:platform-admin
+            - k8s:container-name:platform-admin
+          ttl: 2m
+          fallback: false
         relay:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/relay/sa/relay
@@ -222,6 +239,21 @@ spire-server:
             - k8s:container-name:istio-proxy
           ttl: 2m
           fallback: false
+        platform-admin-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/platform-admin
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: platform-admin
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:platform-admin
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
         tengri-proxy:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
@@ -238,6 +270,21 @@ spire-server:
                 values: [control-plane, run-worker]
           workloadSelectorTemplates:
             - k8s:sa:tengri
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        tengri-run-reader-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/restate/sa/tengri-run-reader
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-run-reader
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:tengri-run-reader
             - k8s:container-name:istio-proxy
           ttl: 2m
           fallback: false

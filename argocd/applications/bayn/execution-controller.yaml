@@ -26,6 +26,10 @@ spec:
         app.kubernetes.io/name: bayn-execution-controller
         app.kubernetes.io/part-of: bayn
     spec:
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       nodeSelector:
         network.proompteng.ai/100g: "true"
       serviceAccountName: bayn
@@ -86,9 +90,11 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "f9e6e142d22de772dca147cae29c07e17010026ee7c156874c1f6a1cccc32878"
+              value: "6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb"
             - name: BAYN_BROKER_ACCESS
               value: read-only
+            - name: BAYN_CAPITAL_AUTHORITY
+              value: none
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -97,11 +103,9 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"ce98123b57957e5ff2c3394debde0a0613fbc825d58897ccfb6574617c4220d2","authoredActivation":{"sourceRevision":"3d33c510e66bca1c5fae247d2e3bf9075916b779","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:f3657c70be3dd14af65ece9f1a61a0aeb53eacc42b64fbad1945baddbbb24c1d"},"activation":{"sourceRevision":"3d33c510e66bca1c5fae247d2e3bf9075916b779","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:f3657c70be3dd14af65ece9f1a61a0aeb53eacc42b64fbad1945baddbbb24c1d"}}'
-            - name: BAYN_CAPITAL_AUTHORITY
-              value: none
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"a36ed2c6e987548b450069ca988bbec30fd43748b665fd0481128322f41d2d63","authoredActivation":{"sourceRevision":"0950a9fd9429cf3f0ee0e14d370225de55532218","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:361183526d1c88848a294459a6f94e794d1773bc959c3638db26d3243bbdee01"},"activation":{"sourceRevision":"0950a9fd9429cf3f0ee0e14d370225de55532218","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:361183526d1c88848a294459a6f94e794d1773bc959c3638db26d3243bbdee01"}}'
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "fd1adaf06499346446c83ee8beb29200bd3d0b3f82155e13ed4c850d153deb89"
+              value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -123,8 +127,6 @@ spec:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: secret-key
-            - name: BAYN_CYCLE_POLL_INTERVAL_MS
-              value: "30000"
             - name: BAYN_RECONCILIATION_INTERVAL_MS
               value: "30000"
             - name: BAYN_HEALTH_INTERVAL_MS
@@ -152,11 +154,6 @@ spec:
               value: "true"
             - name: BAYN_POSTGRES_CA_PATH
               value: /var/run/secrets/bayn/postgres/ca.crt
-            - name: BAYN_NATIVE_ARRIVAL_POSTGRES_URL
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-native-arrival-db-app
-                  key: fqdn-uri
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -172,6 +169,8 @@ spec:
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
             - name: PORT
               value: "9080"
             - name: NODE_ENV
@@ -187,6 +186,8 @@ spec:
                   key: password
             - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
               value: torghut.technical-features.v1
+            - name: BAYN_KAFKA_WEBULL_BARS_TOPIC
+              value: dorvud.webull.raw.v1
             - name: BAYN_KAFKA_TIMESTAMP_POLICY
               value: dorvud.producer-clock.v1
             - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
@@ -195,12 +196,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: bayn-jev-auth
-                  key: api-key
-                  optional: true
-            - name: BAYN_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-openai-auth
                   key: api-key
                   optional: true
             - name: VALKEY_PASSWORD
@@ -216,8 +211,20 @@ spec:
             periodSeconds: 2
             failureThreshold: 600
           readinessProbe:
-            tcpSocket:
-              port: restate
+            exec:
+              command:
+                - node
+                - -e
+                - |
+                  const session = require('node:http2').connect('http://127.0.0.1:9080');
+                  const fail = () => { session.destroy(); process.exitCode = 1; };
+                  session.on('error', fail);
+                  const request = session.request({ ':method': 'GET', ':path': '/startup-ready' });
+                  request.on('response', headers => { process.exitCode = headers[':status'] === 200 ? 0 : 1; });
+                  request.on('error', fail);
+                  request.on('end', () => session.close());
+                  request.resume(); request.end();
+                  session.setTimeout(1000, fail);
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 2
@@ -253,9 +260,6 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
-            - name: native-arrival-postgres-ca
-              mountPath: /var/run/secrets/bayn/native-arrival-postgres
-              readOnly: true
       volumes:
         - name: valkey-client-tls
           secret:
@@ -267,13 +271,6 @@ spec:
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
-            defaultMode: 444
-            items:
-              - key: ca.crt
-                path: ca.crt
-        - name: native-arrival-postgres-ca
-          secret:
-            secretName: bayn-native-arrival-db-ca
             defaultMode: 444
             items:
               - key: ca.crt

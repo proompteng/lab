@@ -32,8 +32,9 @@ import {
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
-import type { JevProtocol } from './protocol'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
+import { webullEntryContext } from './webull-entry-context'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -293,10 +294,14 @@ export const commonMomentumPrices = (
     }
   })
 
-const requestFromSnapshot = (
+// Shared deterministic material preserves v38 reconstruction; each caller applies its own strict version decoder.
+export const jevTradingSignalRequestMaterial = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
-  native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  native: {
+    readonly protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+    readonly portfolio: JevPortfolio
+  },
   selectionPolicy: EntryAblationSelection | null,
 ) =>
   Result.gen(function* () {
@@ -321,6 +326,7 @@ const requestFromSnapshot = (
           )
         : null
     const economics = yield* jevEntryEconomics({
+      feeAt: snapshot.manifest.observedAt,
       cryptoFeeTier,
       protocol: native.protocol,
       symbol,
@@ -328,7 +334,8 @@ const requestFromSnapshot = (
       askMicros: candidate.prices.ask,
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
-    return yield* prepareEntryInferenceInput({
+    const webullContext = yield* webullEntryContext(snapshot, symbol)
+    return {
       ...(selectionPolicy === null
         ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
@@ -353,6 +360,7 @@ const requestFromSnapshot = (
       },
       numericalState: {
         schemaVersion: native.protocol.inputDefinition,
+        webullContext,
         task: {
           positionPolicy: 'long-only',
           horizonMinutes: native.protocol.horizonMinutes,
@@ -404,8 +412,18 @@ const requestFromSnapshot = (
         },
         candidate: candidate.state,
       },
-    })
+    }
   })
+
+const requestFromSnapshot = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  selectionPolicy: EntryAblationSelection | null,
+) =>
+  jevTradingSignalRequestMaterial(snapshot, symbol, native, selectionPolicy).pipe(
+    Result.flatMap(prepareEntryInferenceInput),
+  )
 
 export const makeJevTradingSignalRequest = (input: unknown, symbol: string) =>
   reproduceJevCandidateObservation(input).pipe(

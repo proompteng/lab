@@ -41,7 +41,7 @@ import {
   type FillAccountingStoreShape,
   type ReconciliationStoreShape,
   type ValuationStoreShape,
-} from './db/execution-store'
+} from './db/execution-store/contract'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationClock, ReconciliationError, runOnce } from './reconciler'
@@ -228,7 +228,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true, at = observ
       control.writes += 1
       return receipt
     }),
-  verifyCompleted: () => Effect.void,
+
   value: () =>
     Effect.sync(() => {
       control.writes += 1
@@ -479,7 +479,7 @@ describe('reconciliation pure decisions', () => {
     })
   })
 
-  test('validates the entire order page against the row budget before deferring its boundary', () => {
+  test('paginates orders beyond ten thousand without weakening timestamp boundaries', () => {
     const pageEvidence = evidence('order-row-budget')
     const existing = Array.from({ length: 9_999 }, (_, index) => ({
       ...order(index),
@@ -495,12 +495,14 @@ describe('reconciliation pure decisions', () => {
     const lastAllowed = { ...order(9_999), submittedAt: utcInstantFromEpochMillis(1) }
     const excess = { ...order(10_000), submittedAt: utcInstantFromEpochMillis(0) }
     const complete = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed], evidence: pageEvidence }))
-    if (complete._tag !== 'Complete') throw new Error('A short in-budget page completes the history')
+    if (complete._tag !== 'Complete') throw new Error('A short page completes the history')
     expect(complete.read.rows).toHaveLength(10_000)
-    expect(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence })).toMatchObject({
-      _tag: 'Failure',
-      failure: { failure: { _tag: 'Pagination', reason: 'OrderHistoryTooLarge' } },
-    })
+    const next = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence }))
+    expect(next._tag).toBe('Continue')
+    if (next._tag !== 'Continue') throw new Error('A full page retains its boundary for the next request')
+    const final = Result.getOrThrow(decideOrderPage(next.state, 2, { value: [excess], evidence: pageEvidence }))
+    if (final._tag !== 'Complete') throw new Error('The final short page must complete')
+    expect(final.read.rows).toHaveLength(10_001)
   })
 
   test('bracket history stays stable across reads while retaining child execution changes', () => {
@@ -673,6 +675,56 @@ describe('reconciliation pure decisions', () => {
       }
     },
   )
+
+  test.each(
+    ['ORDER', 'LEG'].flatMap((orderRole) =>
+      [
+        { activityRelation: 'NO_MATCHING_FILLS', quantity: undefined },
+        { activityRelation: 'FILLS_BELOW_ORDER', quantity: '5' },
+        { activityRelation: 'FILLS_ABOVE_ORDER', quantity: '15' },
+      ].map((scenario) => ({ orderRole, ...scenario })),
+    ),
+  )('classifies the first $orderRole fill mismatch as $activityRelation without exposing values', (scenario) => {
+    const member = { ...order(1), filledQuantityAtoms: '10' }
+    const root = scenario.orderRole === 'ORDER' ? member : { ...order(0), filledQuantityAtoms: '0', legs: [member] }
+    const history = {
+      orders: { rows: [{ value: root, evidence: evidence('private-order') }], observedAt },
+      fills:
+        scenario.quantity === undefined
+          ? []
+          : [{ value: { ...fill(1, member), quantityAtoms: scenario.quantity }, evidence: evidence('private-fill') }],
+      fees: [],
+    }
+    const result = decideStableHistory(history, history)
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        failure: {
+          _tag: 'Snapshot',
+          reason: 'FillActivitiesPending',
+          fillMismatch: {
+            activityRelation: scenario.activityRelation,
+            orderRole: scenario.orderRole,
+            orderStatus: BrokerOrderStatus.Filled,
+          },
+        },
+      },
+    })
+    if (Result.isFailure(result)) {
+      expect(Object.keys(result.failure.failure ?? {}).sort()).toEqual(['_tag', 'fillMismatch', 'reason'])
+      expect(JSON.stringify(result.failure.failure)).not.toContain(member.brokerOrderId)
+      expect(JSON.stringify(result.failure.failure)).not.toContain('quantityAtoms')
+    }
+    const converged = {
+      ...history,
+      fills: [{ value: { ...fill(1, member), quantityAtoms: '10' }, evidence: evidence('converged-fill') }],
+    }
+    expect(decideStableHistory(converged, converged)).toEqual(Result.succeed(converged))
+    expect(decideStableHistory(history, converged)).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } },
+    })
+  })
 
   test('classifies stable history, missing baselines, and containment without effects', () => {
     const emptyHistory = {
@@ -949,6 +1001,135 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
+  test.each([false, true])(
+    'reconciles a protection child repeated across a full history page; conflicting=%s',
+    async (conflicting) => {
+      const cut = '2026-11-10T16:49:33.150Z'
+      const parentSubmittedAt = '2026-10-30T13:39:55.166114Z'
+      const childSubmittedAt = '2026-10-30T13:39:55.158403Z'
+      const parentOrder = {
+        ...order(2_000),
+        createdAt: parentSubmittedAt,
+        updatedAt: '2026-10-30T13:40:00.000Z',
+        submittedAt: parentSubmittedAt,
+        orderClass: OrderClass.Bracket,
+        orderType: BrokerOrderType.Limit,
+        limitPriceMicros: '100000000',
+      }
+      const children: readonly BrokerOrder[] = [BrokerOrderType.StopLimit, BrokerOrderType.Limit].map(
+        (orderType, index) => ({
+          ...parentOrder,
+          brokerOrderId: `protection-child-${index}`,
+          clientOrderId: `protection-client-${index}`,
+          parentBrokerOrderId: parentOrder.brokerOrderId,
+          createdAt: childSubmittedAt,
+          updatedAt: '2026-10-30T13:55:18.637306Z',
+          canceledAt: '2026-10-30T13:55:18.637306Z',
+          submittedAt: childSubmittedAt,
+          orderClass: OrderClass.Simple,
+          orderType,
+          side: BrokerSide.Sell,
+          status: BrokerOrderStatus.Canceled,
+          filledQuantityAtoms: '0',
+          limitPriceMicros: index === 0 ? '89000000' : '110000000',
+          ...(index === 0 ? { stopPriceMicros: '90000000' } : {}),
+        }),
+      )
+      const parent = { ...parentOrder, legs: children }
+      const stop = children[0]!
+      const { parentBrokerOrderId: _parent, ...flatStop } = stop
+      const standalone = { ...flatStop, ...(conflicting ? { limitPriceMicros: '88000000' } : {}) }
+      const deferred = { ...order(2_001), status: BrokerOrderStatus.Canceled, filledQuantityAtoms: '0' }
+      const newer = Array.from({ length: 496 }, (_, index) => ({
+        ...order(index),
+        submittedAt: utcInstantFromEpochMillis(Date.parse(parentSubmittedAt) + 1_000 + index),
+        status: BrokerOrderStatus.Canceled,
+        filledQuantityAtoms: '0',
+      })).reverse()
+      // Alpaca counts both nested legs toward 500. The old group is deferred, while the
+      // child submitted 7.711ms before its retained parent reappears below the next cursor.
+      const firstPage = [...newer, parent, deferred]
+      expect(firstPage.reduce((count, row) => count + 1 + (row.legs?.length ?? 0), 0)).toBe(500)
+      const cursors: Array<string | undefined> = []
+      const fee = { accountId, activityId: 'retained-fee', date: '2026-10-30', netAmountMicros: '-230000' }
+      const read: BrokerReadShape = {
+        ...emptyRead(cut),
+        orders: (query = {}) => {
+          cursors.push(query.until)
+          expect(query).toMatchObject({ direction: SortDirection.Descending, limit: 500 })
+          expect(query.after).toBeUndefined()
+          const rows = query.until === cut ? firstPage : [standalone, deferred]
+          const pageAt = utcInstantFromEpochMillis(Date.parse(cut) + cursors.length)
+          return Effect.succeed({
+            value: rows.map((row) => ({
+              ...row,
+              observedAt: pageAt,
+              ...(row.legs === undefined ? {} : { legs: row.legs.map((child) => ({ ...child, observedAt: pageAt })) }),
+            })),
+            evidence: evidence(`overlap-page-${cursors.length}`, pageAt),
+          })
+        },
+        fillActivities: () =>
+          Effect.succeed({
+            value: { items: [{ ...fill(2_000, parent), transactionTime: parent.updatedAt }] },
+            evidence: evidence('retained-fill', cut),
+          }),
+        feeActivities: () => Effect.succeed({ value: { items: [fee] }, evidence: evidence('retained-fee', cut) }),
+      }
+      const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+      const intentId = hash('protection-intent')
+      const store: TestStore = {
+        ...makeStore(control, true, cut),
+        bindings: () =>
+          Effect.succeed([
+            {
+              intentId,
+              clientOrderId: parent.clientOrderId,
+              symbol: parent.symbol,
+              quantityAtoms: parent.quantityAtoms!,
+              protection: {
+                _tag: 'Bracket' as const,
+                stopPriceMicros: '90000000',
+                stopLimitPriceMicros: '89000000',
+                profitLimitPriceMicros: '110000000',
+              },
+            },
+          ]),
+      }
+      const result = await Effect.runPromise(provide(read, store, fence, Effect.succeed(cut)).pipe(Effect.result))
+      expect(cursors).toEqual([cut, parentSubmittedAt, cut, parentSubmittedAt])
+      if (conflicting) {
+        expect(Result.isFailure(result) && result.failure).toMatchObject({
+          failure: {
+            _tag: 'Validation',
+            reason: 'UnexpectedOrderEvent',
+            detail: 'conflicting standalone protection child',
+          },
+        })
+        expect(control.writes).toBe(0)
+        expect(control.reconciliations).toEqual([])
+        expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+      } else {
+        expect(Result.isSuccess(result)).toBe(true)
+        expect(control.reconciliations).toHaveLength(1)
+        const persisted = control.reconciliations[0]!
+        expect(persisted.orders).toHaveLength(500)
+        expect(new Set(persisted.orders.map((row) => row.brokerOrderId)).size).toBe(500)
+        expect(persisted.orders.filter((row) => row.intentId === intentId)).toHaveLength(3)
+        expect(persisted.orders.find((row) => row.brokerOrderId === stop.brokerOrderId)).toMatchObject({
+          intentId,
+          parentBrokerOrderId: parent.brokerOrderId,
+          limitPriceMicros: stop.limitPriceMicros,
+          observedAt: utcInstantFromEpochMillis(Date.parse(cut) + 3),
+        })
+        expect(persisted.fills).toHaveLength(1)
+        expect(persisted.fills[0]).toMatchObject({ intentId, brokerOrderId: parent.brokerOrderId, fillId: 'fill-2000' })
+        expect(persisted.fees.map((row) => row.value)).toEqual([fee])
+        expect(control.restrictions).toEqual([])
+      }
+    },
+  )
+
   test('preserves causal broker read order and clock cutoffs', async () => {
     let accountReads = 0
     let positionReads = 0
@@ -1184,9 +1365,11 @@ describe('execution reconciliation loop', () => {
     expect(control.writes - firstPassWrites).toBe(4)
     expect(control.reconciliations).toHaveLength(2)
     expect(control.reconciliations[1].fills).toEqual(control.reconciliations[0].fills)
+    expect(control.reconciliations[0]).toHaveProperty('ledgerPostingRequired', true)
+    expect(control.reconciliations[1]).toHaveProperty('ledgerPostingRequired', false)
   })
 
-  test('does not reconcile or reuse a completed fill when its accounting verification fails', async () => {
+  test('does not report a completed reconciliation when accounting verification fails', async () => {
     const brokerOrder = order(0)
     const read: BrokerReadShape = {
       ...emptyRead(),
@@ -1201,7 +1384,7 @@ describe('execution reconciliation loop', () => {
     })
     const store: TestStore = {
       ...makeStore(control),
-      verifyCompleted: (inputs) => (inputs.length > 0 ? Effect.fail(failure) : Effect.void),
+      reconcile: (_, snapshot) => snapshot.pipe(Effect.andThen(Effect.fail(failure))),
     }
 
     const exit = await Effect.runPromiseExit(provide(read, store))
@@ -1313,7 +1496,7 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
-  test.each([1, 101])(
+  test.each([1, 101, 10_001])(
     'retains %d available fee settlements excluded by the provider creation-time filter',
     async (count) => {
       const cut = '2026-10-15T08:00:00.000Z'
@@ -1327,7 +1510,8 @@ describe('execution reconciliation loop', () => {
       const read: BrokerReadShape = {
         ...emptyRead(),
         feeActivities: (query) => {
-          const start = query?.pageToken === undefined ? 0 : 100
+          const start =
+            query?.pageToken === undefined ? 0 : fees.findIndex((fee) => fee.activityId === query.pageToken) + 1
           const items = Object.hasOwn(query ?? {}, 'until') ? [] : fees.slice(start, start + 100)
           const last = items.at(-1)
           return Effect.succeed({
@@ -1523,35 +1707,26 @@ describe('execution reconciliation loop', () => {
     }
   })
 
-  test('rejects broker history beyond the hard row limit before persisting', async () => {
-    let offset = 0
+  test('reads complete fill history beyond ten thousand rows', async () => {
+    const fills = Array.from({ length: 10_001 }, (_, index) => fill(index))
     const read: BrokerReadShape = {
       ...emptyRead(),
       fillActivities: (query = {}) => {
-        const pageSize = query.pageSize ?? 100
-        const items = Array.from({ length: pageSize }, (_, index) => fill(offset + index))
-        offset += items.length
+        const offset =
+          query.pageToken === undefined ? 0 : fills.findIndex((row) => row.activityId === query.pageToken) + 1
+        const items = fills.slice(offset, offset + (query.pageSize ?? 100))
+        const last = items.at(-1)
         return Effect.succeed({
-          value: { items, nextPageToken: items[items.length - 1]?.activityId },
+          value: {
+            items,
+            ...(offset + items.length < fills.length && last !== undefined ? { nextPageToken: last.activityId } : {}),
+          },
           evidence: evidence(`fill-page-${offset}`),
         })
       },
     }
-    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-
-    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
-    expect(failure).toMatchObject({
-      _tag: 'ReconciliationError',
-      operation: 'pagination',
-      message: 'Alpaca fill history exceeds 10000 rows',
-      failure: {
-        _tag: 'Pagination',
-        reason: 'FillHistoryTooLarge',
-      },
-    })
-    expect(offset).toBe(10_001)
-    expect(control.writes).toBe(0)
-    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(observedAt)))
+    expect(snapshot.history.fills.map(({ value }) => value)).toEqual(fills)
   })
 
   test('keeps persistence and containment in distinct writer-fence transactions', async () => {
@@ -1591,7 +1766,6 @@ describe('execution reconciliation loop', () => {
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
       completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
-      verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
       hasAccountBaseline: (id) =>
         Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),

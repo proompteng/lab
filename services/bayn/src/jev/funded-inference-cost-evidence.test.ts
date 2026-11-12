@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { InferenceStage } from '../inference-costs'
+import { decodeInferenceCostEvidence, InferenceStage } from '../inference-costs'
+import { summarizeForwardInferenceExpenses } from '../forward-performance/inference-expenses'
 import {
   makeInferenceExpenseQuotes,
   verifyInferenceExpenseQuote,
@@ -68,7 +69,17 @@ test('funded v25 history keeps two-stage identities and checkpoint quotes after 
       requestId: request.requestId,
       claimHash: claim.claimHash,
       recordedAt: completion.handoff.recordedAt,
-      outcome: { status: 'RECEIVED', inference: completion.handoff.disposition.visual },
+      outcome: {
+        status: 'RECEIVED',
+        inference: {
+          ...completion.handoff.disposition.visual,
+          response: (() => {
+            const response = completion.handoff.disposition.visual.response
+            if (response.model !== 'gpt-6-luna') throw new Error('Expected retained Decisions receipt')
+            return response
+          })(),
+        },
+      },
     }),
   )
   const checkpoint = { claim, terminal }
@@ -97,6 +108,32 @@ test('funded v25 history keeps two-stage identities and checkpoint quotes after 
   )
   expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(2)
   for (const quote of quotes) expect(Result.getOrThrow(verifyInferenceExpenseQuote(source, quote))).toEqual(quote)
+  const { chartCheckpoint: _checkpoint, ...priorSource } = source
+  const priorChartQuote = Result.getOrThrow(makeInferenceExpenseQuotes(priorSource, inferenceExpenseRateCard)).find(
+    (quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.Chart,
+  )
+  if (priorChartQuote === undefined) throw new Error('Expected a retained pre-checkpoint chart quote')
+  expect(priorChartQuote.schemaVersion).toBe('bayn.inference-expense-quote.v2')
+  expect(BigInt(priorChartQuote.line.estimatedCostPicoUsd ?? '0')).toBeGreaterThan(0n)
+  const { accountId, sessionDate, asOf, ...row } = source
+  const evidence = Result.getOrThrow(
+    decodeInferenceCostEvidence({
+      schemaVersion: 'bayn.inference-cost-evidence.v3',
+      accountBindingHash: priorChartQuote.accountBindingHash,
+      sessionDate,
+      asOf,
+      requests: [row],
+    }),
+  )
+  const frozen = [...quotes, priorChartQuote].map((quote) => ({ quote, verifiedAt: asOf }))
+  const summary = Result.getOrThrow(summarizeForwardInferenceExpenses(evidence, accountId, frozen))
+  expect(summary.completeMeteredCoverage).toBe(true)
+  expect(summary.matchedQuoteHashes).toEqual(quotes.map((quote) => quote.quoteHash).sort())
+  expect(summary.matchedQuoteHashes).not.toContain(priorChartQuote.quoteHash)
+  expect(summary.requestsWithCoverageIssues).toEqual([])
+  expect(summary.knownEstimatedCostPicoUsd).toBe(
+    quotes.reduce((total, quote) => total + BigInt(quote.line.estimatedCostPicoUsd ?? '0'), 0n).toString(),
+  )
   const { claimHash: _, ...wrongClaim } = { ...claim, providerRequestHash: 'f'.repeat(64) }
   expect(
     Result.isFailure(
@@ -108,7 +145,14 @@ test('funded v25 history keeps two-stage identities and checkpoint quotes after 
   ).toBe(true)
   const { requestId: _id, ...wrongRequest } = {
     ...request,
-    request: { ...request.request, protocol: { ...request.request.protocol, schemaVersion: 'bayn.jev.protocol.v26' } },
+    request: {
+      ...request.request,
+      protocol: {
+        ...request.request.protocol,
+        schemaVersion: 'bayn.jev.protocol.v26',
+        entrySignalPolicy: 'openai-decisions-then-jev' as const,
+      },
+    },
   }
   expect(
     Result.isFailure(

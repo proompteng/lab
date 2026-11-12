@@ -27,6 +27,7 @@ dependencies {
   implementation("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
   implementation("ch.qos.logback:logback-classic:$logbackVersion")
   implementation("io.sentry:sentry:8.61.0")
+  implementation("com.google.protobuf:protobuf-java:4.31.1")
   compileOnly("org.apache.logging.log4j:log4j-core:2.24.3")
   annotationProcessor("org.apache.logging.log4j:log4j-core:2.24.3")
 

@@ -817,6 +817,7 @@ async fn proxy_http(
 ) -> axum::response::Response {
     let (parts, body) = request.into_parts();
     let request_method = parts.method.clone();
+    let browser_mcp = session.port == crate::guest::BROWSER_PORT && parts.uri.path() == "/mcp";
     let editor_asset =
         session.port == crate::guest::EDITOR_PORT && is_editor_asset(parts.uri.path());
     let body = match to_bytes(body, MAX_PROXY_BODY).await {
@@ -875,7 +876,19 @@ async fn proxy_http(
     if let Err(error) = access.require().await {
         return status_response(error.code(), error.message());
     }
-    let upstream = match upstream.send().await {
+    let send = upstream.send();
+    let upstream = if browser_mcp {
+        tokio::select! {
+            biased;
+            _ = state.wait_for_preview_revocation(&session, &access) => {
+                return (StatusCode::FORBIDDEN, "browser preview authorization ended").into_response();
+            }
+            result = send => result,
+        }
+    } else {
+        send.await
+    };
+    let upstream = match upstream {
         Ok(response) => response,
         Err(_) => {
             return (
@@ -893,8 +906,19 @@ async fn proxy_http(
     if let Err(error) = access.require().await {
         return status_response(error.code(), error.message());
     }
-    let upstream_body = access.guard_stream(upstream.bytes_stream().map(|chunk| {
-        chunk.map_err(|error| tonic::Status::unavailable(format!("preview stream failed: {error}")))
+    let tickets = state.tickets.clone();
+    let body_session = session.clone();
+    let upstream_body = access.guard_stream(upstream.bytes_stream().then(move |chunk| {
+        let tickets = tickets.clone();
+        let session = body_session.clone();
+        async move {
+            if browser_mcp {
+                tickets.require_preview_lease(&session).await?;
+            }
+            chunk.map_err(|error| {
+                tonic::Status::unavailable(format!("preview stream failed: {error}"))
+            })
+        }
     }));
     let (body, bridge_nonce) = if inject_bridge {
         let bytes = match to_bytes(Body::from_stream(upstream_body), MAX_PROXY_BODY).await {

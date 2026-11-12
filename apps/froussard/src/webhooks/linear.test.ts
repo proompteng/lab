@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 
+import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AppRuntime } from '@/effect/runtime'
@@ -18,6 +19,7 @@ const ISSUE_ID = '2174add1-f7c8-44e3-bbf3-2d60b5ea8bc9'
 const LABEL_ID = '8a82b5d6-8112-4c41-b32a-0efb93ad4e2b'
 
 const config: WebhookConfig = {
+  restate: { ingressOrigin: 'http://restate.test' },
   idempotency: { ttlMs: 60_000, maxEntries: 100 },
   atlas: { baseUrl: 'http://atlas.test', apiKey: null },
   agents: {
@@ -145,7 +147,7 @@ const makeHarness = (
       published.push(message)
     })
   const handler = createLinearWebhookHandler({
-    runtime: {} as AppRuntime,
+    runtime: { runSync: Effect.runSync } as AppRuntime,
     config: options.config ?? config,
     idempotencyStore: createIdempotencyStore(config.idempotency),
     now: () => NOW,

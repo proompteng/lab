@@ -9,7 +9,6 @@ import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
 import {
-  decodeDecisionsResponse,
   decisionsModel,
   prepareDecisionsRequest,
   DecisionsRequestSchema,
@@ -83,6 +82,7 @@ const buildChartDecisionsRequest = (source: ChartDecisionSource) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(funding.bidMicros),
@@ -263,13 +263,6 @@ export const ChartAssessmentsSchema = Schema.Struct({
 })
 export type ChartAssessments = typeof ChartAssessmentsSchema.Type
 export type ChartAssessmentsMaterial = ChartAssessments | RetainedConditionalChartAssessmentsMaterial
-
-export const chartAssessments = (source: ChartDecisionSource, input: unknown) =>
-  Result.gen(function* () {
-    const prepared = yield* makeChartDecisionsRequest(source)
-    const response = yield* decodeDecisionsResponse(prepared.request, input)
-    return yield* chartAssessmentsFromResponse(source.chart, response, prepared.request)
-  })
 
 export const chartAssessmentsFromResponse = (
   chart: NativeChartEvidence,

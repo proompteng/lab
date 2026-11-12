@@ -11,7 +11,7 @@ harness against the self-hosted Flamingo model.
 - Runtime type: `job`
 - Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:a5796fc2b@sha256:4e4e7ac9f646c061baaa7478ae42bf3acefc2ab46b2640ffa52b677cb8ed86ca`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
-- Default model: `qwen36-flamingo`
+- Default model: `qwen38-flamingo`
 - Supported workload image platforms: `linux/amd64`, `linux/arm64`
 
 The provider is an Agents `exec` provider. The controller mounts
@@ -32,7 +32,7 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 - `ANYPI_REQUIRED_TOOLS` is checked before clone/model work. The default image
   contract includes `bash`, `bun`, `git`, `gh`, `jq`, `node`, `python3`, `rg`,
   `uv`, `mise`, `helm`, and `kustomize`.
-- `ANYPI_MODEL=qwen36-flamingo` targets the Qwen3.6 NVFP4 Flamingo endpoint.
+- `ANYPI_MODEL=qwen38-flamingo` targets the Qwen3.8 FP8 Flamingo endpoint.
 - `ANYPI_CONTEXT_WINDOW=229376` and `ANYPI_MAX_TOKENS=32768` fit inside the
   current 262K production serving profile.
 - `ANYPI_THINKING_LEVEL=medium` enables Qwen thinking for non-trivial coding

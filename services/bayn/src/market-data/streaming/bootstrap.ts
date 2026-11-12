@@ -5,6 +5,25 @@ export class KafkaBootstrapFailure extends Data.TaggedError('KafkaBootstrapFailu
 
 export const kafkaBootstrapDeadlineMs = 300_000
 
+export enum KafkaHandoffReadiness {
+  Ready = 'READY',
+  Waiting = 'WAITING',
+  Failed = 'FAILED',
+  Expired = 'EXPIRED',
+}
+
+export const kafkaHandoffReadiness = (
+  status: { readonly ready: boolean; readonly failure?: string; readonly bootstrapDeadlineAtMs: number | null },
+  now: number,
+): KafkaHandoffReadiness =>
+  status.failure !== undefined
+    ? KafkaHandoffReadiness.Failed
+    : status.ready
+      ? KafkaHandoffReadiness.Ready
+      : status.bootstrapDeadlineAtMs !== null && now > status.bootstrapDeadlineAtMs
+        ? KafkaHandoffReadiness.Expired
+        : KafkaHandoffReadiness.Waiting
+
 export enum KafkaBootstrapTimestampPolicy {
   ProducerClock = 'dorvud.producer-clock.v1',
   RetainedBeginning = 'retained-beginning',
@@ -56,8 +75,11 @@ export const bootstrapKafkaPartitions = (
       throw new KafkaBootstrapFailure({ message: 'Kafka bootstrap positions are missing' })
     const first = BigInt(start.offset)
     const last = BigInt(end.offset)
-    const chosen = BigInt(requested.offset) === -1n ? last : BigInt(requested.offset)
-    if (first < 0n || last < first || chosen < first || chosen > last)
+    const requestedOffset = BigInt(requested.offset)
+    // A timestamp lookup can observe an append after the end was captured. Start at the frozen barrier
+    // so consumption includes that entire append interval; neither a newer seek nor -1 moves the barrier.
+    const chosen = requestedOffset === -1n || requestedOffset > last ? last : requestedOffset
+    if (first < 0n || last < first || chosen < first)
       throw new KafkaBootstrapFailure({ message: 'Kafka retention or partition bounds changed during bootstrap' })
     return {
       topic: end.topic,

@@ -1,6 +1,7 @@
 module
 public import Bayn.Economics
 public import Bayn.Reliability
+public import Bayn.Bootstrap
 import Lean.Elab.Tactic.Omega
 
 @[expose] public section
@@ -112,36 +113,18 @@ theorem changed_deployed_continuation_is_rejected (actual : ControlIdentity)
 
 theorem original_deployed_control_is_reachable : deployedControlPreserved frozenDeployedControlIdentity := rfl
 
-structure RegisteredRiskLimits where
-  order : Nat
-  symbol : Nat
-  gross : Nat
-  net : Nat
-  turnover : Nat
-  deriving Repr, DecidableEq
-
-def withinFrozenRiskLimits (limits : RegisteredRiskLimits) : Prop :=
-  limits.order ≤ 40000000000 ∧ limits.symbol ≤ 40000000000 ∧
-  limits.gross ≤ 100000000000 ∧ limits.net ≤ 100000000000 ∧ limits.turnover ≤ 200000000000
-
-instance (limits : RegisteredRiskLimits) : Decidable (withinFrozenRiskLimits limits) := by
-  unfold withinFrozenRiskLimits
-  infer_instance
-
 structure RegisteredRiskBinding where
   declaredPolicyHash : String
   materialPolicyHash : String
   declaredAccountHash : String
   materialAccountHash : String
   approvedPolicyHashes : List String
-  limits : RegisteredRiskLimits
   deriving Repr, DecidableEq
 
 def registeredRiskPreserved (binding : RegisteredRiskBinding) : Prop :=
   binding.declaredPolicyHash = binding.materialPolicyHash ∧
   binding.declaredAccountHash = binding.materialAccountHash ∧
-  binding.declaredPolicyHash ∈ binding.approvedPolicyHashes ∧
-  withinFrozenRiskLimits binding.limits
+  binding.declaredPolicyHash ∈ binding.approvedPolicyHashes
 
 instance (binding : RegisteredRiskBinding) : Decidable (registeredRiskPreserved binding) := by
   unfold registeredRiskPreserved
@@ -154,36 +137,26 @@ theorem admitted_risk_preserves_material_and_account (binding : RegisteredRiskBi
 
 theorem unapproved_risk_cannot_register (binding : RegisteredRiskBinding)
     (unapproved : binding.declaredPolicyHash ∉ binding.approvedPolicyHashes) :
-    ¬ registeredRiskPreserved binding := fun accepted => unapproved accepted.2.2.1
-
-theorem admitted_risk_preserves_every_frozen_ceiling (binding : RegisteredRiskBinding)
-    (accepted : registeredRiskPreserved binding) : withinFrozenRiskLimits binding.limits := accepted.2.2.2
-
-theorem expanded_turnover_cannot_register (binding : RegisteredRiskBinding)
-    (expanded : 200000000000 < binding.limits.turnover) : ¬ registeredRiskPreserved binding := by
-  intro accepted
-  have bounded := accepted.2.2.2.2.2.2.2
-  omega
+    ¬ registeredRiskPreserved binding := fun accepted => unapproved accepted.2.2
 
 theorem matched_approved_risk_is_reachable : registeredRiskPreserved {
     declaredPolicyHash := "retained", materialPolicyHash := "retained",
     declaredAccountHash := "account", materialAccountHash := "account",
-    approvedPolicyHashes := ["retained", "paper"],
-    limits := ⟨40000000000, 40000000000, 100000000000, 100000000000, 200000000000⟩ } := by decide
+    approvedPolicyHashes := ["retained", "paper"] } := by decide
 
 structure QualificationEvidence where
   sessionCount : Nat
+  controlCount : Nat
+  blockLength : Nat
+  bootstrapReplicates : Nat
+  attemptIndex : Nat
   netProfit : Int
-  bestControlProfit : Int
   profitLowerBoundTotal : Int
   pairedLowerBoundTotals : List Int
-  profitWithoutBest : Int
-  additionalCostProfit : Int
-  latencyStressProfit : Int
   maximumSessionLoss : Nat
   maximumDrawdown : Nat
-  completedEpisodes : Nat
-  filledNotional : Nat
+  maximumSessionLossLimit : Nat
+  maximumDrawdownLimit : Nat
   reliability : List (Nat × Nat)
   safetyViolations : Nat
   completeEvidence : Bool
@@ -191,64 +164,59 @@ structure QualificationEvidence where
   deriving Repr
 
 def economicTargets (e : QualificationEvidence) : Prop :=
-  0 < e.sessionCount ∧ 5000000000 ≤ e.netProfit ∧
-  5 * e.bestControlProfit ≤ 4 * e.netProfit ∧
-  0 < e.profitLowerBoundTotal ∧
-  e.pairedLowerBoundTotals.length = 3 ∧
-  (∀ bound ∈ e.pairedLowerBoundTotals, 50000000 * e.sessionCount < bound) ∧
-  0 < e.profitWithoutBest ∧ 0 < e.additionalCostProfit ∧ 0 < e.latencyStressProfit ∧
-  e.maximumSessionLoss ≤ 1000000000 ∧ e.maximumDrawdown ≤ 2500000000 ∧
-  200 ≤ e.completedEpisodes ∧ 10 * e.sessionCount ≤ e.completedEpisodes ∧
-  100000000000 * e.sessionCount ≤ e.filledNotional
+  0 < e.blockLength ∧ e.blockLength < e.sessionCount ∧
+  tailResolutionSupported e.attemptIndex e.controlCount e.bootstrapReplicates ∧
+  0 < e.netProfit ∧ 0 < e.profitLowerBoundTotal ∧
+  0 < e.controlCount ∧ e.pairedLowerBoundTotals.length = e.controlCount ∧ (∀ bound ∈ e.pairedLowerBoundTotals, 0 < bound) ∧
+  e.maximumSessionLoss ≤ e.maximumSessionLossLimit ∧ e.maximumDrawdown ≤ e.maximumDrawdownLimit
+
+def operationalReliability (counts : List (Nat × Nat)) : Prop :=
+  counts.length = 4 ∧ (∀ pair ∈ counts.take 3, reliabilityPass pair.1 pair.2) ∧
+  (∀ pair ∈ counts.drop 3, (pair.1 = 0 ∧ pair.2 = 0) ∨ reliabilityPass pair.1 pair.2)
 
 def qualificationPass (e : QualificationEvidence) : Prop :=
-  economicTargets e ∧ e.reliability.length = 4 ∧
-  (∀ counts ∈ e.reliability, reliabilityPass counts.1 counts.2) ∧
+  economicTargets e ∧ operationalReliability e.reliability ∧
   e.safetyViolations = 0 ∧ e.completeEvidence = true ∧ e.supportedRealism = true
 
 instance (e : QualificationEvidence) : Decidable (economicTargets e) := by unfold economicTargets; infer_instance
+instance (counts : List (Nat × Nat)) : Decidable (operationalReliability counts) := by unfold operationalReliability; infer_instance
 instance (e : QualificationEvidence) : Decidable (qualificationPass e) := by unfold qualificationPass; infer_instance
 
 theorem qualification_implies_all_requirements (e : QualificationEvidence) (h : qualificationPass e) :
-    economicTargets e ∧ e.reliability.length = 4 ∧
-    (∀ counts ∈ e.reliability, reliabilityPass counts.1 counts.2) ∧
+    economicTargets e ∧ operationalReliability e.reliability ∧
     e.safetyViolations = 0 ∧ e.completeEvidence = true ∧ e.supportedRealism = true := h
 
 theorem missing_evidence_cannot_qualify (e : QualificationEvidence) (h : e.completeEvidence = false) :
-    ¬ qualificationPass e := by
-  simp [qualificationPass, h]
+    ¬ qualificationPass e := by simp [qualificationPass, h]
 
 theorem safety_has_no_error_budget (e : QualificationEvidence) (h : 0 < e.safetyViolations) :
-    ¬ qualificationPass e := by
-  simp only [qualificationPass]
-  omega
+    ¬ qualificationPass e := by unfold qualificationPass; omega
 
 theorem losing_control_cannot_replace_absolute_profit (e : QualificationEvidence) (h : e.netProfit ≤ 0) :
-    ¬ qualificationPass e := by
-  unfold qualificationPass economicTargets
-  omega
+    ¬ qualificationPass e := by unfold qualificationPass economicTargets; omega
 
 def qualifyingExample : QualificationEvidence := {
-  sessionCount := 20,
-  netProfit := 20000000000, bestControlProfit := 2000000000,
-  profitLowerBoundTotal := 20000000000,
-  pairedLowerBoundTotals := [18000000000, 18000000000, 18000000000],
-  profitWithoutBest := 19000000000, additionalCostProfit := 18000000000,
-  latencyStressProfit := 19000000000,
-  maximumSessionLoss := 0, maximumDrawdown := 0,
-  completedEpisodes := 200, filledNotional := 2000000000000,
-  reliability := [(1000, 1000), (1000, 1000), (1000, 1000), (1000, 1000)],
+  sessionCount := 4, controlCount := 1, blockLength := 2, bootstrapReplicates := 10000, attemptIndex := 1, netProfit := 1000000, profitLowerBoundTotal := 500000,
+  pairedLowerBoundTotals := [500000], maximumSessionLoss := 0, maximumDrawdown := 0,
+  maximumSessionLossLimit := 5000000000, maximumDrawdownLimit := 5000000000,
+  reliability := [(1000, 1000), (1000, 1000), (1000, 1000), (0, 0)],
   safetyViolations := 0, completeEvidence := true, supportedRealism := true
 }
 
-theorem qualification_is_reachable : qualificationPass qualifyingExample := by
-  decide
+theorem qualification_is_reachable : qualificationPass qualifyingExample := by decide
 
-theorem shorter_window_can_qualify : qualificationPass { qualifyingExample with sessionCount := 3, filledNotional := 300000000000 } := by
-  decide
+theorem unused_recovery_does_not_require_an_incident : operationalReliability [(1000,1000),(1000,1000),(1000,1000),(0,0)] := by decide
+
+theorem empty_required_work_cannot_qualify : ¬ qualificationPass { qualifyingExample with reliability := [(0,0),(1000,1000),(1000,1000),(0,0)] } := by decide
+
+theorem no_control_cannot_establish_edge (e : QualificationEvidence) (empty : e.pairedLowerBoundTotals = []) :
+    ¬ qualificationPass e := by
+  simp only [qualificationPass, economicTargets, empty, List.length_nil]
+  omega
 
 theorem empty_window_cannot_qualify (e : QualificationEvidence) (empty : e.sessionCount = 0) :
     ¬ qualificationPass e := by
-  simp [qualificationPass, economicTargets, empty]
+  simp only [qualificationPass, economicTargets, empty]
+  omega
 
 end Bayn

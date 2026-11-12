@@ -1,3 +1,5 @@
+import webullObserveCutover from '../../../migrations/0179_webull_observe_cutover'
+import { observeCycleGenerationHash } from '../capital-grant-algebra'
 import { orderRequestBody } from '../../broker/alpaca-mutations/decisions'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
@@ -6,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
-import type { Statement } from 'effect/sql/Statement'
+import { CurrentTransformer, type Statement } from 'effect/sql/Statement'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
@@ -169,7 +171,15 @@ const makeExpiredNativeFixture = () => {
   }
 }
 
-const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<typeof makeFixture>) => {
+const seedExecutionAuthority = (
+  sql: PgClient.PgClient,
+  fixture: ReturnType<typeof makeFixture>,
+  protocolVersion:
+    | 'bayn.jev.protocol.v37'
+    | 'bayn.jev.protocol.v38'
+    | 'bayn.jev.protocol.v39'
+    | 'bayn.jev.protocol.v40' = defaultJevProtocolDocument.schemaVersion,
+) => {
   const observeGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))
   const executionGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
   const reconciliationId = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'activation' }))
@@ -210,7 +220,7 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         'bayn.paper-authority-generation.v3', ${observeGenerationHash}, 'PAPER', 2,
         ${'2'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'3'.repeat(64)}`},
         'jev', ${'4'.repeat(64)}, ${'5'.repeat(64)},
-        ${defaultJevProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
+        ${protocolVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
         'bayn.broker-identity.v2', ${brokerIdentity.identityHash}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
         ${planHash}, ${reconciliationId}, ${reconciliationHash}, ${planHash},
         ${fixture.generationActivatedAt}
@@ -413,10 +423,47 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         return { rows, locked }
       }),
     )
-    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v35')
-    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v35')
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe(defaultJevProtocolDocument.schemaVersion)
+    expect(result.locked.history.strategy_parameter_schema_version).toBe(defaultJevProtocolDocument.schemaVersion)
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
+
+  test.each(['retired-clear', 'operator-hold', 'current-clear'] as const)(
+    'Webull cutover restricts only clear retired authority and is idempotent: %s',
+    async (scenario) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* seedExecutionAuthority(
+            sql,
+            makeFixture(),
+            scenario === 'current-clear' ? 'bayn.jev.protocol.v38' : 'bayn.jev.protocol.v37',
+          )
+          if (scenario === 'operator-hold')
+            yield* sql`UPDATE authority_state SET effective='OBSERVE', kill_state='ACTIVE', reason='operator hold',
+              version=version+1, updated_at=clock_timestamp() WHERE singleton`
+          const before = yield* sql`SELECT * FROM authority_state`
+          const history = yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`
+          yield* sql.withTransaction(webullObserveCutover)
+          const after = yield* sql`SELECT * FROM authority_state`
+          if (scenario === 'retired-clear') {
+            expect(after).toMatchObject([
+              {
+                generation_hash: before[0]?.['generation_hash'],
+                maximum: 'PAPER',
+                effective: 'OBSERVE',
+                kill_state: 'ACTIVE',
+                reason: strategyProtocolCutoverRestrictionReason,
+              },
+            ])
+            expect(Number(after[0]?.['version'])).toBe(Number(before[0]?.['version']) + 1)
+          } else expect(after).toEqual(before)
+          yield* sql.withTransaction(webullObserveCutover)
+          expect(yield* sql`SELECT * FROM authority_state`).toEqual(after)
+          expect(yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`).toEqual(history)
+        }),
+      ),
+  )
 
   test.each(
     [
@@ -441,12 +488,19 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           const cycles = yield* CycleStore
           const blocked = yield* BlockedCycleIntentStore
           const fence = yield* WriterFence
-          yield* seedExecutionAuthority(sql, fixture)
+          const migratedCutover = reason === strategyProtocolCutoverRestrictionReason && scenario === 'no-cycle'
+          yield* seedExecutionAuthority(
+            sql,
+            fixture,
+            migratedCutover ? 'bayn.jev.protocol.v37' : defaultJevProtocolDocument.schemaVersion,
+          )
           if (scenario !== 'no-cycle') {
             yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
             yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
           }
-          yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          if (migratedCutover) yield* sql.withTransaction(webullObserveCutover)
+          else
+            yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
   reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
           const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
           let reconciliations = 0
@@ -503,6 +557,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             effective: Authority.Observe,
             kill: KillState.Clear,
           })
+          expect(Result.getOrThrow(observeCycleGenerationHash(state))).toBe(state.generationHash)
           expect(state.generationHash).not.toBe(generationHash)
           if (scenario !== 'no-cycle') {
             expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Blocked)
@@ -1752,32 +1807,35 @@ const settleUntouchedExpiry = Effect.gen(function* () {
   )
 })
 
-const reserveExpiryIntent = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const fence = yield* WriterFence
-  return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
-    MutationOperation.Submit,
-    expiryFixture.intentIds[0],
-    Result.getOrThrow(
-      canonicalHashV1Result(
-        Result.getOrThrow(
-          orderRequestBody({
-            clientOrderId: 'b1_' + 'A'.repeat(43),
-            symbol: 'AAPL',
-            side: OrderSide.Buy,
-            orderType: OrderType.Limit,
-            timeInForce: TimeInForce.Day,
-            quantityAtoms: '1000000000',
-            notionalLimitMicros: '100000000',
-            limitPriceMicros: '100000000',
-          }),
+const reserveExpiryIntentFor = (intentId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const fence = yield* WriterFence
+    return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
+      MutationOperation.Submit,
+      intentId,
+      Result.getOrThrow(
+        canonicalHashV1Result(
+          Result.getOrThrow(
+            orderRequestBody({
+              clientOrderId: 'b1_' + 'A'.repeat(43),
+              symbol: 'AAPL',
+              side: OrderSide.Buy,
+              orderType: OrderType.Limit,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: '1000000000',
+              notionalLimitMicros: '100000000',
+              limitPriceMicros: '100000000',
+            }),
+          ),
         ),
       ),
-    ),
-    1_000,
-    expiryFixture.reservedAt,
-  )
-})
+      1_000,
+      expiryFixture.reservedAt,
+    )
+  })
+
+const reserveExpiryIntent = reserveExpiryIntentFor(expiryFixture.intentIds[0])
 
 const readExpiryState = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -1810,6 +1868,116 @@ describePostgres('PostgreSQL untouched approval expiry safety', () => {
   afterAll(async () => {
     await owner?.dispose()
     await contender?.dispose()
+  })
+
+  test('commits submission admission with six SQL statements and preserves the exact stored request', async () => {
+    let statements = 0
+    let commits = 0
+    const receipt = await owner.runPromise(
+      Effect.gen(function* () {
+        const fence = yield* WriterFence
+        const countedFence: WriterFenceService = {
+          check: fence.check,
+          transaction: (effect) =>
+            fence.transaction(effect).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  commits += 1
+                }),
+              ),
+            ),
+        }
+        return yield* reserveExpiryIntent.pipe(
+          Effect.provideService(WriterFence, countedFence),
+          Effect.provideService(CurrentTransformer, (statement) =>
+            Effect.sync(() => {
+              statements += 1
+              return statement
+            }),
+          ),
+        )
+      }),
+    )
+    expect(receipt.started).toBe(true)
+    // Counts actual adapter statements; the writer lease's BEGIN/check/COMMIT protocol is separate and unchanged.
+    expect(statements).toBe(6)
+    expect(commits).toBe(1)
+    const durable = await contender.runPromise(readExpiryState)
+    expect(durable.intents[0]).toMatchObject({ state: 'IO_STARTED', state_version: 2 })
+    expect(durable.mutationRows).toHaveLength(1)
+    expect(durable.mutationRows[0]).toMatchObject({
+      event_id: receipt.event.eventId,
+      request_hash: receipt.event.requestHash,
+      request_body: {
+        client_order_id: 'b1_' + 'A'.repeat(43),
+        symbol: 'AAPL',
+        side: 'buy',
+        type: 'limit',
+        time_in_force: 'day',
+        qty: '1',
+        limit_price: '100',
+      },
+    })
+    statements = 0
+    const replay = await contender.runPromise(
+      reserveExpiryIntent.pipe(
+        Effect.provideService(CurrentTransformer, (statement) =>
+          Effect.sync(() => {
+            statements += 1
+            return statement
+          }),
+        ),
+      ),
+    )
+    expect(replay).toEqual({ event: receipt.event, started: false })
+    expect(statements).toBe(1)
+    expect(await contender.runPromise(readExpiryState)).toEqual(durable)
+  })
+
+  test('retains containment for a different intent after the first admission commits', async () => {
+    await owner.runPromise(reserveExpiryIntent)
+    const before = await owner.runPromise(readExpiryState)
+    const blocked = await contender.runPromise(reserveExpiryIntentFor(expiryFixture.intentIds[1]).pipe(Effect.result))
+    expect(blocked).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'MutationStoreError',
+        failure: 'invariant',
+        message: 'another broker mutation has an unresolved outcome',
+      },
+    })
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
+  })
+
+  test('rejects expired approval at the database clock without committing a start', async () => {
+    await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE risk_decisions SET expires_at = ${expiryFixture.reservedAt}`
+      }),
+    )
+    const before = await owner.runPromise(readExpiryState)
+    expect(Result.isFailure(await owner.runPromise(reserveExpiryIntent.pipe(Effect.result)))).toBe(true)
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
+  })
+
+  test('rejects ambient transactions so the durable start cannot be deferred past broker routing', async () => {
+    const before = await owner.runPromise(readExpiryState)
+    const result = await owner.runPromise(
+      Effect.gen(function* () {
+        const fence = yield* WriterFence
+        return yield* fence.transaction(reserveExpiryIntent).pipe(Effect.result)
+      }),
+    )
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'MutationStoreError',
+        failure: 'invariant',
+        message: 'mutation admission must commit independently before broker routing',
+      },
+    })
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
   })
 
   test('atomically retains a decoded denial reason and rejects conflicting database replay', async () => {

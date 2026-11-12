@@ -20,10 +20,11 @@ export const indexOperatingCosts = (
   costs: OperatingCostReport,
   inference: InferenceCostReport,
   session: { readonly openAt: string; readonly closeAt: string },
+  actualCostsOnly = false,
 ) => {
   if (
     costs.totalOperatingCostMicros === null ||
-    costs.qualificationPremiumMicros === null ||
+    (!actualCostsOnly && costs.qualificationPremiumMicros === null) ||
     inference.estimatedTotalCostMicros === null
   )
     return null
@@ -34,7 +35,7 @@ export const indexOperatingCosts = (
   if (invoice === undefined || costs.inferenceReportHash !== inference.reportHash) return null
   const invoiceAmount = BigInt(invoice.knownInvoicedCostMicros)
   const nonInference = BigInt(costs.totalOperatingCostMicros) - invoiceAmount
-  const premiumAmount = BigInt(costs.qualificationPremiumMicros)
+  const premiumAmount = actualCostsOnly ? 0n : BigInt(costs.qualificationPremiumMicros ?? '0')
   if (invoiceAmount < 0n || nonInference < 0n || premiumAmount < 0n) return null
   let totalWeight = 0n
   const points: { readonly at: number; weight: bigint }[] = []

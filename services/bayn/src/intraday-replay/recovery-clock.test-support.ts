@@ -1,5 +1,5 @@
 import { Effect, Semaphore } from 'effect'
-import type { AuthorityRestrictionStoreShape, ReconciliationPersistence } from '../db/execution-store'
+import type { AuthorityRestrictionStoreShape, ReconciliationPersistence } from '../db/execution-store/contract'
 
 const unused = () => Effect.die('Unexpected recovery containment persistence')
 
@@ -7,7 +7,7 @@ export const makeRecoveryContainmentStore = (
   restrictAuthority: AuthorityRestrictionStoreShape['restrictAuthority'],
 ): ReconciliationPersistence => ({
   events: { completeHistory: unused, ingest: unused, ingestPositions: unused },
-  accounting: { account: unused, verifyCompleted: unused },
+  accounting: { account: unused },
   valuation: { value: unused, hasAccountBaseline: unused },
   reconciliation: { retainCashReporting: unused, bindings: unused, reconcile: unused },
   authorityRestriction: { restrictAuthority },

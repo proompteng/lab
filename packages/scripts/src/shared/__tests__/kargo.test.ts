@@ -36,8 +36,17 @@ const parseHmsDurationSeconds = (duration: string): number => {
 
 const warehouses = readManifests('argocd/applications/kargo/warehouses.yaml')
 const stages = readManifests('argocd/applications/kargo/stages.yaml')
-const project = YAML.parse(readRepoFile('argocd/applications/kargo/project.yaml')) as Manifest
-const projectConfig = YAML.parse(readRepoFile('argocd/applications/kargo/project-config.yaml')) as Manifest
+const projects = readManifests('argocd/applications/kargo/project.yaml')
+const projectConfigs = readManifests('argocd/applications/kargo/project-config.yaml')
+const projectOwners = new Map([
+  ['proompteng', 'ofz'],
+  ['tengri', 'ofz'],
+  ['arc-runner', 'arc'],
+  ['hermes-toolchain', 'hermes'],
+  ['temporal-worker', 'temporal'],
+  ['torghut-webull-feed', 'torghut'],
+])
+const projectForStage = (stage: string): string => `${projectOwners.get(stage) ?? stage}-release`
 const kustomization = YAML.parse(readRepoFile('argocd/applications/kargo/kustomization.yaml')) as {
   resources?: string[]
 }
@@ -109,6 +118,7 @@ const receiptCriteriaExpression = (
   images: readonly string[],
   freightGitRepo: string,
   sourceFromImage: boolean,
+  verifyCohortSource = false,
 ): string => {
   const receiptImage = images.length === 1 ? images[0] : images[1]
   if (!receiptImage) return ''
@@ -139,25 +149,29 @@ const receiptCriteriaExpression = (
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     clauses.push(`imageFrom('${image}').Tag == ${receipt}.Tag`)
   }
+  if (verifyCohortSource) {
+    for (const image of images.filter((candidate) => candidate !== receiptImage)) {
+      const candidate = `imageFrom('${image}')`
+      clauses.push(
+        `${candidate}.Annotations['org.opencontainers.image.revision'] == ${receipt}.Annotations['org.opencontainers.image.revision']`,
+      )
+      clauses.push(
+        `${candidate}.Annotations['org.opencontainers.image.source'] == ${receipt}.Annotations['org.opencontainers.image.source']`,
+      )
+    }
+  }
   return clauses.join(' && ')
 }
 
-const productImageCommonInputs = [
-  'nix/images/bun-workspace-service.nix',
-  'nix/packages.nix',
-  'nix/cache-push.sh',
-  'nix/ci-nix-oci-summary.sh',
-  'nix/ci-run-timed.sh',
-  'nix/oci-inspect-archive.sh',
-  '.github/workflows/nix-oci-build-common.yml',
-  'packages/scripts/src/shared/oci.ts',
-  'nix/oci-push.sh',
-  'flake.nix',
-  'flake.lock',
-  'bun.lock',
-] as const
-
 const expected = {
+  'torghut-webull-feed': {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('torghut-webull-feed')],
+    apps: ['torghut-webull-feed'],
+    includePaths: [],
+  },
   ofz: {
     creationCriteria: 'image-revision',
     requiresBuildReceipt: true,
@@ -190,14 +204,7 @@ const expected = {
     tagRegex: runQualifiedTagRegex,
     images: [imageRepo('temporal-worker')],
     apps: ['temporal'],
-    includePaths: [
-      'services/temporal-worker',
-      '.github/workflows/temporal-worker-images.yml',
-      'argocd/applications/temporal',
-      'argocd/applications/kargo',
-      'argocd/applicationsets/platform.yaml',
-      'packages/scripts/src/shared/__tests__/kargo.test.ts',
-    ],
+    includePaths: ['services/temporal-worker', 'argocd/applications/temporal', 'argocd/applicationsets/platform.yaml'],
   },
   restate: {
     creationCriteria: 'single',
@@ -206,16 +213,10 @@ const expected = {
     images: [imageRepo('restate')],
     apps: ['restate'],
     includePaths: [
-      'services/restate',
-      'packages/scripts/src/restate',
-      'packages/scripts/src/shared/cli.ts',
-      'packages/scripts/src/shared/docker.ts',
-      'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
       '.github/workflows/restate-images.yml',
+      'packages/scripts/src/restate',
+      'services/restate',
       'argocd/applications/restate',
-      'argocd/applications/kargo',
-      'argocd/applicationsets/platform.yaml',
-      'bun.lock',
     ],
   },
   opencode: {
@@ -232,7 +233,10 @@ const expected = {
   },
   bayn: {
     creationCriteria: 'image-revision',
-    images: [imageRepo('bayn')],
+    requiresBuildReceipt: true,
+    verifyCohortSource: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('bayn'), imageRepo('bayn-research'), imageRepo('bayn-broker-feed')],
     apps: ['bayn'],
     includePaths: [],
   },
@@ -240,15 +244,7 @@ const expected = {
     creationCriteria: 'image-revision',
     images: [imageRepo('proompteng')],
     apps: ['proompteng'],
-    includePaths: [
-      'apps/landing',
-      'packages/backend',
-      'packages/design',
-      'services/tengri',
-      'nix/images/proompteng.nix',
-      ...productImageCommonInputs,
-      'argocd/applications/proompteng',
-    ],
+    includePaths: [],
   },
   app: {
     creationCriteria: 'single',
@@ -258,11 +254,19 @@ const expected = {
       'apps/app',
       'packages/design',
       'nix/images/app.nix',
-      'nix/check-bun-dependency-closure.sh',
-      '.github/workflows/nix-bun-dependency-closure.yml',
-      '.github/workflows/product-nix-images.yml',
-      ...productImageCommonInputs,
+      'nix/images/bun-workspace-service.nix',
+      'nix/packages.nix',
+      'flake.nix',
+      'flake.lock',
+      'bun.lock',
       'argocd/applications/app',
+      'package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
+      'nix/images/relativize-bun-cache.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
+      'tsconfig.base.json',
     ],
   },
   synthesis: {
@@ -273,8 +277,19 @@ const expected = {
       'apps/synthesis',
       'packages/design',
       'nix/images/synthesis.nix',
-      ...productImageCommonInputs,
+      'nix/images/bun-workspace-service.nix',
+      'nix/packages.nix',
+      'flake.nix',
+      'flake.lock',
+      'bun.lock',
       'argocd/applications/synthesis',
+      'package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
+      'tsconfig.base.json',
+      'nix/images/relativize-bun-cache.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
     ],
   },
   docs: {
@@ -285,8 +300,19 @@ const expected = {
       'apps/docs',
       'packages/design',
       'nix/images/docs.nix',
-      ...productImageCommonInputs,
+      'nix/images/bun-workspace-service.nix',
+      'nix/packages.nix',
+      'flake.nix',
+      'flake.lock',
+      'bun.lock',
       'argocd/applications/docs',
+      'package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
+      'tsconfig.base.json',
+      'nix/images/relativize-bun-cache.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
     ],
   },
   bumba: {
@@ -297,9 +323,6 @@ const expected = {
       'services/bumba',
       'packages/temporal-bun-sdk',
       'nix/images/bumba.nix',
-      '.github/workflows/bumba-ci.yml',
-      '.github/workflows/nix-bun-dependency-closure.yml',
-      'nix/check-bun-dependency-closure.sh',
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
@@ -309,9 +332,6 @@ const expected = {
       'bunfig.toml',
       '.npmrc',
       'patches',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
       'argocd/applications/bumba',
     ],
   },
@@ -323,9 +343,6 @@ const expected = {
       'services/oirat',
       'packages/discord',
       'nix/images/oirat.nix',
-      '.github/workflows/oirat-ci.yml',
-      '.github/workflows/nix-bun-dependency-closure.yml',
-      'nix/check-bun-dependency-closure.sh',
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
@@ -335,9 +352,6 @@ const expected = {
       'bunfig.toml',
       '.npmrc',
       'patches',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
       'argocd/applications/oirat',
     ],
   },
@@ -348,13 +362,8 @@ const expected = {
     includePaths: [
       'apps/froussard',
       'packages/agent-contracts',
-      'packages/codex',
-      'packages/discord',
       'packages/otel',
       'nix/images/froussard.nix',
-      '.github/workflows/froussard-ci.yml',
-      '.github/workflows/nix-bun-dependency-closure.yml',
-      'nix/check-bun-dependency-closure.sh',
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
@@ -364,9 +373,6 @@ const expected = {
       'bunfig.toml',
       '.npmrc',
       'patches',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
       'argocd/applications/froussard',
     ],
   },
@@ -378,11 +384,15 @@ const expected = {
       'nix/images/arc-runner.nix',
       'nix/cache-doctor.sh',
       'nix/oci-doctor.sh',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'nix/toolchain-doctor.sh',
       'argocd/applications/arc',
+      'flake.nix',
+      'flake.lock',
+      'nix/packages.nix',
+      'nix/cache-push.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-release-contract.sh',
     ],
   },
   attic: {
@@ -391,11 +401,9 @@ const expected = {
     apps: ['attic'],
     includePaths: [
       'nix/images/attic.nix',
+      'nix/images/attic-stream-nars.patch',
       'docs/nix-cache.md',
       'docs/nix-oci-real-image-build-adoption-plan.md',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
       'argocd/applications/attic',
     ],
   },
@@ -404,10 +412,6 @@ const expected = {
     images: [imageRepo('headlamp')],
     apps: ['headlamp'],
     includePaths: [
-      '.github/workflows/headlamp-ci.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
       'nix/verify-headlamp-image-assets.sh',
       'services/headlamp',
       'nix/images/headlamp.nix',
@@ -419,18 +423,9 @@ const expected = {
     images: [imageRepo('hermes-toolchain')],
     apps: ['hermes'],
     includePaths: [
-      '.github/actions/setup-nix-toolchain',
-      '.github/workflows/hermes-toolchain-build-push.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
       'flake.lock',
       'flake.nix',
-      'nix/ci-nix-oci-summary.sh',
-      'nix/ci-run-timed.sh',
       'nix/images/hermes-toolchain.nix',
-      'nix/oci-inspect-archive.sh',
-      'nix/oci-push.sh',
-      'nix/oci-release-contract.sh',
       'nix/packages.nix',
       'argocd/applications/hermes',
     ],
@@ -450,12 +445,12 @@ const expected = {
     includePaths: [
       'services/jangar',
       'services/bumba',
+      'packages/temporal-bun-sdk/src',
+      'packages/temporal-bun-sdk/package.json',
+      'packages/temporal-bun-sdk/tsconfig.json',
+      'patches/effect@4.1.4.patch',
       'nix/images/jangar.nix',
       'nix/images/openai-codex-cli.nix',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      '.github/workflows/jangar-post-deploy-verify.yml',
-      'nix/oci-push.sh',
       'argocd/applications/jangar',
       'argocd/bootstrap/jangar',
     ],
@@ -466,12 +461,9 @@ const expected = {
     apps: ['symphony', 'symphony-jangar'],
     includePaths: [
       'services/symphony',
+      'patches/effect@4.1.4.patch',
       'nix/images/symphony.nix',
       'nix/images/openai-codex-cli.nix',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      '.github/workflows/symphony-post-deploy-verify.yml',
-      'nix/oci-push.sh',
       'argocd/applications/symphony',
       'argocd/applications/symphony-jangar',
       'argocd/applications/symphony-base',
@@ -521,14 +513,13 @@ const expected = {
       'packages/cx-tools',
       'packages/otel',
       'packages/scripts/src/agents/update-values.ts',
-      'packages/scripts/src/shared/oci.ts',
       'packages/temporal-bun-sdk',
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
+      'patches/effect@4.1.4.patch',
       'nix/images/openai-codex-cli.nix',
-      '.github/workflows/nix-oci-build-common.yml',
-      'nix/oci-push.sh',
+      'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
       'charts/agents',
     ],
@@ -653,7 +644,11 @@ describe('Kargo direct-push GitOps contract', () => {
   })
 
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
-    expect(kargoHelmElement?.version).toBe('1.11.4')
+    expect(kargoHelmElement?.version).toBe('1.12.5')
+    expect(kargoHelmValues.global.systemResources).toEqual({ namespace: 'kargo', createNamespace: false })
+    expect(kargoHelmValues.global.sharedResources).toEqual({ namespace: 'kargo', createNamespace: false })
+    expect(kargoHelmValues.global).not.toHaveProperty('clusterSecretsNamespace')
+    expect(kargoHelmValues.global).not.toHaveProperty('createClusterSecretsNamespace')
     expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
     expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
       metadata: {
@@ -679,7 +674,7 @@ describe('Kargo direct-push GitOps contract', () => {
         admins: { claims: { email: ['admin@proompteng.ai'] } },
       },
       tls: { enabled: false, terminatedUpstream: true },
-      rollouts: { integrationEnabled: false },
+      rollouts: { integrationEnabled: true },
     })
     expect(kargoHelmValues.externalWebhooksServer).toEqual({ enabled: false })
 
@@ -758,17 +753,21 @@ describe('Kargo direct-push GitOps contract', () => {
       for (const applicationName of contract.apps) {
         expect(applications.get(applicationName)?.targetRevision).toBe(`kargo/${stageName}`)
         expect(applications.get(applicationName)?.annotations?.['kargo.akuity.io/authorized-stage']).toBe(
-          `lab-delivery:${stageName}`,
+          `${projectForStage(stageName)}:${stageName}`,
         )
       }
     }
   })
 
   it('defines automatic Warehouses with a shared Ofz release cohort', () => {
-    expect(project.apiVersion).toBe('kargo.akuity.io/v1alpha1')
-    expect(project.kind).toBe('Project')
-    expect(project.metadata?.name).toBe('lab-delivery')
-    expect(project.metadata?.namespace).toBeUndefined()
+    expect(projects.map((project) => project.metadata?.name).sort()).toEqual(
+      [...new Set(expectedStageNames.map(projectForStage))].sort(),
+    )
+    for (const project of projects) {
+      expect(project.apiVersion).toBe('kargo.akuity.io/v1alpha1')
+      expect(project.kind).toBe('Project')
+      expect(project.metadata?.namespace).toBeUndefined()
+    }
 
     const warehouseMap = byName(warehouses)
     expect([...warehouseMap.keys()].sort()).toEqual(
@@ -781,7 +780,7 @@ describe('Kargo direct-push GitOps contract', () => {
       const warehouse = warehouseMap.get(stageName)
       const sourceFromImage = contract.creationCriteria === 'image-revision'
       expect(warehouse).toBeDefined()
-      expect(warehouse?.metadata?.namespace).toBe('lab-delivery')
+      expect(warehouse?.metadata?.namespace).toBe(projectForStage(stageName))
       expect(warehouse?.spec?.interval).toBe('1m0s')
       expect(warehouse?.spec?.freightCreationPolicy).toBe('Automatic')
       const criteria = warehouse?.spec?.freightCreationCriteria as { expression?: string } | undefined
@@ -790,7 +789,14 @@ describe('Kargo direct-push GitOps contract', () => {
       } else {
         const baseCriteria = criteriaExpression(contract.creationCriteria, contract.images, freightGitRepo)
         if ('requiresBuildReceipt' in contract && contract.requiresBuildReceipt) {
-          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo, sourceFromImage))
+          expect(criteria?.expression).toBe(
+            receiptCriteriaExpression(
+              contract.images,
+              freightGitRepo,
+              sourceFromImage,
+              'verifyCohortSource' in contract && contract.verifyCohortSource,
+            ),
+          )
         } else {
           expect(criteria?.expression).toBe(baseCriteria)
         }
@@ -862,17 +868,15 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns Temporal worker source discovery with both image build triggers', () => {
+  it('aligns Temporal worker publication with source discovery and limits PR builds to worker changes', () => {
     const warehouse = byName(warehouses).get('temporal-worker')
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
-    for (const event of ['pull_request', 'push']) {
-      const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(
-        event === 'push' ? sourcePaths : sourcePaths.filter((path: string) => !path.endsWith('/kargo.test.ts')),
-      ).toEqual(buildPaths)
-    }
+    const buildPaths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+    expect(sourcePaths).toEqual(buildPaths)
+    expect(buildPaths).not.toContain('.github/workflows/temporal-worker-images.yml')
+    expect(workflow.on.pull_request.paths).toEqual(['services/temporal-worker/**'])
   })
 
   it('aligns the Agents Warehouse source paths with its exact image build trigger', () => {
@@ -911,7 +915,7 @@ describe('Kargo direct-push GitOps contract', () => {
     const stageMap = byName(stages)
     expect([...stageMap.keys()].sort()).toEqual(expectedStageNames)
 
-    const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
+    const projectPolicies = projectConfigs.flatMap((project) => project.spec?.promotionPolicies ?? [])
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
     expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
 
@@ -922,7 +926,12 @@ describe('Kargo direct-push GitOps contract', () => {
       const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
       const pushGitRepo = 'pushGitRepo' in contract ? contract.pushGitRepo : gitRepo
       const stage = stageMap.get(stageName)
-      expect(stage?.metadata?.namespace).toBe('lab-delivery')
+      expect(stage?.metadata?.namespace).toBe(projectForStage(stageName))
+      const policy = projectConfigs.find((project) => project.metadata?.namespace === projectForStage(stageName))
+      expect(policy?.spec?.promotionPolicies).toContainEqual({
+        stageSelector: { name: stageName },
+        autoPromotionEnabled: true,
+      })
 
       const vars = Object.fromEntries(
         ((stage?.spec?.vars ?? []) as Array<{ name: string; value: string }>).map((variable) => [
@@ -1110,7 +1119,7 @@ describe('Kargo direct-push GitOps contract', () => {
     }
 
     expect(kustomization.resources).toContain('git-credentials.yaml')
-    for (const manifest of [...warehouses, ...stages, project, projectConfig]) {
+    for (const manifest of [...warehouses, ...stages, ...projects, ...projectConfigs]) {
       expect(manifest.kind).not.toBe('Namespace')
     }
     expect(expectedStageNames).not.toContain('sag')
@@ -1130,9 +1139,8 @@ describe('Kargo direct-push GitOps contract', () => {
     }
     expectYamlUpdate('arc-runner', './out/argocd/applications/arc/application.yaml', [
       ...[1, 2].map((index) => `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`),
+      'spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image',
       'spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image',
-      'spec.sources.3.helm.valuesObject.template.spec.containers.0.image',
-      'spec.sources.4.helm.valuesObject.template.spec.containers.0.image',
     ])
     expect(stagesSource).not.toContain('spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image')
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [

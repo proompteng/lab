@@ -41,7 +41,7 @@ test('a newer unpublished main commit cannot hold a verified Bayn image or mix i
   expect(JSON.stringify(steps)).not.toContain('commitFrom(vars.gitRepo)')
 })
 
-test('isolates both inference credentials to the worker while retaining independent recovery when absent', () => {
+test('isolates the sole Jev inference credential to the worker while retaining independent recovery when absent', () => {
   const secret = read('argocd/applications/bayn/jev-sealedsecret.yaml')
   expect(secret.metadata).toMatchObject({
     name: 'bayn-jev-auth',
@@ -67,16 +67,7 @@ test('isolates both inference credentials to the worker while retaining independ
           ]
         : [],
     )
-    expect(environment.filter((entry: { name: string }) => entry.name === 'BAYN_OPENAI_API_KEY')).toEqual(
-      file === 'execution-controller'
-        ? [
-            {
-              name: 'BAYN_OPENAI_API_KEY',
-              valueFrom: { secretKeyRef: { name: 'bayn-openai-auth', key: 'api-key', optional: true } },
-            },
-          ]
-        : [],
-    )
+    expect(environment.filter((entry: { name: string }) => entry.name === 'BAYN_OPENAI_API_KEY')).toEqual([])
     const brokerKeys = environment.filter((entry: { name: string }) =>
       ['BAYN_ALPACA_KEY_ID', 'BAYN_ALPACA_SECRET_KEY'].includes(entry.name),
     )
@@ -183,28 +174,107 @@ test('discovers only immutable main-published Bayn images with matching source a
   expect(build.on.push.branches).toEqual(['main'])
   expect(build.concurrency['cancel-in-progress']).toBe(false)
   expect(build.jobs.image.with).toMatchObject({
-    publish_kargo_tag: true,
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
     source_revision: '${{ github.sha }}',
     tag: 'sha-${{ github.sha }}',
   })
   expect(build.jobs.image.with.publish_on_dispatch).toBe(false)
   expect(build.on.push.paths).toEqual(
-    expect.arrayContaining(['services/bayn/**', 'nix/images/bayn.nix', 'argocd/applications/bayn/**']),
+    expect.arrayContaining([
+      'services/bayn/**',
+      'services/dorvud/websockets/**',
+      '!services/dorvud/websockets/src/test/**',
+      'nix/images/bayn.nix',
+      'nix/images/bayn-broker-feed.nix',
+      'argocd/applications/bayn/**',
+    ]),
   )
-  expect(warehouse.spec.subscriptions).toHaveLength(1)
+  expect(warehouse.spec.subscriptions).toHaveLength(3)
   expect(warehouse.spec.subscriptions[0].image).toMatchObject({
     repoURL: 'registry.ide-newton.ts.net/lab/bayn',
     imageSelectionStrategy: 'NewestBuild',
-    allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}$'],
+    allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'],
     cacheByTag: true,
   })
-  const image = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
-  expect(warehouse.spec.freightCreationCriteria.expression).toContain(
-    `${image}.Tag == 'kargo-sha-' + ${image}.Annotations['org.opencontainers.image.revision']`,
+  expect(build.jobs['research-image'].with).toMatchObject({
+    image_name: 'bayn-research',
+    package_attr: 'bayn-research-image',
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
+  })
+  expect(build.jobs['publish-cohort'].needs).toEqual(['image', 'research-image', 'broker-feed-image'])
+  expect(warehouse.spec.subscriptions[1].image.repoURL).toBe('registry.ide-newton.ts.net/lab/bayn-research')
+  expect(build.jobs['broker-feed-image'].with).toMatchObject({
+    image_name: 'bayn-broker-feed',
+    package_attr: 'bayn-broker-feed-image',
+    publish_kargo_tag: false,
+    kargo_tag_include_run_id: true,
+    source_revision: '${{ github.sha }}',
+  })
+  for (const image of ['image', 'research-image', 'broker-feed-image']) {
+    expect(build.jobs[image].needs).toEqual(['validation', 'broker-feed-validation'])
+  }
+  expect(warehouse.spec.subscriptions[2].image.repoURL).toBe('registry.ide-newton.ts.net/lab/bayn-broker-feed')
+  const native = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
+  const research = "imageFrom('registry.ide-newton.ts.net/lab/bayn-research')"
+  const broker = "imageFrom('registry.ide-newton.ts.net/lab/bayn-broker-feed')"
+  const expression = warehouse.spec.freightCreationCriteria.expression
+  expect(expression).toContain(`${native}.Tag == ${research}.Tag`)
+  expect(expression).toContain(
+    `${native}.Annotations['org.opencontainers.image.revision'] == ${research}.Annotations['org.opencontainers.image.revision']`,
   )
-  expect(warehouse.spec.freightCreationCriteria.expression).toContain(
-    `${image}.Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'`,
+  expect(expression).toContain(`${research}.Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success'`)
+  expect(expression).toContain(`${broker}.Tag == ${research}.Tag`)
+  expect(expression).toContain(
+    `${broker}.Annotations['ai.proompteng.github-actions-run-id'] == ${research}.Annotations['ai.proompteng.github-actions-run-id']`,
   )
+  expect(expression).toContain(
+    `${broker}.Annotations['org.opencontainers.image.revision'] == ${research}.Annotations['org.opencontainers.image.revision']`,
+  )
+  expect(expression).toContain(`${broker}.Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success'`)
+  const setImages = stage.spec.promotionTemplate.spec.steps.find(
+    (step: { uses: string }) => step.uses === 'kustomize-set-image',
+  )
+  expect(setImages.config.images).toContainEqual({
+    image: 'bayn-research',
+    newName: '${{ vars.researchImageRepo }}',
+    digest: '${{ imageFrom(vars.researchImageRepo).Digest }}',
+  })
+  expect(setImages.config.images).toContainEqual({
+    image: 'bayn-broker-feed',
+    newName: '${{ vars.brokerFeedImageRepo }}',
+    digest: '${{ imageFrom(vars.brokerFeedImageRepo).Digest }}',
+  })
+  expect(read('argocd/applications/bayn/research-worker.yaml').spec.template.spec.containers[0].image).toBe(
+    'bayn-research',
+  )
+})
+
+test('promotes the broker feed digest and its exact source into the Bayn application branch', () => {
+  const feed = read('argocd/applications/bayn/broker-feed.yaml')
+  expect(feed.spec.template.spec.containers[0].image).toBe('bayn-broker-feed')
+  const environment = feed.spec.template.spec.containers[0].env
+  const index = environment.findIndex((entry: { name: string }) => entry.name === 'DORVUD_SOURCE_REVISION')
+  expect(index).toBeGreaterThanOrEqual(0)
+  const parse = steps.find((step: { as?: string }) => step.as === 'baynBrokerFeed')
+  expect(parse.config.path).toBe('./src/argocd/applications/bayn/broker-feed.yaml')
+  expect(parse.config.outputs).toEqual([
+    {
+      name: 'sourceIndex',
+      fromExpression: "string(findIndex(spec.template.spec.containers[0].env, .name == 'DORVUD_SOURCE_REVISION'))",
+    },
+  ])
+  const update = steps.find(
+    (step: { uses: string; config: { path?: string } }) =>
+      step.uses === 'yaml-update' && step.config.path === './out/argocd/applications/bayn/broker-feed.yaml',
+  )
+  expect(update.config.updates).toEqual([
+    {
+      key: "${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynBrokerFeed.sourceIndex) + '.value' }}",
+      value: "${{ imageFrom(vars.brokerFeedImageRepo).Annotations['org.opencontainers.image.revision'] }}",
+    },
+  ])
 })
 
 test('writes source, digest, and research lineage into the correct field in every runtime', () => {

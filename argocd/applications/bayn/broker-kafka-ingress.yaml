@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bayn-broker-kafka-ingress
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: bayn-broker-kafka-ingress
+    app.kubernetes.io/part-of: bayn
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-broker-kafka-ingress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-broker-kafka-ingress
+        app.kubernetes.io/part-of: bayn
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      # Vendor 0.1.1 publishes a single linux/amd64 manifest.
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        network.proompteng.ai/100g: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kafka-ingress
+          image: ghcr.io/restatedev/ingress-integration-kafka:0.1.1@sha256:20704c886ee4dcc4046bab1743dc424bb08b2317ce1bc6da55ce738345ce01b1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+            - name: KAFKA_GROUP_ID
+              value: bayn-broker-notifications-restate-v1
+            - name: KAFKA_TOPICS
+              value: bayn.broker-notifications.v1
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: SASL_PLAINTEXT
+            - name: KAFKA_SASL_MECHANISM
+              value: SCRAM-SHA-512
+            - name: KAFKA_SASL_JAAS_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-market-data
+                  key: sasl.jaas.config
+            - name: KAFKA_AUTO_OFFSET_RESET
+              value: earliest
+            - name: RESTATE_INGRESS_URL
+              value: http://restate.restate.svc.cluster.local:8080
+            - name: RESTATE_RECORD_MAPPER_CLASS
+              value: dev.restate.integration.kafka.mapper.StaticRecordMapper
+            - name: RESTATE_RECORD_MAPPER_SERVICE
+              value: BaynBrokerObservations
+            - name: RESTATE_RECORD_MAPPER_HANDLER
+              value: notify
+            - name: RESTATE_RECORD_MAPPER_KAFKA_METADATA
+              value: "true"
+            - name: RESTATE_KAFKA_CONSUMER_INSTANCES
+              value: "1"
+            - name: JDK_JAVA_OPTIONS
+              value: -Xmx512m
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [/usr/bin/timeout, 2s, /usr/bin/bash, /opt/bayn/health/probe.sh]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: [/usr/bin/timeout, 2s, /usr/bin/bash, /opt/bayn/health/probe.sh]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            # Allow two maximum 30-second reconnect intervals, then replace a stopped assigned forwarder.
+            failureThreshold: 6
+          volumeMounts:
+            - name: health
+              mountPath: /opt/bayn/health
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: health
+          configMap:
+            name: bayn-broker-kafka-health
+            defaultMode: 292
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi

@@ -16,7 +16,6 @@ import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableEntryBatchInferences } from './batch'
 import { JevContractError } from './contract'
-import type { EntryInferenceInput } from './entry-inference-input'
 import { selectSupportedEntryProposal } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
@@ -68,11 +67,12 @@ export const reproduceDecisionEvidence = (input: unknown, expectedVersion: JevBa
   )
 
 export const selectJevEntryCandidates = (
-  observation: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['observation'],
+  observation: Pick<Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['observation'], 'snapshot'> & {
+    readonly protocol: Pick<JevProtocol, 'maximumPositions'>
+  },
   inferences: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['inferences'],
   requests: readonly {
     readonly symbol: string
-    readonly request: { readonly request: EntryInferenceInput }
     readonly status: JevCandidatePlanStatus.Requested
   }[],
 ) =>
@@ -128,8 +128,17 @@ export const selectJevEntryCandidates = (
     return { entryPlanRejections, selected: eligible.slice(0, observation.protocol.maximumPositions) }
   })
 
-export const makeChartEntryTargetMaterial = (
-  source: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>,
+export const makeChartEntryTargetMaterial = <Evidence extends { readonly decidedAt: string }>(
+  source: {
+    readonly evidence: Evidence
+    readonly observation: Pick<
+      Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['observation'],
+      'snapshot' | 'observedAt'
+    > & {
+      readonly protocol: Pick<JevProtocol, 'maximumHoldingMinutes' | 'candidateSymbols'>
+    }
+    readonly calendar: { readonly executionCalendarHash: string }
+  },
   selection: {
     readonly entryPlanRejections: Readonly<
       Record<string, 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS' | 'NO_FUNDED_CANDIDATES'>
@@ -209,20 +218,30 @@ const TargetBase = Schema.Struct({
   ...ChartEntryTargetFields,
 })
 
-// Reuse only the latest exact value. A claimed evidence hash cannot establish that its source is unchanged.
-let lastVerifiedEntryTargetHash: string | undefined
+// Retain only successful full-content fingerprints, never caller-owned evidence.
+// Interleaved active/recovery targets must not evict one another on every check.
+const verifiedEntryTargetHashes = new Set<string>()
 
 export const JevEntryTargetSchema = TargetBase.check(
   Schema.makeFilter((target) => {
     const fingerprint = canonicalHashV1Result(target)
-    if (Result.isSuccess(fingerprint) && fingerprint.success === lastVerifiedEntryTargetHash) return []
+    if (Result.isSuccess(fingerprint) && verifiedEntryTargetHashes.delete(fingerprint.success)) {
+      verifiedEntryTargetHashes.add(fingerprint.success)
+      return []
+    }
     const { evidence, ...material } = target
     const reproduced = decideJevEntry(evidence).pipe(
       Result.flatMap(({ evidence: _, ...derived }) => canonicalHashV1Result(derived)),
     )
     const supplied = canonicalHashV1Result(material)
     if (Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success) {
-      if (Result.isSuccess(fingerprint)) lastVerifiedEntryTargetHash = fingerprint.success
+      if (Result.isSuccess(fingerprint)) {
+        verifiedEntryTargetHashes.add(fingerprint.success)
+        if (verifiedEntryTargetHashes.size > 64) {
+          const oldest = verifiedEntryTargetHashes.values().next().value
+          if (oldest !== undefined) verifiedEntryTargetHashes.delete(oldest)
+        }
+      }
       return []
     }
     return [{ path: ['evidence'], issue: 'complete recorded candidate evidence must reproduce the exact Jev target' }]
@@ -230,11 +249,13 @@ export const JevEntryTargetSchema = TargetBase.check(
 )
 export type JevEntryTarget = typeof JevEntryTargetSchema.Type
 
-export const jevPlanningTargetWeights = (target: ProtectedEntryTarget): Readonly<Record<string, number>> =>
+export const jevPlanningTargetWeights = (
+  target: Pick<ProtectedEntryTarget, 'targetWeights'>,
+): Readonly<Record<string, number>> =>
   Object.fromEntries(Object.entries(target.targetWeights).filter(([, weight]) => weight > 0))
 
 export const jevEntryQuoteMaximumAgeMs = (
-  _target: ProtectedEntryTarget,
+  _target: Pick<ProtectedEntryTarget, 'schemaVersion'>,
   _quoteEventAt: string,
   quoteAgeLimitMs: number,
 ): number => quoteAgeLimitMs

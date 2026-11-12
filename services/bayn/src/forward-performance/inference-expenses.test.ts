@@ -3,7 +3,7 @@ import { decodeInferenceCostEvidence } from '../inference-costs'
 import type { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
 
-import { makeInferenceExpenseQuote } from '../inference-expense'
+import { InferenceExpenseCoverageIssue, makeInferenceExpenseQuote } from '../inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.test-support'
 import {
   readForwardInferenceExpenseSnapshots,
@@ -51,8 +51,11 @@ test('attributes verified inference estimates only to the requested generation a
     'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
   > = Result.getOrThrow(summarizeFromEvidence(evidence, first.accountId, frozen, first.authorityGenerationHash))
   expect(result.sourceAsOf).toBe(evidence.asOf)
-  expect(result).not.toHaveProperty('requestsWithCoverageIssues')
-  expect(JSON.stringify(result)).not.toContain(gap.requestId)
+  expect(result.requestsWithCoverageIssues).toMatchObject([
+    { requestId: gap.requestId, stage: 'JEV', issues: [InferenceExpenseCoverageIssue.UnknownUsage] },
+  ])
+  expect(result.matchedQuoteHashes).toEqual([frozen[0]?.quote.quoteHash, frozen[2]?.quote.quoteHash].sort())
+  expect(JSON.stringify(result)).not.toContain(first.accountId)
   expect(result).toMatchObject({
     claimedRequestCount: 2,
     knownEstimatedCostPicoUsd: '126000',
@@ -88,6 +91,19 @@ test('retains missing and unverified quotes without inventing a charge or comple
 test('rejects foreign account and conflicting coverage instead of summing it', () => {
   expect(Result.isFailure(summarizeFromEvidence(evidence, 'foreign-account', frozen))).toBe(true)
   expect(Result.isFailure(summarizeFromEvidence(evidence, first.accountId, [...frozen, ...frozen]))).toBe(true)
+})
+
+test('retains exact missing quote sources without exposing the provider request or response', () => {
+  const result = Result.getOrThrow(
+    summarizeFromEvidence(evidence, first.accountId, frozen.slice(1), first.authorityGenerationHash),
+  )
+  expect(result.requestsWithCoverageIssues).toMatchObject([
+    { requestId: gap.requestId, receiptHash: null, issues: ['UNKNOWN_USAGE'] },
+    { requestId: first.requestId, receiptHash: first.receipt?.receiptHash, issues: ['MISSING_FROZEN_QUOTE'] },
+  ])
+  expect(JSON.stringify(result)).not.toContain('rejectedResponse')
+  expect(JSON.stringify(result)).not.toContain('requestHash')
+  expect(JSON.stringify(result)).not.toContain(first.accountId)
 })
 
 test('validates other generations in the same session before attributing selected expenses', () => {

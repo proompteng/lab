@@ -1,3 +1,9 @@
+import { DecisionConstruction } from '../decision-construction'
+import {
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
+} from '../shadow-decision'
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -5,7 +11,6 @@ import { makeEntryInferenceJournal } from '../db/entry-inference-postgres'
 import { makeJevPositionStore } from '../db/jev-position-postgres'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
@@ -28,7 +33,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
-} from '../db/execution-store'
+} from '../db/execution-store/contract'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
@@ -43,7 +48,11 @@ import {
 } from '../execution/configuration'
 import { Authority, KillState } from '../execution/contracts'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
-import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../composition/generation-cycle'
+import {
+  executionGenerationNeedsRecovery,
+  makeGenerationCycleDriver,
+  makeRebindingCycleDriver,
+} from '../composition/generation-cycle'
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'
@@ -57,7 +66,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
-import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
+import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
@@ -172,7 +181,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
     const candidateObservationStore = yield* makeCandidateObservationStore
     const jevClient = yield* JevClient
-    const decisionsClient = yield* DecisionsClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
     const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
@@ -180,7 +188,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
     )
     const jevPositions = yield* makeJevPositionStore
-    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
+    const riskPolicy = yield* Effect.fromResult(strategyExecutionRiskPolicy(identity.accountId, input.strategy))
     const plan = {
       schemaVersion: 'bayn.research-execution-plan.v1' as const,
       activation: {
@@ -244,10 +252,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             initialAuthority.generationHash,
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(DecisionConstruction, { observe: buildObserveShadowDecision, execution: buildExecutionDecision }),
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
-      Context.add(DecisionsClient, decisionsClient),
       Context.add(EntryInferenceJournal, entryInferenceJournal),
       Context.add(JevEvaluationStore, jevEvaluations),
       Context.add(JevBatchStore, jevBatches),
@@ -297,6 +305,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
+          buildDecision: buildResearchMutationCycleDecision,
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {
@@ -306,7 +315,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
             blockedCycleIntentStore,
-            pollIntervalMs: input.pollIntervalMs,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
           },
@@ -341,32 +349,26 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           driver,
         ).pipe(Effect.provideContext(resources))
       }).pipe(Effect.mapError(replayGenerationRecoveryError))
-    let owned = yield* startGeneration(activated.generationHash)
-    const initialDriver = owned.driver
-    const permit = yield* Semaphore.make(1)
-    const advance = permit.withPermit(
-      latency.runPass(
-        Effect.gen(function* () {
-          if (yield* owned.needsRebind) {
-            const current = yield* readAuthority
-            let generationHash = current.generationHash
-            if (
-              current.maximum === Authority.Observe &&
-              current.effective === Authority.Observe &&
-              current.kill === KillState.Clear
-            ) {
-              yield* reconcileForActivation
-              const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
-                researchCapitalGrantProof(request),
-                current.generationHash,
-              )
-              generationHash = next.generationHash
-            }
-            owned = yield* startGeneration(generationHash)
-          }
-          return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
-        }),
-      ),
+    const driver = yield* makeRebindingCycleDriver(
+      yield* startGeneration(activated.generationHash),
+      Effect.gen(function* () {
+        const current = yield* readAuthority
+        let generationHash = current.generationHash
+        if (
+          current.maximum === Authority.Observe &&
+          current.effective === Authority.Observe &&
+          current.kill === KillState.Clear
+        ) {
+          yield* reconcileForActivation
+          const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+            researchCapitalGrantProof(request),
+            current.generationHash,
+          )
+          generationHash = next.generationHash
+        }
+        return yield* startGeneration(generationHash)
+      }).pipe(Effect.mapError(replayGenerationRecoveryError)),
+      latency.runPass,
     )
     return {
       authorityGenerationHash: activated.generationHash,
@@ -374,8 +376,15 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      advance,
-      nextDelayMs: initialDriver.nextDelayMs,
+      // Offline studies retain their registered sampling cadence even when the live owner waits for a stream event.
+      advance: driver.advance.pipe(
+        Effect.provideContext(resources),
+        Effect.map((pass) => ({
+          ...pass,
+          nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
+        })),
+      ),
+      nextDelayMs: input.pollIntervalMs,
       reconcile,
       decisionLatencyEvidence: latency.evidence,
     }

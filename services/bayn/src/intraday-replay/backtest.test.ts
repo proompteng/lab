@@ -1,3 +1,5 @@
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { registeredReplayInferenceTariff } from './inference-costs'
 import { jevInstructions } from '../jev/instructions'
@@ -46,15 +48,15 @@ const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v10',
+    schemaVersion: 'bayn.backtest.v11',
     policy: 'JEV' as const,
     latencyStress: null,
     jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
     inference: {
       mode: 'measured-providers',
       maximumCalls: 1000,
-      models: { jev: jevModel, chart: 'gpt-6-luna' },
-      inputDefinition: 'bayn.jev-entry-state.v23',
+      models: { jev: jevModel },
+      inputDefinition: 'bayn.jev-entry-state.v24',
       costs: replayRateCardFixture({
         jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
         chart: {
@@ -116,6 +118,45 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.identity.accountId).toBe(`replay-${first.runId}`)
   expect(first.runId).toBe(Result.getOrThrow(prepareBacktest(input)).runId)
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
+})
+
+test('preparation retains the configured Webull topic only with its independently bound source inventory', () => {
+  const input = fixture()
+  const configured = {
+    ...input.source,
+    marketSources: Schema.decodeUnknownSync(MarketSourcesSchema)(
+      input.source.marketSources.map((source) => ({
+        ...source,
+        topics: { ...source.topics, webullBars: 'synthetic.webull.raw' },
+      })),
+    ),
+  }
+  const source = {
+    ...configured,
+    positions: backtestSourcePartitions(configured).map(
+      ({ topic, partition }) =>
+        input.source.positions.find((position) => position.topic === topic && position.partition === partition) ?? {
+          topic,
+          partition,
+          startOffset: '0',
+          endOffsetExclusive: '0',
+        },
+    ),
+  }
+  const receipt = retainedReplayCaptureFixture(source)
+  const prepared = Result.getOrThrow(prepareWithCapture({ ...input, source }, receipt))
+  expect(prepared.input.source.marketSources[0]?.topics.webullBars).toBe('synthetic.webull.raw')
+  expect(Result.isFailure(prepareWithCapture({ ...input, source }, retainedReplayCaptureFixture(input.source)))).toBe(
+    true,
+  )
+  const changed = {
+    ...source,
+    marketSources: source.marketSources.map((source) => ({
+      ...source,
+      topics: { ...source.topics, webullBars: 'changed' },
+    })),
+  }
+  expect(Result.isFailure(prepareWithCapture({ ...input, source: changed }, receipt))).toBe(true)
 })
 
 test('momentum selects its own source-defined policy without an inference batch identity', () => {
@@ -242,6 +283,8 @@ test('registered latency replay preserves every equity session and the exact can
     calls: [],
   }
   const config = base.obligations.configuration
+  if (config.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Polling backtest fixture requires a retained polling runtime')
   const input = {
     ...original,
     source: {
@@ -257,6 +300,10 @@ test('registered latency replay preserves every equity session and the exact can
     },
     inference: {
       ...original.inference,
+      costs: {
+        ...original.inference.costs,
+        rates: original.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+      },
       mode: 'retained-responses' as const,
       recording,
       recordingHash: testHash(recording),
@@ -272,7 +319,14 @@ test('registered latency replay preserves every equity session and the exact can
   }
   const prepared = Result.getOrThrow(prepareBacktest(original))
   const identity = prepared.identity
-  const material = Result.getOrThrow(latencyReplayPolicyMaterial(config.protocol, identity.accountId, original.policy))
+  const material = Result.getOrThrow(
+    latencyReplayPolicyMaterial(
+      Result.getOrThrow(Schema.decodeUnknownResult(JevProtocolSchema)(config.protocol)),
+      identity.accountId,
+      original.policy,
+      Result.getOrThrow(makeExecutionRiskPolicy(identity.accountId, config.protocol.universe)),
+    ),
+  )
   const registration = {
     ...base,
     calendar: { ...base.calendar, sourceHash: testHash(calendar), sessions },
@@ -292,7 +346,10 @@ test('registered latency replay preserves every equity session and the exact can
             }),
             riskPolicyHash: testHash(material.riskPolicy),
             riskPolicy: material.riskPolicy,
-            inferenceRateCard: input.inference.costs,
+            inferenceRateCard: {
+              ...input.inference.costs,
+              rates: input.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+            },
             promptsHash: testHash(material.prompts),
             continuationAndExitsHash: testHash(material.continuationAndExits),
             protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(prepared.strategy.provenance.strategy)),
@@ -301,6 +358,26 @@ test('registered latency replay preserves every equity session and the exact can
     ),
   }
   const windows = Result.getOrThrow(bindLatencyReplayInput(input, registration, identity))
+  const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...streamingFields } = config
+  const streaming = bindLatencyReplayInput(
+    input,
+    {
+      ...registration,
+      obligations: {
+        ...registration.obligations,
+        configuration: {
+          ...streamingFields,
+          schemaVersion: 'bayn.qualification-runtime.v2',
+          decisionTrigger: 'streaming',
+        },
+      },
+    },
+    identity,
+  )
+  expect(streaming).toMatchObject({
+    _tag: 'Failure',
+    failure: { message: 'Polling latency replay cannot establish a streaming runtime registration' },
+  })
   expect(windows).toEqual(sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })))
   expect(windows).toHaveLength(20)
   const tariffBoundary = sessions[10]?.openAt
@@ -316,6 +393,7 @@ test('registered latency replay preserves every equity session and the exact can
       },
       input.interval,
       JevResearchPolicy.Candidate,
+      defaultJevProtocolDocument,
     ),
   )
   const scheduledRegistration = {
@@ -412,6 +490,10 @@ test('retained replay binds the recording to its exact source, source revision a
     ...original,
     inference: {
       ...original.inference,
+      costs: {
+        ...original.inference.costs,
+        rates: original.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+      },
       mode: 'retained-responses',
       recording: retained,
       recordingHash: Result.getOrThrow(canonicalHashV1Result(retained)),
@@ -469,7 +551,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v35')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v40')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
@@ -927,6 +1009,7 @@ test('prepared replay admits a native control batch before any provider dispatch
       const journal = yield* makeControlJevJournal(directory, prepared.runId)
       yield* TestClock.setTime(Date.parse(observation.payload.observedAt))
       const admitted = yield* journal.batches.begin(plan, observation.payload)
+      if (admitted.dispatches === null) throw new Error('Offline replay must retain in-process dispatch rights')
       expect(admitted.dispatches.length).toBeGreaterThan(0)
       for (const dispatch of admitted.dispatches)
         expect(yield* fs.exists(`${directory}/request-${dispatch.request.requestId}.json`)).toBeTrue()

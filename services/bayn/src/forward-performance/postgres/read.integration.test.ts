@@ -104,7 +104,6 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
       ...runtimeConfig,
       ...config,
       runtimeMode: 'AutonomousService',
-      cyclePollIntervalMs: 30_000,
       execution: { ...runtimeConfig.execution, brokerIdentity: identity },
       alpaca: {
         identity,
@@ -270,7 +269,11 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             const monitored = new Proxy(sql, {
               apply(target, receiver, argumentsList) {
                 const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
-                if (statement.compile()[0].includes('FROM account_snapshots AS snapshot')) lookups.push(statement)
+                if (
+                  typeof statement.compile === 'function' &&
+                  statement.compile()[0].includes('FROM account_snapshots AS snapshot')
+                )
+                  lookups.push(statement)
                 return statement
               },
             })

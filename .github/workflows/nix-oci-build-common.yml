@@ -78,7 +78,7 @@ jobs:
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
-      NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 45m
+      NIX_IMAGE_BUILD_TIMEOUT: 45m
       NIX_IMAGE_CACHE_WARM_TIMEOUT: 30m
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
@@ -138,10 +138,10 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
-            fallback = true
+            fallback = false
             connect-timeout = 10
             stalled-download-timeout = 60
-            download-attempts = 1
+            download-attempts = 3
 
       - name: Record Nix setup timing
         if: always()
@@ -161,35 +161,14 @@ jobs:
         run: |
           set -euo pipefail
           out_link="result-${ARCH}"
-          build_args=(
-            nix build ".#${PACKAGE_ATTR}"
-            --print-build-logs
-            --out-link "${out_link}"
-            --option fallback true
-            --option connect-timeout 10
-            --option stalled-download-timeout 60
-            --option download-attempts 1
-          )
-          set +e
           bash nix/ci-run-timed.sh "build-image-${ARCH}" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}.log" \
-            timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" "${build_args[@]}"
-          build_status="$?"
-          set -e
-          if [[ "${build_status}" -ne 0 ]]; then
-            rm -f "${out_link}"
-            echo "::warning title=Nix image archive build retried without Attic::Attic substitution or build timed out/failed for ${PACKAGE_ATTR} on ${ARCH}; retrying with cache.nixos.org only so the runner does not hang on a final image archive copy."
-            fallback_nix_config=$'experimental-features = nix-command flakes\nsubstituters = https://cache.nixos.org/\nfallback = true\nconnect-timeout = 10\nstalled-download-timeout = 60\ndownload-attempts = 1'
-            env NIX_CONFIG="${fallback_nix_config}" \
-              bash nix/ci-run-timed.sh "build-image-${ARCH}-cache-nixos-fallback" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}-cache-nixos-fallback.log" \
-              timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \
-              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
-          fi
+            timeout --kill-after=30s "${NIX_IMAGE_BUILD_TIMEOUT}" \
+            nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
             echo "Nix image output is not a tar file: ${image_tar}" >&2
             exit 1
           fi
-          printf '%s\n' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
           echo "image_tar=${image_tar}" >> "${GITHUB_OUTPUT}"
           echo "Built ${PACKAGE_ATTR} for ${{ matrix.platform }} at ${image_tar}."
 
@@ -202,15 +181,16 @@ jobs:
           bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
             bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
-      - name: Verify Bayn forward-performance command from image
-        if: inputs.image_name == 'bayn'
+      - name: Verify Bayn image contents
+        if: inputs.image_name == 'bayn' || inputs.image_name == 'bayn-research'
         env:
           IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
           ARCH: ${{ matrix.arch }}
+          BAYN_IMAGE_ROLE: ${{ inputs.image_name == 'bayn' && 'trading' || 'research' }}
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "verify-bayn-command-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-bayn-command-${ARCH}.log" \
-            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}"
+            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}" "${BAYN_IMAGE_ROLE}"
 
       - name: Verify Headlamp frontend assets from image
         if: inputs.image_name == 'headlamp'
@@ -221,6 +201,17 @@ jobs:
           set -euo pipefail
           bash nix/ci-run-timed.sh "verify-headlamp-assets-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-headlamp-assets-${ARCH}.log" \
             bash nix/verify-headlamp-image-assets.sh "${IMAGE_TAR}"
+
+      - name: Verify Proompteng writable cache from image
+        if: inputs.image_name == 'proompteng'
+        env:
+          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          python3 nix/test-verify-proompteng-image-cache.py
+          bash nix/ci-run-timed.sh "verify-proompteng-cache-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-proompteng-cache-${ARCH}.log" \
+            python3 nix/verify-proompteng-image-cache.py "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
         if: >-
@@ -255,32 +246,28 @@ jobs:
           fi
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
-      - name: Warm Nix image archive output in Attic
+      - name: Warm Nix build outputs in Attic
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
-          ATTIC_PUSH_NO_CLOSURE: 'true'
+          ATTIC_PUSH_BATCH_SIZE: '64'
+          PACKAGE_ATTR: ${{ inputs.package_attr }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           test -n "${ATTIC_TOKEN}"
-          mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
-          if [[ "${#image_paths[@]}" -eq 0 ]]; then
-            echo "No Nix image output paths were captured." >&2
-            exit 2
-          fi
           status_file="${NIX_OCI_LOG_DIR}/image-cache-push-status-${ARCH}.txt"
           : > "${status_file}"
 
           set +e
-          bash nix/ci-run-timed.sh "push-image-archive-output-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
-            timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"
+          bash nix/ci-run-timed.sh "push-build-outputs-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
+            timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh --build ".#${PACKAGE_ATTR}"
           status="$?"
           set -e
           if [[ "${status}" -ne 0 ]]; then
             printf 'failed\t%s\n' "${status}" >> "${status_file}"
-            echo "::warning title=Attic image output warm failed::Attic image output push failed for ${ARCH}; registry image push remains authoritative. See cache-push-image-${ARCH}.log."
+            echo "::warning title=Attic build cache upload failed::Attic build output push failed for ${ARCH}; registry image push remains authoritative. See cache-push-image-${ARCH}.log."
             exit 0
           fi
           printf 'succeeded\t0\n' >> "${status_file}"
@@ -291,6 +278,7 @@ jobs:
 
       - name: Upload Nix OCI log artifact
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: nix-oci-logs-${{ inputs.image_name }}-${{ matrix.arch }}
@@ -308,7 +296,7 @@ jobs:
         )
       }}
     needs: build-platform
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     outputs:
       image: ${{ steps.oci.outputs.image }}
       tag: ${{ steps.oci.outputs.tag }}
@@ -374,10 +362,10 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
-            fallback = true
+            fallback = false
             connect-timeout = 10
             stalled-download-timeout = 60
-            download-attempts = 1
+            download-attempts = 3
 
       - name: Record Nix setup timing
         if: always()
@@ -430,12 +418,17 @@ jobs:
           if [ "${LATEST}" = "true" ]; then
             args+=(--latest)
           fi
-          if [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          # Receipt validation needs the exact future alias even when a cohort publishes it later.
+          if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ] ||
+            { [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; then
             kargo_tag="kargo-sha-${SOURCE_SHA}"
             if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ]; then
               kargo_tag="${kargo_tag}-run-${GITHUB_RUN_ID}"
             fi
             args+=(--kargo-tag "${kargo_tag}")
+            if [ "${PUBLISH_KARGO_TAG}" != "true" ] || [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+              args+=(--defer-kargo-tag)
+            fi
           fi
           bash nix/ci-run-timed.sh "create-oci-index" "${NIX_OCI_LOG_DIR}/create-oci-index.log" "${args[@]}"
 

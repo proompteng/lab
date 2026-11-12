@@ -4,18 +4,21 @@
 `galactic` cluster. It preserves every imported machine patch, removes the stale imported `machine.install.image`
 overrides so Omni can derive installers from schematics, and references the Elauwit Image Factory registry patch.
 
-The template targets Talos 1.14.0 and Kubernetes 1.37.0 through Omni 1.11. Complete the Talos phase and its workload
-acceptance before syncing the Kubernetes change. The Talos-only template from the preceding release commit retains
-Kubernetes 1.36.4 for that phase. Each
-Machine's `install.diskSelector` selects its verified system-disk serial, replacing the imported `machine.install.disk`
-field while preserving the other install options. See the [release procedure](../releases/README.md) for artifact
-verification, rolling upgrades, acceptance, and recovery. Control-plane upgrades use `maxParallelism: 1`; individual
-control-plane locks are unsupported.
+The template targets Talos 1.14.5 and Kubernetes 1.37.0 through Omni 1.11. The
+[acceptance record](../releases/talos-v1.14.5-acceptance.md) covers the current rollout and its remaining workload gates.
+All three machines report valid Image Factory schematic metadata. Future version changes use Omni's rolling
+lifecycle with `maxParallelism: 1`, after fencing standalone workspaces for retained-home recovery.
+Individual control-plane locks are unsupported.
 
-For the Talos-only handoff, use the [pinned extraction and rendering commands](../releases/README.md) before the
-workflow below. They extract the Talos-phase template and its registry sidecar from the exact preceding commit and
-pass `--template` explicitly. The default renderer invocation below consumes the current Kubernetes 1.37 template;
-use it only after Talos acceptance and the atomic Talos target/lock update are complete.
+Do not pre-upgrade hosts while a locked Omni cluster still desires an older version, then assume an atomic target
+and unlock update safely adopts them. On Omni 1.11.0, the status controller can briefly see the old derived install
+target after unlock and stage a downgrade. This happened to Turin during the 1.14.5 handoff. A manual same-version
+artifact repair remains separate from a version rollout; require the Cluster target, derived install targets,
+applied configuration versions and live host versions to agree before releasing its maintenance lock.
+
+Each Machine's `install.diskSelector` selects its verified system-disk serial and preserves the existing install
+options. The original 1.14.0 transition and its atomic version/lock handoff are historical procedures in the
+[release runbook](../releases/README.md).
 
 Do not sync the checked-in file directly. Its six placeholders must be rendered into a temporary mode-`0600` file.
 Either provide `GALACTIC_TAILSCALE_AUTH_KEY` and `GALACTIC_OMNI_JOIN_TOKEN`, or extract the existing values from a fresh

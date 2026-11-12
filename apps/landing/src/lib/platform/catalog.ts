@@ -16,10 +16,19 @@ export type ConnectorCatalog = z.infer<typeof connectorCatalogSchema>
 
 export const policyCatalogSchema = z.object({
   version: z.number().int().positive(),
+  actions: z.array(
+    z.object({
+      id: z.string(),
+      resourceKind: z.string(),
+      grantRelation: z.string().optional(),
+      workspaceGrantRelation: z.string().optional(),
+    }),
+  ),
   resources: z.array(
     z.object({
       kind: z.string(),
-      relations: z.array(z.object({ name: z.string(), subjects: z.array(z.enum(['human', 'workload'])) })),
+      workspaceScoped: z.boolean(),
+      relations: z.array(z.object({ name: z.string(), subjects: z.array(z.enum(['human', 'workload', 'workspace'])) })),
     }),
   ),
 })

@@ -44,91 +44,105 @@ the native decision binding remain unfinished.
 
 ## Economic acceptance
 
-The active policy is `bayn.jev-acceptance-policy.v3` in
-[`acceptance.ts`](../../services/bayn/src/jev/acceptance.ts). It evaluates any nonempty calendar registered before
-its first open. The candidate and every matched control must cover that exact calendar. There is no fixed waiting
-period or session count. Existing profit, activity, risk, execution-stress, cost, and uncertainty targets remain.
+The active policy is `bayn.jev-acceptance-policy.v5`, paired with system policy v5 and
+`bayn.system-registration.v4`. The pure [economic evaluator](../../services/bayn/src/system-assessment/economic-qualification.ts)
+uses actual fully attributed economics and the exact conditional bounds below. Register the complete policy,
+candidate, selected controls, allocation, cost attribution, calendar and statistical support before the first open.
 
-[Acceptance v1](jev-migration-acceptance.json) and [v2](jev-migration-acceptance-v2.json) are retained historical
-research contracts. Their twenty-session requirement does not govern new assessments. Original records, failed
-attempts, and content hashes remain intact; the prospective attempt index continues across the policy change.
-A numerical result grants no trading authority and does not establish future returns.
+Qualification requires positive actual net profit, a strictly positive lower bound for average registered expected
+net profit, strictly positive paired net-edge bounds against every selected control, and the existing approved loss
+and drawdown limits. Reliability remains 999/1000 per required class, with zero safety violations. There is no fixed
+session count, trade quota, turnover quota, dollar profit target, control multiple, dollar edge hurdle, bootstrap block
+requirement or resampling work budget. All sessions remain included, including failures, abstention and zero-trade costs.
 
-## Run the numerical checker
+Best-session removal, additional ten-basis-point cost and p95 replay remain diagnostics. They cannot replace actual
+costs or failures. An assessment never grants trading authority. Conditional PAPER evidence does not establish live
+execution, a stationary return distribution or future profitability.
 
-From `services/bayn`:
+## Reporting commands
+
+Use `bayn-system-assessment` from the research image with the existing explicit trading-target configuration; see the
+[system assessment guide](../../services/bayn/src/system-assessment/README.md#private-reporting-command):
+
+1. `--system-history <packet.json>` retains the audited attempt origin.
+2. `--system-register <packet.json>` prospectively binds the v4 registration and verified support-source artifacts.
+3. `--system-capture <registration-sha256>` persists the immutable evidence cut.
+4. `--system-assess <packet.json>` reproduces the complete financial, execution, reliability and statistical evidence.
+
+A statistical plan has method `CONDITIONAL_HOEFFDING_V1`. It explicitly binds `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS`. Its `supports` array contains one entry per selected
+policy: `policy`, `lowerMicros`, `upperMicros`, `sourceHash`, and `assumption`. Bounds apply to fully costed session net
+profit, including execution and operating failures. Source artifacts must be verified before registration. There are
+no default production support values. Do not use observed sample extrema or a daily loss stop as a guaranteed support
+bound: gaps, execution uncertainty and costs may violate either claim.
+
+The registration's complete policy definitions and append-only hash bind these assumptions to source, account,
+strategy, prompts, parameters, execution and costs. Bounds cannot be retuned under an existing attempt. Missing costs,
+marks, sources or sessions prevent qualification. An observation outside its registered support rejects the model;
+the evaluator never clips it, drops it or substitutes zero. A new attempt preserves every earlier attempt.
+
+The old numerical checker is for retained bootstrap research only:
 
 ```sh
 bun tools/jev-acceptance.ts --protocol
-bun tools/jev-acceptance.ts --input /absolute/path/to/session-summaries.json
+bun tools/jev-acceptance.ts --retained-input /absolute/path/to/session-summaries.json
 ```
 
-The first command returns the canonical JSON hash of the active TypeScript policy. This binds the evaluation
-procedure and thresholds. The second reads `bayn.jev-acceptance-input.v1` and emits one JSON report to stdout. Errors go to
-stderr. It exits successfully only for `NUMERICAL_TARGETS_PASSED`. That verdict covers numerical checks only and grants
-no trading authority. A missing target returns `TARGETS_MISSED`; incomplete observations return `INCONCLUSIVE`.
-Malformed input fails before a report is issued.
-
-The input contract is defined by `JevAcceptanceInputSchema` in `services/bayn/src/jev/acceptance.ts`. It requires a
-preregistration made before the first registered open, a nonempty ordered calendar with opening and closing
-times, and exactly four policy series:
-
-- `JEV`, the candidate.
-- `DEPLOYED_BAYN`, the deployed strategy and its original lifecycle.
-- `REPEATED_MOMENTUM`, the deterministic control with the candidate's execution and position management.
-- `JEV_ABLATION`, the candidate with Jev outputs removed under rules fixed on development data.
-
-Every series must contain the same registered dates in the registered order, including zero-trade and blocked sessions.
-Each complete session records actual completed episodes, filled buy-plus-sell notional, net P&L, opening and closing
-equity, marked equity extrema, intraday drawdown, maximum mark gap and a separate p95 batch-latency stress result.
-Session equity must continue from the $100,000 allocation and each previous close. Missing base, latency-stress or
-minute-mark coverage prevents a numerical pass. An unresolved session must remain an explicit unresolved row.
-
-The v1 money fields accept finite JSON numbers in the range -$1 billion to $1 billion, with no fixed decimal-place
-limit. Notional, equity and drawdown fields also require nonnegative values. Arithmetic interprets each decoded number's canonical decimal spelling exactly. It does not round to cents
-or micro-dollars. JSON decoding has already discarded any extra precision in the original numeric text.
-Money sums, ratio comparisons, stress deductions and bootstrap weighted sums use exact integer coefficients at a
-shared decimal scale. Only displayed report values convert back to JavaScript numbers. The displayed value can
-round to a threshold even when the exact comparison differs. Signed zero has the same meaning as zero.
-
-The arithmetic correction preserves the input and report schemas, protocol hash, resampling and thresholds.
-An unchanged input retains its input hash. Corrected metrics or verdicts can change its report hash relative to an
-earlier checker revision. Preserve original receipts and record the checker source revision when comparing results.
-The existing one-micro-dollar equity-consistency tolerance is unchanged and does not apply to acceptance thresholds.
-
-The checker uses summaries, not raw fills or market events. Independently reproduce each summary from its referenced
-evidence. Confirm exact flat reconciliation, complete fills and fees, executable-bid marks at least every minute,
-and model and allocated data costs. Spread and slippage already reflected in execution prices must not be deducted
-again. The additional ten-basis-point stress is deducted once from each filled dollar, including both sides.
-
-The registration's plan hash must identify the exact candidate and control definitions, code, parameters, questions,
-input representations, calendar, source data rules, universe, risk policy, execution and cost models, and selection
-procedure. Verify those bytes and their registration time independently. The checker validates identifiers and
-aligned numerical inputs; it cannot establish that supplied hashes name authentic evidence or that the calendar
-contains every required market session. It also cannot independently establish matched exposure, quote-size units,
-source arrival times, liquidity, accounting correctness or deployment identity.
+It prints the retained v5 research identity and `bayn.jev-acceptance-input.v1` diagnostics. Its numerical success
+cannot establish current statistical edge or qualification. Retained v2/v3/v4/v5 registrations and assessment receipts
+are reproduced under their original policy hashes; their bytes, financial history, attempt indices and results are
+never upgraded. The frozen [v2 acceptance contract](jev-migration-acceptance-v2.json) remains unchanged.
 
 ## Statistical comparison
 
-The checker draws 10,000 shared resamples of two-session circular blocks. Each resample contains exactly the
-registered number of observations. For an odd window, only the final sampled block is truncated. Each block start
-is the exact integer floor of the unsigned PRNG state times the registered count, divided by 2^32.
-The candidate and all controls use the same sampled session indices, retaining paired comparisons. The protocol fixes
-the PRNG, seed and empirical percentile rule. Absolute positive profit retains the original one-sided 95% lower-bound
-check. The additional comparison uses an error allowance of `0.05 / (attempt * (attempt + 1))`, divided across the
-three controls, and requires each resulting paired lower bound to exceed $50 per session.
+The [conditional bound](../../services/bayn/src/system-assessment/conditional-confidence.ts) estimates the average
+registered expected session net profit over the fixed calendar under the mean model below. For each policy, let the prospectively
+registered support be `[l,u]`, let `n` be the complete calendar size, and let `S` be the sum of actual microdollar profit.
+The causal information set includes prior attempts, market inputs, latency, liquidity, failed operation and costs.
+The plan explicitly declares `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS`: for every selected policy and
+session, expected net profit given all prior information equals its expected net profit given registration
+information. The session means may differ across the fixed calendar; conditional higher moments and outcomes may
+remain dependent. This assumption is required for the population expected-profit estimand. A bound for random,
+path-dependent conditional means does not establish that same claim. For example, a common positive/negative shock
+can produce a persistent favorable path while population mean profit is zero.
 
-Attempt numbers belong to an immutable migration-wide registry. Preserve every failed or inconclusive attempt and
-never reset that number to obtain a larger allowance. This checker rejects attempts whose tail probability is below
-the resolution of its frozen 10,000 draws. Changing that procedure requires a new protocol and untouched window.
-Block resampling assumes that the selected block length captures enough dependence. A passing
-bootstrap result does not guarantee future returns; retain the full daily series and assess this assumption during
-independent research review.
+Conditional almost-sure support gives a centered MGF bound with parameter `(u-l)^2/4` under this mean model. The
+registered sources must justify both support and the mean model. Neither assumption nor provider authenticity
+follows from a finite observed sample. All are printed in the result. No full independence or stationary return
+distribution is asserted, and this is not a guarantee that Bayn satisfies those assumptions.
 
-The regression suite includes a synthetic counterexample. A candidate earns $300 every session while its control
-alternates five-session blocks of +$900 and -$420. The candidate's $6,000 total passes the old $5,000 target and equals
-1.25 times the control's $4,800. Its paired lower bound is negative, so v2 rejects it. These are test inputs, not
-recorded trading results.
+For original attempt `k` and `m = 1 + selected control count`, use:
+
+```text
+D = 20 * k * (k + 1) * m
+alpha = 1 / D
+L = ceil(log2(D))
+V = n * (u - l)^2
+radius = ceil(sqrt(ceil(V * L / 2)))
+mean lower bound in microdollars = (S - radius) / n
+```
+
+The factor 20 is the reciprocal of the frozen 0.05 familywise error budget; it is not a session requirement.
+All gate arithmetic uses integers. The report retains the exact rational lower bound and outward-rounded radius;
+only diagnostic currency summaries use floating-point display fields. For a candidate-minus-control comparison, use the paired differences on
+the same registered sessions and support `[l_candidate-u_control, u_candidate-l_control]`. Each policy bears its own
+fully attributed operating costs. A losing control cannot substitute for positive absolute profit and its lower bound.
+
+The conditional Hoeffding tail is bounded by `exp(-2 * radius^2 / V) <= exp(-L) <= 1/D`. The union budget covers every
+selected claim and every immutable attempt: the attempt allocations telescope to at most 0.05. This holds conditional
+on prior selection only under the recorded causal filtration and MGF assumptions. Zero-width support represents a
+claimed deterministic process; it is not a mechanism for estimating support from constant observations.
+
+`Bayn.ConditionalConfidence` proves integer outward rounding and current qualification gates.
+`BaynProbability` proves the conditional tail bound, paired support without independence, the rounding-to-alpha
+connection and the program-wide allocation using pinned Mathlib. Both libraries are mandatory proof-export roots.
+The probability proof library stays outside the executable conformance model and the trading runtime. Reachable
+synthetic success, missing evidence, the negative-expectancy counterexample, exact finite-sample enumeration and
+PostgreSQL admission/history tests exercise the production path.
+
+This procedure follows the conditional-MGF framework and its distinction between changing conditional means and population means in
+[Howard et al., time-uniform confidence sequences](https://arxiv.org/abs/1810.08240) and the bounded-variable inequalities in
+[pinned Mathlib's SubGaussian module](https://github.com/leanprover-community/mathlib4/blob/56a005855ea17e0b0958f73ec801ae140b0a1679/Mathlib/Probability/Moments/SubGaussian.lean).
+It proves a conditional statistical statement, not the market assumptions themselves.
 
 ## Score response consistency
 
@@ -148,7 +162,7 @@ probability on the lowest level.
 From the repository root:
 
 ```sh
-bun test services/bayn/src/jev/contract.test.ts services/bayn/src/jev/acceptance.test.ts
+bun test services/bayn/src/jev/contract.test.ts services/bayn/src/jev/acceptance.test.ts services/bayn/src/jev/acceptance-current.test.ts
 ```
 
 The broader Bayn component checks remain required. Successful unit tests, a numerical pass on synthetic fixtures and

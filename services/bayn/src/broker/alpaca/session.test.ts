@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
+import { Clock, Deferred, Effect, Exit, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
-import { BrokerObservations } from './observed-snapshot'
-import { captureBrokerObservation } from './snapshot-cache'
+import { BrokerObservations, observationUnavailable } from './observed-snapshot'
+import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
+import { makeBrokerObservationCapture } from './snapshot-cache'
 import { makeBrokerObservationBudget } from './poll-budget'
 import { make as makeBrokerRead } from './http'
 import { layer as rawBrokerSessionLayer } from './session'
@@ -24,6 +25,7 @@ import {
   layer,
   mapHttpAcquisitionError,
   retryRecoverableBrokerSessionAcquisition,
+  projectedReadLayer,
 } from './session'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -110,7 +112,50 @@ const completePreflightResponse = (
 }
 
 describe('Alpaca broker session acquisition retry', () => {
-  test('publishes a complete 52-request history within the unchanged capture deadline', async () => {
+  test('starts the status read surface without broker HTTP and rechecks canonical availability on every read', async () => {
+    let requests = 0
+    let available = false
+    const unavailable = observationUnavailable('Canonical broker observation is unavailable')
+    const snapshot = observedBrokerSnapshotFixture(accountId, '2026-11-12T15:00:00.000Z')
+    const observed = Effect.suspend(() => (available ? Effect.succeed(snapshot) : Effect.fail(unavailable)))
+    const resources = projectedReadLayer(connection(0)).pipe(
+      Layer.provide(
+        Layer.succeed(BrokerObservations, {
+          read: observed,
+          readState: observed,
+          readForSubmit: () => observed,
+          invalidate: Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests++
+            return Effect.succeed(jsonResponse(request, { code: 50010000, message: 'broker unavailable' }, 'cold', 503))
+          }),
+        ),
+      ),
+    )
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const read = yield* BrokerRead
+        expect(requests).toBe(0)
+        expect(yield* Effect.flip(read.account)).toBe(unavailable)
+        available = true
+        expect((yield* read.account).value.id).toBe(accountId)
+        const healthSnapshot = read.projection?.healthSnapshot
+        if (healthSnapshot === undefined) throw new Error('Status broker read has no canonical health projection')
+        expect((yield* healthSnapshot).snapshot.account.value.id).toBe(accountId)
+        available = false
+        expect(yield* Effect.flip(read.positions)).toBe(unavailable)
+        expect(requests).toBe(0)
+      }).pipe(Effect.provide(resources), Effect.provide(Logger.layer([]))),
+    )
+    expect(Exit.isSuccess(exit)).toBeTrue()
+    expect(requests).toBe(0)
+  })
+  test('publishes complete history with 52 cold requests and 29 retained-history requests', async () => {
     const fills = Array.from({ length: 2_002 }, (_, index) => ({
       activity_type: 'FILL',
       id: `fill-${index}::62e69015-8549-4bfd-b9c3-01e75843f47d`,
@@ -128,6 +173,7 @@ describe('Alpaca broker session acquisition retry', () => {
     }))
     await Effect.runPromise(
       Effect.gen(function* () {
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
         const budget = yield* makeBrokerObservationBudget
         let requests = 0
         const client = budget.decorate(
@@ -148,9 +194,10 @@ describe('Alpaca broker session acquisition retry', () => {
                 )
               if (url.pathname === '/v2/account/activities/FILL') {
                 const token = url.searchParams.get('page_token')
-                const offset = token === null ? 0 : fills.findIndex((fill) => fill.id === token) + 1
+                const rows = url.searchParams.get('direction') === 'desc' ? fills.toReversed() : fills
+                const offset = token === null ? 0 : rows.findIndex((fill) => fill.id === token) + 1
                 const pageSize = Number(url.searchParams.get('page_size'))
-                return response(fills.slice(offset, offset + pageSize))
+                return response(rows.slice(offset, offset + pageSize))
               }
               if (url.pathname === '/v2/account') return response(accountResponse)
               if (url.pathname === '/v2/account/configurations') return response(accountConfigurationResponse)
@@ -160,10 +207,11 @@ describe('Alpaca broker session acquisition retry', () => {
           ),
         )
         const read = yield* makeBrokerRead(connection(0)).pipe(Effect.provideService(HttpClient.HttpClient, client))
-        const pending = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000).pipe(
-          Effect.result,
-          Effect.forkChild({ startImmediately: true }),
-        )
+        const pending = yield* captureBrokerObservation(
+          read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(30_000)
         const result = yield* Fiber.join(pending)
         if (Result.isFailure(result)) expect(result.failure.message).toContain('exceeded its deadline')
@@ -175,13 +223,31 @@ describe('Alpaca broker session acquisition retry', () => {
         expect(yield* budget.nextPollNotBeforeMs).toBe(31_200)
         yield* TestClock.adjust(1_200)
         yield* budget.beginCapture
-        const second = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000).pipe(
-          Effect.forkChild({ startImmediately: true }),
-        )
+        const second = yield* captureBrokerObservation(
+          read,
+          { generation: 2, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(30_000)
         expect((yield* Fiber.join(second)).snapshot.history.fills).toHaveLength(2_002)
-        expect(requests).toBe(104)
-        expect(yield* budget.nextPollNotBeforeMs).toBe(62_400)
+        expect(requests).toBe(81)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(48_600)
+        const last = fills.at(-1)
+        if (last === undefined) throw new Error('Expected a complete fill fixture')
+        fills.push({
+          ...last,
+          id: 'fill-2002::62e69015-8549-4bfd-b9c3-01e75843f47d',
+          transaction_time: '1970-01-01T00:00:00.000Z',
+        })
+        yield* budget.beginCapture
+        const changed = yield* captureBrokerObservation(
+          read,
+          { generation: 3, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(30_000)
+        expect((yield* Fiber.join(changed)).snapshot.history.fills).toHaveLength(2_003)
+        expect(requests).toBe(133)
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })
@@ -194,8 +260,13 @@ describe('Alpaca broker session acquisition retry', () => {
     const http = Layer.succeed(HttpClient.HttpClient, client)
     const observation = await Effect.runPromise(
       Effect.gen(function* () {
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
         const session = yield* BrokerSession
-        return yield* captureBrokerObservation(session.read, yield* currentUtcInstant, 30_000)
+        return yield* captureBrokerObservation(
+          session.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          30_000,
+        )
       }).pipe(
         Effect.provide(rawBrokerSessionLayer(connection(0))),
         Effect.provide(http),

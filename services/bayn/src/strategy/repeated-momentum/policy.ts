@@ -3,7 +3,7 @@ import { Result, Schema } from 'effect'
 import { makeStrategyProtocolHashResult } from '../../contracts'
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import { JevContractError } from '../../jev/contract'
-import { JevProtocolSchema, type JevProtocol } from '../../jev/protocol'
+import { JevProtocolSchema, type JevProtocolMaterial } from '../../jev/protocol'
 import { strictParseOptions } from '../../schemas'
 
 export const repeatedMomentumPromptPolicy = {
@@ -34,7 +34,9 @@ export const RepeatedMomentumPolicySchema = Schema.Struct({
 export type RepeatedMomentumPolicy = typeof RepeatedMomentumPolicySchema.Type
 export const repeatedMomentumBehaviorHash = sha256('bayn.repeated-momentum.behavior.v1')
 
-export const makeRepeatedMomentumPolicy = (sharedProtocol: JevProtocol): RepeatedMomentumPolicy => ({
+export const makeRepeatedMomentumPolicy = <P extends JevProtocolMaterial>(
+  sharedProtocol: P,
+): Omit<RepeatedMomentumPolicy, 'sharedProtocol'> & { readonly sharedProtocol: P } => ({
   schemaVersion: 'bayn.repeated-momentum-policy.v1',
   sharedProtocol,
   selection: MomentumSelection.PositiveRelativeReturn,
@@ -53,7 +55,9 @@ export const decodeRepeatedMomentumPolicy = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Repeated momentum policy is invalid', cause })),
   )
 
-export const repeatedMomentumStrategyIdentity = (policy: RepeatedMomentumPolicy) =>
+export const repeatedMomentumStrategyIdentity = (
+  policy: Omit<RepeatedMomentumPolicy, 'sharedProtocol'> & { readonly sharedProtocol: JevProtocolMaterial },
+) =>
   Result.gen(function* () {
     const strategy = {
       name: 'jev' as const,

@@ -7,7 +7,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from '@/lib/tengri/schemas'
 import type { TengriAgent } from '@/lib/tengri/types'
 import { runTengriAction } from './client'
-import { SettingsSelect } from './settings-select'
+import { SettingsSelect } from '@/components/platform/settings-select'
 
 const sleepIntervals = [1, 2, 5, 10, 15, 30, 60, 120, 240, 480, 1440, 0]
 

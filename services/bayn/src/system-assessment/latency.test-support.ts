@@ -1,3 +1,4 @@
+import { JevProtocolSchema } from '../jev/protocol'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { Effect, Result, Schema } from 'effect'
 
@@ -85,7 +86,7 @@ export const fullBatchLatencyFixture = (
     (s) => s.date === native.snapshot.manifest.sessionDate,
   )
   if (session === undefined) throw new Error('Missing native session')
-  const base = registrationFixture()
+  const base = registrationFixture(undefined, sessions?.length ?? 20)
   const registration = withRegistrationCommitments({
     ...base,
     registeredAt: '2026-01-01T00:00:00.000Z',
@@ -298,7 +299,12 @@ export const nativeLatencyBacktestFixture = (
   const selected = f.registration.policies.find((p) => p.policy === policy)
   if (selected === undefined) throw new Error('Missing registered replay policy')
   const policyIdentity = Result.getOrThrow(
-    nativeReplayPolicyIdentity(policy, f.registration.obligations.configuration.protocol),
+    nativeReplayPolicyIdentity(
+      policy,
+      Result.getOrThrow(
+        Schema.decodeUnknownResult(JevProtocolSchema)(f.registration.obligations.configuration.protocol),
+      ),
+    ),
   )
   const build = {
     ...configuredBuild,
@@ -324,25 +330,20 @@ export const nativeLatencyBacktestFixture = (
   }
   const material = Result.getOrThrow(
     latencyReplayPolicyMaterial(
-      f.registration.obligations.configuration.protocol,
+      Result.getOrThrow(
+        Schema.decodeUnknownResult(JevProtocolSchema)(f.registration.obligations.configuration.protocol),
+      ),
       selected.riskPolicy.accountId,
       policy,
+      selected.riskPolicy,
     ),
   )
   const inferenceTariff = replayRateCardFixture({
     jev:
-      policy === JevResearchPolicy.Candidate
+      policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation
         ? { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
         : null,
-    chart:
-      policy !== JevResearchPolicy.Momentum
-        ? {
-            inputMicrosPerMillionTokens: '100000',
-            outputMicrosPerMillionTokens: '0',
-            cachedInputMicrosPerMillionTokens: '0',
-            cacheWriteInputMicrosPerMillionTokens: '0',
-          }
-        : null,
+    chart: null,
   })
   const registration = withRegistrationCommitments({
     ...f.registration,
@@ -375,8 +376,10 @@ export const nativeLatencyBacktestFixture = (
     runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
   }
   const configuration = registration.obligations.configuration
+  if (configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Polling backtest fixture requires a retained polling runtime')
   const input = Schema.decodeUnknownSync(BacktestInputSchema)({
-    schemaVersion: 'bayn.backtest.v10',
+    schemaVersion: 'bayn.backtest.v11',
     policy,
     latencyStress: { registration, sourceCut: cut, brokerIdentity: f.identity },
     jevInstructionsHash: testHash(jevInstructions),
@@ -385,8 +388,8 @@ export const nativeLatencyBacktestFixture = (
       recording,
       recordingHash: testHash(recording),
       maximumCalls: 100,
-      models: { jev: 'jev-1.13.0', chart: 'gpt-6-luna' },
-      inputDefinition: 'bayn.jev-entry-state.v23',
+      models: { jev: configuration.protocol.model },
+      inputDefinition: 'bayn.jev-entry-state.v24',
       costs: inferenceTariff,
     },
     allocatedDataCostPerSessionMicros: '0',

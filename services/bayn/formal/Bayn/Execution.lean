@@ -6,6 +6,22 @@ import Lean.Elab.Tactic.Omega
 
 namespace Bayn
 
+-- day is the already-normalized New York session date encoded as YYYYMMDD.
+def datedEquityTafRate (retained : Bool) (day rate : Nat) : Option Nat :=
+  if retained then some rate
+  else if day < 20260701 ∨ 20290101 ≤ day then none
+  else some (if 20261001 ≤ day ∧ day < 20270101 then 0 else rate)
+
+theorem retained_fee_rate_is_unchanged (day rate : Nat) :
+    datedEquityTafRate true day rate = some rate := by simp [datedEquityTafRate]
+
+theorem documented_taf_pause_is_zero (day rate : Nat) (opening : 20261001 ≤ day) (closing : day < 20270101) :
+    datedEquityTafRate false day rate = some 0 := by
+  simp [datedEquityTafRate, show ¬ (day < 20260701 ∨ 20290101 ≤ day) by omega, opening, closing]
+
+theorem unsupported_future_fee_is_unknown (day rate : Nat) (future : 20290101 ≤ day) :
+    datedEquityTafRate false day rate = none := by simp [datedEquityTafRate, future]
+
 def quantizeDown (value increment : Nat) : Nat := value / increment * increment
 def ceilingDivide (value divisor : Nat) : Nat := if value = 0 then 0 else (value - 1) / divisor + 1
 def desiredQuantity (equity weight price increment : Nat) : Nat :=

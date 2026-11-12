@@ -1,8 +1,10 @@
+import { isDeepStrictEqual } from 'node:util'
 import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
 import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
-import { rebuildAccountingLedger } from '../accounting/domain'
+import { prepareAccounting } from '../accounting/domain'
+import type { PositionCost, PreparedAccounting } from '../accounting/model'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
@@ -137,6 +139,7 @@ type AccountingAmountSource = 'opening-cash' | 'transaction-cash-delta'
 type ReconciliationIdentityOperation = 'content-hash' | 'decode' | 'reconciliation-id'
 
 export type ReconciliationAlgebraFailure =
+  | { readonly _tag: 'AccountingTransactionMismatch'; readonly transactionId: string; readonly brokerEventId: string }
   | {
       readonly _tag: 'AccountingPlanFailed'
       readonly transactionId: string
@@ -368,8 +371,40 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
+export const verifyAccountingHistory = (
+  history: readonly {
+    readonly transaction: AccountingTransaction
+    readonly fill: Fill
+    readonly prior: PositionCost
+  }[],
+  ledger: number,
+): Result.Result<readonly PreparedAccounting[], ReconciliationAlgebraFailure> =>
+  Result.gen(function* () {
+    const prepared: PreparedAccounting[] = []
+    for (const { transaction, fill, prior } of history) {
+      const expected = yield* Result.mapError(
+        prepareAccounting(transaction.brokerEventId, fill, prior, ledger),
+        (cause): ReconciliationAlgebraFailure => ({
+          _tag: 'AccountingPlanFailed',
+          transactionId: transaction.transactionId,
+          brokerEventId: transaction.brokerEventId,
+          cause,
+        }),
+      )
+      // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
+      if (!isDeepStrictEqual(transaction, expected.transaction))
+        return yield* fail({
+          _tag: 'AccountingTransactionMismatch',
+          transactionId: transaction.transactionId,
+          brokerEventId: transaction.brokerEventId,
+        })
+      prepared.push(expected)
+    }
+    return prepared
+  })
+
 export const verifyAccountingReceipts = (
-  transactions: readonly AccountingTransaction[],
+  prepared: readonly PreparedAccounting[],
   receipts: readonly AccountingReceipt[],
   config: AccountingLedgerIdentity,
 ): Result.Result<AccountingVerification, ReconciliationAlgebraFailure> =>
@@ -382,33 +417,14 @@ export const verifyAccountingReceipts = (
       receiptBrokerEvents.add(receipt.brokerEventId)
     }
     const receiptsByEvent = new Map(receipts.map((receipt) => [receipt.brokerEventId, receipt]))
-    const planned: {
-      readonly transaction: AccountingTransaction
-      readonly plan: LedgerPlan
-    }[] = []
-    for (const transaction of transactions) {
-      planned.push({
-        transaction,
-        plan: yield* Result.mapError(
-          rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
-          (cause): ReconciliationAlgebraFailure => ({
-            _tag: 'AccountingPlanFailed',
-            transactionId: transaction.transactionId,
-            brokerEventId: transaction.brokerEventId,
-            cause,
-          }),
-        ),
-      })
-    }
-
     const exactReceipts = new Map<string, boolean>()
-    for (const { transaction, plan } of planned) {
+    for (const { transaction, ledger: plan } of prepared) {
       exactReceipts.set(
         transaction.brokerEventId,
         yield* receiptMatches(transaction, receiptsByEvent.get(transaction.brokerEventId), plan, config),
       )
     }
-    return { exactReceipts, plans: planned.map(({ plan }) => plan) }
+    return { exactReceipts, plans: prepared.map(({ ledger }) => ledger) }
   })
 
 export const compareOpeningCash = (input: {
@@ -744,6 +760,12 @@ export const reconciliationAlgebraFailureDetails = (
   failure: ReconciliationAlgebraFailure,
 ): ReconciliationAlgebraFailureDetails => {
   switch (failure._tag) {
+    case 'AccountingTransactionMismatch':
+      return {
+        failure: 'invariant',
+        message: `accounting transaction ${failure.transactionId} differs from its fill and inventory history`,
+        cause: failure,
+      }
     case 'AccountingPlanFailed':
       return {
         failure: 'invariant',

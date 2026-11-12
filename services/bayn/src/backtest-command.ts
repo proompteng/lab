@@ -31,11 +31,9 @@ import { PersistedCapitalGrantStoreLive } from './db/persisted-capital-grant'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { operationalError } from './errors'
 import { prepareBacktest, runBacktest, type ReplayDatabaseConfig } from './intraday-replay/backtest'
-import { JevClient, JevClientLive, JevError } from './jev/client'
-import { JevFailure } from './jev/contract'
+import { JevClient, JevClientLive } from './jev/client'
 import { JevResearchPolicy } from './jev/acceptance'
 import type { NativeReplayPolicy } from './intraday-replay/native-policy'
-import { DecisionsClient, DecisionsClientLive } from './jev/decisions'
 import { momentumReplayProviders, type ReplayInferenceProviders } from './intraday-replay/inference-timing'
 import { JevHttpClientLive } from './jev/http'
 import { jevInstructions } from './jev/instructions'
@@ -47,25 +45,8 @@ const usage =
 export const measuredReplayProviderLayer = (policy: NativeReplayPolicy, timeoutMs: number) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      if (policy === JevResearchPolicy.Momentum)
-        return Layer.mergeAll(
-          Layer.succeed(JevClient, momentumReplayProviders.jev),
-          Layer.succeed(DecisionsClient, momentumReplayProviders.chart),
-        )
-      const chartKey = yield* Config.Redacted('BAYN_OPENAI_API_KEY')
-      const jev =
-        policy === JevResearchPolicy.Ablation
-          ? Layer.succeed(JevClient, {
-              evaluate: () =>
-                Effect.fail(
-                  new JevError({
-                    failure: JevFailure.Request,
-                    message: 'Jev dispatch is forbidden by the ablation policy',
-                  }),
-                ),
-            })
-          : JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), timeoutMs)
-      return Layer.mergeAll(jev, DecisionsClientLive(chartKey, timeoutMs))
+      if (policy === JevResearchPolicy.Momentum) return Layer.succeed(JevClient, momentumReplayProviders.jev)
+      return JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), timeoutMs)
     }),
   )
 class BacktestCommandFailure extends Data.TaggedError('BacktestCommandFailure')<{
@@ -213,9 +194,9 @@ const main = Effect.scoped(
       prepared.input.inference.mode === 'retained-responses' || prepared.input.policy === JevResearchPolicy.Momentum
         ? execute(null)
         : Effect.gen(function* () {
-            const proxy = yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')
+            const proxy = yield* Config.NonEmptyString('BAYN_EGRESS_PROXY')
             return yield* Effect.gen(function* () {
-              return yield* execute({ jev: yield* JevClient, chart: yield* DecisionsClient })
+              return yield* execute({ jev: yield* JevClient })
             }).pipe(
               // @effect-diagnostics-next-line strictEffectProvide:off -- this CLI scope acquires providers only for explicitly measured runs
               Effect.provide(

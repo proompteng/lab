@@ -118,7 +118,7 @@ describe('one execution contract', () => {
     const { client, runner } = await connect()
     const catalog = await client.listTools()
     expect(catalog._meta?.['agents-shell/catalog']).toMatchObject({
-      version: '0.2.2',
+      version: '0.3.0',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
     const handler = createAgentsShellRequestHandler(runner.config, runner)
@@ -155,6 +155,26 @@ describe('one execution contract', () => {
     )
     expect(read).toMatchObject({ state: 'exited', stdout: '', stderr: '', stdoutNextOffset: 5 })
     expect(read.cursor).toBe(executed.cursor)
+  })
+
+  it.each([
+    { timeoutSeconds: null },
+    { timeoutSeconds: 0 },
+    { waitMs: 30_001 },
+    { maxBytes: 4095 },
+    { outputEncoding: 'hex' },
+    { agentId: 'a'.repeat(129) },
+    { unexpected: true },
+  ])('rejects invalid execution arguments before launching: %j', async (invalid) => {
+    const { client, root, runner, sessionId } = await connect()
+    const rejected = await client.callTool({
+      name: 'exec',
+      arguments: { requestKey: 'invalid-arguments', sessionId, command: 'printf changed > touched', ...invalid },
+    })
+    expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected.content)).toContain('Input validation error')
+    expect(runner.jobs.size).toBe(0)
+    expect(existsSync(join(root, 'touched'))).toBe(false)
   })
 
   it('waits for readable output, then completion without busy polling', async () => {

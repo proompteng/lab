@@ -17,6 +17,13 @@ export enum BrokerReadErrorKind {
   AccountMismatch = 'ACCOUNT_MISMATCH',
 }
 
+/** Diagnostic only; never used to decide observation admission or retry authority. */
+export enum BrokerPollFailureReason {
+  AcquisitionDeadline = 'ACQUISITION_DEADLINE',
+  PollDeadline = 'POLL_DEADLINE',
+  SnapshotRejected = 'SNAPSHOT_REJECTED',
+}
+
 export type BrokerReadOperation =
   | 'configuration'
   | 'proxy'
@@ -43,6 +50,7 @@ export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
   readonly observedAt?: string
   /** Local projection absence, never inferred from a provider timeout or response. */
   readonly observationFailure?: 'NO_ADMISSIBLE_CUT'
+  readonly pollFailureReason?: BrokerPollFailureReason
   readonly cause?: unknown
 }> {}
 

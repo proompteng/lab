@@ -86,6 +86,7 @@ data class ForwarderConfig(
   val marketDataChannelFreshnessWarmupMs: Long = 120_000,
   val marketDataReadIdleTimeoutMs: Long = 180_000,
   val latestMarketData: LatestMarketDataConfig? = null,
+  val qualifyIexSubscriptions: Boolean = false,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -224,6 +225,30 @@ data class ForwarderConfig(
         }
       require(latestSymbols != null || listOf("ALPACA_LATEST_POLL_INTERVAL_MS", "ALPACA_LATEST_MAX_AGE_MS").none { it in mergedEnv }) {
         "latest observation settings require ALPACA_LATEST_SYMBOLS"
+      }
+      val qualifyIexSubscriptions =
+        mergedEnv["ALPACA_IEX_SUBSCRIPTION_QUALIFICATION"]?.let {
+          requireNotNull(it.toBooleanStrictOrNull()) { "ALPACA_IEX_SUBSCRIPTION_QUALIFICATION must be true or false" }
+        } ?: false
+      if (qualifyIexSubscriptions) {
+        val candidates =
+          requireNotNull(
+            latestMarketData,
+          ) { "IEX qualification requires the existing latest REST observations" }.symbols.toSet()
+        val quotes = configuredSymbolOverrides["quotes"]?.toSet().orEmpty()
+        val trades = configuredSymbolOverrides["trades"]?.toSet().orEmpty()
+        val bars = configuredSymbolOverrides["bars"]?.toSet() ?: staticSymbolSet
+        require(
+          alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == "iex" && shardCount == 1 &&
+            mergedEnv["JANGAR_SYMBOLS_URL"].isNullOrBlank() &&
+            alpacaMarketDataChannels.toSet() == setOf("trades", "quotes", "bars") &&
+            staticSymbolSet.size == 16 && bars == staticSymbolSet && quotes.size == 7 && trades == quotes &&
+            candidates.size == 9 && quotes.intersect(candidates).isEmpty() && quotes + candidates == staticSymbolSet &&
+            latestMarketData.symbols == latestMarketData.symbols.sorted() && staticSymbols == staticSymbols.sorted() &&
+            configuredSymbolOverrides["quotes"] == quotes.sorted() && configuredSymbolOverrides["trades"] == trades.sorted() &&
+            configuredSymbolOverrides["bars"].let { it == null || it == bars.sorted() } &&
+            subscribeBatchSize >= staticSymbolSet.size,
+        ) { "IEX qualification requires the admitted 16-bar/7-quote/7-trade baseline and its nine REST-only symbols" }
       }
       val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
@@ -441,6 +466,7 @@ data class ForwarderConfig(
         marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
         marketDataReadIdleTimeoutMs = marketDataReadIdleTimeoutMs.coerceAtLeast(30_000),
         latestMarketData = latestMarketData,
+        qualifyIexSubscriptions = qualifyIexSubscriptions,
       )
     }
 

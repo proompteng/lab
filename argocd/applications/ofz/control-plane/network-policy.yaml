@@ -19,6 +19,12 @@ spec:
               app: proompteng
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: platform-admin
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: tengri
           podSelector:
             matchExpressions:

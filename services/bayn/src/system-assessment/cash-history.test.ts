@@ -37,8 +37,25 @@ const history = Schema.decodeUnknownSync(CashHistorySchema)({
   changes: [change(20, 20, '-2'), change(80, 80, '7')],
 })
 
+test('valuation schedule follows the registered decision cadence and always includes both boundaries', () => {
+  expect(requiredValuationTimes([{ openAt: at(0), closeAt: at(125) }], 30_000)).toEqual([
+    at(0),
+    at(30),
+    at(60),
+    at(90),
+    at(120),
+    at(125),
+  ])
+  expect(requiredValuationTimes([{ openAt: at(0), closeAt: at(125) }], 90_000)).toEqual([at(0), at(90), at(125)])
+})
+
 test('exact boundary and minute cash comes from transactions and an independent cash observation, including backwards reconstruction', () => {
-  expect(requiredValuationTimes([{ openAt: at(0), closeAt: at(125) }])).toEqual([at(0), at(60), at(120), at(125)])
+  expect(requiredValuationTimes([{ openAt: at(0), closeAt: at(125) }], 60_000)).toEqual([
+    at(0),
+    at(60),
+    at(120),
+    at(125),
+  ])
   const marks = [mark(0, null), mark(30, '998'), mark(60, null), mark(90, '1005'), mark(120, null)]
   const projected = Result.getOrThrow(projectSessionCash(marks, history, flows, at(120)))
   expect(projected.map((value) => value.cashMicros)).toEqual(['1000', '998', '998', '1005', '1005'])

@@ -179,6 +179,30 @@ class CollectorTests(unittest.TestCase):
         )
         self.assertEqual(bad["state"], "unknown")
 
+    def test_nix_upload_and_download_failures_reach_metrics(self):
+        cache = cache_evidence(
+            "| Attic substitutions | 4 |\n| cache.nixos.org substitutions | 2 |\n"
+            "| Local derivation builds | 1 |\n| Attic upload successes | 0 |\n"
+            "| Attic upload failures | 1 |\n| Attic download failures | 2 |\n"
+            "| cache.nixos.org download failures | 3 |"
+        )
+        self.assertEqual(cache["attic_upload_failures"], 1)
+        self.assertEqual(cache["attic_download_failures"], 2)
+        self.store.save_job(job_record(run(), job()), cache)
+        metrics = self.store.render(self.now)
+        for kind, value in (
+            ("attic_upload_failures", 1),
+            ("attic_download_failures", 2),
+            ("nixos_download_failures", 3),
+        ):
+            lines = [
+                line
+                for line in metrics.splitlines()
+                if line.startswith("ci_nix_cache_events") and f'kind="{kind}"' in line
+            ]
+            self.assertTrue(lines)
+            self.assertTrue(all(line.endswith(f" {value}") for line in lines))
+
     def test_real_step_names_separate_setup_build_publication_and_validation(self):
         expected = {
             "Set up job": "runner_setup",
@@ -404,6 +428,155 @@ class CollectorTests(unittest.TestCase):
                 observer.poll(self.now)
         self.assertEqual(observer.last_poll, 0)
 
+    def test_blocked_poll_exposes_live_phase_without_refreshing_cached_facts(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        observer.refresh()
+        cached = observer.metrics
+        entered, release = threading.Event(), threading.Event()
+        errors = []
+
+        def blocked_poll():
+            try:
+                with observer.phases.track("poll"):
+                    entered.set()
+                    release.wait(5)
+            except BaseException as error:  # noqa: BLE001 - Relay worker failures to the test thread.
+                errors.append(error)
+
+        with patch("time.monotonic", return_value=100) as clock:
+            worker = threading.Thread(target=blocked_poll)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                clock.return_value = 880
+                # The HTTP reader must not access SQLite or refresh cached facts.
+                with patch.object(self.store, "render", side_effect=AssertionError):
+                    metrics = observer.render_metrics().decode()
+                self.assertIn(
+                    'ci_observability_phase_active{phase="poll"} 1\n', metrics
+                )
+                self.assertIn(
+                    'ci_observability_phase_elapsed_seconds{phase="poll"} 780\n',
+                    metrics,
+                )
+                self.assertIn(
+                    "ci_observability_last_poll_timestamp_seconds 0\n", metrics
+                )
+                self.assertEqual(observer.metrics, cached)
+            finally:
+                release.set()
+                worker.join(2)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIn(
+            'ci_observability_phase_active{phase="poll"} 0\n',
+            observer.render_metrics().decode(),
+        )
+
+    def test_phase_outcomes_are_bounded_and_preserve_exceptions(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        for error, outcome in (
+            (None, "success"),
+            (RuntimeError("secret-url"), "error"),
+            (KeyboardInterrupt(), "interrupted"),
+        ):
+            with patch("time.monotonic", side_effect=[10, 14]):
+                if error is None:
+                    with observer.phases.track("poll"):
+                        pass
+                else:
+                    with (
+                        self.assertRaises(type(error)) as caught,
+                        observer.phases.track("poll"),
+                    ):
+                        raise error
+                    self.assertIs(caught.exception, error)
+            metrics = observer.render_metrics().decode()
+            self.assertIn(
+                f'ci_observability_phase_completions_total{{outcome="{outcome}",phase="poll"}} 1\n',
+                metrics,
+            )
+            self.assertIn(
+                'ci_observability_phase_last_duration_seconds{phase="poll"} 4\n',
+                metrics,
+            )
+            self.assertNotIn("secret-url", metrics)
+        with self.assertRaises(ValueError), observer.phases.track("run-12345"):
+            self.fail("Unbounded phase was accepted")
+        self.assertNotIn("run-12345", observer.render_metrics().decode())
+        lines = observer.phases.render().splitlines()
+        self.assertEqual(len(lines), 48)
+        self.assertEqual(len({line.rsplit(" ", 1)[0] for line in lines}), 48)
+        with observer.phases.track("poll"):
+            with self.assertRaises(RuntimeError), observer.phases.track("history"):
+                self.fail("Overlapping phases were accepted")
+            self.assertIn(
+                'ci_observability_phase_active{phase="poll"} 1\n',
+                observer.phases.render(),
+            )
+
+    def test_loop_diagnostics_distinguish_failed_poll_from_pending_work(self):
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        with (
+            patch.object(
+                observer, "poll", side_effect=RuntimeError("GitHub unavailable")
+            ),
+            patch.object(observer, "collect_pending") as pending,
+            patch.object(observer, "history"),
+            patch("time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            observer.run()
+        metrics = observer.render_metrics().decode()
+        self.assertEqual(pending.call_count, 1)
+        self.assertEqual(observer.errors, 1)
+        self.assertEqual(observer.last_poll, 0)
+        for phase_name, outcome in (
+            ("poll", "error"),
+            ("history", "success"),
+            ("pending_backfill", "success"),
+            ("sleep", "interrupted"),
+        ):
+            self.assertIn(
+                f'ci_observability_phase_completions_total{{outcome="{outcome}",phase="{phase_name}"}} 1\n',
+                metrics,
+            )
+        self.assertIn(
+            'ci_observability_phase_completions_total{outcome="success",phase="pending_live"} 0\n',
+            metrics,
+        )
+
+    def test_successful_loop_preserves_poll_heartbeat_and_phase_order(self):
+        api = FakeGitHub({}, {})
+        observer = Collector(self.store, api, {}, "http://unused")
+        with (
+            patch.object(api, "pages", return_value=iter([])),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+            patch.object(observer, "history"),
+            patch("time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            observer.run()
+        self.assertGreater(observer.last_poll, 0)
+        self.assertEqual(observer.errors, 0)
+        metrics = observer.render_metrics().decode()
+        for phase_name in (
+            "poll",
+            "pending_live",
+            "history",
+            "pending_backfill",
+            "prune",
+            "loki",
+        ):
+            self.assertIn(
+                f'ci_observability_phase_completions_total{{outcome="success",phase="{phase_name}"}} 1\n',
+                metrics,
+            )
+        self.assertIn(
+            'ci_observability_phase_completions_total{outcome="success",phase="refresh"} 2\n',
+            metrics,
+        )
+
     def test_active_queued_jobs_keep_architecture_pool_role_and_event(self):
         active_run, queued = run(), job()
         active_run["status"] = "in_progress"
@@ -443,6 +616,112 @@ class CollectorTests(unittest.TestCase):
         ):
             self.assertIn(value, line)
         self.assertTrue(observer.last_poll > 0)
+
+    def test_running_build_age_disappears_after_completion(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None, steps=[])
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+            patch.object(observer, "collect_job"),
+        ):
+            observer.poll(self.now)
+            expected = self.now - timestamp(running["started_at"])
+            self.assertIn("ci_job_oldest_execution_seconds", observer.active_metrics)
+            self.assertTrue(
+                any(
+                    line.endswith(f" {expected}")
+                    for line in observer.active_metrics.splitlines()
+                    if line.startswith("ci_job_oldest_execution_seconds")
+                )
+            )
+            running["status"] = "completed"
+            observer.poll(self.now)
+            self.assertNotIn("ci_job_oldest_execution_seconds", observer.active_metrics)
+            self.assertNotIn(
+                "ci_job_current_phase_age_seconds", observer.active_metrics
+            )
+
+    def test_active_phase_distinguishes_artifact_upload_from_github_finalization(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None)
+        upload = {
+            "name": "Upload Nix OCI log artifact",
+            "status": "in_progress",
+            "started_at": "2026-10-25T12:29:00Z",
+            "completed_at": None,
+        }
+        running["steps"] = [upload]
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+        ):
+            for expected_phase, age in [("artifacts", 360), ("finalizing", 240)]:
+                with self.subTest(phase=expected_phase):
+                    observer.poll(self.now)
+                    line = next(
+                        x
+                        for x in observer.active_metrics.splitlines()
+                        if x.startswith("ci_job_current_phase_age_seconds")
+                    )
+                    self.assertIn(f'phase="{expected_phase}"', line)
+                    self.assertEqual(float(line.rsplit(" ", 1)[1]), age)
+                    self.assertNotIn(upload["name"], line)
+                    self.assertIn(
+                        "ci_job_oldest_execution_seconds", observer.active_metrics
+                    )
+                upload.update(status="completed", completed_at="2026-10-25T12:31:00Z")
+
+    def test_missing_steps_keep_whole_job_and_unattributed_phase_visible(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None, steps=[])
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+        ):
+            observer.poll(self.now)
+        age = self.now - timestamp(running["started_at"])
+        lines = observer.active_metrics.splitlines()
+        for metric in (
+            "ci_job_oldest_execution_seconds",
+            "ci_job_current_phase_age_seconds",
+        ):
+            line = next(x for x in lines if x.startswith(metric))
+            self.assertTrue(line.endswith(f" {age}"), line)
+        self.assertIn('phase="unattributed"', observer.active_metrics)
 
     def test_finished_job_is_collected_before_its_workflow_finishes(self):
         active_run = run()
@@ -546,6 +825,68 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 3
         )
+
+    def test_history_reserves_foreground_quota_and_resumes_its_existing_iterator(self):
+        api = FakeGitHub({}, {})
+        api.remaining = 1999
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        fetched = []
+
+        def runs(*_args):
+            for index in range(2):
+                fetched.append(index)
+                if index == 0:
+                    api.remaining = 1999
+                yield run() | {"id": 100 + index}
+
+        with (
+            patch.object(api, "runs", side_effect=runs, create=True) as discovery,
+            patch("time.time", return_value=self.now),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(fetched, [])
+            self.assertEqual(observer.last_history_progress, 0)
+            api.remaining = 2000
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(fetched, [0])
+            self.assertEqual(observer.history_day, 0)
+            api.remaining = 4999
+            observer.history(self.now, days=1, windows=1)
+        discovery.assert_called_once()
+        self.assertEqual(fetched, [0, 1])
+        self.assertEqual(observer.history_day, 1)
+        self.assertEqual(observer.last_history, self.now)
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 2
+        )
+
+    def test_foreground_poll_keeps_running_inside_the_history_quota_reserve(self):
+        api = GitHub("unused")
+        api.remaining, api.reset_at = 1500, self.now + 3600
+        observer = Collector(self.store, api, {}, "http://unused")
+
+        def response(*_args, **_kwargs):
+            value = io.BytesIO(
+                json.dumps({"total_count": 0, "workflow_runs": []}).encode()
+            )
+            value.headers = {
+                "X-RateLimit-Remaining": "1499",
+                "X-RateLimit-Reset": str(int(self.now + 3600)),
+            }
+            return value
+
+        with (
+            patch.object(api.opener, "open", side_effect=response) as request,
+            patch("time.time", return_value=self.now),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            request.assert_not_called()
+            observer.poll(self.now)
+        self.assertEqual(observer.last_poll, self.now)
+        self.assertEqual(request.call_count, 6)
+        self.assertEqual(api.remaining, 1499)
 
     def test_search_over_1000_results_is_split_without_silently_truncating(self):
         api = GitHub("unused")

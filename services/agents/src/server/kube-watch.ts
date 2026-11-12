@@ -61,7 +61,7 @@ export type ResourceWatchService = {
   start: (options: WatchOptions) => Effect.Effect<WatchHandle>
 }
 
-export class ResourceWatch extends Context.Tag('ResourceWatch')<ResourceWatch, ResourceWatchService>() {}
+export class ResourceWatch extends Context.Service<ResourceWatch, ResourceWatchService>()('ResourceWatch') {}
 
 const DEFAULT_RESTART_DELAY_MS = 2_000
 const DEFAULT_MAX_RESTART_DELAY_MS = 60_000

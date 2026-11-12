@@ -13,6 +13,16 @@ spec:
               kubernetes.io/metadata.name: restate
           podSelector:
             matchLabels:
+              app.kubernetes.io/name: tengri-run-reader
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
               app: restate
       ports:
         - protocol: TCP
@@ -367,6 +377,16 @@ spec:
         matchLabels:
           app: restate
   ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: observability-cluster-metrics-alloy
+    ports:
+    - protocol: TCP
+      port: 8080
   - from:
     - namespaceSelector:
         matchLabels:
