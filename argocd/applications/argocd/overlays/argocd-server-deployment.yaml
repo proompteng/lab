@@ -5,6 +5,9 @@ metadata:
 spec:
   replicas: 1
   template:
+    metadata:
+      annotations:
+        gitops.proompteng.ai/repo-budget-revision: cold-repo-v1
     spec:
       containers:
         - name: argocd-server

@@ -195,3 +195,31 @@ quorum losses, and the existing Ceph latency/slow-operation alerts evaluated. A 
 Rollback by reverting these scratch/resource changes through Git and reconciling the same Applications. Temporary
 checkouts regenerate as they already do after a Pod replacement; Kargo resources, Git promotion history and durable
 volumes are retained. Reverting returns these writes to the system disk, so the original contention risk also returns.
+
+## Bounded cold repository acquisition
+
+The controller and API server use a 300-second repo-server RPC deadline. The main repo-server gives each external
+command 180 seconds, followed by the existing 10-second fatal cleanup grace. This leaves 110 seconds within the RPC
+budget for repository-lock wait, manifest generation and cleanup. These are operational bounds for GitOps work;
+they do not change application health probes, trading deadlines, retries, concurrency or TLS validation.
+
+On 2026-11-12, an Altra repo-server cache had three approximately 224 MB kept Git packs but no refs. Repeated
+60-second RPC cancellations interrupted cold fetches and discarded partial packs. One Kargo render request spent
+about 57 seconds waiting for that repository, leaving only three seconds for its fetch. Its tmpfs had ample free
+space, memory reported no OOM events and current CPU pressure was zero. The other replica completed warm fetches
+in under a second. The longer, finite budget addresses the observed cold-acquisition cancellation loop; a slow or
+failed fetch still requires investigation rather than an unlimited deadline or manual writes to Argo's cache.
+
+Argo CD v3.6.1 applies the RPC deadline around the entire
+[repo-server client call](https://github.com/argoproj/argo-cd/blob/v3.6.1/reposerver/apiclient/clientset.go).
+Its [Git commands](https://github.com/argoproj/argo-cd/blob/v3.6.1/util/git/client.go) also inherit that context and
+the independent [command timeout](https://github.com/argoproj/argo-cd/blob/v3.6.1/util/exec/exec.go), so both bounds
+must allow the cold fetch. The standard ConfigMap keys feed the controller and API-server environment at Pod start;
+the committed `repo-budget-revision` annotations roll those consumers when this budget changes. Keep both annotations
+in step with future budget updates. Repo-server's environment change uses its existing one-at-a-time rollout.
+
+Run the focused scratch/budget contract above and render the full pinned Kustomization. Verify the rendered
+ConfigMap references, command environment and unchanged replica/rollout settings. After normal GitOps reconciliation,
+check the effective environment, a completed cold fetch with refs present, and successful normal manifest generation
+on each repo-server replica. A successful render from only the warm replica does not qualify the replacement cache.
+Retain the existing memory and tmpfs checks; changing the deadline does not establish storage or market readiness.
