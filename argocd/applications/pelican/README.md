@@ -37,6 +37,8 @@ kubectl -n pelican get externalsecret,pvc,datavolume,deploy,vm,vmi,ingress,servi
 kubectl -n pelican logs deployment/pelican -c initialize
 ```
 
+The first installation runs 255 upstream migrations. A one-hour Deployment progress window accommodates cold-start storage latency without restarting the initializer or relaxing readiness. Investigate stalled migration logs or storage warnings rather than assuming a healthy rollout from elapsed time.
+
 Validate actual login/installer closure and an authenticated Panel-to-Wings `/api/system` request after rollout. An Argo health indicator alone does not prove game execution. KubeVirt's guest-agent condition confirms that cloud-init installed the agent; inspect Wings independently.
 
 Cloud-init installs Docker CE from its signed upstream Ubuntu repository and verifies the pinned Wings binary before enabling its service. Bootstrap is first-boot initialization: future guest software/configuration changes require an explicit in-guest update or a planned replacement preserving game data. Never recreate a used root disk as an update mechanism.

@@ -43,6 +43,9 @@ metadata:
   name: pelican
 spec:
   replicas: 1
+  # First installation runs 255 upstream migrations; Ceph fsync latency can exceed 10 minutes.
+  # This changes rollout reporting only; readiness remains gated by the HTTP probe.
+  progressDeadlineSeconds: 3600
   strategy:
     type: Recreate
   selector:
