@@ -61,6 +61,6 @@ export const postAgentMessagesHandler = async (
 ) =>
   Effect.runPromise(
     postAgentMessagesEffect(request, layer).pipe(
-      Effect.catchAll((error) => Effect.succeed(agentMessagesErrorResponse(error))),
+      Effect.catch((error) => Effect.succeed(agentMessagesErrorResponse(error))),
     ),
   )

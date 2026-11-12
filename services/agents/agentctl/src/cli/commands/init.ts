@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { Command, Options } from '@effect/cli'
+import { Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
@@ -32,7 +32,7 @@ const resolvePromptText = (value: Option.Option<string>, question: string, allow
         catch: (error) => asAgentctlError(error, 'ValidationError'),
       })
 
-const resolvePromptList = (values: string[], question: string) =>
+const resolvePromptList = (values: readonly string[], question: string) =>
   values.length > 0
     ? Effect.succeed(
         values
@@ -56,14 +56,14 @@ const transportErrorTag = (error: unknown) => {
 }
 
 const makeInitImplCommand = () => {
-  const name = Options.optional(Options.text('name'))
-  const text = Options.optional(Options.text('text'))
-  const summary = Options.optional(Options.text('summary'))
-  const acceptance = Options.repeated(Options.text('acceptance').pipe(Options.withAlias('criteria')))
-  const labels = Options.repeated(Options.text('label').pipe(Options.withAlias('labels')))
-  const source = Options.optional(Options.text('source'))
-  const file = Options.optional(Options.text('file'))
-  const apply = Options.boolean('apply')
+  const name = Flag.optional(Flag.String('name'))
+  const text = Flag.optional(Flag.String('text'))
+  const summary = Flag.optional(Flag.String('summary'))
+  const acceptance = Flag.atLeast(Flag.String('acceptance').pipe(Flag.withAlias('criteria')), 0)
+  const labels = Flag.atLeast(Flag.String('label').pipe(Flag.withAlias('labels')), 0)
+  const source = Flag.optional(Flag.String('source'))
+  const file = Flag.optional(Flag.String('file'))
+  const apply = Flag.Boolean('apply').pipe(Flag.withDefault(false))
 
   return Command.make(
     'impl',
@@ -158,19 +158,19 @@ const makeInitImplCommand = () => {
 }
 
 const makeInitRunCommand = () => {
-  const name = Options.optional(Options.text('name'))
-  const agent = Options.optional(Options.text('agent'))
-  const impl = Options.optional(Options.text('impl'))
-  const runtime = Options.optional(Options.text('runtime'))
-  const runtimeConfig = Options.repeated(Options.text('runtime-config'))
-  const param = Options.repeated(Options.text('param'))
-  const workloadImage = Options.optional(Options.text('workload-image'))
-  const cpu = Options.optional(Options.text('cpu'))
-  const memory = Options.optional(Options.text('memory'))
-  const memoryRef = Options.optional(Options.text('memory-ref'))
-  const file = Options.optional(Options.text('file'))
-  const apply = Options.boolean('apply')
-  const wait = Options.boolean('wait')
+  const name = Flag.optional(Flag.String('name'))
+  const agent = Flag.optional(Flag.String('agent'))
+  const impl = Flag.optional(Flag.String('impl'))
+  const runtime = Flag.optional(Flag.String('runtime'))
+  const runtimeConfig = Flag.atLeast(Flag.String('runtime-config'), 0)
+  const param = Flag.atLeast(Flag.String('param'), 0)
+  const workloadImage = Flag.optional(Flag.String('workload-image'))
+  const cpu = Flag.optional(Flag.String('cpu'))
+  const memory = Flag.optional(Flag.String('memory'))
+  const memoryRef = Flag.optional(Flag.String('memory-ref'))
+  const file = Flag.optional(Flag.String('file'))
+  const apply = Flag.Boolean('apply').pipe(Flag.withDefault(false))
+  const wait = Flag.Boolean('wait').pipe(Flag.withDefault(false))
 
   return Command.make(
     'run',
