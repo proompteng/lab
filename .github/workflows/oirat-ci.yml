@@ -89,6 +89,7 @@ jobs:
       package_attr: oirat-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
+      kargo_tag_include_run_id: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets: inherit

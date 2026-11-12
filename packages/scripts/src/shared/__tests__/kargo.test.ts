@@ -239,36 +239,48 @@ const expected = {
   },
   app: {
     creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('app')],
     apps: ['app'],
     includePaths: [],
   },
   synthesis: {
     creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('synthesis')],
     apps: ['synthesis'],
     includePaths: [],
   },
   docs: {
     creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('docs')],
     apps: ['docs'],
     includePaths: [],
   },
   bumba: {
     creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('bumba')],
     apps: ['bumba'],
     includePaths: [],
   },
   oirat: {
     creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('oirat')],
     apps: ['oirat'],
     includePaths: [],
   },
   froussard: {
     creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
     images: [imageRepo('froussard')],
     apps: ['froussard'],
     includePaths: [],
@@ -474,8 +486,10 @@ describe('Kargo direct-push GitOps contract', () => {
         expected[name].images.map((repo) => [
           repo,
           {
-            Tag: `kargo-sha-${source}`,
+            Tag: name === 'torghut' ? `kargo-sha-${source}` : `kargo-sha-${source}-run-43122728159`,
             Annotations: {
+              [buildRunIdAnnotation]: '43122728159',
+              [buildConclusionAnnotation]: 'success',
               'org.opencontainers.image.revision': source,
               'org.opencontainers.image.source': imageSourceRepo,
             },
@@ -486,6 +500,7 @@ describe('Kargo direct-push GitOps contract', () => {
         runInNewContext(
           expression,
           {
+            nil: null,
             imageFrom: (repo: string) => input[repo],
             commitFrom: () => ({ ID: filteredAncestor }),
           },
@@ -537,7 +552,7 @@ describe('Kargo direct-push GitOps contract', () => {
     },
   )
 
-  it.each(ancestryGuardedStages)(
+  it.each([...ancestryGuardedStages])(
     '%s rejects an unmerged image revision before cloning or writing desired state',
     (name) => {
       const steps = byName(stages).get(name)?.spec?.promotionTemplate?.spec?.steps
@@ -562,7 +577,87 @@ describe('Kargo direct-push GitOps contract', () => {
         expect(runInNewContext(guard.config.successExpression, context)).toBe(success)
         expect(runInNewContext(guard.config.failureExpression, context)).toBe(failure)
       }
-      expect(steps[1].uses).toBe('git-clone')
+      expect(steps[3].uses).toBe('git-clone')
+    },
+  )
+
+  it.each([...ancestryGuardedStages])(
+    '%s binds discovery to a digest receipt from its trusted main publisher',
+    (name) => {
+      const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+      const digest = `sha256:${'a'.repeat(64)}`
+      const image = {
+        Digest: digest,
+        Annotations: {
+          'org.opencontainers.image.revision': source,
+          [buildRunIdAnnotation]: '43122728159',
+        },
+      }
+      const stage = byName(stages).get(name)
+      const steps = stage?.spec?.promotionTemplate?.spec?.steps
+      const vars = Object.fromEntries(stage?.spec?.vars.map((variable: any) => [variable.name, variable.value]))
+      const render = (expression: string) =>
+        expression.replace(/\$\{\{(.*?)\}\}/g, (_match, code: string) =>
+          String(
+            runInNewContext(code.trim(), {
+              vars,
+              imageFrom: () => image,
+              trimPrefix: (value: string, prefix: string) =>
+                value.startsWith(prefix) ? value.slice(prefix.length) : value,
+            }),
+          ),
+        )
+      const accept = (step: any, body: any, status = 200) =>
+        runInNewContext(render(step.config.successExpression), { response: { status, body } })
+      const run = {
+        head_branch: 'main',
+        head_sha: source,
+        event: 'push',
+        path: vars.buildWorkflow,
+        repository: { full_name: 'proompteng/lab' },
+        head_repository: { full_name: 'proompteng/lab' },
+      }
+      expect(steps[1].uses).toBe('http')
+      expect(render(steps[1].config.url)).toBe('https://api.github.com/repos/proompteng/lab/actions/runs/43122728159')
+      expect(accept(steps[1], run)).toBe(true)
+      expect(accept(steps[1], { ...run, event: 'workflow_dispatch' })).toBe(true)
+      for (const invalid of [
+        { ...run, event: 'pull_request' },
+        { ...run, event: 'pull_request_target' },
+        { ...run, head_branch: 'feature' },
+        { ...run, head_sha: 'b'.repeat(40) },
+        { ...run, path: '.github/workflows/untrusted.yml' },
+        { ...run, head_repository: { full_name: 'attacker/lab' } },
+      ])
+        expect(accept(steps[1], invalid)).toBe(false)
+      const artifact = {
+        name: `nix-release-${name}-${digest.slice(7)}`,
+        expired: false,
+        workflow_run: { head_sha: source, head_branch: 'main' },
+      }
+      const receipt = { total_count: 1, artifacts: [artifact] }
+      expect(steps[2].uses).toBe('http')
+      expect(render(steps[2].config.url)).toBe(
+        'https://api.github.com/repos/proompteng/lab/actions/runs/43122728159/artifacts',
+      )
+      expect(steps[2].config.queryParams[0].name).toBe('name')
+      expect(render(steps[2].config.queryParams[0].value)).toBe(artifact.name)
+      expect(accept(steps[2], receipt)).toBe(true)
+      for (const invalid of [
+        { total_count: 0, artifacts: [] },
+        { total_count: 2, artifacts: [artifact, artifact] },
+        { total_count: 1, artifacts: [{ ...artifact, name: `nix-release-${name}-${'b'.repeat(64)}` }] },
+        { total_count: 1, artifacts: [{ ...artifact, expired: true }] },
+        {
+          total_count: 1,
+          artifacts: [{ ...artifact, workflow_run: { head_sha: 'b'.repeat(40), head_branch: 'main' } }],
+        },
+      ])
+        expect(accept(steps[2], invalid)).toBe(false)
+      for (const status of [403, 404, 429, 500]) {
+        expect(accept(steps[1], run, status)).toBe(false)
+        expect(accept(steps[2], receipt, status)).toBe(false)
+      }
     },
   )
 
@@ -938,7 +1033,7 @@ describe('Kargo direct-push GitOps contract', () => {
         expect(steps[0].if).toContain('imageFrom(vars.nanoagentImage).Tag')
       } else if (ancestryGuardedStages.some((name) => name === stageName)) {
         expect(steps[0].uses).toBe('http')
-        expect(steps[1].uses).toBe('git-clone')
+        expect(steps[3].uses).toBe('git-clone')
       } else {
         expect(steps[0].uses).toBe('git-clone')
       }

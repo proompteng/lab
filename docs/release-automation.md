@@ -105,13 +105,15 @@ Every application image follows this transaction:
    merge—is the deployed revision. `workflow_dispatch` may run the same verifier diagnostically; it is not a promotion
    or recovery fallback.
 
-App, Synthesis, Docs, Bumba, Oirat and Froussard also take their source revision from the immutable image.
-Their Warehouse verifies the revision-qualified tag and this repository's source annotation; their Stage checks out
-that exact annotation only after GitHub's compare API confirms it is an ancestor of protected `main` (or its tip).
-This read-only public-repository check runs before cloning or writing desired state, rejects unmerged revisions
-and missing commits, and fails closed on unavailable or rate-limited responses within two minutes. Registry
-annotations alone are not main-branch authority. They have no separate Git subscription or duplicated path list: an unrelated lockfile,
-root script alias or operating guide can advance filtered Git history without producing a new runtime image.
+App, Synthesis, Docs, Bumba, Oirat and Froussard take their source revision from the immutable image.
+Their Warehouse requires a successful run-qualified tag. Before cloning or writing desired state, their Stage
+checks protected-main ancestry and verifies the run's repository, source SHA, main branch, event and exact publisher
+workflow through GitHub's public API. It then requires an unexpired immutable artifact named for that image and its
+exact SHA-256 index digest from that same run. The common publisher uploads this receipt after platform validation
+and cache summary, before exposing the discoverable alias. Registry annotations alone cannot authorize promotion.
+These checks fail closed on missing, unavailable or rate-limited evidence within two minutes per request.
+The existing token, artifact retention and Kargo promotion policies are unchanged. These six Warehouses have no
+separate Git subscription or duplicated path list: metadata-only commits cannot strand an eligible runtime image.
 
 Torghut's five-image release takes its source commit from the immutable images. Its Warehouse requires every image
 to share the same eligible tag, each tag to match its OCI revision annotation, and every source annotation to name

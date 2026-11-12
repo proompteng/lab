@@ -87,6 +87,8 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
+    - name: buildWorkflow
+      value: .github/workflows/product-nix-images.yml
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
@@ -120,6 +122,35 @@ spec:
             timeout: 10s
             successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
             failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.repository.full_name == 'proompteng/lab' &&
+              response.body.head_repository.full_name == 'proompteng/lab' && response.body.head_branch == 'main' &&
+              response.body.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}' && response.body.path == '${{ vars.buildWorkflow }}' &&
+              (response.body.event == 'push' || response.body.event == 'workflow_dispatch')
+            failureExpression: response.status == 404
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] + '/artifacts' }}
+            queryParams:
+              - name: name
+                value: ${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.total_count == 1 &&
+              response.body.artifacts[0].name == '${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}' && !response.body.artifacts[0].expired &&
+              response.body.artifacts[0].workflow_run.head_branch == 'main' &&
+              response.body.artifacts[0].workflow_run.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}'
+            failureExpression: response.status == 404
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -178,6 +209,8 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
+    - name: buildWorkflow
+      value: .github/workflows/product-nix-images.yml
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
@@ -211,6 +244,35 @@ spec:
             timeout: 10s
             successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
             failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.repository.full_name == 'proompteng/lab' &&
+              response.body.head_repository.full_name == 'proompteng/lab' && response.body.head_branch == 'main' &&
+              response.body.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}' && response.body.path == '${{ vars.buildWorkflow }}' &&
+              (response.body.event == 'push' || response.body.event == 'workflow_dispatch')
+            failureExpression: response.status == 404
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] + '/artifacts' }}
+            queryParams:
+              - name: name
+                value: ${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.total_count == 1 &&
+              response.body.artifacts[0].name == '${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}' && !response.body.artifacts[0].expired &&
+              response.body.artifacts[0].workflow_run.head_branch == 'main' &&
+              response.body.artifacts[0].workflow_run.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}'
+            failureExpression: response.status == 404
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -269,6 +331,8 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
+    - name: buildWorkflow
+      value: .github/workflows/product-nix-images.yml
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
@@ -302,6 +366,35 @@ spec:
             timeout: 10s
             successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
             failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.repository.full_name == 'proompteng/lab' &&
+              response.body.head_repository.full_name == 'proompteng/lab' && response.body.head_branch == 'main' &&
+              response.body.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}' && response.body.path == '${{ vars.buildWorkflow }}' &&
+              (response.body.event == 'push' || response.body.event == 'workflow_dispatch')
+            failureExpression: response.status == 404
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] + '/artifacts' }}
+            queryParams:
+              - name: name
+                value: ${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.total_count == 1 &&
+              response.body.artifacts[0].name == '${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}' && !response.body.artifacts[0].expired &&
+              response.body.artifacts[0].workflow_run.head_branch == 'main' &&
+              response.body.artifacts[0].workflow_run.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}'
+            failureExpression: response.status == 404
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -360,6 +453,8 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
+    - name: buildWorkflow
+      value: .github/workflows/bumba-ci.yml
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
@@ -393,6 +488,35 @@ spec:
             timeout: 10s
             successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
             failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.repository.full_name == 'proompteng/lab' &&
+              response.body.head_repository.full_name == 'proompteng/lab' && response.body.head_branch == 'main' &&
+              response.body.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}' && response.body.path == '${{ vars.buildWorkflow }}' &&
+              (response.body.event == 'push' || response.body.event == 'workflow_dispatch')
+            failureExpression: response.status == 404
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] + '/artifacts' }}
+            queryParams:
+              - name: name
+                value: ${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.total_count == 1 &&
+              response.body.artifacts[0].name == '${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}' && !response.body.artifacts[0].expired &&
+              response.body.artifacts[0].workflow_run.head_branch == 'main' &&
+              response.body.artifacts[0].workflow_run.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}'
+            failureExpression: response.status == 404
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -423,7 +547,7 @@ spec:
             path: ./out/argocd/applications/bumba/deployment.yaml
             updates:
               - key: spec.template.spec.containers.0.env.6.value
-                value: "${{ 'bumba@' + trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+                value: "${{ 'bumba@' + imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
         - uses: git-commit
           as: commit
           config:
@@ -457,6 +581,8 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
+    - name: buildWorkflow
+      value: .github/workflows/oirat-ci.yml
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
@@ -490,6 +616,35 @@ spec:
             timeout: 10s
             successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
             failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.repository.full_name == 'proompteng/lab' &&
+              response.body.head_repository.full_name == 'proompteng/lab' && response.body.head_branch == 'main' &&
+              response.body.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}' && response.body.path == '${{ vars.buildWorkflow }}' &&
+              (response.body.event == 'push' || response.body.event == 'workflow_dispatch')
+            failureExpression: response.status == 404
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] + '/artifacts' }}
+            queryParams:
+              - name: name
+                value: ${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.total_count == 1 &&
+              response.body.artifacts[0].name == '${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}' && !response.body.artifacts[0].expired &&
+              response.body.artifacts[0].workflow_run.head_branch == 'main' &&
+              response.body.artifacts[0].workflow_run.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}'
+            failureExpression: response.status == 404
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -627,6 +782,8 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
+    - name: buildWorkflow
+      value: .github/workflows/froussard-ci.yml
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
@@ -660,6 +817,35 @@ spec:
             timeout: 10s
             successExpression: response.status == 200 && (response.body.status == 'ahead' || response.body.status == 'identical')
             failureExpression: response.status == 404 || (response.status == 200 && response.body.status != 'ahead' && response.body.status != 'identical')
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.repository.full_name == 'proompteng/lab' &&
+              response.body.head_repository.full_name == 'proompteng/lab' && response.body.head_branch == 'main' &&
+              response.body.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}' && response.body.path == '${{ vars.buildWorkflow }}' &&
+              (response.body.event == 'push' || response.body.event == 'workflow_dispatch')
+            failureExpression: response.status == 404
+        - uses: http
+          retry:
+            timeout: 2m
+          config:
+            method: GET
+            url: ${{ 'https://api.github.com/repos/proompteng/lab/actions/runs/' + imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] + '/artifacts' }}
+            queryParams:
+              - name: name
+                value: ${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+            timeout: 10s
+            successExpression: >-
+              response.status == 200 && response.body.total_count == 1 &&
+              response.body.artifacts[0].name == '${{ 'nix-release-' + trimPrefix(vars.imageRepo, 'registry.ide-newton.ts.net/lab/') + '-' + trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}' && !response.body.artifacts[0].expired &&
+              response.body.artifacts[0].workflow_run.head_branch == 'main' &&
+              response.body.artifacts[0].workflow_run.head_sha == '${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}'
+            failureExpression: response.status == 404
         - uses: git-clone
           config:
             repoURL: ${{ vars.gitRepo }}
@@ -688,7 +874,7 @@ spec:
               - key: spec.template.spec.containers.0.env.15.value
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
               - key: spec.template.spec.containers.0.env.16.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+                value: "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/froussard/approval-worker.yaml
@@ -696,7 +882,7 @@ spec:
               - key: spec.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.template.spec.containers.0.env.3.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+                value: "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
               - key: spec.template.spec.containers.0.env.4.value
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
         - uses: git-commit

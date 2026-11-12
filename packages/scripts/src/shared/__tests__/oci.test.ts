@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 import { afterEach, describe, expect, it } from 'bun:test'
+import YAML from 'yaml'
 
 import { __private, assertOciPlatforms, createOciIndex, inspectOciPlatforms, publishOciKargoTag } from '../oci'
 
@@ -598,6 +599,29 @@ describe('createOciIndex', () => {
 })
 
 describe('native OCI build workflows', () => {
+  it('withholds run-qualified discovery until validation and the digest-bound receipt upload succeed', () => {
+    const steps = YAML.parse(nixOciWorkflow).jobs['publish-index'].steps as Array<Record<string, any>>
+    const index = (name: string) => steps.findIndex((step) => step.name === name)
+    expect(index('Verify OCI image index platforms')).toBeLessThan(index('Write release contract'))
+    expect(index('Summarize Nix OCI cache use')).toBeLessThan(index('Upload release contract'))
+    expect(index('Upload release contract')).toBeLessThan(index('Publish receipted Kargo alias'))
+    expect(index('Publish receipted Kargo alias')).toBe(steps.length - 1)
+    const create = steps[index('Create OCI image index')]
+    expect(create?.run).toContain(`if [ "\${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ] ||`)
+    const receipt = steps[index('Write release contract')]
+    expect(receipt?.run).toContain('"${DIGEST#sha256:}"')
+    const upload = steps[index('Upload release contract')]
+    expect(upload?.if).toBe("inputs.release_artifact_name != '' || inputs.kargo_tag_include_run_id")
+    expect(upload?.with.name).toBe('${{ inputs.release_artifact_name || steps.receipt.outputs.artifact_name }}')
+    expect(upload?.with.overwrite).toBe("${{ inputs.release_artifact_name == '' }}")
+    const publish = steps[index('Publish receipted Kargo alias')]
+    expect(publish?.if).toBe(
+      "inputs.kargo_tag_include_run_id && inputs.publish_kargo_tag && github.ref == 'refs/heads/main'",
+    )
+    expect(publish?.run).toContain('publish-kargo-tag')
+    expect(publish?.run).toContain('--reference "${REFERENCE}"')
+  })
+
   it('routes the live Attic image through real Nix OCI builds', () => {
     expect(atticWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(atticWorkflow).toContain('package_attr: atticd-image')

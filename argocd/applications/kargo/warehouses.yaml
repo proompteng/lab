@@ -10,8 +10,13 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/app').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/app').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/app').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/app
@@ -19,7 +24,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
 ---
@@ -35,8 +40,13 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/synthesis').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/synthesis').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/synthesis
@@ -44,7 +54,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
 ---
@@ -60,8 +70,13 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/docs').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/docs').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/docs').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/docs
@@ -69,7 +84,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
 ---
@@ -85,8 +100,13 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/bumba').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bumba').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/bumba').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bumba
@@ -94,7 +114,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
 ---
@@ -110,8 +130,13 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/oirat').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/oirat').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/oirat').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/oirat
@@ -119,7 +144,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
 ---
@@ -135,8 +160,13 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/froussard').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.revision'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/froussard').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/froussard').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/froussard
@@ -144,7 +174,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
 ---
