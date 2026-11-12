@@ -18,7 +18,7 @@ import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
-import type { JevProtocol } from '../jev/protocol'
+import { defaultJevProtocolDocument, type JevProtocol } from '../jev/protocol'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { observedQuoteAt } from '../market-data/streaming/projection'
 import {
@@ -26,9 +26,9 @@ import {
   type StrategyMarketSnapshot,
   type VerifiedStrategyMarketSnapshot,
 } from '../market-data/streaming/snapshot'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { makeExecutionRiskPolicy, resolveExecutionRiskPolicy } from '../execution/risk-policy'
 import { BrokerEnvironment } from '../broker/identity'
-import type { Policy } from '../risk'
+import { PolicySchema, type Policy } from '../risk'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
@@ -85,6 +85,7 @@ export type ControlStudyManagement =
 export const ControlStudyInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.control-study-input.v10'),
   riskEnvironment: Schema.Enum(BrokerEnvironment),
+  riskPolicy: Schema.optionalKey(PolicySchema),
   openingPeakEquityMicros: PositiveMicrosSchema,
   costObjective: Schema.Literals(['ALL_COSTS', 'KNOWN_COST_DIAGNOSTIC']),
   entry: Schema.Enum(ControlEntryMode),
@@ -918,6 +919,22 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
         new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
       )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    const sourceRisk = yield* input.riskPolicy === undefined
+      ? makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe, input.riskEnvironment)
+      : resolveExecutionRiskPolicy(
+          input.riskPolicy.accountId,
+          defaultJevProtocolDocument.universe,
+          input.riskEnvironment,
+          yield* canonicalHashV1Result(input.riskPolicy),
+        )
+    // Replay has its own synthetic account. Preserve every approved native limit and only rebind that identity.
+    const risk = yield* Schema.decodeUnknownResult(
+      PolicySchema,
+      strictParseOptions,
+    )({
+      ...sourceRisk,
+      accountId: prepared.identity.accountId,
+    })
     if (BigInt(input.openingPeakEquityMicros) < BigInt(prepared.input.openingCashMicros))
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Opening broker peak cannot be below flat opening equity' }),
@@ -972,7 +989,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control polling and routing latency must each be at most one minute' }),
       )
-    return { input, prepared, falsification, definition, dataCostMicros }
+    return { input, prepared, risk, falsification, definition, dataCostMicros }
   })
 
 export const runControlStudy = (
@@ -982,7 +999,7 @@ export const runControlStudy = (
   management: ControlStudyManagement,
 ) =>
   Effect.gen(function* () {
-    const { input, prepared, falsification, definition, dataCostMicros } = yield* Effect.fromResult(
+    const { input, prepared, risk, falsification, definition, dataCostMicros } = yield* Effect.fromResult(
       prepareControlStudy(raw, receipt),
     )
     if (input.management !== management.mode)
@@ -991,9 +1008,6 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry requires exactly one measured provider binding',
       })
-    const risk = yield* Effect.fromResult(
-      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe, input.riskEnvironment),
-    )
     const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)
