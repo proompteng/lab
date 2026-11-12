@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$ARC_RUNNER_NODE_NAME" = talos-192-168-1-85
+          test "$RUNNER_ARCH" = ARM64
           printf 'Analysis commit: %s\nCommon ARM worker: %s\n' "$SOURCE_SHA" "$ACTIONS_RUNNER_POD_NAME" >> "$GITHUB_STEP_SUMMARY"
       - name: Validate analysis
         uses: ./.github/actions/validate-analysis
