@@ -467,7 +467,9 @@ inference-expense owner. Its SQL page scan and persisted retry backoff never run
 
 Completion returns a compact event to the same account owner, bound to its source revision and activation epoch.
 The owner resumes the original retained observation and result rather than discovering another batch for the consumed
-window. Admission commits the already verified source reference so a replacement worker can verify that same manifest
+window. The resume reader reconstructs and verifies the complete admitted source once at the database boundary and returns
+that typed graph to the owner, including its snapshot and content hash. Admission commits the already verified source
+reference so a replacement worker can verify that same manifest
 without treating replayed bytes as a new live capture. Before binding or transmitting, the existing financial path
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
@@ -1485,6 +1487,10 @@ lineage. Image publication alone does not authorize the revised strategy.
   trading restrictions remain visible through `/v1/status`. Execution readiness and order admission are unchanged.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
+
+The status process opens without a live broker HTTP preflight. Its health passes read the revision-bound canonical
+broker projection each time, so an unavailable broker remains visible as degraded status and can recover without a
+process restart. Execution workers retain their verified broker session and all existing order-admission checks.
 
 Status [economics](src/cycle/observability.ts) labels cumulative accounting `ACCOUNT_HISTORY`, spanning authority
 generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Its execution-fee
