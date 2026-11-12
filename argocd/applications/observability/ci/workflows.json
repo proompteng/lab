@@ -58,7 +58,7 @@
     },
     {
       "id": "broker-feed-validation",
-      "pattern": "^broker-feed-validation(?: \\(.*\\))?$"
+      "pattern": "^broker-feed-validation(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "image",
