@@ -107,7 +107,7 @@ is_owned_daemon() {
   local has_pidfile=false has_data_root=false has_cgroup=false
   local -a arguments=() stat_fields=()
   [[ "$candidate" =~ ^[1-9][0-9]*$ && -r "/proc/$candidate/cmdline" ]] || return 1
-  executable="$(readlink -f "/proc/$candidate/exe")" || return 1
+  executable="$(sudo -n "$(command -v readlink)" -f "/proc/$candidate/exe")" || return 1
   mapfile -d '' -t arguments < "/proc/$candidate/cmdline" || return 1
   if [[ "$executable" != "$daemon_binary" && "$executable" != "$daemon_entry" ]]; then
     # A shell entry point is supported for local development and focused fixtures.
