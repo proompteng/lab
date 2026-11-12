@@ -278,6 +278,58 @@ Run the producer checks from this directory:
 Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
 Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
 
+## Same-session IEX subscription qualification
+
+`ALPACA_IEX_SUBSCRIPTION_QUALIFICATION=true` enables a diagnostic on the existing core IEX connection. The reviewed
+baseline remains sixteen bar, seven quote and seven trade subscriptions. The nine REST-only symbols continue through
+the existing latest-observation path. Neither the summed baseline subscription budget nor its REST/WS overlap guard
+is relaxed. Credentials, destination, preferred feed, delay class, topics, private trade updates, crypto and delayed SIP
+retain their existing contracts.
+
+After authentication and a complete baseline acknowledgement, the diagnostic waits for a regular equity session and
+sends one additive subscription containing only the nine missing quote and trade memberships. It never adds a fourth
+channel or another connection. Alpaca documents that subscriptions are additive, acknowledgements contain the full
+current membership, and error 405 preserves the previous membership. See the
+[provider protocol](https://docs.alpaca.markets/us/docs/streaming-market-data).
+
+Candidate data is blocked before sequence allocation, deduplication, Kafka publication and ordinary freshness tracking,
+including frames before acknowledgement, buffered frames after rollback and frames on a later connection. Candidate
+and admitted maps are separate. The diagnostic records only membership, counters and provider/receipt/processing
+times; it retains no prices, raw source payloads, credentials or account identity.
+
+A complete sixteen-quote/sixteen-trade/sixteen-bar acknowledgement starts a bounded observation window: two sixty-second bar intervals plus the existing ten-second provider-age allowance
+(130 seconds).
+Qualification requires usable coverage of every member across that active window, quote/trade age and receipt gaps
+within ten seconds, bar coverage within 130 seconds, and decoded-frame processing delay within one second. Silence,
+unusable values, clock or queue violations and departure from the regular session leave coverage unproved. These are
+qualification limits, not measured production latency or an entitlement claim. The bar budget accommodates starting
+just after a minute boundary and receiving a completed bar after that minute; bars retain their minute-start timestamp.
+
+The diagnostic removes only its added quote/trade memberships after the observation window, including success, and
+requires the full original baseline acknowledgement within ten seconds. A partial or delayed candidate acknowledgement
+also triggers that exact rollback; an uncertain rollback closes the connection for coherent baseline recovery. Error
+405 is consumed only while the additive request is pending: it latches rejection and preserves baseline authentication
+without reconnecting. Other provider errors retain normal recovery. The process attempts the amendment once and does
+not repeat it on reconnect. Session generations fence late diagnostic updates; historical completed proof never makes
+a replacement session appear fresh.
+
+Inspect `/readyz` field `iex_subscription_qualification` alongside the exact Kargo revision, running image and ordinary
+channel readiness. `qualified` requires a completed observation window and verified baseline restoration; it does not
+switch financial admission. `outcome` retains the last trial decision; a new connection resets current qualification
+and retains any completed proof under its original generation. Retain the full diagnostic outcome and timing coverage during a real regular session.
+Infrastructure health, an accepted subscription or a quiet after-hours connection alone cannot establish qualification.
+
+The reviewed desired configuration changes the existing single-replica Recreate Deployment's configuration generation.
+Its normal immutable image/Kargo rollout has a restart gap; it preserves neither the old TCP connection nor uninterrupted
+market capture. Within the replacement process, baseline admission and the additive trial share one authenticated TCP
+session. A failed trial preserves current inputs or reconnects to the baseline. Recovery disables the flag through
+reviewed GitOps and the same Kargo path; it does not repoint an account or change entitlements. A process restart creates
+a new diagnostic attempt, so retain evidence and disable the flag after the bounded qualification is assessed.
+
+After live qualification, a separately reviewed hard cutover must promote one admitted source map under a new source
+generation, fence in-flight REST publications and delete ordinary latest polling and the temporary qualification path.
+The full forty-eight-membership target remains open until that product proof and hard migration are complete.
+
 ## Producer stall diagnostics
 
 Deduplication uses one bounded insertion-ordered store per cache. Expired keys are removed from that store;
