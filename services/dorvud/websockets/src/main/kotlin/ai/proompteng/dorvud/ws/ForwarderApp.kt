@@ -616,6 +616,7 @@ class ForwarderApp(
         header("Content-Type", "application/msgpack")
       }
     }) {
+      if (feed.config.core && feed.config.equityFeed == EquityFeed.Iex) maxFrameSize = 1_048_576
       var authOk = false
       var subscribedOk = false
       var admittedSymbolsByChannel = emptyMap<String, Set<String>>()

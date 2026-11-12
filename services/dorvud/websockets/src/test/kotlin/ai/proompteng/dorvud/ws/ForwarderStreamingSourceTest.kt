@@ -136,6 +136,31 @@ class ForwarderStreamingSourceTest {
       }
     }
 
+  @Test
+  fun `oversized IEX frames close the session before publication and recover with fresh admission`() =
+    runBlocking {
+      withForwarder(scenario = { state, connection ->
+        if (connection == 1) {
+          val oversized = JsonObject(quote("AAPL", state.clock.get()) + ("padding" to JsonPrimitive("x".repeat(1_048_576))))
+          sendBatch(listOf(oversized))
+        } else {
+          assertEquals(2, connection)
+          state.clock.incrementAndGet()
+          sendBatch(listOf(quote("AAPL", state.clock.get())))
+        }
+      }) { state, app ->
+        state.await { state.envelopes().any { it.string("source") == "ws" } }
+        assertEquals(2, state.connections.get())
+        val published = state.envelopes().filter { it.string("source") == "ws" }
+        assertEquals(1, published.size)
+        assertEquals(JsonPrimitive(1), published.single()["seq"])
+        assertEquals(2, state.requests.size)
+        assertEquals(0, state.latestRequests.get())
+        assertTrue(app.readinessInfo().alpacaMarketDataWs.authOk)
+        assertTrue(app.readinessInfo().alpacaMarketDataWs.subscriptionOk)
+      }
+    }
+
   private fun assertMembership(
     request: JsonObject,
     action: String,
