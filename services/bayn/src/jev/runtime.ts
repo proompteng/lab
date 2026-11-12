@@ -253,9 +253,16 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           }
         }
       }
-      if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
+      const pending = yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)
+      if (pending.length > 0)
         return yield* new JevAwaitingEvidence({
           message: 'A committed Jev batch still awaits its original deadline',
+          availableAt: utcInstantFromEpochMillis(
+            pending.reduce(
+              (earliest, plan) => Math.min(earliest, Date.parse(plan.expiresAt)),
+              options.admissionDeadlineAt ?? Number.POSITIVE_INFINITY,
+            ),
+          ),
           readiness: DecisionReadinessReason.DecisionPending,
         })
       if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
@@ -374,6 +381,16 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             : JevAvailabilityReason.InvalidEvidence
       return yield* new JevAwaitingEvidence({
         message: jevAvailabilityMessage(reason),
+        ...(saved.result === null
+          ? {
+              availableAt: utcInstantFromEpochMillis(
+                Math.min(
+                  Date.parse(saved.plan.expiresAt),
+                  options.admissionDeadlineAt ?? Date.parse(saved.plan.expiresAt),
+                ),
+              ),
+            }
+          : {}),
         readiness:
           reason === JevAvailabilityReason.OutsideValidityWindow &&
           saved.result !== null &&
