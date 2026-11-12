@@ -21,8 +21,8 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   `analysis-arm64` set uses the same private-process model through its workflow in `gregkonush/analysis`.
 - Kata's upstream component packager still requires Docker pull/build/run. Its command wrapper starts a private,
   pinned Docker Engine with data, containerd/runc execution state, socket, temporary files and client configuration
-  beneath `RUNNER_TEMP`, then stops that daemon when the command exits. On Turin those paths are on Ceph; ARM64
-  retains its job storage. Bridge and iptables management are disabled, and container/build networking uses the
+  beneath `RUNNER_TEMP`, then stops that daemon when the command exits. Both native build sets place those paths
+  on Ceph. Bridge and iptables management are disabled, and container/build networking uses the
   existing runner Pod namespace. The wrapper adds no Pod privilege, host socket, service or permanent daemon.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
@@ -46,13 +46,13 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   publication jobs use `arc-amd64-publish`. Their native builds keep the existing architecture-specific labels.
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
-- Each AMD64 build runner uses one 130Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
+- Each AMD64 and ARM64 build runner uses one 130Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
   for `/nix`, `/home/runner/.cache`, `/tmp`, `/var/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
   filesystem in `replicapool`. The init rejects other filesystems, non-RBD devices and the runner root filesystem,
   then copies the image's Nix tree and cache with the existing byte, file-count, symlink and ownership checks.
-  The PVC is deleted with its runner Pod. ARM64, analysis and publication workspaces retain their existing storage.
+  The PVC is deleted with its runner Pod. Analysis and publication workspaces retain their existing storage.
 - `/var/tmp` has its own `var-tmp` subdirectory with explicit mode `01777`; Skopeo uses it for large archive
-  expansion by default. The AMD64 runner also sets `CARGO_HOME` and `RUSTUP_HOME` to private mode-`0700`
+  expansion by default. Both native build sets also set `CARGO_HOME` and `RUSTUP_HOME` to private mode-`0700`
   directories under its Ceph-backed cache mount before any workflow step starts. Ordinary image inspection/push
   passes Skopeo `--tmpdir` explicitly, and Kata creates private Rust state under `RUNNER_TEMP` before installing
   Rust. These workflow paths also protect jobs accepted by runners that predate the new mount/environment settings.
@@ -64,15 +64,16 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - The init sets scratch `/tmp` with explicit `01777` so GNU chmod clears inherited `fsGroup` setgid bits.
   For the existing ARC image marker, the shared Nix setup action also creates a private `00700` build directory
   beneath `RUNNER_TEMP` and passes it through `NIX_CONFIG`'s `build-dir`, including the existing sudo launcher.
-  Hosted Nix configuration stays unchanged. On AMD64 this directory stays on the same Ceph
+  Hosted Nix configuration stays unchanged. On both native build sets this directory stays on the same Ceph
   volume. Nix's sandbox and syscall filter remain enabled; inherited setgid directories otherwise make readonly
   source unpacking fail with `Operation not permitted`. Job temporary storage is removed with the runner.
 - New AMD64 scratch claims never use `local-path-ci-amd64`. Existing busy runners keep their old local claims until
   their normal Pod lifecycle ends; no data migration or active-job deletion is required. Retain the old local-path
   mappings for that cleanup. Ceph RBD data uses the existing HDD OSDs and dedicated BlueStore DB NVMe devices,
-  separate from Turin's system NVMe and Talos `/var`. Image layers, runtime metadata and runner logs still use node
+  separate from both build nodes' system NVMe and Talos `/var`. ARM64 build scratch no longer uses node-local
+  `emptyDir` or the runner overlay. Image layers, runtime metadata and runner logs still use node
   storage, so verify system-disk and control-plane latency during representative builds.
-- The AMD64 scratch init requests 2Gi and is limited to 8Gi of memory. Its full Nix-tree bootstrap exceeded the prior
+- Each native build scratch init requests 2Gi and is limited to 8Gi of memory. The AMD64 Nix-tree bootstrap exceeded the prior
   512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's 16Gi aggregate
   memory request for the runner, so the init does not increase its scheduling reservation.
 - Tailscale connectivity comes from the Omni-owned node configuration in
@@ -133,6 +134,17 @@ Ten fully written 130Gi claims require 1.27TiB logical and approximately 2.54TiB
 This fits the measured capacity without reducing replication or changing a durable volume. RBD is thin-provisioned;
 the arithmetic does not reserve pool headroom or prove throughput. `HEALTH_WARN` already reported BlueStore slow
 operation indications on OSDs 3 and 5. Keep that warning visible and recheck it; capacity alone is not health proof.
+
+ARM64 builds reproduced the same system-disk contention on Altra later that day. From 13:20:49 to 13:23:35 UTC,
+the active Kata ARM64 runner Pod wrote 19.75 MB/s to Altra's system NVMe, while the device averaged 42.67 MB/s.
+The Pod's workspace was a local XFS `emptyDir`; its Nix and temporary/cache paths were on the overlay.
+Altra's etcd logged 1.459, 2.421 and 1.074-second WAL syncs inside that measured interval. The ARM64 build set now
+uses the same verified Ceph bootstrap, five mounts and Rust cache homes as AMD64, preserving its one-to-eight
+capacity, ARM64 placement, service account and runner resources. Accepted jobs finish on their existing storage.
+At 13:25 UTC, `replicapool` had 9.66TiB `MAX AVAIL` and the cluster had 29.45TiB raw free, with replication still two.
+The ten AMD64 plus eight ARM64 maximum requires 2.29TiB logical and approximately 4.57TiB raw if every 130Gi
+claim is fully written. Retain the existing BlueStore warning and qualify actual ARM64 builds and both control
+planes after rollout; the ten-slot AMD64 workflow alone does not prove ARM64 throughput.
 
 Verify the promoted Kargo revision, ten-runner configuration, Turin placement and `rook-ceph-block` claims first.
 After the slot/output acceptance succeeds, record a continuous 30-minute representative native-image-build window
