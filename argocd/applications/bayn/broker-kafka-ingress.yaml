@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: bayn-broker-kafka-ingress
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app.kubernetes.io/name: bayn-broker-kafka-ingress
     app.kubernetes.io/part-of: bayn
