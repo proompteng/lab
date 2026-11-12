@@ -28,6 +28,10 @@ unrun attempts and requires economic and candidate-outcome parity. Binding hashe
 the economic projection compared by the runner is explicit in its summary. Five samples make p95 the maximum by the
 nearest-rank definition; this is descriptive, not a tail guarantee.
 
+TigerBeetle uses the existing Bayn CI container configuration, including its container-scoped `io_uring` seccomp
+exception and two-CPU, 2 GiB limit. It changes no host or production setting. Its `--development` mode makes these
+controlled functional and timing comparisons unsuitable for production throughput claims.
+
 The financial worker executes the real financial engine and persistence with simulated broker ports. Its original
 event clock advances with measured database/provider work. Physical CPU/wall measurements exclude initialization and
 are reported separately. The worker uses an explicitly offline cadence; it does not exercise the current streaming

@@ -141,8 +141,8 @@ export const buildStreamingBenchmarkSnapshot = async (input: {
     ],
   ])
   if (input.actorHarnessPath !== undefined) {
-    if (!input.exposeFixtureContext || !paths.has('services/bayn/src/jev/inference-work.ts'))
-      throw new Error('The explicit actor harness requires instrumented streaming source with an inference work owner')
+    if (!input.exposeFixtureContext)
+      throw new Error('The explicit actor harness requires recorded fixture instrumentation')
     harnessPaths.set('services/bayn/tools/streaming-benchmark-actor.ts', resolve(input.actorHarnessPath))
   }
   const harnesses = new Map(
