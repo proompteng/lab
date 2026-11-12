@@ -16,6 +16,7 @@ By default the helpers auto-detect runtime and use the REST endpoints:
 
 - `POST /v1/memory-notes`
 - `GET /v1/memory-notes`
+- `GET /v1/memory-notes/<id>`
 
 Default base URL selection:
 
@@ -50,7 +51,10 @@ bun run save-memory --task-name "describe repo" --content "we changed X" \
 - `--task-name` – namespace to store under (required).
 - `--summary` – short overview (defaults to the first 300 characters of content).
 - `--tags` – comma-separated list.
-- Other flags are ignored by the Agents memory note endpoint and will emit a warning when supplied.
+- `--repository` defaults to `proompteng/lab`; use it for another repository.
+- `--commit` defaults to the current checkout's `HEAD` and must be a full Git SHA.
+- `--json` returns the compact ID/timestamp receipt. Identical saves return the original note.
+- Unsupported flags, including the removed `--metadata` and ignored legacy flags, fail before writing.
 
 ### Retrieve memories
 
@@ -62,8 +66,10 @@ bun run retrieve-memory --query "what did we build" --limit 5
 - `--task-name` – optional namespace filter. If omitted, searches across all namespaces.
 - `--limit` – up to how many matches to return (defaults to `5`).
 - `--repository`, `--tags`, `--model`, `--after`, and `--before` filter candidates before retrieval.
-- `--latest` lists by creation time without a query or embedding request.
-- `--json` returns complete content, creation time and provenance.
+- `--latest` lists compact summaries by creation time, without a query or embedding request.
+- `--cursor` continues a latest listing using its `nextCursor`, with the same filters.
+- `--id` reads a note by UUID, including retired history. Follow `nextOffset` with `--offset` to read all content.
+- `--json` returns complete records for search, bounded chunks for `--id`, or summaries and a cursor for latest listing.
 - `--include-retired` includes obsolete notes for historical inspection. Ordinary retrieval excludes them.
 - Unsupported retrieval flags fail instead of being ignored.
 

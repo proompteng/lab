@@ -1,12 +1,15 @@
 import {
   listMemoryNotesFromAgentsService,
+  getMemoryNoteFromAgentsService,
+  fitMemoryNotesPage,
+  readMemoryNote,
   persistMemoryNoteToAgentsService,
   retireMemoryNoteInAgentsService,
   retrieveRepoContextFromAgentsService,
   fitRepoContext,
   type AgentsServiceJsonResult,
   type RepoContextInput,
-  type AgentsMemoryNoteFilters,
+  type AgentsListMemoryNotesInput,
   type AgentsPersistMemoryNoteInput,
   type AgentsPersistMemoryNoteResult,
   type AgentsRetireMemoryNoteInput,
@@ -33,7 +36,12 @@ const filters = {
   createdBefore: Schema.optional(Schema.String),
   includeRetired: Schema.optional(Schema.Boolean),
   limit: Schema.optional(Schema.Number.pipe(Schema.int(), Schema.between(1, 50))),
+  cursor: Schema.optional(
+    Schema.String.annotations({ description: 'nextCursor from the previous page. Keep the same filters.' }),
+  ),
 }
+
+type SaveInput = Omit<AgentsPersistMemoryNoteInput, 'metadata'> & { repository?: string; commit: string }
 
 const responseBody = <T extends { ok: boolean }>(response: AgentsServiceJsonResult<T>) => {
   if (!response.ok) throw new Error(`Memory API failed (${response.status}): ${response.error ?? 'request failed'}`)
@@ -41,12 +49,8 @@ const responseBody = <T extends { ok: boolean }>(response: AgentsServiceJsonResu
   return response.body
 }
 
-const result = <T extends { ok: boolean }>(response: AgentsServiceJsonResult<T>, maxBytes: number) => {
-  const body = responseBody(response)
-  if (Buffer.byteLength(JSON.stringify(body)) > maxBytes)
-    throw new Error('Memory response exceeds the output limit. Reduce limit or narrow the filters.')
-  return jsonTextResult(body)
-}
+const replyBytes = (value: Record<string, unknown>) =>
+  Buffer.byteLength(JSON.stringify(jsonTextResult(value))) + REPLY_META_RESERVE_BYTES
 
 const mutationResult = (response: AgentsServiceJsonResult<AgentsPersistMemoryNoteResult>) => {
   const note = responseBody(response).memory
@@ -69,7 +73,7 @@ export const createMemoryTools = (): EffectTool[] => [
     auditArguments: false,
     auditResult: false,
     description:
-      'Retrieve bounded code and notes together. Supply expectedCommit to verify freshness. Reports stale or unavailable sources explicitly.',
+      'Search code and notes together. Supply expectedCommit for freshness. Open note IDs with memory_get. Reports unavailable sources.',
     inputSchema: Schema.Struct({
       query: Schema.String.pipe(Schema.minLength(1)),
       repository: Schema.optional(Schema.String),
@@ -102,20 +106,54 @@ export const createMemoryTools = (): EffectTool[] => [
       }),
   },
   {
+    name: 'memory_get',
+    title: 'Read an engineering note',
+    auditArguments: false,
+    auditResult: false,
+    description:
+      'Read a note by ID, including retired history. Follow nextOffset for the remaining content. No embedding request.',
+    inputSchema: Schema.Struct({
+      id: Schema.String.annotations({ description: 'Note ID returned by retrieve_context or memory_list.' }),
+      offset: Schema.optional(
+        Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(0)).annotations({
+          description: 'nextOffset from the previous response. Omit for the first chunk.',
+        }),
+      ),
+    }),
+    annotations: readOnlyAnnotations,
+    scopes: READ_SCOPES,
+    ...toolSecurityMeta([READ_SCOPES[0]]),
+    handler: (input: { id: string; offset?: number }, { config }) =>
+      Effect.tryPromise({
+        try: async () => {
+          const note = responseBody(await getMemoryNoteFromAgentsService(input.id)).memory
+          if (!note) throw new Error('Memory API returned no note.')
+          return jsonTextResult(readMemoryNote(note, input.offset, config.defaultOutputBytes, replyBytes))
+        },
+        catch: agentsShellErrorFromUnknown,
+      }),
+  },
+  {
     name: 'memory_list',
     title: 'List latest engineering notes',
     auditArguments: false,
     auditResult: false,
     description:
-      'List notes newest first with repository, tag, model and date filters. Excludes retired notes. No query embedding.',
+      'Browse compact note summaries newest first. Follow nextCursor with the same filters. Use memory_get to read a note.',
     inputSchema: Schema.Struct(filters),
     annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (input: AgentsMemoryNoteFilters, { config }) =>
+    handler: (input: AgentsListMemoryNotesInput, { config }) =>
       Effect.tryPromise({
         try: async () =>
-          result(await listMemoryNotesFromAgentsService({ ...input, limit: input.limit ?? 5 }), config.maxOutputBytes),
+          jsonTextResult(
+            fitMemoryNotesPage(
+              responseBody(await listMemoryNotesFromAgentsService({ ...input, limit: input.limit ?? 5 })),
+              config.defaultOutputBytes,
+              replyBytes,
+            ),
+          ),
         catch: agentsShellErrorFromUnknown,
       }),
   },
@@ -125,20 +163,32 @@ export const createMemoryTools = (): EffectTool[] => [
     auditArguments: false,
     auditResult: false,
     description:
-      'Save durable knowledge only when explicitly requested. Include repository and commit provenance in metadata. Never save secrets.',
+      'Save requested durable knowledge with repository and commit provenance. Identical saves reuse their note ID. Never save secrets.',
     inputSchema: Schema.Struct({
       namespace: Schema.optional(Schema.String),
       content: Schema.String.pipe(Schema.minLength(1)),
       summary: Schema.optional(Schema.String),
       tags: Schema.optional(Schema.Array(Schema.String)),
-      metadata: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+      repository: Schema.optional(
+        Schema.String.pipe(Schema.pattern(/^[\w.-]+\/[\w.-]+$/), Schema.maxLength(200)).annotations({
+          description: 'Repository owner/name. Defaults to proompteng/lab.',
+        }),
+      ),
+      commit: Schema.String.pipe(Schema.pattern(/^[0-9a-f]{40}$/i)).annotations({
+        description: 'Full source commit SHA from the checkout. Never invent a commit.',
+      }),
     }),
-    annotations: writeAnnotations,
+    annotations: { ...writeAnnotations, idempotentHint: true },
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([WRITE_SCOPES[0]]),
-    handler: (input: AgentsPersistMemoryNoteInput) =>
+    handler: (input: SaveInput) =>
       Effect.tryPromise({
-        try: async () => mutationResult(await persistMemoryNoteToAgentsService(input)),
+        try: async () => {
+          const { repository = 'proompteng/lab', commit, ...note } = input
+          return mutationResult(
+            await persistMemoryNoteToAgentsService({ ...note, metadata: { repository, commit: commit.toLowerCase() } }),
+          )
+        },
         catch: agentsShellErrorFromUnknown,
       }),
   },

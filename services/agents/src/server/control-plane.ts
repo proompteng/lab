@@ -176,6 +176,11 @@ const routeSources: RouteSourceSpec[] = [
     load: () => import('../routes/v1/memory-notes/retire'),
   },
   {
+    file: 'src/routes/v1/memory-notes/$id.ts',
+    sourceUrl: new URL('../routes/v1/memory-notes/$id.ts', import.meta.url),
+    load: () => import('../routes/v1/memory-notes/$id'),
+  },
+  {
     file: 'src/routes/v1/memory-notes/count.ts',
     sourceUrl: new URL('../routes/v1/memory-notes/count.ts', import.meta.url),
     load: () => import('../routes/v1/memory-notes/count'),

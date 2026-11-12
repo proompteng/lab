@@ -16,6 +16,52 @@ helmCharts:
     valuesFile: values.yaml
 
 patches:
+  # Upstream defaults to worker_processes auto; Turin exposes 384 logical CPUs.
+  # Render a four-worker template to avoid hundreds of Nginx workers and OOMs.
+  - target:
+      kind: Deployment
+      name: penpot-frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: penpot-frontend
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: nginx-worker-template
+                image: penpotapp/frontend:2.19.1
+                command: [/bin/bash, -ec]
+                args:
+                  - |
+                    sed 's/^worker_processes auto;/worker_processes 4;/' /tmp/nginx.conf.template > /nginx-template/nginx.conf.template
+                    grep -qx 'worker_processes 4;' /nginx-template/nginx.conf.template
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop: [ALL]
+                  runAsNonRoot: true
+                  runAsUser: 1001
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 32Mi
+                  limits:
+                    memory: 128Mi
+                volumeMounts:
+                  - name: nginx-template
+                    mountPath: /nginx-template
+            containers:
+              - name: penpot-frontend
+                volumeMounts:
+                  - name: nginx-template
+                    mountPath: /tmp/nginx.conf.template
+                    subPath: nginx.conf.template
+                    readOnly: true
+            volumes:
+              - name: nginx-template
+                emptyDir: {}
   - target:
       kind: Pod
       name: penpot-test-connection
