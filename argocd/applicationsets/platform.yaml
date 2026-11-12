@@ -270,6 +270,20 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: paperless
+                path: argocd/applications/paperless
+                namespace: paperless
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: pelican
                 path: argocd/applications/pelican
                 namespace: pelican
