@@ -13,7 +13,7 @@ See also:
 
 ## Production delivery (Kargo + Argo CD)
 
-Production Agents is delivered through the `main` build, the `lab-delivery/agents` Kargo
+Production Agents is delivered through the `main` build, the `agents-release/agents` Kargo
 Warehouse and Stage, and the ApplicationSet-generated `agents` Argo CD Application. Helm is
 the renderer inside the GitOps application; it is not a production installation or upgrade
 authority.
@@ -26,11 +26,11 @@ The production application contract is:
 2. Wait for the workflow to finish its complete receipt set. It publishes the four images
    only after their final multi-architecture indexes and provenance annotations are valid.
    Do not select a mutable `latest` tag or create an image tag by hand.
-3. The `lab-delivery/agents` Warehouse accepts only one run-qualified
+3. The `agents-release/agents` Warehouse accepts only one run-qualified
    `kargo-sha-<source-sha>-run-<github-run-id>` set whose four images share the source,
-   run ID, and successful build conclusion. Inspect the `lab-delivery/agents` Warehouse
+   run ID, and successful build conclusion. Inspect the `agents-release/agents` Warehouse
    and the resulting Freight before treating promotion as admitted.
-4. The automatic `lab-delivery/agents` Stage validates that all four image tags match,
+4. The automatic `agents-release/agents` Stage validates that all four image tags match,
    writes the promoted digests, source SHA, and CI metadata into
    `argocd/applications/agents/values.yaml` on the generated `kargo/agents` branch, and
    updates the `agents` Argo Application to that generated revision.
@@ -48,9 +48,9 @@ The production application contract is:
 Inspect the promotion record and Argo revision:
 
 ```bash
-kubectl -n lab-delivery get warehouse/agents stage/agents
-kubectl -n lab-delivery get freight -o wide
-kubectl -n lab-delivery get stage/agents -o yaml
+kubectl -n agents-release get warehouse/agents stage/agents
+kubectl -n agents-release get freight -o wide
+kubectl -n agents-release get stage/agents -o yaml
 kubectl -n argocd get application/agents \
   -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
 git ls-remote origin refs/heads/kargo/agents
@@ -97,12 +97,12 @@ do not replace an AgentRun proof.
 ## Production rollback
 
 Rollback is a Kargo operation. Identify the last known-good Freight and re-promote it
-through the `lab-delivery/agents` Stage. Kargo will regenerate `kargo/agents`, update the
+through the `agents-release/agents` Stage. Kargo will regenerate `kargo/agents`, update the
 Argo revision, and preserve the source/configuration boundary.
 
 ```bash
-kubectl -n lab-delivery get freight -o wide
-kubectl -n lab-delivery get stage/agents -o yaml
+kubectl -n agents-release get freight -o wide
+kubectl -n agents-release get stage/agents -o yaml
 kubectl -n argocd get application/agents \
   -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'
 kubectl -n agents rollout status deployment/agents --timeout=5m
@@ -565,7 +565,7 @@ uv run python scripts/orchestration_guard.py evaluate-failure \
 ```mermaid
 flowchart TD
   Source["Merge reviewed change to main"] --> Build["agents-build-push: four images + receipt set"]
-  Build --> Warehouse["lab-delivery/agents Warehouse creates Freight"]
+  Build --> Warehouse["agents-release/agents Warehouse creates Freight"]
   Warehouse --> Stage["agents Stage validates and promotes"]
   Stage --> Branch["Kargo writes kargo/agents + updates Argo revision"]
   Branch --> Argo["Argo agents Synced/Healthy"]

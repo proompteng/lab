@@ -70,7 +70,7 @@ consumer groups are independent.
 
 The feed is the third member of Bayn's atomic image cohort. The main-only workflow tests and publishes
 `lab/bayn`, `lab/bayn-research` and `lab/bayn-broker-feed` under the same successful source/run receipt, withholding
-every Kargo discovery alias until all three qualify. `lab-delivery/bayn` promotes all three into `kargo/bayn` and writes
+every Kargo discovery alias until all three qualify. `bayn-release/bayn` promotes all three into `kargo/bayn` and writes
 the feed's `DORVUD_SOURCE_REVISION` from the selected image. The adapter remains a reviewed upstream digest.
 Use the [release contract](../../../docs/release-automation.md); do not deploy this manifest from a worktree.
 
@@ -615,7 +615,7 @@ exact reconciliation, and no broker-ledger advance before replacing the mandate.
 invoke the activation handler manually.
 
 The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
-`lab-delivery/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
+`bayn-release/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
 The automatic Stage checks out that image revision, updates the status, worker, and activation bindings from the same
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact

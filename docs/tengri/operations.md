@@ -382,8 +382,8 @@ Normal delivery follows main publication, eligible Warehouse/Freight, exact auto
 explicit namespaces:
 
 ```bash
-kubectl --context galactic-lan -n lab-delivery get warehouse,freight,stage
-kubectl --context galactic-lan -n lab-delivery get stage/tengri -o yaml
+kubectl --context galactic-lan -n ofz-release get warehouse,freight,stage
+kubectl --context galactic-lan -n ofz-release get stage/tengri -o yaml
 kubectl --context galactic-lan -n argocd get application/tengri application/proompteng -o yaml
 kubectl --context galactic-lan -n tengri get microvm,lease,pod,pvc
 ```
@@ -406,8 +406,8 @@ After Kargo promotes a Freight, require all of the following before calling the 
 ```bash
 set -euo pipefail
 
-kubectl --context galactic-lan -n lab-delivery get freight,stage
-kubectl --context galactic-lan -n lab-delivery get stage/proompteng -o yaml
+kubectl --context galactic-lan -n ofz-release get freight,stage
+kubectl --context galactic-lan -n ofz-release get stage/proompteng -o yaml
 kubectl --context galactic-lan -n argocd get application/proompteng \
   -o jsonpath='{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
 kubectl --context galactic-lan -n argocd get application/proompteng \
