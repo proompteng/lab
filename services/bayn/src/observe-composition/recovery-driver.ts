@@ -498,6 +498,8 @@ export const decisionReadinessContinuationDelayMs = (
   if (
     (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
       result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved &&
+      result.readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      result.readiness.reason !== DecisionReadinessReason.InferenceUnavailable &&
       !sourceWindow) ||
     result.readiness.availableAt === undefined
   )
