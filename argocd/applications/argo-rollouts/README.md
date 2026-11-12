@@ -11,7 +11,8 @@ Phase 1 usage in this repo:
 - dashboard disabled
 - traffic-router integrations disabled
 - controller metrics enabled
-- analysis Jobs pinned to namespace `torghut` so Torghut simulation `AnalysisRun` templates execute with namespace-local RBAC and secrets
+- analysis Jobs run in their AnalysisRun's namespace, preserving Torghut simulation RBAC and secrets while allowing
+  Kargo smoke checks in each application's release namespace
 
 Torghut historical simulations continue to use Argo Workflows as the orchestrator. Argo Rollouts is introduced here as the
 execution and status controller for simulation `AnalysisRun` gates.

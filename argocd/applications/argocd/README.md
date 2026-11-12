@@ -26,9 +26,9 @@ Promotion is running, and record any existing non-Healthy Stage so it is not att
 
 ```bash
 kubectl -n argocd get application argocd root kargo -o wide
-kubectl -n lab-delivery get promotions.kargo.akuity.io -o json | \
+kubectl -n <project>-release get promotions.kargo.akuity.io -o json | \
   jq -e '[.items[] | select(.status.phase == "Running" or .status.phase == "Pending")] | length == 0'
-kubectl -n lab-delivery get stages.kargo.akuity.io
+kubectl -n <project>-release get stages.kargo.akuity.io
 ```
 
 Sync the whole self-managed Application at the exact merge commit. The Application uses server-side apply and
@@ -63,10 +63,10 @@ argocd account get-user-info --server argocd.proompteng.ai --grpc-web
 
 # Kargo must complete a new browser-based OIDC exchange through the Argo-hosted Dex issuer.
 kargo login https://kargo.ide-newton.ts.net --sso
-kargo get stages --project lab-delivery
+kargo get stages --project <project>-release
 
 kubectl -n argocd get application -o wide
-kubectl -n lab-delivery get stages.kargo.akuity.io
+kubectl -n <project>-release get stages.kargo.akuity.io
 ```
 
 The final deployment proof is the first normal Kargo promotion after the upgrade: a passing `main` image build must

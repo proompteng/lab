@@ -202,7 +202,7 @@ validate manifests before an authorized apply.
   targets need a main-only immutable build, Warehouse, Stage, exact automatic policy, and authorized-stage annotation.
   Promotion must update the configured renderer's source inputs, with rendered output verified against the digest.
   Retained post-deploy workflows follow the exact Kargo branch and Stage-written paths; manual dispatch is diagnostic.
-  Use `lab-delivery` for promotion evidence and `argocd` for Application evidence.
+  Use the owning `<project>-release` namespace for promotion evidence and `argocd` for Application evidence.
 - Bayn uses the same Kargo image-delivery path. Its native activation hook and trading runtime retain account,
   strategy, grant, reconciliation, and order-risk enforcement; image promotion does not grant live capital authority.
 - Confirm the Kubernetes context and pass an explicit namespace to `kubectl`. On authorization failures, verify

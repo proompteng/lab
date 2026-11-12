@@ -4012,7 +4012,7 @@ data:
               description: '{{ $labels.name }} has not reached its committed desired state for fifteen minutes. Compare its exact Kargo revision with Argo and the live workload.'
               runbook_url: docs/release-automation.md
           - alert: PlatformPromotionFailed
-            expr: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode",phase=~"Failed|Errored"} == 1
+            expr: kube_kargo_stage_last_promotion_info{namespace=~"ofz-release|relay-release|opencode-release",stage=~"ofz|relay|tengri|proompteng|opencode",phase=~"Failed|Errored"} == 1
             for: 5m
             labels:
               severity: critical
@@ -4024,7 +4024,7 @@ data:
               description: The last {{ $labels.stage }} promotion {{ $labels.phase }}. Inspect its selected Freight, failed step and exact source receipt; retain the previous deployed image.
               runbook_url: docs/release-automation.md
           - alert: PlatformPromotionStalled
-            expr: time() - kube_kargo_stage_current_promotion_started_at{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode"} > 1800
+            expr: time() - kube_kargo_stage_current_promotion_started_at{namespace=~"ofz-release|relay-release|opencode-release",stage=~"ofz|relay|tengri|proompteng|opencode"} > 1800
             for: 5m
             labels:
               severity: warning
@@ -4037,11 +4037,11 @@ data:
               runbook_url: docs/release-automation.md
           - alert: PlatformPromotionTelemetryMissing
             expr: |
-              absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="relay"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode"})
+              absent(kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="ofz"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="relay-release",stage="relay"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="tengri"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="proompteng"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="opencode-release",stage="opencode"})
             for: 10m
             labels:
               severity: warning
