@@ -59,6 +59,8 @@ const fixture = (options: FixtureOptions = {}) => {
   writeFileSync(join(cgroupRoot + leafCgroup, 'memory.max'), '34359738368\n')
   writeFileSync(join(cgroupRoot + leafCgroup, 'cpu.max'), '2000000 100000\n')
   if (options.systemContainerd) writeFileSync(systemSocket, '')
+  writeFileSync(join(root, 'self-cgroup'), '0::' + (options.cgroup ?? leafCgroup) + '\n')
+  writeFileSync(join(root, 'daemon-cgroup'), '0::' + (options.escapedDaemon ? '/unrelated/daemon' : leafCgroup) + '\n')
   // Remap only immutable read paths, retaining production guards and real
   // process identity/signals. These fixtures add no production override.
   const fixtureWrapper = join(root, 'wrapper.sh')
@@ -66,6 +68,8 @@ const fixture = (options: FixtureOptions = {}) => {
     fixtureWrapper,
     readFileSync(wrapper, 'utf8')
       .replaceAll('/sys/fs/cgroup', cgroupRoot)
+      .replaceAll('/proc/self/cgroup', join(root, 'self-cgroup'))
+      .replaceAll('/proc/$daemon_pid/cgroup', join(root, 'daemon-cgroup'))
       .replaceAll('/run/containerd/containerd.sock', systemSocket),
   )
   const real = (name: string) =>
@@ -83,11 +87,6 @@ const fixture = (options: FixtureOptions = {}) => {
     '  printf "%s\\n" "$last" >> "$FIXTURE_ROOT/elevated-proc-reads"',
     'fi',
     'exec "$REAL_READLINK" "$@"',
-  ])
-  executable('cat', [
-    'if [[ "$#" == 1 && "$1" == /proc/self/cgroup ]]; then printf "0::%s\\n" "$CURRENT_CGROUP"; exit 0; fi',
-    'if [[ "$#" == 1 && "$1" == /proc/*/cgroup ]]; then printf "0::%s\\n" "$DAEMON_CGROUP"; exit 0; fi',
-    'exec "$REAL_CAT" "$@"',
   ])
   executable('stat', [
     'if [[ "$*" == "-f -c %T "* ]]; then printf "%s\\n" "$CGROUP_FILESYSTEM"; exit 0; fi',
@@ -166,8 +165,6 @@ const fixture = (options: FixtureOptions = {}) => {
       FIXTURE_ELEVATED: '0',
       PAYLOAD_EXIT: String(options.exitCode ?? 0),
       FAIL_STARTUP: options.failStartup ? '1' : '0',
-      CURRENT_CGROUP: options.cgroup ?? leafCgroup,
-      DAEMON_CGROUP: options.escapedDaemon ? '/unrelated/daemon' : leafCgroup,
       CGROUP_FILESYSTEM: options.filesystem ?? 'cgroup2fs',
       BAD_CONTAINERD: options.badContainerd ?? '',
       PIDFILE_VALUE: options.foreignPid ? String(outsider?.pid) : options.stalePid ? '2147483647' : '',
