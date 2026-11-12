@@ -66,7 +66,7 @@ image_node="$(resolve_image_entry /bin/node)"
 test -x "${image_node}"
 
 if [[ "${role}" = trading ]]; then
-  for command in index restate-execution-server restate-execution-activate market-projection-worker \
+  for command in index restate-execution-server restate-execution-activate market-projection-worker decision-construction-worker \
     forward-performance-command control-opening-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done

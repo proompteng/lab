@@ -11,6 +11,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [189, 'native_protection_cancel_receipts'],
     [190, 'settle_retired_jev_batches'],
     [191, 'execution_controller_atomic_rotation'],
+    [192, 'uncapped_paper_turnover'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
@@ -19,6 +20,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [189, 'native_protection_cancel_receipts'],
     [190, 'settle_retired_jev_batches'],
     [191, 'execution_controller_atomic_rotation'],
+    [192, 'uncapped_paper_turnover'],
   ])
 })
 

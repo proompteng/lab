@@ -15,14 +15,14 @@ import { AgentsShellRunner } from './runner'
 const roots: string[] = []
 const receiptSchema = Schema.Struct({
   msg: Schema.Literal('agents-shell http request'),
-  requestId: Schema.String.pipe(Schema.pattern(/^[0-9a-f-]{36}$/)),
+  requestId: Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9a-f-]{36}$/))),
   method: Schema.String,
   path: Schema.String,
-  phase: Schema.Literal('routing', 'authorization', 'connect', 'transport', 'close'),
-  event: Schema.Literal('started', 'phase', 'aborted', 'failed', 'completed'),
+  phase: Schema.Literals(['routing', 'authorization', 'connect', 'transport', 'close']),
+  event: Schema.Literals(['started', 'phase', 'aborted', 'failed', 'completed']),
   aborted: Schema.Boolean,
-  durationMs: Schema.Number.pipe(Schema.greaterThanOrEqualTo(0)),
-  status: Schema.optional(Schema.Number),
+  durationMs: Schema.Number.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  status: Schema.optionalKey(Schema.Number),
 })
 
 const fixture = () => {

@@ -30,10 +30,10 @@ const successful = {
   PATH: process.env.PATH ?? '',
   CHANGES_RESULT: 'success',
   BAYN_RELEVANT: 'true',
-  IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
   FORMAL_RELEVANT: 'true',
   FORMAL_RESULT: 'success',
+  GEPA_RELEVANT: 'true',
   GEPA_RESULT: 'success',
   UNIT_RESULT: 'success',
   ARCHIVE_RESULT: 'success',
@@ -41,8 +41,6 @@ const successful = {
   POSTGRES_RESULT: 'success',
   MARKET_DATA_REPLAY_RESULT: 'success',
   REPLAY_EXECUTION_RESULT: 'success',
-  DEPENDENCY_INPUT_RESULT: 'success',
-  IMAGE_RESULT: 'skipped',
 }
 const run = async (overrides: Record<string, string>) => {
   const child = Bun.spawn(['bash', '-c', command], {
@@ -182,10 +180,14 @@ test.each([
   }
 })
 
-test('irrelevant changes retain the existing skip policy but detection and required image failures still fail', async () => {
+test('irrelevant changes retain the existing skip policy but detection failures still fail', async () => {
   expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)
   expect((await run({ BAYN_RELEVANT: 'false', CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
-  expect((await run({ IMAGE_RELEVANT: 'true', IMAGE_RESULT: 'failure' })).exit).not.toBe(0)
+})
+
+test('unchanged Python inputs may skip GEPA independently of service validation', async () => {
+  expect((await run({ GEPA_RELEVANT: 'false', GEPA_RESULT: 'skipped' })).exit).toBe(0)
+  expect((await run({ BAYN_RELEVANT: 'false', GEPA_RESULT: 'failure' })).exit).not.toBe(0)
 })
 
 test('formal-only changes require a successful proof result independently of service jobs', async () => {

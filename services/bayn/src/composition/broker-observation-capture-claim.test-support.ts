@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
 import { ValkeyCache } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
@@ -62,7 +63,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
 
 await mock.module('../db/postgres-client', () => ({
   ...actualPostgres,
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, sql as unknown as PgClient.PgClient),
+  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, postgresQueryFixture(sql)),
 }))
 await mock.module('../broker/alpaca/http', () => ({
   ...actualHttp,
