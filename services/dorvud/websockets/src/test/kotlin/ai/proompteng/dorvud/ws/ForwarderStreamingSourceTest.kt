@@ -20,6 +20,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -79,6 +80,63 @@ class ForwarderStreamingSourceTest {
         assertEquals(0, state.latestRequests.get())
         assertTrue(app.readinessInfo().alpacaMarketDataWs.subscriptionOk)
         assertEquals(admitted, app.readinessInfo().alpacaMarketDataWs.subscribedSymbolsByChannel)
+      }
+    }
+
+  @Test
+  fun `healthy streaming does not poll bar repair and reconnect schedules one bounded repair`() =
+    runBlocking {
+      val reconnect = CompletableDeferred<Unit>()
+      withForwarder(enableBarsBackfill = true, scenario = { state, connection ->
+        while (connection != 1 || !reconnect.isCompleted) {
+          sendBatch(listOf(quote("AAPL", state.clock.incrementAndGet())))
+          delay(100)
+        }
+        close(CloseReason(CloseReason.Codes.NORMAL, "controlled reconnect"))
+      }) { state, app ->
+        state.await { state.barRequests.get() == 1 && state.envelopes().any { it.string("source") == "ws" } }
+        delay(61_000)
+        assertEquals(1, state.connections.get())
+        assertEquals(1, state.barRequests.get(), "healthy streaming repeated the bar-repair HTTP scan")
+        assertTrue(app.readinessInfo().alpacaMarketDataWs.subscriptionOk)
+        reconnect.complete(Unit)
+        state.await { state.connections.get() == 2 && state.barRequests.get() == 2 }
+        assertEquals(2, state.barRequests.get())
+      }
+    }
+
+  @Test
+  fun `slow bar repair leaves streaming active across reconnect and cancels with its owner`() =
+    runBlocking {
+      val reconnect = CompletableDeferred<Unit>()
+      val repairEntered = CompletableDeferred<Unit>()
+      val pages = AtomicInteger()
+      withForwarder(
+        enableBarsBackfill = true,
+        barResponse = {
+          if (pages.incrementAndGet() == 1) {
+            repairEntered.complete(Unit)
+            delay(6_000)
+            """{"bars":{},"next_page_token":"second"}"""
+          } else {
+            awaitCancellation()
+          }
+        },
+        scenario = { state, connection ->
+          while (connection != 1 || !reconnect.isCompleted) {
+            sendBatch(listOf(quote("AAPL", state.clock.incrementAndGet())))
+            delay(100)
+          }
+          close(CloseReason(CloseReason.Codes.NORMAL, "controlled reconnect during repair"))
+        },
+      ) { state, app ->
+        state.await { repairEntered.isCompleted && state.envelopes().any { it.string("source") == "ws" } }
+        delay(10_500)
+        assertEquals(1, state.connections.get())
+        assertTrue(app.readinessInfo().alpacaMarketDataWs.subscriptionOk)
+        reconnect.complete(Unit)
+        state.await { state.connections.get() == 2 && app.readinessInfo().alpacaMarketDataWs.subscriptionOk }
+        assertEquals(2, state.barRequests.get(), "reconnect duplicated an in-flight paginated repair")
       }
     }
 
@@ -247,6 +305,7 @@ class ForwarderStreamingSourceTest {
     val connections = AtomicInteger()
     val requests = ConcurrentLinkedQueue<JsonObject>()
     val latestRequests = AtomicInteger()
+    val barRequests = AtomicInteger()
     val records = ConcurrentLinkedQueue<ProducerRecord<String, String>>()
     val failure = CompletableDeferred<Throwable>()
 
@@ -269,6 +328,8 @@ class ForwarderStreamingSourceTest {
 
   private suspend fun withForwarder(
     acknowledgeInitially: Boolean = true,
+    enableBarsBackfill: Boolean = false,
+    barResponse: suspend () -> String = { """{"bars":{},"next_page_token":null}""" },
     scenario: suspend DefaultWebSocketServerSession.(ProviderState, Int) -> Unit,
     verify: suspend (ProviderState, ForwarderApp) -> Unit,
   ) {
@@ -277,6 +338,10 @@ class ForwarderStreamingSourceTest {
       embeddedServer(CIO, port = 0) {
         install(WebSockets)
         routing {
+          get("/v2/stocks/bars") {
+            state.barRequests.incrementAndGet()
+            call.respondText(barResponse(), ContentType.Application.Json)
+          }
           get("/v2/stocks/{channel}/latest") {
             state.latestRequests.incrementAndGet()
             call.respondText("{}", ContentType.Application.Json)
@@ -322,6 +387,7 @@ class ForwarderStreamingSourceTest {
       ForwarderConfig.fromEnv(
         mapOf(
           "ALPACA_KEY_ID" to "local-test-key",
+          "ENABLE_BARS_BACKFILL" to enableBarsBackfill.toString(),
           "ALPACA_SECRET_KEY" to "local-test-secret",
           "ALPACA_STREAM_URL" to "ws://127.0.0.1:$port",
           "ALPACA_BASE_URL" to "http://127.0.0.1:$port",

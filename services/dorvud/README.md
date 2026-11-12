@@ -106,15 +106,15 @@ java -Dlog4j.configurationFile=/opt/flink/conf/log4j-console.properties \
 Preserve existing checkpoint and savepoint identities, then verify restored jobs, completed checkpoints and fresh BTC/ETH/SOL features.
 An SDK flush, healthy Pod or synthetic issue alone does not establish market-data or trading acceptance.
 
-With `ENABLE_BARS_BACKFILL=true`, the WebSocket forwarder also reconciles provider bars every minute. This task remains
-active after the market closes and while the WebSocket reconnects, refreshing requested symbols on each pass.
-It first checks `BARS_BACKFILL_LOOKBACK_HOURS`,
-then uses five-minute overlapping windows. It repeats the full lookback hourly and when the requested symbols change.
-Every request page uses the same completed-minute cutoff. Each pass has a 60-second deadline.
-Recovery runs on the blocking-I/O dispatcher and interrupts a blocked Kafka enqueue when canceled. Undispatched
-batches retain enqueue order, and a bar is acknowledged only after Kafka confirms publication. A timeout or shutdown
-does not pin the caller's dispatcher or mark an unacknowledged bar as recovered.
-
+With `ENABLE_BARS_BACKFILL=true`, each core startup or reconnect attempt requests one bounded historical bar repair.
+A healthy streaming connection does not schedule minute-based REST scans. A repair already running stays owned by the
+feed while the socket reconnects; overlapping attempts cannot start another scan. Each new repair refreshes the requested
+symbols and uses the existing lookback and five-minute overlap. A reconnect after an hour or a changed symbol set can
+request the full lookback. Every request page uses the same completed-minute cutoff, and each pass has a 60-second deadline.
+Recovery runs on the blocking-I/O dispatcher and interrupts a blocked Kafka enqueue when canceled. Undispatched batches
+retain enqueue order, and a bar is acknowledged only after Kafka confirms publication. Application shutdown cancels the
+owned repair; recovery timeout or failure leaves unacknowledged bars pending for a later reconnect without ending a
+healthy socket.
 Recovery publishes only provider-supplied completed bars that this process has not acknowledged in Kafka. A failed
 request, malformed page or failed acknowledgement leaves the scan incomplete for retry. It does not invent bars for
 intervals the provider omits. Recovered envelopes keep `source=rest` and their actual recovery time, so they cannot

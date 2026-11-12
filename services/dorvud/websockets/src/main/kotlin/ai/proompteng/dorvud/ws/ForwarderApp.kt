@@ -397,30 +397,6 @@ class ForwarderApp(
                       }
                     },
                   )
-                if (feed.config.core && config.enableBarsBackfill) {
-                  launch {
-                    while (isActive) {
-                      try {
-                        val completed =
-                          withTimeoutOrNull(60_000) {
-                            val symbols =
-                              normalizeSymbols(
-                                feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
-                                feed.config.symbolAllowlist,
-                              )
-                            reconcileBars(producer, feed.sequence, symbols)
-                            true
-                          }
-                        if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending" }
-                      } catch (error: CancellationException) {
-                        throw error
-                      } catch (error: Exception) {
-                        logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending" }
-                      }
-                      delay(60_000)
-                    }
-                  }
-                }
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
@@ -528,35 +504,63 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     feed: MarketDataFeedRuntimeState,
     symbolsTracker: SymbolsTracker,
-  ) {
-    var attempt = 0
-    while (scope.isActive) {
+  ): Unit =
+    coroutineScope {
+      var attempt = 0
+      var recovery: Job? = null
       try {
-        ensureKafkaReady(producer, feed)
-        streamMarketDataSession(producer, feed, symbolsTracker) {
-          attempt = 0
-        }
-      } catch (e: Exception) {
-        currentCoroutineContext().ensureActive()
-        ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
-          metrics.recordWsConnectError(errorClass)
-          metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
-          recordFeedError(feed, errorClass)
-        }
-        logger.warn(e) { "alpaca ws session ended feed=${feed.config.feed}" }
-      } finally {
-        setFeedWsReady(feed, false)
-      }
+        while (isActive) {
+          if (feed.config.core && config.enableBarsBackfill && recovery?.isCompleted != false) {
+            recovery =
+              launch {
+                try {
+                  val completed =
+                    withTimeoutOrNull(60_000) {
+                      val symbols =
+                        normalizeSymbols(
+                          feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
+                          feed.config.symbolAllowlist,
+                        )
+                      reconcileBars(producer, feed.sequence, symbols)
+                      true
+                    }
+                  if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending until reconnect" }
+                } catch (error: CancellationException) {
+                  throw error
+                } catch (error: Exception) {
+                  logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending until reconnect" }
+                }
+              }
+          }
+          try {
+            ensureKafkaReady(producer, feed)
+            streamMarketDataSession(producer, feed, symbolsTracker) {
+              attempt = 0
+            }
+          } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
+            ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
+              metrics.recordWsConnectError(errorClass)
+              metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
+              recordFeedError(feed, errorClass)
+            }
+            logger.warn(e) { "alpaca ws session ended feed=${feed.config.feed}" }
+          } finally {
+            setFeedWsReady(feed, false)
+          }
 
-      if (!scope.isActive) break
-      attempt += 1
-      metrics.reconnects.increment()
-      metrics.recordMarketDataReconnect(feed.config.feed)
-      val delayMs = feed.reconnectBackoff.nextDelay(attempt)
-      logger.warn { "alpaca ws reconnecting feed=${feed.config.feed} in ${delayMs}ms (attempt=$attempt)" }
-      delay(delayMs)
+          if (!isActive) break
+          attempt += 1
+          metrics.reconnects.increment()
+          metrics.recordMarketDataReconnect(feed.config.feed)
+          val delayMs = feed.reconnectBackoff.nextDelay(attempt)
+          logger.warn { "alpaca ws reconnecting feed=${feed.config.feed} in ${delayMs}ms (attempt=$attempt)" }
+          delay(delayMs)
+        }
+      } finally {
+        recovery?.cancel()
+      }
     }
-  }
 
   private suspend fun streamTradeUpdatesLoop(
     producer: KafkaProducer<String, String>,
