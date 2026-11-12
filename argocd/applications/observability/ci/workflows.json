@@ -103,6 +103,10 @@
       "pattern": "^market-data-replay(?: \\(.*\\))?$"
     },
     {
+      "id": "streaming-integration",
+      "pattern": "^streaming-integration(?: \\(.*\\))?$"
+    },
+    {
       "id": "postgres-integration",
       "pattern": "^postgres-integration(?: \\(.*\\))?$"
     },
