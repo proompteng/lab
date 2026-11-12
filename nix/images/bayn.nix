@@ -23,6 +23,7 @@ let
     "frozen-control-command"
     "control-study-command"
     "native-arrival-export-command"
+    "jev-study-export-command"
     "webull-research-command"
   ] else [
     "decision-construction-worker"
@@ -99,6 +100,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/native-arrival-export-command.js" "$@"
   '';
+  studyExportCommand = pkgs.writeShellScriptBin "bayn-jev-study-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-study-export-command.js" "$@"
+  '';
   webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -149,6 +155,7 @@ let
     # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
     "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
     "bun --cwd=services/bayn run build ${buildDefines}"
+    "bun build services/bayn/src/jev-study-export-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
@@ -161,6 +168,7 @@ let
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/native-arrival-export-command.js --help"
+    "node services/bayn/dist/jev-study-export-command.js --help"
     "node services/bayn/dist/control-opening-command.js --help"
     "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
@@ -248,6 +256,7 @@ import ./bun-workspace-service.nix {
     frozenControlCommand
     controlCommand
     nativeArrivalExportCommand
+    studyExportCommand
     webullResearchCommand
     gepaPython
     pkgs.go-containerregistry
