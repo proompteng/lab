@@ -87,21 +87,10 @@ jobs:
   broker-feed-validation:
     needs: changes
     if: needs.changes.outputs.image == 'true'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-          cache: gradle
-      - name: Verify the broker feed and shared platform
-        working-directory: services/dorvud
-        run: ./gradlew :platform:ktlintCheck :platform:test :websockets:ktlintCheck :websockets:test
+    uses: ./.github/workflows/bayn-broker-feed-validation.yml
 
   image:
-    needs: validation
+    needs: [validation, broker-feed-validation]
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
@@ -116,7 +105,7 @@ jobs:
     secrets: inherit
 
   research-image:
-    needs: validation
+    needs: [validation, broker-feed-validation]
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn-research
@@ -145,7 +134,7 @@ jobs:
 
   publish-cohort:
     needs: [image, research-image, broker-feed-image]
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     timeout-minutes: 15
     env:
       BAYN_DIGEST: ${{ needs.image.outputs.digest }}

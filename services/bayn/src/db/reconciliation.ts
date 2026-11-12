@@ -704,7 +704,9 @@ export const makeReconciliation = (
         const intents: readonly IntentExpectation[] = [...projected.intents, ...childExpectations]
         const unknownMutationCount = projected.unknownMutationCount
 
-        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger)
+        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger).pipe(
+          withObservedStage('bayn.reconciliation.accounting-history'),
+        )
         const transactions = prepared.map(({ transaction }) => transaction)
         const receiptRows = yield* sql<Record<string, unknown>>`
           SELECT
@@ -722,14 +724,16 @@ export const makeReconciliation = (
           FROM accounting_receipts
           WHERE broker_event_id IN (SELECT broker_event_id FROM accounting_transactions WHERE account_id = ${accountId})
           ORDER BY broker_event_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeReceipts))
+        `.pipe(
+          Effect.flatMap(decodeReceipts),
+          withObservedStage('bayn.reconciliation.accounting-receipt-read', { dependency: 'postgresql' }),
+        )
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
-        const { exactReceipts, plans } = yield* fromDecision(
-          'reconcile',
-          verifyAccountingReceipts(prepared, receipts, config),
-        )
+        const { exactReceipts, plans } = yield* Effect.suspend(() =>
+          fromDecision('reconcile', verifyAccountingReceipts(prepared, receipts, config)),
+        ).pipe(withObservedStage('bayn.reconciliation.accounting-receipt-verify'))
         const ledgerExact = yield* journal
           .verifyAccount(accountId, [
             ...plans,
@@ -738,6 +742,7 @@ export const makeReconciliation = (
             ...accruals.map((accrual) => accrual.plan),
           ])
           .pipe(
+            withObservedStage('bayn.reconciliation.accounting-ledger-verify', { dependency: 'tigerbeetle' }),
             Effect.mapError((cause) =>
               storeError('reconcile', 'ledger', 'TigerBeetle account verification failed during reconciliation', cause),
             ),

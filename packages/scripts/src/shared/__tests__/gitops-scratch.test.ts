@@ -81,3 +81,41 @@ test('Lovely keeps separate bounded temporary storage and reserves process headr
   expect(pod.securityContext).toBeUndefined()
   expect(pod.initContainers).toBeUndefined()
 })
+
+test('repo RPC budgets cover bounded cold commands, cleanup and lock wait', () => {
+  const params = readYaml('argocd/applications/argocd/overlays/argocd-cmd-params-cm.yaml').data
+  const deployment = readYaml('argocd/applications/argocd/overlays/argocd-repo-server-deployment.yaml')
+  const container = deployment.spec.template.spec.containers.find(
+    (entry: Container) => entry.name === 'argocd-repo-server',
+  ) as Container
+  const seconds = (name: string) => {
+    const entries = container.env?.filter((entry) => entry.name === name)
+    expect(entries).toHaveLength(1)
+    expect(entries?.[0]?.value).toMatch(/^\d+s$/)
+    return Number(entries?.[0]?.value?.slice(0, -1))
+  }
+  const command = seconds('ARGOCD_EXEC_TIMEOUT')
+  const cleanup = seconds('ARGOCD_EXEC_FATAL_TIMEOUT')
+  expect(command).toBeGreaterThan(90)
+  expect(command).toBeLessThanOrEqual(180)
+  expect(cleanup).toBe(10)
+  const controller = Number(params['controller.repo.server.timeout.seconds'])
+  const server = Number(params['server.repo.server.timeout.seconds'])
+  expect(controller).toBe(server)
+  // One cold command may hold the repository lock before this request proceeds.
+  expect(controller).toBeGreaterThanOrEqual(command + cleanup + 60)
+  expect(controller).toBeLessThanOrEqual(300)
+})
+
+test('repo RPC ConfigMap consumers roll together when the cold-cache budget changes', () => {
+  const controller = readYaml('argocd/applications/argocd/overlays/argocd-application-controller-statefulset.yaml')
+  const server = readYaml('argocd/applications/argocd/overlays/argocd-server-deployment.yaml')
+  const revision = 'gitops.proompteng.ai/repo-budget-revision'
+  expect(controller.spec.template.metadata.annotations[revision]).toBe('cold-repo-v1')
+  expect(server.spec.template.metadata.annotations[revision]).toBe(
+    controller.spec.template.metadata.annotations[revision],
+  )
+  expect(controller.spec.template.metadata.annotations['gitops.proompteng.ai/config-revision']).toBe(
+    'controller-resource-health-persist-v1',
+  )
+})
