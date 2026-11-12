@@ -178,7 +178,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
-  it('keeps all AMD64 runner scratch on Ryzen local storage', () => {
+  it('maps AMD64 runner scratch only to designated local storage paths', () => {
     const application = YAML.parseDocument(arcApplication)
     const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
     if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
@@ -196,7 +196,14 @@ describe('ARC Nix runner toolchain', () => {
     expect(data.nodePathMap).toEqual([])
     expect(data.storageClassConfigs['local-path-ci-amd64'].nodePathMap).toEqual([
       { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
+      { node: 'turin', paths: ['/var/local-path-provisioner/ci-amd64'] },
       { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
+    ])
+    const storageClass = YAML.parse(readRepoFile('argocd/applications/local-path/storageclass-ci-amd64.yaml'))
+    expect(storageClass.allowedTopologies).toEqual([
+      {
+        matchLabelExpressions: [{ key: 'kubernetes.io/hostname', values: ['talos-192-168-1-194', 'turin'] }],
+      },
     ])
     expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
       'local-path',
