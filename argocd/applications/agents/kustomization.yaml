@@ -11,6 +11,7 @@ resources:
   - agents-shell-tunnel-networkpolicy.yaml
   - agents-shell-omni-externalsecret.yaml
   - agents-shell-bmc-externalsecret.yaml
+  - agents-shell-workspace-ceph-20261112.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
   - graf-codex-agentprovider.yaml

@@ -15,6 +15,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Installation, upgrade, and incident operations: `runbooks.md`
 - Control-plane UI: `control-plane-ui.md`
 - Shell tool and command activity: `agents-shell-activity.md`
+- Preserving shell sessions during storage migration: `agents-shell-workspace-migration.md`
 - Engineering memory and shell tools: `memory-notes.md`
 - Talos, Omni and BMC shell inspection: `agents-shell-infrastructure.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
