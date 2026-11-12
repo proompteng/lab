@@ -129,6 +129,8 @@ Each market-data connection has one ten-second establishment deadline covering t
 complete subscription acknowledgement. Expiry cancels that attempt before the feed reconnects. The deadline ends at
 authenticated acknowledgement, so healthy streams can continue indefinitely. Crypto publication also requires its
 acknowledged channel membership; early frames cannot allocate sequences or enter Kafka.
+Startup trade backfill runs alongside acknowledgement processing. Paginated REST recovery cannot consume the
+establishment deadline or delay live publication, and session shutdown cancels its recovery job.
 
 ## Crypto source events
 
