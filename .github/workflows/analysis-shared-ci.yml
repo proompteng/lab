@@ -58,6 +58,27 @@ jobs:
           [[ "$UPSTREAM_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$SOURCE_REF" == refs/heads/* || "$SOURCE_REF" == refs/tags/* ]]
           test -n "$LOG_RECIPIENT"
+      - name: Require the active originating workflow
+        id: source-run
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.ANALYSIS_SOURCE_TOKEN }}
+          script: |
+            const runId = Number(process.env.UPSTREAM_RUN_ID)
+            const attempt = Number(process.env.UPSTREAM_RUN_ATTEMPT)
+            if (!Number.isSafeInteger(runId) || runId <= 0 ||
+                !Number.isSafeInteger(attempt) || attempt <= 0) {
+              throw new Error('Source run and attempt must be valid identifiers')
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRunAttempt({
+              owner: 'gregkonush', repo: 'analysis', run_id: runId, attempt_number: attempt,
+            })
+            if (run.status !== 'in_progress' || run.head_sha !== process.env.SOURCE_SHA ||
+                run.head_repository?.full_name !== 'gregkonush/analysis' ||
+                run.path !== '.github/workflows/analysis-image.yml' || run.run_attempt !== attempt ||
+                !['push', 'workflow_dispatch'].includes(run.event)) {
+              throw new Error('Source workflow is no longer active at the requested commit')
+            }
       - name: Checkout analysis at the requested commit
         uses: actions/checkout@v6
         with:
@@ -129,7 +150,7 @@ jobs:
             const { data: run } = await github.rest.actions.getWorkflowRunAttempt({
               owner, repo, run_id: runId, attempt_number: attempt,
             })
-            if (run.head_sha !== sha || run.head_branch !== 'main' ||
+            if (run.status !== 'in_progress' || run.head_sha !== sha || run.head_branch !== 'main' ||
                 run.head_repository?.full_name !== owner + '/' + repo ||
                 run.path !== '.github/workflows/analysis-image.yml' ||
                 run.run_attempt !== attempt ||

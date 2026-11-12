@@ -13,6 +13,7 @@ const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
 const admit = new AsyncFunction('github', 'core', 'process', admission)
 const sha = 'a'.repeat(40)
 const sourceRun = () => ({
+  status: 'in_progress',
   head_sha: sha,
   head_branch: 'main',
   head_repository: { full_name: 'gregkonush/analysis' },
@@ -29,6 +30,18 @@ const sourceEnv = () => ({
 })
 
 describe('analysis common-worker bridge', () => {
+  it('refuses work after its originating controller has ended', async () => {
+    const script = workflow.jobs.validate.steps.find((step: { id?: string }) => step.id === 'source-run').with.script
+    const verify = new AsyncFunction('github', 'process', script)
+    for (const status of ['in_progress', 'completed', 'queued']) {
+      const github = {
+        rest: { actions: { getWorkflowRunAttempt: async () => ({ data: { ...sourceRun(), status } }) } },
+      }
+      const result = verify(github, { env: sourceEnv() })
+      if (status === 'in_progress') await result
+      else await expect(result).rejects.toThrow('no longer active')
+    }
+  })
   it('returns only authenticated encrypted application output from public jobs', () => {
     expect(workflow.env.DOCKER_BUILD_RECORD_UPLOAD).toBe('false')
     expect(workflow.env.DOCKER_BUILD_SUMMARY).toBe('false')
@@ -136,7 +149,17 @@ describe('analysis common-worker bridge', () => {
   })
 
   it('admits only the exact trusted upstream main run while the source is still current', async () => {
-    for (const scenario of ['valid', 'stale', 'other-repo', 'wrong-sha', 'wrong-workflow', 'pr', 'attempt', 'ref']) {
+    for (const scenario of [
+      'valid',
+      'stale',
+      'other-repo',
+      'wrong-sha',
+      'wrong-workflow',
+      'pr',
+      'attempt',
+      'ref',
+      'completed',
+    ]) {
       const run = sourceRun()
       const env = sourceEnv()
       if (scenario === 'other-repo') run.head_repository.full_name = 'other/analysis'
@@ -145,6 +168,7 @@ describe('analysis common-worker bridge', () => {
       if (scenario === 'pr') run.event = 'pull_request'
       if (scenario === 'attempt') run.run_attempt = 1
       if (scenario === 'ref') env.SOURCE_REF = 'refs/heads/other'
+      if (scenario === 'completed') run.status = 'completed'
       const outputs: Record<string, string> = {}
       const github = {
         rest: {
