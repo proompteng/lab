@@ -1,8 +1,8 @@
 package ai.proompteng.dorvud.ws
 
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.header
+import io.ktor.client.request.url
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.websocket.Frame
@@ -65,9 +65,11 @@ internal suspend fun HttpClient.streamAlpacaTradeUpdates(
     val established = CompletableDeferred<Unit>()
     val streaming =
       async {
-        webSocket(
-          urlString = streamUrl,
-          request = { header(HttpHeaders.ContentType, ContentType.Application.Json.toString()) },
+        webSocketWithBoundedCleanup(
+          request = {
+            url(streamUrl)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+          },
         ) {
           maxFrameSize = ALPACA_TRADE_UPDATE_MAX_FRAME_BYTES
           send(
