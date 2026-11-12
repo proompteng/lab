@@ -1,12 +1,13 @@
 # Agent Shell workspace migration to Ceph
 
-Status: Staging procedure. The new claim is not attached to Agent Shell.
+Status: Storage staging only. The independent `agents-workspace` Application owns
+the new claim; copying and attaching it to Agent Shell remain gated below.
 
 ## Scope and evidence
 
 The staged claim is `agents/agents-shell-workspace-ceph-20261112`: 256Gi,
-`ReadWriteOnce`, `rook-ceph-block`. Its manifest is included by the existing
-[Agents Kustomization](../../argocd/applications/agents/kustomization.yaml).
+`ReadWriteOnce`, `rook-ceph-block`. Its manifest is included by the independent
+[workspace Kustomization](../../argocd/applications/agents-workspace/kustomization.yaml).
 Staging does not change the Deployment, image, `/workspace` emptyDir, bootstrap,
 existing `agents-shell-workspace` claim, or any active session.
 
@@ -18,12 +19,40 @@ Agent Shell's local dependency installs coincided with system-disk pressure and
 etcd WAL stalls. Moving this workspace addresses that measured disposable writer;
 it does not establish cluster or ten-runner throughput qualification.
 
+## Separate storage ownership
+
+Putting a staging PVC in the existing Agents directory would not be harmless. The
+`agents-build-push.yml` workflow includes `argocd/applications/agents/**`, so this
+PVC and an Agents Kustomization change would build all four Agents images. The Agents
+Warehouse binds those images to the selected Git commit, and the automatic
+`agents-release/agents` Stage updates all image pins, including Agent Shell.
+That indirect rollout would replace the active emptyDir Pod.
+
+The root Application instead owns the declarative
+[`agents-workspace` Application](../../argocd/applicationsets/agents-workspace.yaml),
+following its existing standalone Application convention. This new owner tracks
+`main`, uses the default Project and manual sync, and renders exactly the protected
+PVC. It has no Namespace creation or management options and renders no Namespace
+or workload. Existing Agents manifests, image triggers, Warehouse/Stage contracts
+and the old PVC's ownership remain unchanged.
+
+The six staging paths were checked against all current main push workflows and
+the pull-request classifier: only hosted Argo lint, Kubernetes schema and script
+validation apply; no native/image workflow matches. Recheck that routing if the
+change set or workflow definitions change. Do not add workflow exclusions, weaken
+Freight/source matching or pause unrelated delivery. The existing Agents
+Application still accepts only its Stage-generated Kargo revision; a scoped sync
+of arbitrary `main` is not a config-only route for that Application.
+
 ## Stage without replacing the source Pod
 
-1. Review and merge the claim through the normal [GitOps delivery
-   path](../release-automation.md). Verify the exact revision and rendered diff:
-   only this PVC is added, and no Namespace or workload changes are present.
-   Reconcile only the new claim when a scoped Argo sync is required.
+1. After review and CI, merge the six staging paths through the normal
+   [GitOps delivery path](../release-automation.md). Verify the exact committed
+   revision and rendered diff: the root adds only the `agents-workspace`
+   Application, its child renders only the new PVC, and the existing Agents render
+   is unchanged. Use a standard scoped root sync for that Application if required,
+   then manually sync `agents-workspace` at the reviewed revision with pruning
+   disabled. No Namespace or workload may be created or changed by these syncs.
 2. Confirm the new claim is Bound to `rook-ceph-block`, has 256Gi capacity and the
    expected access mode. Keep its `Prune=false,Delete=false` protection. Do not
    attach it to the running Deployment or delete/reuse the old 20Gi claim.
