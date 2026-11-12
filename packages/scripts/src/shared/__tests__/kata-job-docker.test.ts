@@ -8,6 +8,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -37,15 +38,20 @@ type FixtureOptions = {
   escapedDaemon?: boolean
   badContainerd?: 'root' | 'state' | 'address' | 'socket'
   systemContainerd?: boolean
+  missingRuntime?: 'containerd' | 'shim' | 'runc'
 }
 
 const fixture = (options: FixtureOptions = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'kata-job-runtime-'))
   const bin = join(root, 'bin')
+  const runtimeBin = join(root, 'bundled-containerd', 'bin')
+  const ambientBin = join(root, 'ambient-bin')
   const runnerTemp = join(root, 'runner-temp')
   const cgroupRoot = join(root, 'cgroup')
   const systemSocket = join(root, 'system-containerd.sock')
   mkdirSync(bin)
+  mkdirSync(runtimeBin, { recursive: true })
+  mkdirSync(ambientBin)
   mkdirSync(runnerTemp)
   chmodSync(runnerTemp, 0o2770)
   mkdirSync(cgroupRoot + leafCgroup, { recursive: true })
@@ -75,11 +81,25 @@ const fixture = (options: FixtureOptions = {}) => {
   )
   const real = (name: string) =>
     spawnSync('bash', ['-c', 'command -v "$1"', '--', name], { encoding: 'utf8' }).stdout.trim()
-  const executable = (name: string, lines: string[]) => {
-    writeFileSync(join(bin, name), ['#!/usr/bin/env bash', 'set -euo pipefail', ...lines, ''].join('\n'), {
+  const executable = (name: string, lines: string[], directory = bin) => {
+    writeFileSync(join(directory, name), ['#!/usr/bin/env bash', 'set -euo pipefail', ...lines, ''].join('\n'), {
       mode: 0o755,
     })
   }
+  if (options.missingRuntime !== 'containerd') {
+    executable('containerd', ['echo matching-containerd-1.7'], runtimeBin)
+  }
+  if (options.missingRuntime !== 'shim') {
+    executable('containerd-shim-runc-v2', ['echo matching-shim-1.7'], runtimeBin)
+  }
+  if (options.missingRuntime !== 'runc') executable('runc', ['echo pinned-runc'])
+  symlinkSync(join(runtimeBin, 'containerd'), join(bin, 'containerd'))
+  executable(
+    'containerd-shim-runc-v2',
+    ['echo ambient > "$FIXTURE_ROOT/ambient-shim-used"', 'echo foreign-shim-2.3'],
+    ambientBin,
+  )
+  executable('runc', ['echo ambient > "$FIXTURE_ROOT/ambient-runc-used"', 'echo foreign-runc'], ambientBin)
   executable('sudo', ['[[ "$1" == -n ]] && shift', 'export FIXTURE_ELEVATED=1', 'exec "$@"'])
   executable('readlink', [
     'for last; do :; done',
@@ -94,6 +114,12 @@ const fixture = (options: FixtureOptions = {}) => {
     'exec "$REAL_STAT" "$@"',
   ])
   executable('dockerd', [
+    // Model nixpkgs' libexec prefix: pinned runc is present, but the v2 shim is not.
+    'export PATH="$FIXTURE_ROOT/bin:$PATH"',
+    'command -v containerd-shim-runc-v2 > "$FIXTURE_ROOT/daemon-shim-path"',
+    'containerd-shim-runc-v2 --version > "$FIXTURE_ROOT/daemon-shim-version"',
+    'command -v runc > "$FIXTURE_ROOT/daemon-runc-path"',
+    'runc --version > "$FIXTURE_ROOT/daemon-runc-version"',
     'printf "%s\\n" "$@" > "$FIXTURE_ROOT/daemon-args"',
     'printf "%s" "$DOCKER_TMPDIR" > "$FIXTURE_ROOT/daemon-tmp"',
     'if [[ "$FAIL_STARTUP" == 1 ]]; then echo "fixture startup failure"; exit 9; fi',
@@ -167,7 +193,7 @@ const fixture = (options: FixtureOptions = {}) => {
     timeout: 15000,
     env: {
       ...process.env,
-      PATH: bin + ':' + process.env.PATH,
+      PATH: bin + ':' + ambientBin + ':' + process.env.PATH,
       RUNNER_TEMP: runnerTemp,
       FIXTURE_ROOT: root,
       FIXTURE_ELEVATED: '0',
@@ -229,6 +255,15 @@ describe('Kata job-owned Docker runtime', () => {
           expect(args).toContain(flag)
         }
         expect(readFileSync(join(root, 'daemon-tmp'), 'utf8')).toBe(join(state, 'tmp'))
+        expect(readFileSync(join(root, 'daemon-shim-path'), 'utf8').trim()).toBe(
+          join(root, 'bundled-containerd', 'bin', 'containerd-shim-runc-v2'),
+        )
+        expect(readFileSync(join(root, 'daemon-shim-version'), 'utf8').trim()).toBe('matching-shim-1.7')
+        expect(readFileSync(join(root, 'daemon-runc-path'), 'utf8').trim()).toBe(join(root, 'bin', 'runc'))
+        expect(readFileSync(join(root, 'daemon-runc-version'), 'utf8').trim()).toBe('pinned-runc')
+        expect(existsSync(join(root, 'ambient-shim-used'))).toBe(false)
+        expect(existsSync(join(root, 'ambient-runc-used'))).toBe(false)
+        expect(result.stdout).toContain('Kata runtime provenance:')
         expect(readFileSync(join(root, 'client-paths'), 'utf8').trim().split('\n')).toEqual([
           'unix://' + join(state, 'docker.sock'),
           join(state, 'client'),
@@ -245,6 +280,21 @@ describe('Kata job-owned Docker runtime', () => {
         const pid = readFileSync(join(root, 'daemon-pid'), 'utf8')
         expect(existsSync('/proc/' + pid)).toBe(false)
         expect(existsSync(join(state, 'dockerd.log'))).toBe(true)
+      } finally {
+        cleanup()
+      }
+    })
+  }
+
+  for (const missingRuntime of ['containerd', 'shim', 'runc'] as const) {
+    it('rejects a missing bundled ' + missingRuntime + ' before starting a daemon', () => {
+      const { root, result, cleanup } = fixture({ missingRuntime })
+      try {
+        expect(result.error).toBeUndefined()
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('requires the Docker-bundled containerd, runc-v2 shim, and runc')
+        expect(existsSync(join(root, 'daemon-args'))).toBe(false)
+        expect(existsSync(join(root, 'ambient-shim-used'))).toBe(false)
       } finally {
         cleanup()
       }

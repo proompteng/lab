@@ -56,6 +56,24 @@ daemon_entry="$(readlink -f "$docker_daemon")"
 # nixpkgs wraps dockerd to expose its pinned containerd/runc dependencies.
 daemon_binary="$(dirname "$(dirname "$daemon_entry")")/libexec/docker/dockerd"
 [[ -x "$daemon_binary" ]] || daemon_binary="$daemon_entry"
+# The pinned nixpkgs wrapper links containerd but omits its runc-v2 shim.
+# containerd searches PATH before its own bin directory, so an ambient newer
+# shim can speak an incompatible bootstrap protocol to the bundled daemon.
+daemon_support="$(dirname "$daemon_binary")"
+containerd_binary="$(readlink -f "$daemon_support/containerd")"
+containerd_bin="$(dirname "$containerd_binary")"
+containerd_shim="$containerd_bin/containerd-shim-runc-v2"
+runc_binary="$(readlink -f "$daemon_support/runc")"
+if [[ ! -x "$containerd_binary" || ! -x "$containerd_shim" || ! -x "$runc_binary" ]]; then
+  echo 'Kata packaging requires the Docker-bundled containerd, runc-v2 shim, and runc' >&2
+  exit 1
+fi
+readonly daemon_support containerd_binary containerd_bin containerd_shim runc_binary
+printf 'Kata runtime provenance: dockerd=%s containerd=%s shim=%s runc=%s\n' \
+  "$daemon_binary" "$containerd_binary" "$containerd_shim" "$runc_binary"
+"$containerd_binary" --version
+"$containerd_shim" --version
+"$runc_binary" --version
 state="$(mktemp -d "$RUNNER_TEMP/kata-docker.XXXXXX")"
 docker_host="unix://$state/docker.sock"
 docker_config="$state/client"
@@ -195,7 +213,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 {
-  sudo -n env "PATH=$PATH" "DOCKER_TMPDIR=$state/tmp" "$docker_daemon" \
+  # nixpkgs still prefixes its libexec directory, retaining its pinned runc;
+  # this next directory supplies the matching runc-v2 shim before the base image.
+  sudo -n env "PATH=$containerd_bin:$PATH" "DOCKER_TMPDIR=$state/tmp" "$docker_daemon" \
     --config-file "$state/daemon.json" \
     --host "$docker_host" --group "$(id -g)" \
     --data-root "$state/data" --exec-root "$state/exec" --pidfile "$state/dockerd.pid" \
