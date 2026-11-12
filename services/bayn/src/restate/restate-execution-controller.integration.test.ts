@@ -344,8 +344,9 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
             },
             catch: (cause) => cause,
           })
+          // The idle pass also reads deadline ownership before completing without a successor timer.
           expect(journal).toMatchObject({
-            rows: [{ journal_entries: 0, lazy_tick_state_reads: 0, minimum_tick_entries: 6, maximum_tick_entries: 6 }],
+            rows: [{ journal_entries: 0, lazy_tick_state_reads: 0, minimum_tick_entries: 7, maximum_tick_entries: 7 }],
           })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
