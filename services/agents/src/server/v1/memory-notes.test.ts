@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
+import { summarizeMemoryNote } from '@proompteng/agent-contracts'
 
 import {
   getMemoryNotesCountHandler,
   getMemoryNotesHandler,
+  getMemoryNoteHandler,
   getMemoryNotesStatsHandler,
   postMemoryNotesHandler,
   postRetireMemoryNoteHandler,
@@ -50,7 +52,8 @@ const makeStore = () => {
       async ({ namespace } = {}) =>
         saved.filter((record) => (namespace ? record.namespace === namespace : true)).length,
     ),
-    list: vi.fn(async () => saved),
+    list: vi.fn(async () => ({ ok: true as const, memories: saved.map(summarizeMemoryNote), nextCursor: null })),
+    get: vi.fn(async (id: string) => saved.find((note) => note.id === id) ?? null),
     retire: vi.fn(async () => {
       const note = saved[0]
       if (!note) throw new Error('Memory note not found.')
@@ -67,6 +70,19 @@ const makeStore = () => {
 }
 
 describe('memory notes v1 handlers', () => {
+  it('reports unavailable storage when opening an exact note', async () => {
+    const response = await getMemoryNoteHandler(
+      new Request('http://agents.test/v1/memory-notes/id'),
+      '11111111-1111-4111-8111-111111111111',
+      {
+        storeFactory: () => {
+          throw new Error('DATABASE_URL is required')
+        },
+      },
+    )
+    expect(response.status).toBe(503)
+    expect(await response.json()).toHaveProperty('error', 'DATABASE_URL is required')
+  })
   it('persists and retrieves memory notes through the Agents-owned store', async () => {
     const { store } = makeStore()
     const deps = { storeFactory: () => store }
@@ -79,7 +95,7 @@ describe('memory notes v1 handlers', () => {
       }),
       deps,
     )
-    expect(postResponse.status).toBe(201)
+    expect(postResponse.status).toBe(200)
     await expect(postResponse.json()).resolves.toMatchObject({
       ok: true,
       memory: { namespace: 'demo', content: 'hello world', summary: 'hello' },
