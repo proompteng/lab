@@ -8,6 +8,7 @@ spec:
     metadata:
       annotations:
         gitops.proompteng.ai/config-revision: controller-resource-health-persist-v1
+        gitops.proompteng.ai/repo-budget-revision: cold-repo-v1
     spec:
       containers:
         - name: argocd-application-controller

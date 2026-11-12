@@ -841,9 +841,14 @@ class ForwarderApp(
       awaitAuthOrThrow()
       val initialSymbolsByChannel = feed.config.desiredSymbolsByChannel(initial)
       applySubscribeByChannel(initialSymbolsByChannel)
-      if (feed.config.core) {
-        maybeBackfillTrades(producer, feed.sequence, initialSymbolsByChannel["trades"].orEmpty())
-      }
+      val tradesBackfill =
+        if (feed.config.core) {
+          launch {
+            maybeBackfillTrades(producer, feed.sequence, initialSymbolsByChannel["trades"].orEmpty())
+          }
+        } else {
+          null
+        }
 
       val poller =
         config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let {
@@ -1082,6 +1087,7 @@ class ForwarderApp(
           }
         }
       } finally {
+        tradesBackfill?.cancel()
         poller?.cancel()
         starvationMonitor?.cancel()
         recordMarketDataWsDisconnected(feed)
@@ -1317,6 +1323,7 @@ class ForwarderApp(
         }
     } catch (e: Exception) {
       coreMarketDataFeed.tradesBackfillDone.set(false)
+      currentCoroutineContext().ensureActive()
       logger.warn(e) { "trades backfill failed; will retry when symbols refresh" }
     }
   }
