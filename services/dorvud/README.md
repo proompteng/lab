@@ -120,6 +120,11 @@ During the regular IEX session, the core forwarder reconnects if no provider mar
 `ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS` of the subscription or the last event. This check also runs when the WebSocket
 keeps sending control frames. REST recovery cannot reset the provider-event clock.
 
+Each market-data connection has one ten-second establishment deadline covering the HTTP upgrade, authentication and
+complete subscription acknowledgement. Expiry cancels that attempt before the feed reconnects. The deadline ends at
+authenticated acknowledgement, so healthy streams can continue indefinitely. Crypto publication also requires its
+acknowledged channel membership; early frames cannot allocate sequences or enter Kafka.
+
 ## Crypto source events
 
 The forwarder opens the Alpaca `v1beta3/crypto/{location}` websocket with the same `ALPACA_KEY_ID` and
