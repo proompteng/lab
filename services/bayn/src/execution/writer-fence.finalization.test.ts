@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Semaphore } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from 'effect'
 import type { Connection } from 'effect/sql/SqlConnection'
 
 import { WriterFence, WriterFenceLive } from './writer-fence'
+import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
 
 const fixture = (
   hooks: {
@@ -31,7 +32,7 @@ const fixture = (
         return []
       }),
   } as unknown as Connection
-  const client = {
+  const client = Object.assign(postgresQueryFixture(), {
     reserve: (hooks.reserve ?? Effect.void).pipe(
       Effect.andThen(
         Effect.acquireRelease(Effect.succeed(connection), () =>
@@ -41,9 +42,7 @@ const fixture = (
         ),
       ),
     ),
-    transactionService: Context.Service<[Connection, number]>('test/finalization/transaction'),
-    transactionSemaphoreService: Context.Service<Semaphore.Semaphore>('test/finalization/semaphore'),
-  } as unknown as PgClient.PgClient
+  })
   const layer = WriterFenceLive.pipe(Layer.provide(Layer.succeed(PgClient.PgClient, client)))
   return {
     commands,

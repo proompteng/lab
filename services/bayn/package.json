@@ -48,9 +48,9 @@
     "native:export": "node dist/research/native-arrival-export-command.js"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.0",
-    "@effect/sql-clickhouse": "4.0.0",
-    "@effect/sql-pg": "4.0.0",
+    "@effect/platform-node": "4.1.4",
+    "@effect/sql-clickhouse": "4.1.4",
+    "@effect/sql-pg": "4.1.4",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/core": "2.10.0",
     "@opentelemetry/exporter-trace-otlp-proto": "0.221.0",
@@ -60,7 +60,7 @@
     "@restatedev/restate-sdk": "1.16.5",
     "@restatedev/restate-sdk-opentelemetry": "1.16.5",
     "@sentry/node": "11.8.0",
-    "effect": "4.0.0",
+    "effect": "4.1.4",
     "ml-matrix": "6.15.0",
     "redis": "6.3.0",
     "tigerbeetle-node": "0.17.9"
