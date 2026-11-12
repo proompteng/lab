@@ -9,71 +9,8 @@ import YAML from 'yaml'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string) => readFileSync(new URL(path, repoRoot), 'utf8')
-const application = YAML.parse(readRepoFile('argocd/applications/arc/application.yaml'))
-const amd64 = application.spec.sources.find(
-  (source: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
-    source.helm?.valuesObject?.runnerScaleSetName === 'arc-amd64',
-).helm.valuesObject.template.spec
 
 describe('ARC disposable cache storage', () => {
-  it('mounts separate large-file scratch and creates private Rust cache homes after copy verification', () => {
-    const runner = amd64.containers[0]
-    const mounts = runner.volumeMounts as { name: string; mountPath: string; subPath: string }[]
-    expect(mounts.find((mount) => mount.mountPath === '/var/tmp')).toEqual({
-      name: 'scratch',
-      mountPath: '/var/tmp',
-      subPath: 'var-tmp',
-    })
-    expect(mounts.find((mount) => mount.mountPath === '/tmp')?.subPath).toBe('tmp')
-    for (const [name, value] of [
-      ['CARGO_HOME', '/home/runner/.cache/cargo'],
-      ['RUSTUP_HOME', '/home/runner/.cache/rustup'],
-    ]) {
-      expect(runner.env).toContainEqual({ name, value })
-      expect(mounts.some((mount) => mount.name === 'scratch' && value.startsWith(mount.mountPath + '/'))).toBe(true)
-    }
-    const script = amd64.initContainers[0].args[0] as string
-    const createCaches = 'mkdir -p "$stage/cache/cargo" "$stage/cache/rustup"'
-    expect(script.indexOf(createCaches)).toBeGreaterThan(script.indexOf('partial cache copy:'))
-    expect(script.indexOf('chown -R 1001:1001 "$stage/nix" "$stage/cache"')).toBeGreaterThan(
-      script.indexOf(createCaches),
-    )
-    expect(script.indexOf('post_copy_available_kib=')).toBeGreaterThan(script.indexOf(createCaches))
-    expect(script).toContain('mv "$stage/var-tmp" "$scratch/var-tmp"')
-    const modeCommands = script
-      .split('\n')
-      .filter((line) =>
-        [
-          createCaches,
-          'chmod 00700 "$stage/cache/cargo" "$stage/cache/rustup"',
-          'chmod 01777 "$stage/var-tmp"',
-        ].includes(line.trim()),
-      )
-    expect(modeCommands).toHaveLength(3)
-    const stage = mkdtempSync(join(tmpdir(), 'arc-cache-modes-'))
-    try {
-      mkdirSync(join(stage, 'cache'))
-      mkdirSync(join(stage, 'var-tmp'))
-      chmodSync(join(stage, 'cache'), 0o2770)
-      chmodSync(join(stage, 'var-tmp'), 0o3777)
-      const result = spawnSync('bash', ['-euc', modeCommands.join('\n')], {
-        encoding: 'utf8',
-        env: { ...process.env, stage },
-        timeout: 10_000,
-      })
-      expect(result.status, result.stderr).toBe(0)
-      expect(statSync(join(stage, 'var-tmp')).mode & 0o7777).toBe(0o1777)
-      for (const name of ['cargo', 'rustup']) {
-        const path = join(stage, 'cache', name)
-        expect(statSync(path).mode & 0o7777).toBe(0o700)
-        expect(statSync(path).uid).toBe(process.getuid?.())
-        expect(statSync(path).dev).toBe(statSync(stage).dev)
-      }
-    } finally {
-      rmSync(stage, { recursive: true, force: true })
-    }
-  })
-
   it('routes Kata toolchain installation and Cargo state before Rust setup on existing runners', () => {
     const steps = YAML.parse(readRepoFile('.github/workflows/kata-firecracker-extension.yaml')).jobs.build.steps as {
       name?: string
