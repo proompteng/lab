@@ -165,11 +165,11 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('keeps lab ARC runner concurrency capped', () => {
+  it('keeps AMD64 at the temporary contention cap while preserving other runner pools', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 8')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 0')
     expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 2')
     expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 1')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')

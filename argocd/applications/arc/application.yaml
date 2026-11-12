@@ -111,8 +111,9 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          minRunners: 1
-          maxRunners: 8
+          # Temporary shared-NVMe contention mitigation; see README.md for the restoration gate.
+          minRunners: 0
+          maxRunners: 1
           listenerTemplate:
             spec:
               nodeSelector:

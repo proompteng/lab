@@ -22,9 +22,9 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
-- One `arc-amd64` scale set serves up to eight AMD64 build slots under the existing workflow label on Ryzen and
-  Turin. Each runner reserves 16Gi memory with a 32Gi limit. Required host affinity restricts the set to those two
-  nodes; soft host spreading lets available Turin capacity accept jobs when Ryzen has insufficient memory.
+- One `arc-amd64` scale set temporarily serves one AMD64 build slot with no idle runner under the existing workflow
+  label on Ryzen and Turin. Each runner reserves 16Gi memory with a 32Gi limit. Required host affinity restricts the
+  set to those two nodes; soft host spreading lets available Turin capacity accept jobs when Ryzen has insufficient memory.
   `arc-arm64` has eight build slots on Altra; `analysis-arm64` retains its separate one-slot limit.
 - `analysis-arm64` keeps its 20Gi disposable workspace and one worker. Its single runner container reserves two CPUs,
   4Gi memory and 20Gi ephemeral storage, with limits of ten CPUs, 18Gi memory and 72Gi storage. These preserve the
@@ -65,7 +65,9 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 ## AMD64 capacity
 
-The single `arc-amd64` scale set has `minRunners: 1` and `maxRunners: 8`. Keep its existing GitHub identity and label.
+The single `arc-amd64` scale set temporarily has `minRunners: 0` and `maxRunners: 1` to contain shared-system-NVMe
+contention. The normal target remains `minRunners: 1` and `maxRunners: 8`, subject to the restoration gate below.
+Keep its existing GitHub identity and label.
 Separate ARC sets with a duplicate label do not provide a reliable combined queue, and ARC 0.14.2 does not update an
 existing registered set's labels. Native builds keep that one label; publication has its own `arc-amd64-publish` label
 with `minRunners: 1` and `maxRunners: 2`.
@@ -85,7 +87,8 @@ workflow's own publication job can wait for a pool whose creation depends on tha
 the native build queues and retain its validation, signatures and discovery gates.
 
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. Sync and verify the
-reviewed `local-path` configuration before enabling Turin. Keep one idle runner per set. The manual
+reviewed `local-path` configuration before enabling Turin. Only the temporary AMD64 mitigation removes its idle
+runner; the other sets retain their current limits. After restoring AMD64 capacity, the unchanged manual
 `ARC placement acceptance` workflow verifies eight distinct build runners and two distinct publication runners
 with at least 45 seconds of shared occupancy, local XFS scratch and exact BuildKit output checksums. Run it after
 the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot start. This proves slots and tooling, not sustained
@@ -97,6 +100,26 @@ checks with the Actions service before deleting a runner. Do not delete runner P
 GitHub's [official ARC scale-set documentation](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets#example-jobs-queue-draining)
 documents strict queue draining as setting both `minRunners` and `maxRunners` to `0`. Reserve that mode for an explicitly
 coordinated emergency drain because the ordinary ARC image/Kargo workflow also requires an AMD64 runner.
+
+### Temporary storage-contention mitigation
+
+The 2026-11-12 incident reproduced under normal AMD64 CI load. Turin's etcd WAL `fdatasync` took 85.048 seconds
+and 27.090 seconds at 09:30 UTC, and API readiness failed its etcd checks. At 09:31 UTC the shared system NVMe
+averaged 78.86 MB/s writes, 116.6 ms per write and a weighted queue of 271.7 over two minutes. Read-only cgroup
+samples from 09:30:59 to 09:32:57 attributed 32.09, 7.63 and 4.79 MB/s to three AMD64 runners, including one
+scratch initializer. The quiet interval before that wave did not establish stability under build load.
+
+The temporary 0–1 limit uses the documented fallback and lets accepted jobs finish normally. It changes no
+runner placement, scratch path, durable storage, memory limit, ARM64 capacity or publication capacity. Do not
+delete active runner Pods. Verify the promoted Kargo revision and effective limit, then observe representative
+native image builds before treating the mitigation as successful.
+
+Restore capacity through a separate reviewed change after addressing the shared-storage bottleneck. Increase
+concurrency in reviewed stages through the same delivery path and record a continuous 30-minute representative
+build window at each stage with healthy API/etcd readiness, no new slow WAL-sync warnings or recurring
+reconciliation timeouts, and measured device write/flush latency and queue depth. Once eight build slots are
+enabled, run the unchanged placement acceptance workflow and representative concurrent image builds before
+claiming eight-slot stability. The one-slot mitigation is not eight-slot acceptance or permanent storage isolation.
 
 GitHub can reject an outdated runner binary and ARC then marks its scale set `Outdated`, removes its listener, and
 stops scheduling jobs. A successful controller health check does not prove runner capacity. If every build runner
