@@ -33,7 +33,7 @@ import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { CandidateObservationStore, candidateObservationLog } from '../observe-composition/candidate-observation'
-import { makeJevObservation, restoreJevObservation } from './observation'
+import { makeJevObservation } from './observation'
 import { canonicalHashV1Result } from '../hash'
 import { JevInferenceWorkStore } from './inference-work'
 import {
@@ -226,7 +226,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         if (resumed !== null) {
           const batches = yield* JevBatchStore
           const retained = yield* batches.read(resumed.batchId)
-          const original = yield* Effect.fromResult(restoreJevObservation(resumed.observation))
+          const original = resumed.source
           if (
             retained === null ||
             retained.result === null ||

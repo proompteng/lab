@@ -467,7 +467,9 @@ inference-expense owner. Its SQL page scan and persisted retry backoff never run
 
 Completion returns a compact event to the same account owner, bound to its source revision and activation epoch.
 The owner resumes the original retained observation and result rather than discovering another batch for the consumed
-window. Admission commits the already verified source reference so a replacement worker can verify that same manifest
+window. The resume reader reconstructs and verifies the complete admitted source once at the database boundary and returns
+that typed graph to the owner, including its snapshot and content hash. Admission commits the already verified source
+reference so a replacement worker can verify that same manifest
 without treating replayed bytes as a new live capture. Before binding or transmitting, the existing financial path
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
