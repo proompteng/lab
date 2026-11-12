@@ -314,9 +314,7 @@ data:
   dex.config: |
     issuer: https://argocd.proompteng.ai/api/dex
     storage:
-      type: kubernetes
-      config:
-        inCluster: true
+      type: memory
     web:
       http: 0.0.0.0:5556
     telemetry:

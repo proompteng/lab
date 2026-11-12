@@ -42,6 +42,7 @@ def main() -> None:
     assert config["PAPERLESS_AI_LLM_MODEL"] == "qwen38-flamingo"
     assert config["PAPERLESS_AI_LLM_EMBEDDING_BACKEND"] == "huggingface"
     assert config["PAPERLESS_DBENGINE"] == "postgresql"
+    assert config["PAPERLESS_PORT"] == "8000"
     assert config["PAPERLESS_TIKA_ENABLED"] == "true"
 
     secret = resource("ExternalSecret", "paperless-runtime")["spec"]
@@ -65,6 +66,7 @@ def main() -> None:
     pod = deployment["template"]["spec"]
     assert pod["securityContext"]["runAsNonRoot"] is True
     assert pod["automountServiceAccountToken"] is False
+    assert pod["enableServiceLinks"] is False
     container = pod["containers"][0]
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
     assert "@sha256:" in container["image"]

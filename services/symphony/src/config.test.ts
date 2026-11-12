@@ -43,7 +43,7 @@ describe('config normalization', () => {
           promotion_authority: 'kargo',
           required_checks_source: 'branch_protection',
           promotion_branch_prefix: 'codex/jangar-release-',
-          kargo_project: 'lab-delivery',
+          kargo_project: 'symphony-release',
           kargo_warehouse: 'jangar',
           kargo_branch: 'kargo/jangar',
           kargo_stages: ['jangar'],
@@ -101,7 +101,7 @@ describe('config normalization', () => {
     expect(config.release).toMatchObject({
       mode: 'kargo_auto',
       promotionAuthority: 'kargo',
-      kargoProject: 'lab-delivery',
+      kargoProject: 'symphony-release',
       kargoWarehouse: 'jangar',
       kargoBranch: 'kargo/jangar',
       kargoStages: ['jangar'],

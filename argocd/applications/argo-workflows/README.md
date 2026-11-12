@@ -40,3 +40,7 @@ MC_CONFIG_DIR="$tmp" mc alias set --api S3v4 argo \
 
 MC_CONFIG_DIR="$tmp" mc ls argo/argo-workflows
 ```
+
+The Application disables server-side diff because the versioned CRD installer image changes an immutable Job
+template. Its existing `Force=true,Replace=true` sync policy recreates that Job before the controller and server
+roll. Server-side apply remains enabled for reconciliation.

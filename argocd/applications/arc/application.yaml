@@ -68,7 +68,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:83c37d9eaef4112d6773facf2ad35f6a91fb6660067d2276a1047623bb74b8d7
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:182dff8ce5d6d9066325099de840e59c39020b81d23c05251cce607b9f70df12
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -142,7 +142,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:83c37d9eaef4112d6773facf2ad35f6a91fb6660067d2276a1047623bb74b8d7
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:182dff8ce5d6d9066325099de840e59c39020b81d23c05251cce607b9f70df12
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -231,7 +231,8 @@ spec:
                       # copied modes and links while making writable Nix state owned by that user.
                       chown -R 1001:1001 "$stage/nix" "$stage/cache"
                       chmod 755 "$stage/nix" "$stage/nix/store" "$stage/nix/var" "$stage/cache"
-                      chmod 1777 "$stage/tmp"
+                      # The leading zero clears fsGroup's inherited setgid bit before Nix builds use /tmp.
+                      chmod 01777 "$stage/tmp"
                       chown 0:1001 "$stage/work"
                       chmod 2777 "$stage/work"
 
@@ -262,7 +263,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:83c37d9eaef4112d6773facf2ad35f6a91fb6660067d2276a1047623bb74b8d7
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:182dff8ce5d6d9066325099de840e59c39020b81d23c05251cce607b9f70df12
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -372,7 +373,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:83c37d9eaef4112d6773facf2ad35f6a91fb6660067d2276a1047623bb74b8d7
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:182dff8ce5d6d9066325099de840e59c39020b81d23c05251cce607b9f70df12
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -467,7 +468,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:83c37d9eaef4112d6773facf2ad35f6a91fb6660067d2276a1047623bb74b8d7
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:182dff8ce5d6d9066325099de840e59c39020b81d23c05251cce607b9f70df12
                   securityContext:
                     privileged: false
                   command: [ "/home/runner/run.sh" ]

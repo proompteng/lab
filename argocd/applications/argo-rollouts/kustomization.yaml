@@ -15,9 +15,6 @@ helmCharts:
         replicas: 2
         metrics:
           enabled: true
-        extraEnv:
-          - name: ARGO_ROLLOUTS_ANALYSIS_JOB_NAMESPACE
-            value: torghut
         readinessProbe:
           httpGet:
             path: /metrics
