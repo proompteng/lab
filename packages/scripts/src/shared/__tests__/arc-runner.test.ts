@@ -75,19 +75,20 @@ describe('ARC Nix runner toolchain', () => {
   it('keeps runner scratch disposable while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
-    expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
+    expect(
+      YAML.parse(arcApplication)
+        .spec.sources.map(
+          (source: { helm: { valuesObject: { runnerScaleSetName?: string } } }) =>
+            source.helm.valuesObject.runnerScaleSetName,
+        )
+        .filter(Boolean),
+    ).toEqual(['arc-arm64', 'arc-amd64'])
     expect(arcApplication).not.toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
     expect(armBlock).toContain('storageClassName: rook-ceph-block')
     expect(armBlock).toContain('storage: 100Gi')
     expect(armBlock).not.toContain('emptyDir:')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
-    const analysisBlock = runnerScaleSetBlock('analysis-arm64')
-    expect(analysisBlock).toContain('emptyDir:')
-    expect(analysisBlock).toContain('sizeLimit: 20Gi')
-    expect(analysisBlock).not.toContain('ACTIONS_RUNNER_CONTAINER_HOOKS')
-    expect(analysisBlock).not.toContain('volumeClaimTemplate:')
-    expect(analysisBlock).not.toContain('storageClassName: "rook-ceph-block"')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
@@ -106,7 +107,7 @@ describe('ARC Nix runner toolchain', () => {
       ],
     })
 
-    for (const name of ['arc-arm64', 'analysis-arm64']) {
+    for (const name of ['arc-arm64']) {
       const source = application.spec.sources.find(
         (candidate: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
           candidate.helm?.valuesObject?.runnerScaleSetName === name,
@@ -440,7 +441,7 @@ fi
 
   it('isolates each job in a private BuildKit process without a sidecar or shared cache', () => {
     const application = YAML.parse(arcApplication)
-    for (const index of [1, 2, 3]) {
+    for (const index of [1, 2]) {
       const pod = application.spec.sources[index].helm.valuesObject.template.spec
       expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
       expect(JSON.stringify(pod)).not.toMatch(/DOCKER_HOST|podman|hostPath|dind|tcp:\/\//)
@@ -468,8 +469,6 @@ fi
     }
 
     expect(runnerScaleSetBlock('arc-arm64')).toContain('storage: 100Gi')
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
-    expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {

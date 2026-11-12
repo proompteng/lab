@@ -18,7 +18,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
   the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
   socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The
-  `analysis-arm64` set uses the same private-process model through its workflow in `gregkonush/analysis`.
+  Shared ARM workflows use the same private-process model for application image builds.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
@@ -27,16 +27,16 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   of 20 CPUs and 32Gi memory. Required hostname selectors keep workers off Ryzen.
 - Publication jobs use the normal `arc-amd64` queue. They retain their existing manifest/index validation,
   signatures, receipts and discovery gates, but no longer have reserved workers or a separate scheduling label.
-- The separately registered `analysis-arm64` runner serves `gregkonush/analysis`, not `proompteng/lab`.
-  GitHub repository-scoped scale sets cannot share that registration. It retains its one-worker, 20Gi local workspace
-  until an explicit retirement or repository migration; it is not one of the two lab queues.
+- External repositories dispatch their workflows into lab to use the common pools. Repository-scoped scale sets
+  cannot serve another repository directly. The shared entry point checks out an immutable source commit and calls
+  application-owned actions; application build details stay in the owning repository.
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
 - Each AMD64 and normal ARM64 build runner uses one 100Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
   for `/nix`, `/home/runner/.cache`, `/tmp`, `/var/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
   filesystem in `replicapool`. The init rejects other filesystems, non-RBD devices and the runner root filesystem,
   then copies the image's Nix tree and cache with the existing byte, file-count, symlink and ownership checks.
-  The PVC is deleted with its runner Pod. Publication uses the same scratch volume; analysis retains its separate storage.
+  The PVC is deleted with its runner Pod. Publication and external application builds use the same scratch volume.
 - `/var/tmp` has a separate `var-tmp` subdirectory with explicit mode `01777`; large archive tools can use their
   normal temporary directory without writing to the runner overlay. Both native build sets expose `CARGO_HOME`
   and `RUSTUP_HOME` beneath the Ceph-backed cache. The init creates these directories after verifying the seed
