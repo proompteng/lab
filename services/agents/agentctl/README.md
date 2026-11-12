@@ -221,6 +221,9 @@ bun run build:bins    # builds all platform binaries
 bun run build:release # builds archives + checksums in dist/release
 ```
 
+The npm entry uses the installed `@grpc/proto-loader` package so its protobuf serializers retain Node Buffer support.
+The standalone binaries bundle all dependencies.
+
 ## Release (npm + Homebrew)
 
 1. Build binaries for each target platform:

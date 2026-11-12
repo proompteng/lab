@@ -1,0 +1,82 @@
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: pelican-wings-rootdisk
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  source:
+    http:
+      url: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
+  storage:
+    accessModes: [ReadWriteOnce]
+    volumeMode: Filesystem
+    storageClassName: rook-ceph-block
+    resources:
+      requests:
+        storage: 40Gi
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: pelican-wings
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: pelican-wings
+        app.kubernetes.io/name: pelican-wings
+    spec:
+      architecture: amd64
+      nodeSelector:
+        kubernetes.io/hostname: turin
+        kubernetes.io/arch: amd64
+      domain:
+        cpu:
+          cores: 4
+        resources:
+          requests:
+            cpu: "1"
+            memory: 6Gi
+          limits:
+            cpu: "4"
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+              ports:
+                - name: api
+                  port: 8080
+                  protocol: TCP
+                - name: sftp
+                  port: 2022
+                  protocol: TCP
+                - name: forest
+                  port: 10999
+                  protocol: UDP
+                - name: caves
+                  port: 11000
+                  protocol: UDP
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: pelican-wings-rootdisk
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            secretRef:
+              name: pelican-bootstrap
