@@ -214,24 +214,24 @@ let
     };
   };
 
-  argoWorkflowsVersion = "4.0.5";
+  argoWorkflowsVersion = "4.1.6";
   argoWorkflowsSource = sourceFor "argo-workflows" {
     x86_64-linux.src = fetchurl {
       name = "argo-linux-amd64.gz";
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-linux-amd64.gz";
-      hash = "sha256-hzJBjzvJMOnqDivklycM8kW1XHrJrhFoVnQ/a8MnM8A=";
+      hash = "sha256-iF+IajONfnwP1KaBFSdw+1TfGEf4/FXq7XiNZhwDBOA=";
     };
     aarch64-linux.src = fetchurl {
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-linux-arm64.gz";
-      hash = "sha256-KAaD9NKcQzxhS7xH2GONLKCVqY4VD4IbcaQHMmBuNMs=";
+      hash = "sha256-wRmWqVMpKI68xR5YMK001h7WhNUoAlGChZYwVZn5K/U=";
     };
     x86_64-darwin.src = fetchurl {
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-darwin-amd64.gz";
-      hash = "sha256-zztdjIKQLeFj5+85L/vajBdnFiDIInhdFORwVVY+FlQ=";
+      hash = "sha256-/97MfFktPih4IQxY//dBLoC1TVqx0OJaFWwZ9ghLMFo=";
     };
     aarch64-darwin.src = fetchurl {
       url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-darwin-arm64.gz";
-      hash = "sha256-/lFleWUZwKS6riwgAQ4LDh3ra6jzycXC7qIb2INJ4Go=";
+      hash = "sha256-DJXFOsIuFfJGW7zbrf5i6W9A7M9wy9K5NG4hJmeOKeQ=";
     };
   };
 
@@ -241,11 +241,7 @@ let
       archiveRoot = "shellcheck-v${shellcheckVersion}";
       src = fetchurl {
         name = "shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
-        url = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056942";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/koalaman/shellcheck/releases/download/v${shellcheckVersion}/shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
         hash = "sha256-jDvhKwXVwXegTCnjx4zomshvFZVoHKsUm2W5fE4icZg=";
       };
     };

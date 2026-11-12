@@ -4,12 +4,22 @@ Seal the secret
 kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed.yaml
 ```
 
-## Argo CD v3.5.2 upgrade
+## Argo CD v3.6.1 upgrade
 
-The control plane is pinned to the complete upstream HA manifest for Argo CD v3.5.2. The upgrade from v3.4.6 is a
-single GitOps reconciliation; do not update only the container images. Argo CD 3.5 embeds Helm 4, but every enabled
+The control plane is pinned to the complete upstream HA manifest for Argo CD v3.6.1. The upgrade from v3.5.2 is a
+single GitOps reconciliation; do not update only the container images. Argo CD 3.6 embeds Helm 4, but every enabled
 OCI Helm source in this cluster uses HTTPS-backed GHCR or Docker Hub. Do not add `insecureOCIForceHttp`, a Helm v3
 override, or a second rendering path. Lovely remains the renderer for Applications that already select that plugin.
+
+The companion releases are Kargo 1.12.5, Argo Workflows 4.1.6 (chart 2.0.18), and Argo Rollouts 1.10.2
+(chart 2.43.12). Reconcile Argo CD first, then Workflows and Rollouts, then Kargo. Kargo 1.12 uses only the
+existing `systemResources` and `sharedResources` namespace settings; the removed `clusterSecretsNamespace`
+settings must not be restored. Both configured namespaces are already `kargo`, so no Secret migration is needed.
+
+Argo CD 3.6 uses server-side diff for Applications with server-side apply. Admission failures can therefore appear
+during comparison before a sync. Workflows 4.1.6 retains the installed 4.1.2 SSO token format. Kargo 1.12 changes
+image creation-time discovery, so compare the selected Freight with the pre-upgrade record before accepting a new
+promotion. Existing publication annotations remain the artifact eligibility contract.
 
 Before syncing the merged revision, require `argocd`, `root`, and `kargo` to be Synced and Healthy, ensure no Kargo
 Promotion is running, and record any existing non-Healthy Stage so it is not attributed to this upgrade:
@@ -106,7 +116,7 @@ invocations are not deleted by either the rollout or rollback; only Argo's healt
 
 ## CloudNativePG major-upgrade health
 
-The Cluster health customization preserves the Argo CD v3.5.2 phase classifications except that
+The Cluster health customization preserves the Argo CD v3.6.1 phase classifications except that
 `Upgrading Postgres major version` is `Progressing`. CNPG uses this phase during a normal native major upgrade;
 classifying it as `Degraded` causes Argo to fail the sync and Kargo to exhaust deployment retries while the database
 is still upgrading. Later waves remain held until CNPG reports `Cluster in healthy state`. Delayed upgrades,

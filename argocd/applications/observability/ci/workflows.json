@@ -27,8 +27,8 @@
       "pattern": "^Publication slot .*(?: \\(.*\\))?$"
     },
     {
-      "id": "local-build",
-      "pattern": "^Build slot .* local scratch build(?: \\(.*\\))?$"
+      "id": "ceph-build",
+      "pattern": "^Build slot .* Ceph scratch build(?: \\(.*\\))?$"
     },
     {
       "id": "verify-placement",

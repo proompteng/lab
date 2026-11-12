@@ -81,7 +81,7 @@ internal sealed interface BrokerFeedNotification {
 internal data class SignedBrokerNotification(
   val message: String,
   val signature: String,
-  val schemaVersion: String = "bayn.signed-broker-notification.v1",
+  val schemaVersion: String,
 )
 
 internal fun brokerFeedSha256(value: String): String =
@@ -109,7 +109,7 @@ internal fun signBrokerNotification(
   val mac = Mac.getInstance("HmacSHA256")
   mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
   val signature = mac.doFinal("$BROKER_NOTIFICATION_VERSION\n$message".toByteArray(Charsets.UTF_8)).toHex()
-  return SignedBrokerNotification(message, signature)
+  return SignedBrokerNotification(message, signature, "bayn.signed-broker-notification.v1")
 }
 
 internal class VerifiedBrokerFeed(

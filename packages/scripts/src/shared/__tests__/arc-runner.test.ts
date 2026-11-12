@@ -1,4 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -10,6 +13,7 @@ const setupAction = readRepoFile('.github/actions/setup-nix-toolchain/action.yml
 const arcApplication = readRepoFile('argocd/applications/arc/application.yaml')
 const arcRunnerImage = readRepoFile('nix/images/arc-runner.nix')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
+const arcPlacementAcceptance = readRepoFile('.github/workflows/arc-placement-acceptance.yml')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const argoLintWorkflow = readRepoFile('.github/workflows/argo-lint.yml')
@@ -58,7 +62,7 @@ const arcNixSetupSteps = (workflow: string) => {
 }
 
 describe('ARC Nix runner toolchain', () => {
-  it('keeps ARC runner scratch writes off shared Ceph while making runner images releasable by digest', () => {
+  it('keeps runner scratch disposable while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
@@ -67,7 +71,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(armBlock).toContain('emptyDir:')
     expect(armBlock).toContain('sizeLimit: 130Gi')
     expect(armBlock).not.toContain('volumeClaimTemplate:')
-    expect(arcApplication).not.toMatch(/storageClassName:\s*["']?rook-ceph/)
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
     const analysisBlock = runnerScaleSetBlock('analysis-arm64')
     expect(analysisBlock).toContain('emptyDir:')
     expect(analysisBlock).toContain('sizeLimit: 20Gi')
@@ -112,9 +116,9 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('places AMD64 Nix and workspace writes on one disposable local NVMe volume', () => {
+  it('places AMD64 Nix and workspace writes on one disposable Ceph RBD volume', () => {
     const application = YAML.parseDocument(arcApplication)
-    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {
+    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'rook-ceph-block']] as const) {
       const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
       expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe(name)
       expect(application.getIn([...valuesPath, 'scaleSetLabels']).toJSON()).toContain('arc-amd64')
@@ -123,7 +127,7 @@ describe('ARC Nix runner toolchain', () => {
 
       const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
       expect(pod.toJSON()).toMatchObject({
-        nodeSelector: { 'kubernetes.io/arch': 'amd64' },
+        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' },
         initContainers: expect.arrayContaining([
           expect.objectContaining({
             volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
@@ -149,7 +153,7 @@ describe('ARC Nix runner toolchain', () => {
                   accessModes: ['ReadWriteOnce'],
                   storageClassName: storageClass,
                   volumeMode: 'Filesystem',
-                  resources: { requests: { storage: '45Gi' } },
+                  resources: { requests: { storage: '130Gi' } },
                 },
               }),
             },
@@ -165,11 +169,11 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('keeps lab ARC runner concurrency capped', () => {
+  it('keeps ten warm AMD64 runners while preserving the other runner pools', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 8')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 10')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 10')
     expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 2')
     expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 1')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
@@ -178,13 +182,17 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
-  it('maps AMD64 runner scratch only to designated local storage paths', () => {
+  it('pins AMD64 builds to Turin without repurposing the existing local storage paths', () => {
     const application = YAML.parseDocument(arcApplication)
     const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
     if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
     expect(pod.toJSON().nodeSelector).toEqual({
       'kubernetes.io/arch': 'amd64',
+      'kubernetes.io/hostname': 'turin',
     })
+    expect(pod.getIn(['volumes', 0, 'ephemeral', 'volumeClaimTemplate', 'spec', 'storageClassName'])).toBe(
+      'rook-ceph-block',
+    )
     expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
@@ -201,6 +209,74 @@ describe('ARC Nix runner toolchain', () => {
       'local-path-bayn-wal',
       'local-path-ci-amd64',
     ])
+  })
+
+  it('admits only a separate Ceph RBD ext4 scratch mount before touching files', () => {
+    const application = YAML.parse(arcApplication)
+    const script = application.spec.sources[2].helm.valuesObject.template.spec.initContainers[0].args[0] as string
+    const boundary = script.indexOf('# A terminated init')
+    if (boundary < 0) throw new Error('Scratch admission boundary is missing')
+    const admission = script.slice(0, boundary)
+    const directory = mkdtempSync(join(tmpdir(), 'arc-scratch-admission-'))
+    writeFileSync(
+      join(directory, 'df'),
+      `#!/bin/sh
+for path do :; done
+printf 'Filesystem Type Blocks Used Available Capacity Mounted\\n'
+if [ "$path" = / ]; then
+  printf '%s overlay 1 0 1 0%% /\\n' "$ARC_TEST_ROOT"
+else
+  printf '%s %s 1 0 1 0%% /scratch\\n' "$ARC_TEST_DEVICE" "$ARC_TEST_FSTYPE"
+fi
+`,
+      { mode: 0o755 },
+    )
+    try {
+      for (const [device, filesystem, root, status] of [
+        ['/dev/rbd0', 'ext4', 'overlay', 0],
+        ['/dev/rbd12', 'ext4', 'overlay', 0],
+        ['/dev/nvme3n1p4', 'ext4', 'overlay', 1],
+        ['/dev/rbd0', 'xfs', 'overlay', 1],
+        ['overlay', 'overlay', 'overlay', 1],
+        ['/dev/rbd0', 'ext4', '/dev/rbd0', 1],
+      ] as const) {
+        const result = spawnSync('bash', ['-c', admission], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            ARC_TEST_DEVICE: device,
+            ARC_TEST_FSTYPE: filesystem,
+            ARC_TEST_ROOT: root,
+          },
+        })
+        expect(result.status, `${device} ${filesystem} root=${root}: ${result.stderr}`).toBe(status)
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('requires ten Ceph builders and two publication runners without weakening the overlap proof', () => {
+    const jobs = YAML.parse(arcPlacementAcceptance).jobs
+    expect(jobs['ceph-build'].strategy.matrix.slot).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(jobs['ceph-build'].strategy['max-parallel']).toBe(10)
+    expect(jobs['publication-tools'].strategy.matrix.slot).toEqual([1, 2])
+    expect(jobs['publication-tools'].strategy['max-parallel']).toBe(2)
+    expect(jobs['verify-placement'].needs).toEqual(['ceph-build', 'publication-tools'])
+    for (const job of Object.values(jobs) as { steps: { run?: string }[] }[]) {
+      for (const step of job.steps) {
+        if (step.run) {
+          const syntax = spawnSync('bash', ['-n'], { input: step.run, encoding: 'utf8' })
+          expect(syntax.status, syntax.stderr).toBe(0)
+        }
+      }
+    }
+    expect(arcPlacementAcceptance).toContain('"$RUNNER_TEMP" "$buildkit_root"')
+    expect(arcPlacementAcceptance).toContain('test "$device" = "$scratch_device"')
+    expect(arcPlacementAcceptance).toContain('test "$output_sha" = "$input_sha"')
+    expect(arcPlacementAcceptance).toContain('([.[].pod] | unique | length) == 12')
+    expect(arcPlacementAcceptance).toContain('([.[].end] | min) - ([.[].start] | max) >= 45')
   })
 
   it('reserves small sidecar-free runners for publication outside the native build queues', () => {
