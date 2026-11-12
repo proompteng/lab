@@ -193,7 +193,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(data.nodePathMap).toEqual([])
     expect(data.storageClassConfigs['local-path-ci-amd64'].nodePathMap).toEqual([
       { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
-      { node: 'turin', paths: ['/var/local-path-provisioner/ci-amd64'] },
+      { node: 'turin', paths: ['/var/lib/kubelet/ci-amd64'] },
       { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
     ])
     expect(Object.keys(data.storageClassConfigs).sort()).toEqual([

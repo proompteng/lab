@@ -122,11 +122,7 @@ let
       sourceRoot = ".";
       src = fetchurl {
         name = "kubeconform-linux-amd64.tar.gz";
-        url = "https://api.github.com/repos/yannh/kubeconform/releases/assets/253886788";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/yannh/kubeconform/releases/download/v${kubeconformVersion}/kubeconform-linux-amd64.tar.gz";
         hash = "sha256-wxUY3dEiZjs/Oqh0z+gXjLCYjelE8px0oLkmCSDRFdM=";
       };
     };
@@ -222,11 +218,7 @@ let
   argoWorkflowsSource = sourceFor "argo-workflows" {
     x86_64-linux.src = fetchurl {
       name = "argo-linux-amd64.gz";
-      url = "https://api.github.com/repos/argoproj/argo-workflows/releases/assets/403312239";
-      curlOptsList = [
-        "--header"
-        "Accept: application/octet-stream"
-      ];
+      url = "https://github.com/argoproj/argo-workflows/releases/download/v${argoWorkflowsVersion}/argo-linux-amd64.gz";
       hash = "sha256-hzJBjzvJMOnqDivklycM8kW1XHrJrhFoVnQ/a8MnM8A=";
     };
     aarch64-linux.src = fetchurl {
@@ -249,11 +241,7 @@ let
       archiveRoot = "shellcheck-v${shellcheckVersion}";
       src = fetchurl {
         name = "shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
-        url = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056942";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/koalaman/shellcheck/releases/download/v${shellcheckVersion}/shellcheck-v${shellcheckVersion}.linux.x86_64.tar.xz";
         hash = "sha256-jDvhKwXVwXegTCnjx4zomshvFZVoHKsUm2W5fE4icZg=";
       };
     };
