@@ -39,7 +39,7 @@ spec:
                 - |
                   response=$(mktemp)
                   trap 'rm -f "$response"' EXIT
-                  curl --fail --silent --show-error --location --connect-timeout 5 --max-time 20 "$SMOKE_URL" -o "$response"
+                  curl --fail --silent --show-error --location --retry 5 --retry-connrefused --retry-delay 2 --retry-max-time 20 --connect-timeout 5 --max-time 20 "$SMOKE_URL" -o "$response"
                   if [ "$SMOKE_PATTERN" != "HTTP_STATUS_ONLY" ]; then
                     grep -Eq "$SMOKE_PATTERN" "$response"
                   fi
