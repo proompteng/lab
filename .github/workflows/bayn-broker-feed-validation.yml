@@ -44,7 +44,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: bayn-broker-feed-test-reports
+          name: bayn-broker-feed-test-reports-${{ github.run_attempt }}
           path: |
             services/dorvud/platform/build/test-results/test/*.xml
             services/dorvud/platform/build/reports/tests/test/
