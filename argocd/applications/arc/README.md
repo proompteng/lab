@@ -42,10 +42,16 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
 - Each AMD64 build runner uses one 130Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
-  for `/nix`, `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
+  for `/nix`, `/home/runner/.cache`, `/tmp`, `/var/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
   filesystem in `replicapool`. The init rejects other filesystems, non-RBD devices and the runner root filesystem,
   then copies the image's Nix tree and cache with the existing byte, file-count, symlink and ownership checks.
   The PVC is deleted with its runner Pod. ARM64, analysis and publication workspaces retain their existing storage.
+- `/var/tmp` has its own `var-tmp` subdirectory with explicit mode `01777`; Skopeo uses it for large archive
+  expansion by default. The AMD64 runner also sets `CARGO_HOME` and `RUSTUP_HOME` to private mode-`0700`
+  directories under its Ceph-backed cache mount before any workflow step starts. Ordinary image inspection/push
+  passes Skopeo `--tmpdir` explicitly, and Kata creates private Rust state under `RUNNER_TEMP` before installing
+  Rust. These workflow paths also protect jobs accepted by runners that predate the new mount/environment settings.
+  Preserve the archive, provenance, publication and checksum checks when changing temporary storage.
 - A 130Gi RBD claim has a real filesystem capacity ceiling, unlike the former unbounded local-path directory.
   The init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
   filesystem overhead. The claim size is separate from the runner's unchanged ephemeral-storage resource limit.
@@ -92,8 +98,8 @@ the native build queues and retain its validation, signatures and discovery gate
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. The manual
 `ARC placement acceptance` workflow verifies ten distinct Turin build runners on ten different ext4 RBD devices
 and two distinct publication runners, with at least 45 seconds of shared occupancy and exact BuildKit output
-checksums. All four scratch mounts, `RUNNER_TEMP` and the private BuildKit cache must share each runner's RBD
-filesystem. Run it after the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot
+checksums. All five scratch mounts, both Rust state directories, `RUNNER_TEMP` and the private BuildKit cache
+must share each runner's RBD filesystem. Run it after the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot
 start. This proves slots, placement and tooling. Sustained throughput also requires the representative-build
 observation below. The [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
 checks with the Actions service before deleting a runner. Do not delete runner Pods manually.

@@ -139,6 +139,19 @@ jobs:
           path: .kata-source
           persist-credentials: false
 
+      - name: Place Rust state on job storage
+        run: |
+          set -euo pipefail
+          # Also protect accepted runners that predate the managed cache-home settings.
+          rust_state="$(mktemp -d "${RUNNER_TEMP:?}/rust-state.XXXXXX")"
+          chmod 00700 "$rust_state"
+          mkdir -p "$rust_state/cargo" "$rust_state/rustup"
+          chmod 00700 "$rust_state/cargo" "$rust_state/rustup"
+          {
+            printf 'CARGO_HOME=%s\n' "$rust_state/cargo"
+            printf 'RUSTUP_HOME=%s\n' "$rust_state/rustup"
+          } >> "$GITHUB_ENV"
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
