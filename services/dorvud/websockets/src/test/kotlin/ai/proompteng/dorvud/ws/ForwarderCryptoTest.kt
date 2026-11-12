@@ -7,12 +7,17 @@ import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.statement.HttpResponseContainer
 import io.ktor.client.statement.HttpResponsePipeline
 import io.ktor.http.encodedPath
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.path
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSocketServerSession
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
+import io.ktor.server.websocket.webSocketRaw
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.DefaultWebSocketSession
 import io.ktor.websocket.Frame
@@ -62,11 +67,48 @@ class ForwarderCryptoTest {
   fun `crypto session cancellation reconnects without stopping the equity feed`() = verifyCryptoSession(cancelFirstConnect = true)
 
   @Test
+  fun `stalled crypto HTTP upgrade reconnects and publishes without stopping equity`() =
+    verifyCryptoSession(stall = EstablishmentStage.Upgrade)
+
+  @Test
+  fun `missing crypto authentication reconnects and releases the old socket`() =
+    verifyCryptoSession(stall = EstablishmentStage.Authentication)
+
+  @Test
+  fun `missing crypto subscription acknowledgement reconnects and releases the old socket`() =
+    verifyCryptoSession(stall = EstablishmentStage.Subscription)
+
+  @Test
+  fun `authenticated subscribed crypto session survives the establishment deadline`() = verifyCryptoSession(surviveDeadline = true)
+
+  @Test
+  fun `shutdown cancels a pending crypto HTTP upgrade without reconnecting`() =
+    verifyCryptoSession(stall = EstablishmentStage.Upgrade, stopWhileEstablishing = true)
+
+  @Test
+  fun `shutdown releases a crypto socket waiting for authentication without reconnecting`() =
+    verifyCryptoSession(stall = EstablishmentStage.Authentication, stopWhileEstablishing = true)
+
+  @Test
+  fun `shutdown releases a crypto socket waiting for subscription without reconnecting`() =
+    verifyCryptoSession(stall = EstablishmentStage.Subscription, stopWhileEstablishing = true)
+
+  @Test
+  fun `silent established crypto socket reconnects even when peer ignores the close handshake`() =
+    verifyCryptoSession(reconnectAfterSilence = true)
+
+  @Test
   fun `crypto reauthenticates and resubscribes after a stalled close without restarting equity`() =
     verifyCryptoSession(stallFirstClose = true)
 
+  private enum class EstablishmentStage { Upgrade, Authentication, Subscription }
+
   private fun verifyCryptoSession(
     cancelFirstConnect: Boolean = false,
+    stall: EstablishmentStage? = null,
+    surviveDeadline: Boolean = false,
+    stopWhileEstablishing: Boolean = false,
+    reconnectAfterSilence: Boolean = false,
     stallFirstClose: Boolean = false,
   ) = runBlocking {
     val payloads = Json.parseToJsonElement(File("../fixtures/alpaca-crypto-v1.json").readText()) as JsonArray
@@ -74,47 +116,84 @@ class ForwarderCryptoTest {
     val subscriptions = ConcurrentLinkedQueue<JsonObject>()
     val records = ConcurrentLinkedQueue<ProducerRecord<String, String>>()
     val published = CompletableDeferred<Unit>()
-    val republished = CompletableDeferred<Unit>()
     val bothAuthenticated = CompletableDeferred<Unit>()
+    val stalled = CompletableDeferred<Unit>()
+    val stalledSocketClosed = CompletableDeferred<Unit>()
+    val publishAfterDeadline = CompletableDeferred<Unit>()
     val closeStarted = CompletableDeferred<Unit>()
-    val cryptoConnections = AtomicInteger(0)
     val stalledSession = AtomicReference<Job?>(null)
     val stalledCall = AtomicReference<Job?>(null)
     val stalledWriter = AtomicReference<Job?>(null)
+    val stallNext = AtomicBoolean(stall != null)
+    val cryptoConnections = AtomicInteger()
+    val now = Instant.parse("2026-10-10T02:04:01Z")
+    val clock = AtomicLong(now.toEpochMilli())
+    val expectedPublications = payloads.size * if (reconnectAfterSilence || stallFirstClose) 2 else 1
     val server =
       embeddedServer(CIO, port = 0) {
         install(WebSockets)
+        intercept(ApplicationCallPipeline.Plugins) {
+          if (call.request.path() == "/v1beta3/crypto/us" && stall == EstablishmentStage.Upgrade &&
+            stallNext.compareAndSet(true, false)
+          ) {
+            stalled.complete(Unit)
+            awaitCancellation()
+          }
+        }
         routing {
           for (path in listOf("/v2/iex", "/v1beta3/crypto/us")) {
-            webSocket(path) {
-              send(Frame.Text("""[{"T":"success","msg":"connected"}]"""))
-              authentications += Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
-              if (authentications.size == 2) bothAuthenticated.complete(Unit)
-              send(Frame.Text("""[{"T":"success","msg":"authenticated"}]"""))
-              val subscription = Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
-              subscriptions += subscription
-              val ack = JsonObject(subscription - "action" + ("T" to JsonPrimitive("subscription")))
-              send(Frame.Text(JsonArray(listOf(ack)).toString()))
-              if (path.endsWith("/crypto/us")) {
-                val connection = cryptoConnections.incrementAndGet()
-                val trade = payloads.first().jsonObject
-                val batch =
-                  JsonArray(
-                    listOf(
-                      payloads.first(),
-                      JsonObject(trade + ("t" to JsonPrimitive("invalid-timestamp"))),
-                      JsonObject(trade + ("T" to JsonObject(emptyMap()))),
-                      JsonObject(trade + ("T" to JsonArray(emptyList()))),
-                    ) + payloads.drop(1),
-                  )
-                send(Frame.Text(batch.toString()))
-                if (stallFirstClose && connection == 1) {
-                  close(CloseReason(CloseReason.Codes.GOING_AWAY, "test disconnect"))
-                  return@webSocket
+            val handler: suspend WebSocketServerSession.() -> Unit = session@{
+              val crypto = path.endsWith("/crypto/us")
+              if (crypto) cryptoConnections.incrementAndGet()
+              val stallThisSocket = crypto && stallNext.compareAndSet(true, false)
+              try {
+                send(Frame.Text("""[{"T":"success","msg":"connected"}]"""))
+                authentications += Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
+                if (authentications.size == 2) bothAuthenticated.complete(Unit)
+                if (stallThisSocket && stall == EstablishmentStage.Authentication) {
+                  stalled.complete(Unit)
+                  for (frame in incoming) Unit
+                  return@session
                 }
+                send(Frame.Text("""[{"T":"success","msg":"authenticated"}]"""))
+                val subscription = Json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject
+                subscriptions += subscription
+                if (stallThisSocket && stall == EstablishmentStage.Subscription) {
+                  stalled.complete(Unit)
+                  send(Frame.Text(payloads.toString()))
+                  for (frame in incoming) Unit
+                  return@session
+                }
+                val ack = JsonObject(subscription - "action" + ("T" to JsonPrimitive("subscription")))
+                send(Frame.Text(JsonArray(listOf(ack)).toString()))
+                if (path.endsWith("/crypto/us")) {
+                  val trade = payloads.first().jsonObject
+                  val batch =
+                    JsonArray(
+                      listOf(
+                        payloads.first(),
+                        JsonObject(trade + ("t" to JsonPrimitive("invalid-timestamp"))),
+                        JsonObject(trade + ("T" to JsonObject(emptyMap()))),
+                        JsonObject(trade + ("T" to JsonArray(emptyList()))),
+                      ) + payloads.drop(1),
+                    )
+                  send(Frame.Text(batch.toString()))
+                  if (stallFirstClose && cryptoConnections.get() == 1) {
+                    close(CloseReason(CloseReason.Codes.GOING_AWAY, "test disconnect"))
+                    return@session
+                  }
+                  if (reconnectAfterSilence && cryptoConnections.get() == 1) clock.addAndGet(1001)
+                  if (surviveDeadline) {
+                    publishAfterDeadline.await()
+                    send(Frame.Binary(true, JsonArray(listOf(payloads[1])).toString().toByteArray()))
+                  }
+                }
+                for (frame in incoming) Unit
+              } finally {
+                if (stallThisSocket) stalledSocketClosed.complete(Unit)
               }
-              awaitCancellation()
             }
+            if (reconnectAfterSilence) webSocketRaw(path, handler = handler) else webSocket(path, handler = handler)
           }
         }
       }.start(wait = false)
@@ -125,24 +204,23 @@ class ForwarderCryptoTest {
       val record = firstArg<ProducerRecord<String, String>>()
       records += record
       secondArg<Callback>().onCompletion(metadata, null)
-      val cryptoCount = records.count { it.topic() == "crypto-events" }
-      if (cryptoCount == payloads.size) published.complete(Unit)
-      if (cryptoCount == payloads.size * 2) republished.complete(Unit)
+      if (records.count { it.topic() == "crypto-events" } == expectedPublications) published.complete(Unit)
       CompletableFuture.completedFuture(metadata)
     }
     val config =
-      ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "same-account-key",
-          "ALPACA_SECRET_KEY" to "same-account-secret",
-          "ALPACA_STREAM_URL" to "ws://127.0.0.1:$port",
-          "SYMBOLS" to "SPY",
-          "ALPACA_CRYPTO_SYMBOLS" to "BTC/USD",
-          "TOPIC_CRYPTO_EVENTS" to "crypto-events",
-        ),
-      )
-    val now = Instant.parse("2026-10-10T02:04:01Z")
-    val clock = AtomicLong(now.toEpochMilli())
+      ForwarderConfig
+        .fromEnv(
+          mapOf(
+            "ALPACA_KEY_ID" to "same-account-key",
+            "ALPACA_SECRET_KEY" to "same-account-secret",
+            "ALPACA_STREAM_URL" to "ws://127.0.0.1:$port",
+            "SYMBOLS" to "SPY",
+            "ALPACA_CRYPTO_SYMBOLS" to "BTC/USD",
+            "TOPIC_CRYPTO_EVENTS" to "crypto-events",
+            "RECONNECT_BASE_MS" to "20",
+            "RECONNECT_MAX_MS" to "40",
+          ),
+        ).let { if (reconnectAfterSilence) it.copy(marketDataReadIdleTimeoutMs = 100) else it }
     val cancelConnect = AtomicBoolean(cancelFirstConnect)
     val stallClose = AtomicBoolean(stallFirstClose)
     val client =
@@ -190,22 +268,42 @@ class ForwarderCryptoTest {
     val app = ForwarderApp(config, producerFactory = { producer }, nowMs = clock::get, httpClient = client)
     val job = app.start()
     try {
-      withTimeout(10_000) {
+      if (stopWhileEstablishing) {
+        withTimeout(5000) { stalled.await() }
+        app.stop()
+        withTimeout(5000) { job.join() }
+        assertEquals(if (stall == EstablishmentStage.Upgrade) 0 else 1, cryptoConnections.get())
+        if (stall != EstablishmentStage.Upgrade) withTimeout(5000) { stalledSocketClosed.await() }
+        assertFalse(job.isActive)
+        return@runBlocking
+      }
+      if (stall == EstablishmentStage.Subscription) {
+        withTimeout(5000) { stalled.await() }
+        delay(100)
+        assertTrue(records.none { it.topic() == "crypto-events" })
+        assertFalse(
+          app
+            .readinessInfo()
+            .marketDataFeeds
+            .single { it.feed == "us" }
+            .subscriptionOk,
+        )
+      }
+      withTimeout(14_000) {
         published.await()
         bothAuthenticated.await()
+        if (stall != null && stall != EstablishmentStage.Upgrade) stalledSocketClosed.await()
       }
       if (stallFirstClose) {
-        withTimeout(12_000) {
-          closeStarted.await()
-          republished.await()
-          while (authentications.size < 3 || !app.isReady()) delay(10)
-        }
+        assertTrue(closeStarted.isCompleted)
         assertTrue(requireNotNull(stalledSession.get()).isCancelled)
         assertTrue(requireNotNull(stalledCall.get()).isCancelled)
         assertTrue(requireNotNull(stalledWriter.get()).isCancelled)
-        assertEquals(2, cryptoConnections.get())
       }
-      assertEquals(if (stallFirstClose) 3 else 2, authentications.size)
+      val reestablished =
+        stall == EstablishmentStage.Authentication || stall == EstablishmentStage.Subscription || reconnectAfterSilence || stallFirstClose
+      assertEquals(if (reestablished) 3 else 2, authentications.size)
+      assertEquals(if (reestablished) 2 else 1, cryptoConnections.get())
       assertTrue(
         authentications.all {
           it["key"] == JsonPrimitive("same-account-key") &&
@@ -214,11 +312,11 @@ class ForwarderCryptoTest {
       )
       assertTrue(subscriptions.any { "orderbooks" in it && "updatedBars" in it })
       val crypto = records.filter { it.topic() == "crypto-events" }
-      val expectedPayloads = if (stallFirstClose) payloads + payloads else payloads.toList()
+      val expectedPayloads = if (reconnectAfterSilence || stallFirstClose) payloads + payloads else payloads
       assertEquals(expectedPayloads, crypto.map { Json.parseToJsonElement(it.value()).jsonObject.getValue("payload") })
       assertTrue(crypto.all { it.key() == "BTC/USD" })
       assertEquals(
-        (1L..expectedPayloads.size.toLong()).toList(),
+        (1L..expectedPublications.toLong()).toList(),
         crypto.map {
           Json
             .parseToJsonElement(it.value())
@@ -229,6 +327,14 @@ class ForwarderCryptoTest {
         },
       )
       withTimeout(5000) { while (!app.isReady()) delay(10) }
+      if (surviveDeadline) {
+        delay(10_500)
+        assertEquals(1, cryptoConnections.get())
+        assertTrue(app.isReady())
+        publishAfterDeadline.complete(Unit)
+        withTimeout(5000) { while (records.count { it.topic() == "crypto-events" } != payloads.size + 1) delay(10) }
+        assertEquals(payloads[1], Json.parseToJsonElement(records.last().value()).jsonObject.getValue("payload"))
+      }
       assertTrue(
         app
           .readinessInfo()

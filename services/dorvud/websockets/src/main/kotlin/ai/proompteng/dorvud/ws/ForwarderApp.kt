@@ -27,7 +27,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -636,6 +638,29 @@ class ForwarderApp(
     feed: MarketDataFeedRuntimeState,
     symbolsTracker: SymbolsTracker,
     onReady: () -> Unit,
+  ): Unit =
+    coroutineScope {
+      val established = CompletableDeferred<Unit>()
+      val streaming =
+        async {
+          receiveMarketDataSession(producer, feed, symbolsTracker, { established.complete(Unit) }, onReady)
+          check(established.isCompleted) { "alpaca market-data session closed before subscription feed=${feed.config.feed}" }
+        }
+      val acknowledged =
+        withTimeoutOrNull(10_000) {
+          established.await()
+          true
+        }
+      check(acknowledged == true) { "alpaca market-data establishment timed out feed=${feed.config.feed} after 10000ms" }
+      streaming.await()
+    }
+
+  private suspend fun receiveMarketDataSession(
+    producer: KafkaProducer<String, String>,
+    feed: MarketDataFeedRuntimeState,
+    symbolsTracker: SymbolsTracker,
+    onEstablished: () -> Unit,
+    onReady: () -> Unit,
   ) {
     val url = alpacaMarketDataStreamUrl(config, feed.config)
     httpClient.webSocketWithBoundedCleanup({
@@ -654,6 +679,7 @@ class ForwarderApp(
 
       var authOk = false
       var subscribedOk = false
+      var admittedCryptoSymbolsByChannel = emptyMap<String, Set<String>>()
       val subscribedSince = AtomicReference<Instant?>(null)
       var lastProviderMarketDataAt: Instant? = null
       val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
@@ -661,6 +687,7 @@ class ForwarderApp(
       var readyNotified = false
 
       fun updateWsReady() {
+        if (authOk && subscribedOk) onEstablished()
         val now = Instant.ofEpochMilli(nowMs())
         val eventStarved =
           optionsEventStarved(
@@ -747,52 +774,46 @@ class ForwarderApp(
       suspend fun awaitAuthOrThrow() {
         // Alpaca rejects subscribe requests before a successful auth handshake; if we get an error,
         // restart the session so the outer loop can apply backoff.
-        val authed =
-          withTimeoutOrNull(10_000) {
-            while (isActive && !authOk) {
-              decodeNextMessages().forEach { msg ->
-                when (msg) {
-                  is AlpacaSuccess -> {
-                    if (msg.msg.contains("auth", ignoreCase = true)) {
-                      authOk = true
-                      recordMarketDataAuthSuccess(feed)
-                      publishObservationStatus(producer, feed, "authenticated")
-                      updateWsReady()
-                    }
-                  }
-                  is AlpacaError -> {
-                    authOk = false
-                    subscribedOk = false
-                    val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
-                    recordMarketDataWsDisconnected(feed, errorClass)
-                    updateWsReady()
-                    metrics.recordWsConnectError(errorClass)
-                    metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
-                    recordFeedError(feed, errorClass)
-                    publishObservationStatus(producer, feed, "degraded", errorClass, msg.msg)
-                    publishOptionsWsStatus(
-                      producer = producer,
-                      seq = feed.sequence,
-                      subscribedCount = 0,
-                      statusValue = optionsStatusForCode(msg.code),
-                      errorCode = msg.code?.toString(),
-                      errorDetail = msg.msg,
-                      authOk = false,
-                      subscriptionOk = false,
-                      eventStarved = false,
-                    )
-                    logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
-                    throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
-                  }
-                  else -> {}
+        while (isActive && !authOk) {
+          decodeNextMessages().forEach { msg ->
+            when (msg) {
+              is AlpacaSuccess -> {
+                if (msg.msg.contains("auth", ignoreCase = true)) {
+                  authOk = true
+                  recordMarketDataAuthSuccess(feed)
+                  publishObservationStatus(producer, feed, "authenticated")
+                  updateWsReady()
                 }
               }
+              is AlpacaError -> {
+                authOk = false
+                subscribedOk = false
+                val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                recordMarketDataWsDisconnected(feed, errorClass)
+                updateWsReady()
+                metrics.recordWsConnectError(errorClass)
+                metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
+                recordFeedError(feed, errorClass)
+                publishObservationStatus(producer, feed, "degraded", errorClass, msg.msg)
+                publishOptionsWsStatus(
+                  producer = producer,
+                  seq = feed.sequence,
+                  subscribedCount = 0,
+                  statusValue = optionsStatusForCode(msg.code),
+                  errorCode = msg.code?.toString(),
+                  errorDetail = msg.msg,
+                  authOk = false,
+                  subscriptionOk = false,
+                  eventStarved = false,
+                )
+                logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
+                throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
+              }
+              else -> {}
             }
-            authOk
-          } ?: false
-        if (!authed) {
-          throw RuntimeException("alpaca auth timed out after 10000ms")
+          }
         }
+        check(authOk) { "alpaca market-data session closed before authentication" }
       }
 
       suspend fun applySubscription(
@@ -1014,6 +1035,7 @@ class ForwarderApp(
                     nowMs = nowMs(),
                   )
                 feed.websocketStatus.set(wsStatus)
+                if (feed.config.marketType == AlpacaMarketType.CRYPTO) admittedCryptoSymbolsByChannel = actualSubscribedByChannel
                 subscribedLock.withLock {
                   subscribedSymbols.clear()
                   subscribedSymbols.addAll(actualSubscribed)
@@ -1096,6 +1118,14 @@ class ForwarderApp(
               }
               else -> {
                 val observed = observedMarketDataMessage(msg)
+                if (observed != null && feed.config.marketType == AlpacaMarketType.CRYPTO &&
+                  (
+                    !authOk || !subscribedOk ||
+                      observed.symbol !in admittedCryptoSymbolsByChannel[canonicalMarketDataChannel(observed.channel)].orEmpty()
+                  )
+                ) {
+                  return@forEach
+                }
                 if (observed != null && qualification != null) {
                   val qualificationChannel = canonicalMarketDataChannel(observed.channel) ?: observed.channel
                   val providerAt =
