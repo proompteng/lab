@@ -88,7 +88,7 @@ Capacity changes use a reviewed Git change and the normal runner-image/Kargo del
 reviewed `local-path` configuration before enabling Turin. Keep one idle runner per set. The manual
 `ARC placement acceptance` workflow verifies eight distinct build runners and two distinct publication runners
 with at least 45 seconds of shared occupancy, local XFS scratch and exact BuildKit output checksums. Run it after
-the existing build wave clears; its 90-minute rendezvous is bounded. This proves slots and tooling, not sustained
+the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot start. This proves slots and tooling, not sustained
 throughput for eight simultaneous large image builds. Check a representative image build and node I/O as well.
 If storage contention returns, restore `minRunners: 0` and `maxRunners: 1` through that path. Existing busy runners finish before the count
 falls; the [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
