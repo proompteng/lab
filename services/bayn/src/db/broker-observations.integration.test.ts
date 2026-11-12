@@ -7,6 +7,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, Schema, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
+import type { Statement } from 'effect/sql/Statement'
 
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
 import {
@@ -934,6 +935,129 @@ describePostgres('Durable per-account broker observations', () => {
             expect(result.failure.observationFailure).toBe('NO_ADMISSIBLE_CUT')
           }
           expect(attributes).toEqual({})
+        }),
+      ),
+  )
+
+  test.each([1, 4])(
+    'bounds diagnostic query work against the same pending cut with retained history: %s',
+    async (mask) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          const ticket = yield* pendingFixture(sql, store, mask)
+          if (mask === 4)
+            yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(ticket.startedAt) - 60_000))
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              // Migrated indexes and column constraints, isolated from other fixtures.
+              // These tables contain synthetic read-path history, not financial postings.
+              yield* sql`CREATE TEMP TABLE mutation_events (LIKE public.mutation_events INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`INSERT INTO mutation_events SELECT * FROM public.mutation_events`
+              yield* sql`INSERT INTO mutation_events
+              (event_id,schema_version,mutation_id,intent_id,sequence,operation,event_type,request_hash,consistency_delay_ms,occurred_at)
+              SELECT md5('mutation-' || n) || md5(n::text), 'bayn.paper-mutation-event.v1',
+                ${'9'.repeat(64)}, ${'9'.repeat(64)}, n + 1, 'SUBMIT', 'RECOVERY_UNKNOWN', ${'f'.repeat(64)}, 1000,
+                ${ticket.startedAt}::timestamptz - interval '60 seconds'
+              FROM generate_series(1,8192) AS n`
+              yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`CREATE TRIGGER broker_event_projection_hash BEFORE INSERT ON pg_temp.broker_events
+              FOR EACH ROW EXECUTE FUNCTION initialize_broker_event_projection_hash()`
+              yield* sql`INSERT INTO broker_events
+              (event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
+              SELECT md5('event-' || n) || md5(n::text), 'bayn.paper-broker-event.v1', md5(n::text) || md5('content-' || n),
+                'ACCOUNT', 'ALPACA', CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
+                'history-' || n, n, ${ticket.startedAt}::timestamptz - interval '60 seconds',
+                ${ticket.startedAt}::timestamptz - interval '60 seconds'
+              FROM generate_series(1,8192) AS n`
+              yield* sql`CREATE TEMP TABLE broker_notification_receipts (LIKE public.broker_notification_receipts INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`INSERT INTO broker_notification_receipts SELECT * FROM public.broker_notification_receipts`
+              yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at,recorded_at)
+              SELECT CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
+                md5('receipt-' || n) || md5(n::text), ${revision},
+                ${ticket.startedAt}::timestamptz - interval '60 seconds',
+                ${ticket.startedAt}::timestamptz - interval '60 seconds'
+              FROM generate_series(1,8192) AS n`
+              yield* sql`ANALYZE mutation_events`
+              yield* sql`ANALYZE broker_events`
+              yield* sql`ANALYZE broker_notification_receipts`
+              yield* sql`ANALYZE intents`
+              yield* sql`ANALYZE broker_observations`
+              const reads: Statement<Record<string, unknown>>[] = []
+              const monitored = new Proxy(sql, {
+                apply(target, receiver, argumentsList) {
+                  const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                  reads.push(statement)
+                  return statement
+                },
+              })
+              const reader = makeBrokerObservationStore(monitored, accountId, revision, 60_000, cacheFixture.cache)
+              expect((yield* Effect.flip(reader.readState)).kind).toBe(BrokerReadErrorKind.ObservationPending)
+              expect(reads).toHaveLength(2)
+              const pending = reads[1]
+              if (pending === undefined) throw new Error('Expected the existing pending query')
+              const [query, parameters] = pending.compile()
+              // PostgreSQL prunes the three unused diagnostic projections here;
+              // the parameters, predicates, selected row and snapshot stay identical.
+              const baselineQuery = `SELECT snapshot_hash,state_hash,"observedAt" FROM (${query}) AS pending`
+              const decodeCut = Schema.decodeUnknownEffect(
+                Schema.Array(
+                  Schema.Struct({
+                    snapshot_hash: Schema.String,
+                    state_hash: Schema.String,
+                    observedAt: Schema.String,
+                  }),
+                ),
+              )
+              const baselineRows = yield* sql.unsafe(baselineQuery, parameters).pipe(Effect.flatMap(decodeCut))
+              const diagnosticRows = yield* sql.unsafe(query, parameters).pipe(Effect.flatMap(decodeCut))
+              expect(diagnosticRows).toEqual(baselineRows)
+              const explain = (statement: string) =>
+                sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement}`, parameters).pipe(
+                  Effect.flatMap(
+                    Schema.decodeUnknownEffect(
+                      Schema.Array(
+                        Schema.Struct({
+                          'QUERY PLAN': Schema.Array(
+                            Schema.Struct({
+                              Plan: Schema.Record(Schema.String, Schema.Unknown),
+                              'Execution Time': Schema.Number,
+                            }),
+                          ),
+                        }),
+                      ),
+                    ),
+                  ),
+                  Effect.map((rows) => {
+                    const plan = rows[0]?.['QUERY PLAN'][0]
+                    if (plan === undefined) throw new Error('Missing pending-cut query plan')
+                    const blocks = [
+                      'Shared Hit Blocks',
+                      'Shared Read Blocks',
+                      'Local Hit Blocks',
+                      'Local Read Blocks',
+                    ].reduce((sum, key) => sum + Number(plan.Plan[key] ?? 0), 0)
+                    expect(plan.Plan['Actual Rows']).toBe(1)
+                    return { blocks, executionMs: plan['Execution Time'] }
+                  }),
+                )
+              const samples = []
+              for (const reversed of [false, true, false]) {
+                const first = yield* explain(reversed ? query : baselineQuery)
+                const second = yield* explain(reversed ? baselineQuery : query)
+                const baseline = reversed ? second : first
+                const diagnostic = reversed ? first : second
+                // The extra projection probes are not free. Bound their logical
+                // read amplification without asserting timing on a shared CI host.
+                expect(diagnostic.blocks).toBeLessThanOrEqual(baseline.blocks * 3 + 64)
+                samples.push({ baseline, diagnostic })
+              }
+              yield* Effect.logInfo('Pending-cut diagnostic query plan fixture', {
+                mask,
+                historyRowsPerTable: 8192,
+                samples,
+              })
+            }),
+          )
         }),
       ),
   )
