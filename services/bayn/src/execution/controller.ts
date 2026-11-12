@@ -274,6 +274,11 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerReconciliationRetry =
+    result.outcome._tag === ExecutionControllerOutcome.Blocked &&
+    result.observation?.result === 'FAILURE' &&
+    result.observation.operation === 'reconcile' &&
+    result.observation.failure === 'market-data'
   const nextDueAt = Result.try({
     try: () => {
       if (result.outcome.nextWakeAt === undefined) return undefined
@@ -305,8 +310,11 @@ export const completeExecutionControllerTick = (
     wakeAcceptedAt: _previousWakeAcceptedAt,
     ...completedState
   } = state
-  const availableAt =
-    result.observation?.result !== 'SUCCESS'
+  // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
+  // without inventing polling from a legacy delay; broker observations can still wake promptly.
+  const availableAt = brokerReconciliationRetry
+    ? decodedNextDueAt.success
+    : result.observation?.result !== 'SUCCESS'
       ? undefined
       : result.observation.outcome === 'WINDOW_CLOSED' ||
           result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
