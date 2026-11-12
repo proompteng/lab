@@ -1,0 +1,127 @@
+name: Analysis shared CI
+
+run-name: Analysis ${{ inputs.source_sha }} · ${{ inputs.upstream_run_id }}.${{ inputs.upstream_run_attempt }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact analysis commit
+        required: true
+        type: string
+      source_ref:
+        description: Original analysis Git ref
+        required: true
+        type: string
+      upstream_run_id:
+        description: Analysis workflow run
+        required: true
+        type: string
+      upstream_run_attempt:
+        description: Analysis workflow attempt
+        required: true
+        type: string
+      publish:
+        description: Publish current analysis main after validation
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: analysis-shared-ci-${{ inputs.publish && 'main' || inputs.source_sha }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  SOURCE_REF: ${{ inputs.source_ref }}
+  UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
+  UPSTREAM_RUN_ATTEMPT: ${{ inputs.upstream_run_attempt }}
+
+jobs:
+  validate:
+    runs-on: arc-arm64
+    timeout-minutes: 90
+    steps:
+      - name: Validate immutable source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$UPSTREAM_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$UPSTREAM_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_REF" == refs/heads/* || "$SOURCE_REF" == refs/tags/* ]]
+      - name: Checkout analysis at the requested commit
+        uses: actions/checkout@v6
+        with:
+          repository: gregkonush/analysis
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.ANALYSIS_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Verify source and common worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$ARC_RUNNER_NODE_NAME" = talos-192-168-1-85
+          printf 'Analysis commit: %s\nCommon ARM worker: %s\n' "$SOURCE_SHA" "$ACTIONS_RUNNER_POD_NAME" >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate analysis
+        uses: ./.github/actions/validate-analysis
+
+  admit-publish:
+    needs: validate
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      approved: ${{ steps.admit.outputs.approved }}
+    steps:
+      - name: Verify trusted analysis main publication
+        id: admit
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.ANALYSIS_SOURCE_TOKEN }}
+          script: |
+            const owner = 'gregkonush'
+            const repo = 'analysis'
+            const sha = process.env.SOURCE_SHA
+            const runId = Number(process.env.UPSTREAM_RUN_ID)
+            const attempt = Number(process.env.UPSTREAM_RUN_ATTEMPT)
+            if (!/^[0-9a-f]{40}$/.test(sha) ||
+                !Number.isSafeInteger(runId) || runId <= 0 ||
+                !Number.isSafeInteger(attempt) || attempt <= 0 ||
+                process.env.SOURCE_REF !== 'refs/heads/main') {
+              throw new Error('Publication requires an immutable analysis main source and valid upstream run')
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRunAttempt({
+              owner, repo, run_id: runId, attempt_number: attempt,
+            })
+            if (run.head_sha !== sha || run.head_branch !== 'main' ||
+                run.head_repository?.full_name !== owner + '/' + repo ||
+                run.path !== '.github/workflows/analysis-image.yml' ||
+                run.run_attempt !== attempt ||
+                !['push', 'workflow_dispatch'].includes(run.event)) {
+              throw new Error('Upstream run does not authorize this analysis main publication')
+            }
+            const { data: ref } = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' })
+            if (ref.object.sha !== sha) throw new Error('Refusing to publish a stale analysis main commit')
+            core.setOutput('approved', 'true')
+
+  publish:
+    needs: [validate, admit-publish]
+    if: needs.admit-publish.outputs.approved == 'true'
+    runs-on: arc-arm64
+    timeout-minutes: 120
+    steps:
+      - name: Checkout validated analysis source
+        uses: actions/checkout@v6
+        with:
+          repository: gregkonush/analysis
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.ANALYSIS_SOURCE_TOKEN }}
+          persist-credentials: false
+      - name: Publish analysis
+        uses: ./.github/actions/publish-analysis
+        with:
+          source-sha: ${{ inputs.source_sha }}
