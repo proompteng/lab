@@ -24,11 +24,11 @@
   "arc-placement-acceptance.yml": [
     {
       "id": "publication-tools",
-      "pattern": "^Verify publication runner(?: \\(.*\\))?$"
+      "pattern": "^Publication slot .*(?: \\(.*\\))?$"
     },
     {
       "id": "local-build",
-      "pattern": "^Slot .* local scratch build(?: \\(.*\\))?$"
+      "pattern": "^Build slot .* local scratch build(?: \\(.*\\))?$"
     },
     {
       "id": "verify-placement",
