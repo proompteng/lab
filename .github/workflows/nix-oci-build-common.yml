@@ -296,7 +296,7 @@ jobs:
         )
       }}
     needs: build-platform
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     outputs:
       image: ${{ steps.oci.outputs.image }}
       tag: ${{ steps.oci.outputs.tag }}

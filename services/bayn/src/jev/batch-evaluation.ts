@@ -164,5 +164,5 @@ export const recoverPendingJevBatches = (cycleId: string, authorityGenerationHas
     const store = yield* JevBatchStore
     const pending = yield* store.pending(cycleId, authorityGenerationHash)
     const recovered = yield* Effect.forEach(pending, (batchId) => store.finish(batchId))
-    return recovered.every((batch) => batch.result !== null)
+    return recovered.filter((batch) => batch.result === null).map((batch) => batch.plan)
   })

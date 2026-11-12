@@ -1,5 +1,15 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -65,19 +75,20 @@ describe('ARC Nix runner toolchain', () => {
   it('keeps runner scratch disposable while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
-    expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
+    expect(
+      YAML.parse(arcApplication)
+        .spec.sources.map(
+          (source: { helm: { valuesObject: { runnerScaleSetName?: string } } }) =>
+            source.helm.valuesObject.runnerScaleSetName,
+        )
+        .filter(Boolean),
+    ).toEqual(['arc-arm64', 'arc-amd64'])
     expect(arcApplication).not.toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
-    expect(armBlock).toContain('emptyDir:')
-    expect(armBlock).toContain('sizeLimit: 130Gi')
-    expect(armBlock).not.toContain('volumeClaimTemplate:')
+    expect(armBlock).toContain('storageClassName: rook-ceph-block')
+    expect(armBlock).toContain('storage: 100Gi')
+    expect(armBlock).not.toContain('emptyDir:')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('storageClassName: rook-ceph-block')
-    const analysisBlock = runnerScaleSetBlock('analysis-arm64')
-    expect(analysisBlock).toContain('emptyDir:')
-    expect(analysisBlock).toContain('sizeLimit: 20Gi')
-    expect(analysisBlock).not.toContain('ACTIONS_RUNNER_CONTAINER_HOOKS')
-    expect(analysisBlock).not.toContain('volumeClaimTemplate:')
-    expect(analysisBlock).not.toContain('storageClassName: "rook-ceph-block"')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
@@ -96,7 +107,7 @@ describe('ARC Nix runner toolchain', () => {
       ],
     })
 
-    for (const name of ['arc-arm64', 'analysis-arm64']) {
+    for (const name of ['arc-arm64']) {
       const source = application.spec.sources.find(
         (candidate: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
           candidate.helm?.valuesObject?.runnerScaleSetName === name,
@@ -112,7 +123,7 @@ describe('ARC Nix runner toolchain', () => {
           },
         ],
       })
-      expect(source.helm.valuesObject.template.spec.nodeSelector).toEqual({ 'kubernetes.io/arch': 'arm64' })
+      expect(source.helm.valuesObject.template.spec.nodeSelector).toMatchObject({ 'kubernetes.io/arch': 'arm64' })
     }
   })
 
@@ -140,6 +151,7 @@ describe('ARC Nix runner toolchain', () => {
               { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
               { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
               { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
+              { name: 'scratch', mountPath: '/var/tmp', subPath: 'var-tmp' },
               workMount,
             ]),
           }),
@@ -153,7 +165,7 @@ describe('ARC Nix runner toolchain', () => {
                   accessModes: ['ReadWriteOnce'],
                   storageClassName: storageClass,
                   volumeMode: 'Filesystem',
-                  resources: { requests: { storage: '130Gi' } },
+                  resources: { requests: { storage: '100Gi' } },
                 },
               }),
             },
@@ -169,17 +181,121 @@ describe('ARC Nix runner toolchain', () => {
     }
   })
 
-  it('keeps ten warm AMD64 runners while preserving the other runner pools', () => {
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 10')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 10')
-    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 2')
-    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 1')
+  it('mounts separate large-file scratch and creates private Rust cache homes after copy verification', () => {
+    const amd64 = YAML.parse(arcApplication).spec.sources[2].helm.valuesObject.template.spec
+    const runner = amd64.containers[0]
+    const mounts = runner.volumeMounts as { name: string; mountPath: string; subPath: string }[]
+    expect(mounts.find((mount) => mount.mountPath === '/var/tmp')).toEqual({
+      name: 'scratch',
+      mountPath: '/var/tmp',
+      subPath: 'var-tmp',
+    })
+    expect(mounts.find((mount) => mount.mountPath === '/tmp')?.subPath).toBe('tmp')
+    for (const [name, value] of [
+      ['CARGO_HOME', '/home/runner/.cache/cargo'],
+      ['RUSTUP_HOME', '/home/runner/.cache/rustup'],
+    ]) {
+      expect(runner.env).toContainEqual({ name, value })
+      expect(mounts.some((mount) => mount.name === 'scratch' && value.startsWith(mount.mountPath + '/'))).toBe(true)
+    }
+    const script = amd64.initContainers[0].args[0] as string
+    const createCaches = 'mkdir -p "$stage/cache/cargo" "$stage/cache/rustup"'
+    expect(script.indexOf(createCaches)).toBeGreaterThan(script.indexOf('partial cache copy:'))
+    expect(script.indexOf('chown -R 1001:1001 "$stage/nix" "$stage/cache"')).toBeGreaterThan(
+      script.indexOf(createCaches),
+    )
+    expect(script.indexOf('post_copy_available_kib=')).toBeGreaterThan(script.indexOf(createCaches))
+    expect(script).toContain('mv "$stage/var-tmp" "$scratch/var-tmp"')
+    const modeCommands = script
+      .split('\n')
+      .filter((line) =>
+        [
+          createCaches,
+          'chmod 00700 "$stage/cache/cargo" "$stage/cache/rustup"',
+          'chmod 01777 "$stage/var-tmp"',
+        ].includes(line.trim()),
+      )
+    expect(modeCommands).toHaveLength(3)
+    const stage = mkdtempSync(join(tmpdir(), 'arc-cache-modes-'))
+    try {
+      mkdirSync(join(stage, 'cache'))
+      mkdirSync(join(stage, 'var-tmp'))
+      chmodSync(join(stage, 'cache'), 0o2770)
+      chmodSync(join(stage, 'var-tmp'), 0o3777)
+      const result = spawnSync('bash', ['-euc', modeCommands.join('\n')], {
+        encoding: 'utf8',
+        env: { ...process.env, stage },
+        timeout: 10_000,
+      })
+      expect(result.status, result.stderr).toBe(0)
+      expect(statSync(join(stage, 'var-tmp')).mode & 0o7777).toBe(0o1777)
+      for (const name of ['cargo', 'rustup']) {
+        const path = join(stage, 'cache', name)
+        expect(statSync(path).mode & 0o7777).toBe(0o700)
+        expect(statSync(path).uid).toBe(process.getuid?.())
+        expect(statSync(path).dev).toBe(statSync(stage).dev)
+      }
+    } finally {
+      rmSync(stage, { recursive: true, force: true })
+    }
+  })
+
+  it('gives ARM64 the same verified Ceph scratch and pins its workers to Altra', () => {
+    const application = YAML.parse(arcApplication)
+    const arm = application.spec.sources[1].helm.valuesObject
+    const amd = application.spec.sources[2].helm.valuesObject
+    const pod = arm.template.spec
+    const runner = pod.containers[0]
+    expect(arm.runnerScaleSetName).toBe('arc-arm64')
+    expect(arm.scaleSetLabels).toEqual(['arc-arm64'])
+    expect({ min: arm.minRunners, max: arm.maxRunners }).toEqual({ min: 5, max: 10 })
+    expect(pod.nodeSelector).toEqual({
+      'kubernetes.io/arch': 'arm64',
+      'kubernetes.io/hostname': 'talos-192-168-1-85',
+    })
+    expect(pod.serviceAccountName).toBe('arc-arm64-gha-rs-kube-mode')
+    expect(pod.tolerations).toBeUndefined()
+    expect(pod.affinity).toBeUndefined()
+    expect(pod.securityContext).toEqual(amd.template.spec.securityContext)
+    expect(pod.initContainers).toEqual(amd.template.spec.initContainers)
+    expect(runner.volumeMounts).toEqual(amd.template.spec.containers[0].volumeMounts)
+    expect(runner.resources).toEqual({
+      requests: { cpu: '4', memory: '16Gi', 'ephemeral-storage': '10Gi' },
+      limits: { cpu: '20', memory: '32Gi', 'ephemeral-storage': '100Gi' },
+    })
+    expect(runner.securityContext).toEqual({ privileged: true })
+    expect(runner.command).toEqual(['/home/runner/run.sh'])
+    expect(runner.image).toBe(amd.template.spec.containers[0].image)
+    expect(pod.containers).toHaveLength(1)
+    expect(pod.volumes).toHaveLength(1)
+    const claim = pod.volumes[0].ephemeral.volumeClaimTemplate
+    expect(pod.volumes[0].name).toBe('scratch')
+    expect(claim.spec).toEqual(amd.template.spec.volumes[0].ephemeral.volumeClaimTemplate.spec)
+    expect(claim.metadata.labels).toEqual({
+      'actions.github.com/scale-set-name': 'arc-arm64',
+      'storage.proompteng.ai/durability': 'rebuildable',
+    })
+    for (const name of ['CARGO_HOME', 'RUSTUP_HOME']) {
+      expect(runner.env.find((entry: { name: string }) => entry.name === name)).toEqual(
+        amd.template.spec.containers[0].env.find((entry: { name: string }) => entry.name === name),
+      )
+    }
+  })
+
+  it('shares build and publication queues with five to ten workers per architecture', () => {
+    for (const name of ['arc-arm64', 'arc-amd64']) {
+      const block = runnerScaleSetBlock(name)
+      expect(block).toContain('minRunners: 5')
+      expect(block).toContain('maxRunners: 10')
+      expect(block).toContain('storage: 100Gi')
+    }
+    expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-publish')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
     expect(arcApplication).not.toContain('arc-amd64-turin')
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
+    const workflows = readdirSync(new URL('.github/workflows/', repoRoot))
+    for (const workflow of workflows) {
+      expect(readRepoFile(`.github/workflows/${workflow}`)).not.toContain('arc-amd64-publish')
+    }
   })
 
   it('pins AMD64 builds to Turin without repurposing the existing local storage paths', () => {
@@ -257,13 +373,13 @@ fi
     }
   })
 
-  it('requires ten Ceph builders and two publication runners without weakening the overlap proof', () => {
+  it('requires ten Ceph builders per architecture without weakening the overlap proof', () => {
     const jobs = YAML.parse(arcPlacementAcceptance).jobs
     expect(jobs['ceph-build'].strategy.matrix.slot).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    expect(jobs['ceph-build'].strategy['max-parallel']).toBe(10)
-    expect(jobs['publication-tools'].strategy.matrix.slot).toEqual([1, 2])
-    expect(jobs['publication-tools'].strategy['max-parallel']).toBe(2)
-    expect(jobs['verify-placement'].needs).toEqual(['ceph-build', 'publication-tools'])
+    expect(jobs['ceph-build'].strategy.matrix.architecture).toEqual(['amd64', 'arm64'])
+    expect(jobs['ceph-build'].strategy['max-parallel']).toBe(20)
+    expect(jobs['publication-tools']).toBeUndefined()
+    expect(jobs['verify-placement'].needs).toEqual(['ceph-build'])
     for (const job of Object.values(jobs) as { steps: { run?: string }[] }[]) {
       for (const step of job.steps) {
         if (step.run) {
@@ -275,35 +391,57 @@ fi
     expect(arcPlacementAcceptance).toContain('"$RUNNER_TEMP" "$buildkit_root"')
     expect(arcPlacementAcceptance).toContain('test "$device" = "$scratch_device"')
     expect(arcPlacementAcceptance).toContain('test "$output_sha" = "$input_sha"')
-    expect(arcPlacementAcceptance).toContain('([.[].pod] | unique | length) == 12')
+    expect(arcPlacementAcceptance).toContain('([.[].pod] | unique | length) == 20')
+    expect(arcPlacementAcceptance).toContain('([.[] | [.node, .scratchDevice]] | unique | length) == 20')
     expect(arcPlacementAcceptance).toContain('([.[].end] | min) - ([.[].start] | max) >= 45')
   })
 
-  it('reserves small sidecar-free runners for publication outside the native build queues', () => {
-    const application = YAML.parse(arcApplication)
-    const source = application.spec.sources.find(
-      (source: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
-        source.helm?.valuesObject?.runnerScaleSetName === 'arc-amd64-publish',
+  it('validates both hosts, per-host RBD identity, capacity and shared occupancy', () => {
+    const jobs = YAML.parse(arcPlacementAcceptance).jobs
+    const step = jobs['verify-placement'].steps.find(
+      (candidate: { name?: string }) => candidate.name === 'Verify ten builders per architecture overlapped',
     )
-    const pod = source.helm.valuesObject.template.spec
-    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64' })
-    expect(pod.tolerations).toContainEqual({
-      key: 'workload.proompteng.ai/compute-local',
-      operator: 'Equal',
-      value: 'true',
-      effect: 'NoSchedule',
-    })
-    expect(pod.automountServiceAccountToken).toBe(false)
-    expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
-    expect(pod.containers[0].securityContext.privileged).toBe(false)
-    expect(pod.initContainers).toBeUndefined()
-    expect(pod.containers[0].resources.requests).toEqual({ cpu: '1', memory: '2Gi', 'ephemeral-storage': '2Gi' })
-    expect(pod.volumes).toEqual([{ name: 'work', emptyDir: { sizeLimit: '32Gi' } }])
+    const predicate = step.run.match(/jq -s -e '([\s\S]*?)' proof/)?.[1]
+    if (!predicate) throw new Error('Placement proof predicate is missing')
+    const receipts = () =>
+      ['amd64', 'arm64'].flatMap((architecture) =>
+        Array.from({ length: 10 }, (_, index) => ({
+          architecture,
+          role: 'build',
+          slot: index + 1,
+          node: architecture === 'amd64' ? 'turin' : 'talos-192-168-1-85',
+          pod: `runner-${architecture}-${index}`,
+          scratchDevice: `/dev/rbd${index}`,
+          scratchFilesystem: 'ext4',
+          scratchCapacityBytes: 104000000000,
+          runnerTemp: '/home/runner/_work/_temp',
+          buildkitRoot: '/home/runner/_work/_temp/buildkit.test/cache',
+          inputBytes: 16777216,
+          outputBytes: 16777216,
+          inputSha256: 'a'.repeat(64),
+          outputSha256: 'a'.repeat(64),
+          start: 100,
+          end: 160,
+        })),
+      )
+    for (const scenario of ['valid', 'missing', 'duplicate-device', 'wrong-host', 'old-capacity', 'short-overlap']) {
+      const data = receipts()
+      if (scenario === 'missing') data.pop()
+      if (scenario === 'duplicate-device') data[0].scratchDevice = data[1].scratchDevice
+      if (scenario === 'wrong-host') data[10].node = 'turin'
+      if (scenario === 'old-capacity') data[0].scratchCapacityBytes = 130 * 1024 ** 3
+      if (scenario === 'short-overlap') data[0].start = 120
+      const result = spawnSync('jq', ['-s', '-e', predicate], {
+        input: data.map((receipt) => JSON.stringify(receipt)).join('\n'),
+        encoding: 'utf8',
+      })
+      expect(result.status, scenario + ': ' + result.stderr).toBe(scenario === 'valid' ? 0 : 1)
+    }
   })
 
   it('isolates each job in a private BuildKit process without a sidecar or shared cache', () => {
     const application = YAML.parse(arcApplication)
-    for (const index of [1, 2, 3]) {
+    for (const index of [1, 2]) {
       const pod = application.spec.sources[index].helm.valuesObject.template.spec
       expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
       expect(JSON.stringify(pod)).not.toMatch(/DOCKER_HOST|podman|hostPath|dind|tcp:\/\//)
@@ -330,9 +468,7 @@ fi
       expect(block).not.toContain('storage: 20Gi')
     }
 
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('sizeLimit: 130Gi')
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
-    expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('storage: 100Gi')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {

@@ -33,7 +33,7 @@ import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { CandidateObservationStore, candidateObservationLog } from '../observe-composition/candidate-observation'
-import { makeJevObservation, restoreJevObservation } from './observation'
+import { makeJevObservation } from './observation'
 import { canonicalHashV1Result } from '../hash'
 import { JevInferenceWorkStore } from './inference-work'
 import {
@@ -226,7 +226,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         if (resumed !== null) {
           const batches = yield* JevBatchStore
           const retained = yield* batches.read(resumed.batchId)
-          const original = yield* Effect.fromResult(restoreJevObservation(resumed.observation))
+          const original = resumed.source
           if (
             retained === null ||
             retained.result === null ||
@@ -253,9 +253,16 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           }
         }
       }
-      if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
+      const pending = yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)
+      if (pending.length > 0)
         return yield* new JevAwaitingEvidence({
           message: 'A committed Jev batch still awaits its original deadline',
+          availableAt: utcInstantFromEpochMillis(
+            pending.reduce(
+              (earliest, plan) => Math.min(earliest, Date.parse(plan.expiresAt)),
+              options.admissionDeadlineAt ?? Number.POSITIVE_INFINITY,
+            ),
+          ),
           readiness: DecisionReadinessReason.DecisionPending,
         })
       if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
@@ -374,6 +381,16 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             : JevAvailabilityReason.InvalidEvidence
       return yield* new JevAwaitingEvidence({
         message: jevAvailabilityMessage(reason),
+        ...(saved.result === null
+          ? {
+              availableAt: utcInstantFromEpochMillis(
+                Math.min(
+                  Date.parse(saved.plan.expiresAt),
+                  options.admissionDeadlineAt ?? Date.parse(saved.plan.expiresAt),
+                ),
+              ),
+            }
+          : {}),
         readiness:
           reason === JevAvailabilityReason.OutsideValidityWindow &&
           saved.result !== null &&
