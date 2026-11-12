@@ -89,15 +89,17 @@ test('unused-entry handoff accelerates only an expired, unbound block before the
     ).toBeUndefined()
 })
 
-test.each([DecisionReadinessReason.SignalWindowObserved, DecisionReadinessReason.LookbackWarmup])(
-  '%s schedules the known future boundary before the normal poll',
-  (reason) => {
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, observedAt)).toBe(7_000)
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 5_000, observedAt)).toBeUndefined()
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 7_000, observedAt)).toBeUndefined()
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, instant(2_000))).toBe(5_000)
-  },
-)
+test.each([
+  DecisionReadinessReason.SignalWindowObserved,
+  DecisionReadinessReason.LookbackWarmup,
+  DecisionReadinessReason.DecisionPending,
+  DecisionReadinessReason.InferenceUnavailable,
+])('%s schedules the known future boundary before the normal poll', (reason) => {
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, observedAt)).toBe(7_000)
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 5_000, observedAt)).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 7_000, observedAt)).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, instant(2_000))).toBe(5_000)
+})
 
 test.each([DecisionReadinessReason.SnapshotUnavailable, DecisionReadinessReason.SnapshotStale])(
   '%s preserves the known next-window wake before the original unused entry expires',
@@ -163,6 +165,8 @@ test('rejects missing or invalid timing and boundaries outside the entry session
 test.each(
   Object.values(DecisionReadinessReason).filter(
     (reason) =>
+      reason !== DecisionReadinessReason.DecisionPending &&
+      reason !== DecisionReadinessReason.InferenceUnavailable &&
       reason !== DecisionReadinessReason.LookbackWarmup &&
       reason !== DecisionReadinessReason.SignalWindowObserved &&
       reason !== DecisionReadinessReason.SnapshotUnavailable &&

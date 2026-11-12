@@ -19,6 +19,7 @@ import { sha256 } from '../hash'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { MarketChangeReason, marketChangedEventId } from '../execution/events'
 import { CycleRunnerError } from '../cycle/runner/model'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OperationalError } from '../errors'
 import {
   executionControllerAdvanceRunOptions,
@@ -559,8 +560,13 @@ test('closed-session completion retains the next eligibility boundary against un
   expect(state.nextDueAt).toBe(nextWakeAt)
 })
 
-test.each(['BROKER_OBSERVATION_PENDING', 'POST_MUTATION_RECONCILIATION'] as const)(
-  'market bursts wait for the broker boundary while completion events accelerate %s',
+test.each([
+  'BROKER_OBSERVATION_PENDING',
+  'POST_MUTATION_RECONCILIATION',
+  DecisionReadinessReason.DecisionPending,
+  DecisionReadinessReason.InferenceUnavailable,
+] as const)(
+  'market bursts preserve the original %s boundary while completion events accelerate',
   async (waitReason) => {
     for (const completion of ['BrokerObservation', 'InferenceCompleted'] as const) {
       let state: ExecutionControllerState = {
@@ -596,7 +602,15 @@ test.each(['BROKER_OBSERVATION_PENDING', 'POST_MUTATION_RECONCILIATION'] as cons
                       result: 'SUCCESS',
                       outcome: 'RECOVERED',
                       recoveryAction: 'WAITING',
-                      waitReason,
+                      ...(waitReason === 'POST_MUTATION_RECONCILIATION'
+                        ? { waitReason }
+                        : {
+                            readiness: {
+                              reason: waitReason,
+                              availableAt: nextWakeAt,
+                              message: 'Awaiting the committed inference result',
+                            },
+                          }),
                       observedAt: '2026-08-13T18:00:01.000Z',
                     },
               outcome: {
