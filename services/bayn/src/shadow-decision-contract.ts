@@ -545,13 +545,18 @@ const PersistedIntradaySnapshotRowsSchema = Schema.Struct({
   trades: Schema.Array(Schema.Unknown),
 })
 
+const RecordedPlannerInputSchema = Schema.Struct({
+  ...TargetPlannerInputSchema.fields,
+  brokerState: Schema.optionalKey(TargetPlannerInputSchema.fields.brokerState),
+})
+
 const ExecutionDecisionMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
   mode: Schema.Literal(legacyExecutionAuthorityToken),
   dispatchable: Schema.Boolean,
   bindings: ExecutionDecisionBindingsSchema,
   /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
-  plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
+  plannerInput: Schema.optionalKey(RecordedPlannerInputSchema),
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   /** Persist the pure strategy output that authorized the targets. */
@@ -576,6 +581,18 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
 
 type ExecutionDecisionValidationMaterial = Omit<typeof ExecutionDecisionMaterialSchema.Type, 'strategyDecision'> & {
   readonly strategyDecision?: RecordedRuntimeStrategyDecision
+}
+
+export const executionDecisionPlannerInput = (
+  document: Pick<ExecutionDecisionValidationMaterial, 'plannerInput' | 'strategyDecision'>,
+): TargetPlannerInput | undefined => {
+  const input = document.plannerInput
+  if (input === undefined) return undefined
+  const source = document.strategyDecision
+  const brokerState =
+    input.brokerState ??
+    (isProtectedEntryTarget(source) ? source.evidence.observation.portfolio.brokerState : undefined)
+  return brokerState === undefined ? undefined : { ...input, brokerState }
 }
 
 const executionBindingMatchesIntradayMomentumProtocol = (binding: SnapshotExecutionMarketDataBinding): boolean =>
@@ -1073,13 +1090,20 @@ const streamingPricingEvidenceIssues = (
 }
 
 const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
-  const input = document.plannerInput
+  const input = executionDecisionPlannerInput(document)
   const executionMarketData = document.bindings.executionMarketData
   const requiresQuoteBoundLiquidationEvidence =
     isSnapshotExecutionMarketDataBinding(executionMarketData) &&
     executionMarketData.purpose === 'LIQUIDATION' &&
     document.targetPlan.executionTerms?.priceReference === 'verified-adverse-quote-boundary'
   if (input === undefined) {
+    if (document.plannerInput !== undefined)
+      return [
+        {
+          path: ['plannerInput', 'brokerState'],
+          issue: 'planner evidence requires its exact broker state or a verified entry observation',
+        },
+      ]
     return requiresQuoteBoundLiquidationEvidence
       ? [
           {
@@ -1300,24 +1324,25 @@ const momentumProtocolIdentityMatches = (
 
 const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (!isProtectedEntryTarget(target) || document.plannerInput === undefined)
+  const plannerInput = executionDecisionPlannerInput(document)
+  if (!isProtectedEntryTarget(target) || plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
   const issues: Schema.FilterIssue[] = []
   const { observation } = target.evidence
   if (
-    document.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
-    document.plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
+    plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
   ) {
     const expected = maximumFundedBuyQuantities({
       plans: target.exitPolicy.plans,
-      askPriceMicros: document.plannerInput.referencePrices.askPriceMicros,
+      askPriceMicros: plannerInput.referencePrices.askPriceMicros,
       targetWeights: jevPlanningTargetWeights(target),
       capitalMicros: observation.portfolio.brokerState.account.equityMicros,
       precision: observation.protocol.executionModel.precision,
     })
-    const actualHash = canonicalHashV1Result(document.plannerInput.executionTerms.maximumBuyQuantityAtoms)
+    const actualHash = canonicalHashV1Result(plannerInput.executionTerms.maximumBuyQuantityAtoms)
     const expectedHash = Result.flatMap(expected, canonicalHashV1Result)
     if (Result.isFailure(actualHash) || Result.isFailure(expectedHash) || actualHash.success !== expectedHash.success)
       issues.push({
@@ -1337,7 +1362,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
           )
         return yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
       })
-      const pricedAsk = document.plannerInput.referencePrices.askPriceMicros[symbol]
+      const pricedAsk = plannerInput.referencePrices.askPriceMicros[symbol]
       if (
         Result.isFailure(originalAsk) ||
         pricedAsk === undefined ||
@@ -1407,10 +1432,10 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
       issue: 'Jev source rows and snapshot must exactly match the recorded observation',
     })
   if (
-    document.plannerInput.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n) ||
-    document.plannerInput.brokerState.reconciliation.reconciledAt <
+    plannerInput.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n) ||
+    plannerInput.brokerState.reconciliation.reconciledAt <
       observation.portfolio.brokerState.reconciliation.reconciledAt ||
-    !equal(document.plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
+    !equal(plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
     document.targetPlan.intentTargets.some((intent) => intent.side !== OrderSide.Buy)
   )
     issues.push({
@@ -1449,7 +1474,7 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
   const target = document.strategyDecision
   if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') return []
   const evidence = target.evidence
-  const input = document.plannerInput
+  const input = executionDecisionPlannerInput(document)
   const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
   if (
     input === undefined ||
@@ -1857,10 +1882,9 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
   const targets = document.targetPlan.intentTargets
   const riskBlocked = document.riskBlock !== undefined
   const riskCount = document.deltaRisk.length
+  const plannerInput = executionDecisionPlannerInput(document)
   const proposedPositionSequence =
-    document.plannerInput === undefined
-      ? undefined
-      : reconstructProposedPositionSequence(document.plannerInput, document.targetPlan)
+    plannerInput === undefined ? undefined : reconstructProposedPositionSequence(plannerInput, document.targetPlan)
   if (requiresDurableRiskFacts && proposedPositionSequence === undefined) {
     issues.push({
       path: ['deltaRisk', 'facts', 'proposedPositions'],
@@ -2200,10 +2224,10 @@ export const decisionSourceRows = (document: CycleDecisionDocument | RecordedExe
       ? document.decisionMarketDataRows
       : undefined
 
-// Only owned, deeply frozen graphs receive this receipt. Copies and stored JSON
-// still cross the full schema boundary; a claimed contentHash never earns reuse.
+// The bundled constructor worker transfers a validated graph into this owner's heap.
+// Other copies and stored JSON still require full validation; a claimed hash earns no reuse.
 const verifiedCycleDocuments = new WeakMap<object, CycleDecisionDocument>()
-const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
+export const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
   const freeze = (value: unknown): void => {
     if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
     for (const child of Object.values(value)) freeze(child)

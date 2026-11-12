@@ -37,7 +37,26 @@ data:
               description: Join runId, receiptHash and trace_id in bayn-research logs. Check model expiry, invalid streams and signed registration.
               runbook_url: docs/bayn/jev-optimization.md
           - alert: BaynResearchCostCoverageIncomplete
-            expr: max(bayn_research_unpriced_attempts) > 0 or max(bayn_research_ambiguous_attempts) > 0 or max(bayn_research_oldest_pending_expense_seconds) > 300
+            expr: max(bayn_research_unpriced_attempts) > 0
+            for: 10m
+            labels:
+              severity: info
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Retained Bayn research attempts lack verified prices
+              description: >-
+                Unpriced retained attempts: {{ with query "max(bayn_research_unpriced_attempts)" }}{{ . | first | value }}{{ else }}unavailable{{ end }};
+                ambiguous claims: {{ with query "max(bayn_research_ambiguous_attempts)" }}{{ . | first | value }}{{ else }}unavailable{{ end }};
+                oldest pending priced expense: {{ with query "max(bayn_research_oldest_pending_expense_seconds)" }}{{ . | first | value }}{{ else }}unavailable{{ end }} seconds.
+                Unpriced evidence can be historical and is not an expense-projection backlog. Unknown costs prevent a fully costed comparison; inspect immutable run allocation and receipt evidence before any recovery.
+              runbook_url: docs/bayn/jev-optimization.md#research-cost-coverage-triage
+          - alert: BaynResearchCostCoverageDegraded
+            expr: |
+              max(bayn_research_unpriced_attempts) > min_over_time((max(bayn_research_unpriced_attempts))[1h:])
+              or max(bayn_research_ambiguous_attempts) > 0
+              or max(bayn_research_oldest_pending_expense_seconds) > 300
             for: 10m
             labels:
               severity: warning
@@ -45,9 +64,13 @@ data:
               namespace: bayn
               service: bayn-research
             annotations:
-              summary: Bayn research costs lack complete verified coverage
-              description: Inspect retained run and receipt identities, the frozen allocation basis and expense projection. Unknown costs prevent a fully costed comparison.
-              runbook_url: docs/bayn/jev-optimization.md
+              summary: Bayn research cost coverage is deteriorating
+              description: >-
+                Unpriced retained attempts: {{ with query "max(bayn_research_unpriced_attempts)" }}{{ . | first | value }}{{ else }}unavailable{{ end }};
+                ambiguous claims: {{ with query "max(bayn_research_ambiguous_attempts)" }}{{ . | first | value }}{{ else }}unavailable{{ end }};
+                oldest pending priced expense: {{ with query "max(bayn_research_oldest_pending_expense_seconds)" }}{{ . | first | value }}{{ else }}unavailable{{ end }} seconds.
+                Unpriced attempts increased within the last hour, claims are ambiguous, or priced expenses remain unposted. Inspect the worker and immutable allocation evidence; never substitute a zero price for an unknown cost.
+              runbook_url: docs/bayn/jev-optimization.md#research-cost-coverage-triage
       - name: flamingo.rules
         rules:
           - alert: FlamingoModelUnavailable
@@ -723,9 +746,12 @@ data:
               service: ci-observability
               notify: email
             annotations:
-              summary: An individual image build has exceeded twenty minutes
-              description: "{{ $labels.workflow }} on {{ $labels.architecture }} is still running after twenty minutes. Inspect the job while it is active; this alert does not require a median regression."
+              summary: An image job has exceeded twenty minutes
+              description: >-
+                {{ $labels.workflow }} on {{ $labels.architecture }} is still running after twenty minutes.
+                Oldest active phases: {{ range query (printf "max by (phase) (ci_job_current_phase_age_seconds{workflow=%q,architecture=%q,runner_pool=%q,job_family=%q,job_role=%q,event=%q})" $labels.workflow $labels.architecture $labels.runner_pool $labels.job_family $labels.job_role $labels.event) | sortByLabel "phase" }}{{ .Labels.phase }}={{ .Value | printf "%.0f" }}s; {{ else }}unavailable; {{ end }}Build, cache upload, artifact upload and GitHub finalization all count toward job age. Inspect the active job; this alert does not require a median regression.
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+              runbook_url: argocd/applications/observability/ci/README.md
           - alert: CiObservabilityUnavailable
             expr: |
               absent(up{job="ci-observability"}) or up{job="ci-observability"} == 0
@@ -1228,8 +1254,8 @@ data:
               summary: Ceph cluster reports HEALTH_WARN
               description: >-
                 Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable.
-                Active checks: {{ range query (printf "ceph_health_detail{job=%q,instance=%q} > 0" $labels.job $labels.instance) | sortByLabel "name" }}{{ .Labels.name }}; {{ else }}detail unavailable; {{ end }}Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident.
-              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+                Active checks: {{ range query (printf "ceph_health_detail{job=%q,instance=%q} > 0" $labels.job $labels.instance) | sortByLabel "name" }}{{ .Labels.name }}; {{ else }}detail unavailable; {{ end }}Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident. BLUESTORE_SLOW_OP_ALERT can retain a past event for bluestore_slow_ops_warn_lifetime; inspect OSD event times and current client latency before changing storage.
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md#investigate-retained-bluestore-slow-operation-warnings
           - alert: CephClusterHealthError
             expr: ceph_health_status{job="ceph-storage"} >= 2
             for: 5m
@@ -1457,67 +1483,63 @@ data:
         rules:
           - alert: TorghutWSForwarderDown
             expr: |
-              up{
-                job="torghut",
-                namespace="torghut",
-                service="torghut-ws"
-              } == 0
+              (
+                max by (job, namespace, service) (
+                  up{job="torghut",namespace="torghut",service="torghut-ws"}
+                ) == 0
+                or absent(up{job="torghut",namespace="torghut",service="torghut-ws"})
+              )
+              and on()
+              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
             for: 5m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
               summary: Torghut WS forwarder is down
               description: |
-                torghut-ws is not being scraped (up=0) for 5 minutes. Market data will not flow into Kafka, and TA will stall.
+                The enabled torghut-ws deployment has no reachable metrics target for 5 minutes. Inspect the pod, metrics discovery and market-data flow into Kafka.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSForwarderNotReady
             expr: |
-              torghut_ws_readyz_status{
-                namespace="torghut",
-                service="torghut-ws"
-              } == 0
+              max by (job, namespace, service) (
+                (
+                  torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws"}
+                  or on (job, namespace, service, instance)
+                  0 * up{job="torghut",namespace="torghut",service="torghut-ws"}
+                )
+                and on (job, namespace, service, instance)
+                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)
+              ) == 0
+              and on()
+              (max(kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}) > 0)
             for: 2m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
               summary: Torghut WS forwarder not ready
               description: |
-                torghut-ws /readyz is failing for 2 minutes (Alpaca/Kafka gates not healthy).
+                No reachable torghut-ws target reports healthy readiness for 2 minutes while the deployment is enabled. Inspect /readyz Alpaca, Kafka, trade-update and market-data-channel gates. Missing readiness telemetry also fails this check; it runs overnight for crypto feeds.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
-          - alert: TorghutWSRestartsOrOOM
+          - alert: TorghutWSContainerRestarts
             expr: |
-              (
-                sum(
-                  increase(
-                    kube_pod_container_status_restarts_total{
-                      namespace="torghut",
-                      pod=~"torghut-ws-.*",
-                      container="torghut-ws"
-                    }[10m]
-                  )
-                ) > 0
-              )
-              or
-              (
-                max(
-                  max_over_time(
-                    kube_pod_container_status_last_terminated_reason{
-                      namespace="torghut",
-                      pod=~"torghut-ws-.*",
-                      container="torghut-ws",
-                      reason="OOMKilled"
-                    }[10m]
-                  )
-                ) >= 1
-              )
+              sum by (namespace) (
+                increase(kube_pod_container_status_restarts_total{
+                  namespace="torghut",pod=~"torghut-ws-.*",container="torghut-ws"
+                }[10m])
+              ) > 0
             for: 1m
             labels:
-              severity: critical
+              severity: warning
+              team: trading
+              service: torghut-ws
             annotations:
-              summary: Torghut WS container restarted or OOMKilled
+              summary: Torghut WS container restarted recently
               description: |
-                torghut-ws restarted in the last 10 minutes or terminated with OOMKilled.
-                Inspect /readyz gates, recent ws logs, and JVM heap settings before market-hour impact grows.
+                torghut-ws restarted in the last 10 minutes. Inspect the termination reason, recent logs and JVM heap settings. Sustained unavailability and failed readiness have separate critical email alerts.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSDesiredSymbolsFetchFailing
             expr: |
@@ -1576,9 +1598,17 @@ data:
                 * (hour(vector(time())) >= 14)
                 * (hour(vector(time())) < 21)
               )
+              and on()
+              (max(torghut_ws_readyz_status{namespace="torghut",service="torghut-ws"}
+                and on (job, namespace, service, instance)
+                (up{job="torghut",namespace="torghut",service="torghut-ws"} == 1)) == 1)
             for: 8m
             labels:
               severity: critical
+              team: trading
+              namespace: torghut
+              service: torghut-ws
+              notify: email
             annotations:
               summary: Torghut WS is not publishing Kafka records (market hours)
               description: |
@@ -1586,6 +1616,41 @@ data:
 
                 This usually means the Alpaca WS isn't receiving events or subscriptions are broken.
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+      - name: registry.rules
+        rules:
+          - alert: RegistryCleanupMissed
+            expr: |
+              (
+                max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="registry",cronjob="registry-cleanup"}
+                )
+                > on (namespace, cronjob)
+                (
+                  max by (namespace, cronjob) (
+                    kube_cronjob_status_last_successful_time{namespace="registry",cronjob="registry-cleanup"}
+                  )
+                  or on (namespace, cronjob)
+                  0 * max by (namespace, cronjob) (
+                    kube_cronjob_created{namespace="registry",cronjob="registry-cleanup"}
+                  )
+                )
+              )
+              and on (namespace, cronjob)
+              (
+                time() - max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="registry",cronjob="registry-cleanup"}
+                ) > 7200
+              )
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: registry
+              notify: email
+            annotations:
+              summary: Registry cleanup missed its deadline
+              description: The latest scheduled registry cleanup has no subsequent successful run after its two-hour deadline. Inspect the cleanup Job and write gate before recovery. A successful CronJob-owned recovery clears this alert; retained failed Jobs do not keep it firing.
+              runbook_url: docs/registry/manual-garbage-collection.md
       - name: torghut-ta.rules
         rules:
           - alert: TorghutSignalPipelineMetricsDown
@@ -3947,7 +4012,7 @@ data:
               description: '{{ $labels.name }} has not reached its committed desired state for fifteen minutes. Compare its exact Kargo revision with Argo and the live workload.'
               runbook_url: docs/release-automation.md
           - alert: PlatformPromotionFailed
-            expr: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode",phase=~"Failed|Errored"} == 1
+            expr: kube_kargo_stage_last_promotion_info{namespace=~"ofz-release|relay-release|opencode-release",stage=~"ofz|relay|tengri|proompteng|opencode",phase=~"Failed|Errored"} == 1
             for: 5m
             labels:
               severity: critical
@@ -3959,7 +4024,7 @@ data:
               description: The last {{ $labels.stage }} promotion {{ $labels.phase }}. Inspect its selected Freight, failed step and exact source receipt; retain the previous deployed image.
               runbook_url: docs/release-automation.md
           - alert: PlatformPromotionStalled
-            expr: time() - kube_kargo_stage_current_promotion_started_at{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode"} > 1800
+            expr: time() - kube_kargo_stage_current_promotion_started_at{namespace=~"ofz-release|relay-release|opencode-release",stage=~"ofz|relay|tengri|proompteng|opencode"} > 1800
             for: 5m
             labels:
               severity: warning
@@ -3972,11 +4037,11 @@ data:
               runbook_url: docs/release-automation.md
           - alert: PlatformPromotionTelemetryMissing
             expr: |
-              absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="relay"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng"})
-              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode"})
+              absent(kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="ofz"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="relay-release",stage="relay"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="tengri"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="proompteng"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="opencode-release",stage="opencode"})
             for: 10m
             labels:
               severity: warning

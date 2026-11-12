@@ -13,10 +13,9 @@
     "tsc": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@effect/schema": "^0.75.5",
     "@proompteng/codex": "workspace:*",
     "@proompteng/otel": "workspace:*",
-    "effect": "^3.21.2",
+    "effect": "4.1.4",
     "handlebars": "^4.7.9",
     "yaml": "^2.8.4"
   },

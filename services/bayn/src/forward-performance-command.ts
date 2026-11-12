@@ -1,45 +1,20 @@
-import { readRegisteredFinancialIdentity } from './system-assessment/capital-identity'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { fileURLToPath } from 'node:url'
 import { Cause, Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
 import { loadForwardPerformanceConfig } from './forward-performance/config'
-import { decodeConfiguredCapitalActivation } from './composition/capital-activation'
-import { JevResearchPolicy } from './jev/acceptance'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
 import { recordForwardPerformancePersistence } from './forward-performance/report'
-import { Sha256Schema, strictParseOptions } from './schemas'
+import { Sha256Schema } from './schemas'
 import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-performance-receipt'
 import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
-import { readSystemEvidencePacket } from './system-assessment/files'
-import {
-  initializeQualificationHistory,
-  registerSystemQualification,
-  assessAndPersistSystem,
-  readSystemRegistration,
-  registerOperationalPeriod,
-  assessAndPersistOperational,
-} from './system-assessment/postgres'
-import { OperationalRegistrationSchema, validateOperationalRegistration } from './system-assessment/operational-period'
-import { OperationalAssessmentInputSchema } from './system-assessment/operational-assessment'
-import { captureSystemSourceCut } from './system-assessment/capture'
-import { ValkeyCacheLive } from './valkey-cache'
-import { qualificationRuntime } from './system-assessment/configuration'
-import { validateSystemRegistration } from './system-assessment/policy'
-import { SystemAssessmentError } from './system-assessment/economics'
-import { loadActiveStrategyProtocol } from './strategy'
-import { canonicalHashV1Result } from './hash'
-import { SystemAssessmentInputSchema } from './system-assessment/assessment'
-import { verifyLatencyStressImages } from './system-assessment/latency-report'
-import { CaptureReplayExecutionSchema, captureReplayExecution } from './system-assessment/replay-execution'
-import { readSystemSourceCut } from './system-assessment/source-cut'
 import { runForwardPerformanceWithinDeadline } from './forward-performance-deadline'
 
 export const FORWARD_PERFORMANCE_COMMAND_USAGE =
-  'Usage: bayn-forward-performance --authority-generation <sha256> [--assessment <sha256>] [--persist-receipt | --deadline-ms <milliseconds>] | --system-history <packet.json> | --system-register <packet.json> | --system-capture <registration-sha256> | --system-capture-replay <packet.json> | --system-assess <packet.json> | --help'
+  'Usage: bayn-forward-performance --authority-generation <sha256> [--assessment <sha256>] [--persist-receipt | --deadline-ms <milliseconds>] | --help'
 
 export class ForwardPerformanceCommandArgumentError extends Data.TaggedError('ForwardPerformanceCommandArgumentError')<{
   readonly message: string
@@ -47,11 +22,6 @@ export class ForwardPerformanceCommandArgumentError extends Data.TaggedError('Fo
 
 type ForwardPerformanceCommand =
   | { readonly _tag: 'Help' }
-  | {
-      readonly _tag: 'SystemHistory' | 'SystemRegister' | 'SystemAssess' | 'SystemCaptureReplay'
-      readonly path: string
-    }
-  | { readonly _tag: 'SystemCapture'; readonly registrationHash: string }
   | {
       readonly _tag: 'Supervised'
       readonly deadlineMs: number
@@ -89,15 +59,7 @@ export const parseForwardPerformanceCommandArgs = (
     return Result.fail(new ForwardPerformanceCommandArgumentError({ message: FORWARD_PERFORMANCE_COMMAND_USAGE }))
   }
   if (args.length === 1 && args[0] === '--help') return Result.succeed({ _tag: 'Help' })
-  if (args.length === 2 && args[1] !== undefined && args[1].trim().length > 0) {
-    if (args[0] === '--system-history') return Result.succeed({ _tag: 'SystemHistory', path: args[1] })
-    if (args[0] === '--system-register') return Result.succeed({ _tag: 'SystemRegister', path: args[1] })
-    if (args[0] === '--system-assess') return Result.succeed({ _tag: 'SystemAssess', path: args[1] })
-    if (args[0] === '--system-capture-replay') return Result.succeed({ _tag: 'SystemCaptureReplay', path: args[1] })
-    const registration = Schema.decodeUnknownResult(Sha256Schema)(args[1])
-    if (args[0] === '--system-capture' && Result.isSuccess(registration))
-      return Result.succeed({ _tag: 'SystemCapture', registrationHash: registration.success })
-  }
+
   if (
     (args.length === 4 || (args.length === 5 && args[4] === '--persist-receipt')) &&
     args[0] === '--authority-generation' &&
@@ -175,111 +137,6 @@ const runProof = (options: {
     }),
   ).pipe(withObservedSpan('bayn.forward-performance.prove'))
 
-const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 'Help' | 'Run' | 'Supervised' }>) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const config = yield* loadForwardPerformanceConfig()
-      const result = yield* Effect.gen(function* () {
-        if (command._tag === 'SystemCapture')
-          return yield* captureSystemSourceCut(config, command.registrationHash).pipe(
-            // @effect-diagnostics-next-line strictEffectProvide:off -- private capture owns its scoped cache reader
-            Effect.provide(ValkeyCacheLive),
-          )
-        const packet = yield* readSystemEvidencePacket(command.path)
-        if (command._tag === 'SystemCaptureReplay') {
-          const request = yield* Schema.decodeUnknownEffect(
-            CaptureReplayExecutionSchema,
-            strictParseOptions,
-          )(packet.payload)
-          return yield* captureReplayExecution(
-            request,
-            yield* readSystemRegistration(request.registrationHash),
-            yield* readSystemSourceCut(request.sourceCutHash),
-          )
-        }
-        if (command._tag === 'SystemHistory')
-          return yield* initializeQualificationHistory(packet.payload, packet.verifiedSources)
-        if (command._tag === 'SystemRegister') {
-          const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
-            ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
-            : yield* Effect.fromResult(validateSystemRegistration(packet.payload))
-          const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
-          if (
-            (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
-            registration.obligations.runtimeConfigurationHash
-          )
-            return yield* new SystemAssessmentError({
-              message: 'Prospective registration must use the configured runtime deadlines and strategy protocol',
-            })
-          const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
-          if (
-            candidate === undefined ||
-            candidate.sourceRevision !== config.build.sourceRevision ||
-            `sha256:${candidate.imageDigest}` !== config.build.imageDigest
-          )
-            return yield* new SystemAssessmentError({
-              message: 'Prospective registration must bind the current physical worker build',
-            })
-          if (config.capitalActivationRequestJson !== undefined) {
-            const configured = yield* Effect.fromResult(
-              decodeConfiguredCapitalActivation(
-                config.capitalActivationRequestJson,
-                config.researchCapitalBuildLineageJson,
-              ),
-            ).pipe(Effect.mapError((message) => new SystemAssessmentError({ message })))
-            const expected =
-              configured.buildLineage === null
-                ? undefined
-                : { request: configured.request, buildLineage: configured.buildLineage }
-            if (
-              (candidate.capitalAuthorization === undefined) !== (expected === undefined) ||
-              (expected !== undefined &&
-                (yield* Effect.fromResult(
-                  canonicalHashV1Result(
-                    candidate.capitalAuthorization === undefined
-                      ? undefined
-                      : {
-                          request: candidate.capitalAuthorization.request,
-                          buildLineage: candidate.capitalAuthorization.buildLineage,
-                        },
-                  ),
-                )) !== (yield* Effect.fromResult(canonicalHashV1Result(expected))))
-            )
-              return yield* new SystemAssessmentError({
-                message: 'Prospective registration must preserve the configured reviewed capital lineage',
-              })
-          }
-          if (
-            candidate.capitalAuthorization !== undefined &&
-            (yield* readRegisteredFinancialIdentity(candidate)) === null
-          )
-            return yield* new SystemAssessmentError({
-              message: 'Registration requires its existing durable capital generation',
-            })
-          return registration.program === 'BAYN_OPERATIONAL_RELIABILITY'
-            ? yield* registerOperationalPeriod(registration, packet.verifiedSources)
-            : yield* registerSystemQualification(registration, packet.verifiedSources)
-        }
-        if (Schema.is(OperationalAssessmentInputSchema)(packet.payload))
-          return yield* assessAndPersistOperational(packet.payload, packet.verifiedSources)
-        const input = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(packet.payload)
-        yield* readSystemRegistration(yield* Effect.fromResult(canonicalHashV1Result(input.registration)))
-        const images = yield* verifyLatencyStressImages(
-          input.latencyStressSources,
-          input.registration,
-          packet.artifacts,
-        )
-        return yield* assessAndPersistSystem(input, packet.verifiedSources, packet.artifacts, images)
-      }).pipe(
-        // @effect-diagnostics-next-line strictEffectProvide:off -- command owns the scoped database layer
-        Effect.provide(PostgresClientLive(config)),
-      )
-      const output = yield* Effect.fromResult(canonicalJsonV1Result(result))
-      const stdio = yield* Stdio.Stdio
-      yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())
-    }),
-  )
-
 const runtime = Layer.mergeAll(makeConfiguredTelemetryRuntimeLayer('bayn-forward-performance'), NodeServices.layer)
 const main = Effect.gen(function* () {
   const command = yield* Effect.fromResult(parseForwardPerformanceCommandArgs(process.argv.slice(2)))
@@ -296,8 +153,7 @@ const main = Effect.gen(function* () {
       ],
       command.deadlineMs,
     )
-  if (command._tag === 'Run') return yield* runProof(command.options)
-  return yield* runSystem(command)
+  return yield* runProof(command.options)
 })
 const deadlineRequested = process.argv.slice(2).includes('--deadline-ms')
 const program = deadlineRequested

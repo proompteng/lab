@@ -26,6 +26,10 @@ import {
 } from './rows'
 
 export interface CycleQueries {
+  readonly retainDecisionInput: (
+    document: CycleDecisionDocument,
+    inputDigest: string,
+  ) => Effect.Effect<void, CycleStoreInternalError>
   readonly selectCycle: (
     cycleId: string,
     locked: boolean,
@@ -60,6 +64,15 @@ export const makeCycleQueries = (
   let retainedDecision:
     | { readonly document: CycleDecisionDocument; readonly digest: string; readonly bytes: number }
     | undefined
+
+  const retainDecisionInput: CycleQueries['retainDecisionInput'] = (input, inputDigest) =>
+    Effect.gen(function* () {
+      // Binding supplies its decoded, private graph. Unknown objects still cross
+      // the full boundary; only the decoder's owned frozen receipt can be reused.
+      const document = yield* Effect.fromResult(decodeCycleDecisionDocument(input))
+      const bytes = Buffer.byteLength(JSON.stringify(document), 'utf8')
+      retainedDecision = bytes <= 8 * 1024 * 1024 ? { document, digest: inputDigest, bytes } : undefined
+    })
 
   const selectCycle: CycleQueries['selectCycle'] = (cycleId, locked) => {
     const rows = locked
@@ -172,8 +185,7 @@ export const makeCycleQueries = (
               ? retained.document
               : yield* Effect.fromResult(decodeCycleDecisionDocument(row.document))
           if (!row.matches_retained_document) {
-            const bytes = Buffer.byteLength(JSON.stringify(document), 'utf8')
-            retainedDecision = bytes <= 8 * 1024 * 1024 ? { document, digest: row.document_digest, bytes } : undefined
+            yield* retainDecisionInput(document, row.document_digest)
           }
           return attachCycleDecisionStoreEvidence(document, {
             executionCompletionEvidenceMatches: row.execution_completion_evidence_matches,
@@ -507,6 +519,7 @@ export const makeCycleQueries = (
     )
 
   return {
+    retainDecisionInput,
     selectCycle,
     selectCycleByAuthoritySlot,
     selectDecisionDocuments,

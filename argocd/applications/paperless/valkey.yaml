@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: paperless-valkey
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  serviceName: paperless-valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paperless-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paperless-valkey
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: valkey
+          image: valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              umask 077
+              printf 'requirepass %s\n' "$VALKEY_PASSWORD" > /tmp/valkey-password.conf
+              exec valkey-server /tmp/valkey-password.conf --appendonly yes --save 60 1000 --maxmemory 256mb --maxmemory-policy noeviction
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-runtime
+                  key: VALKEY_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: rook-ceph-block
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless-valkey
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  selector:
+    app.kubernetes.io/name: paperless-valkey
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

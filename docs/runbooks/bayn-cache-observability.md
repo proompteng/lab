@@ -79,6 +79,18 @@ are excluded from metric labels.
 
 Missing series and no-traffic quantiles remain unknown. The dashboard does not replace absent evidence with zeros.
 
+`bayn_scheduler_delay_seconds` measures the monotonic excess delay resuming a one-second diagnostic sleep in
+execution workers with OTLP metrics enabled. It shares the existing service/source identity and exporter; it makes no
+network or database calls. One completed wake-up produces one sample, with no synthetic catch-up samples after a stall.
+Scope shutdown interrupts the sleep. A diagnostic defect stops the sampler with a fixed warning and does not change trading
+or exporter behavior. Missing samples do not mean zero delay.
+
+Compare its source-bound histogram with an over-deadline operation's exact trace. For example, a SET lasting longer
+than the one-second command deadline can reflect delayed local timer processing as well as remote latency. The
+sampler measures local scheduling delay, not a specific CPU, garbage-collection, network or Valkey cause; a stall can
+overlap multiple operations. It does not change operation deadlines, the required replica acknowledgment, polling
+quota, freshness or authority. Confirm subsequent successful replicated publication separately.
+
 ## Alerts and diagnosis
 
 The `bayn-cache-performance.rules` Mimir group contains eight rules. They use the existing trading email route.
@@ -119,7 +131,7 @@ time() - max by (source_revision, service) (bayn_telemetry_heartbeat_timestamp_s
    An older API can remain deployed while a newer controller waits on an activation prerequisite. This is unresolved
    deployment skew, not automatically a false positive or a global telemetry outage. Keep the exact-source alert.
 2. Inspect the existing Kargo promotion and Argo operation messages, then the relevant workload's image/source
-   metadata and hook conditions using explicit namespaces (`lab-delivery`, `argocd`, `bayn`). Distinguish current
+   metadata and hook conditions using explicit namespaces (`bayn-release`, `argocd`, `bayn`). Distinguish current
    and retained controllers. Read only the relevant status/condition fields; do not dump credentials or raw logs.
    If activation is blocked, identify its safe prerequisite evidence separately; do not reset authority, skip a hook,
    force a rollout, change network policy or relax freshness to clear this alert.

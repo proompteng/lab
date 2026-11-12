@@ -105,7 +105,7 @@ const check = (name: string, directory: string, expectedViolation?: string) => {
   }
 }
 
-for (const name of ['Controller', 'EntryRecovery', 'MutationLedger']) {
+for (const name of ['Controller', 'EntryRecovery', 'MutationLedger', 'RecoveryScheduler', 'CancellationAdmission']) {
   const directory = join(output, name)
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, `${name}.tla`), readFileSync(join(models, `${name}.tla`)))
@@ -114,6 +114,27 @@ for (const name of ['Controller', 'EntryRecovery', 'MutationLedger']) {
 }
 
 const faults = [
+  {
+    model: 'CancellationAdmission',
+    name: 'stale-cancellation-admission',
+    before: 'Admit == /\\ CanAdmit',
+    after: 'Admit == /\\ phase = "Read"',
+    violation: 'Invariant NoUnauthorizedStart is violated.',
+  },
+  {
+    model: 'RecoveryScheduler',
+    name: 'stopped-recovery',
+    before: "scheduled' = IF dependencyReady THEN FALSE ELSE TRUE",
+    after: "scheduled' = IF dependencyReady THEN FALSE ELSE recoveryWindow < MaximumRecoveryWindow",
+    violation: 'Invariant RecoveryScheduled is violated.',
+  },
+  {
+    model: 'RecoveryScheduler',
+    name: 'unfair-recovery-delivery',
+    before: ' /\\ WF_vars(Deliver)',
+    after: '',
+    violation: 'Temporal properties were violated.',
+  },
   {
     model: 'Controller',
     name: 'stale-completion',
@@ -124,9 +145,23 @@ const faults = [
   {
     model: 'EntryRecovery',
     name: 'missed-short-retry',
-    before: 'IF Pending THEN ContinuationDelay ELSE NormalDelay',
-    after: 'NormalDelay',
+    before: 'ContinuationDelay == IF WithinAdmission /\\ ExpiredWork THEN RetryDelay',
+    after: 'ContinuationDelay == IF WithinAdmission /\\ ExpiredWork THEN NormalDelay',
     violation: 'Invariant CappedRetries is violated.',
+  },
+  {
+    model: 'EntryRecovery',
+    name: 'changed-eligibility-deadline',
+    before: 'THEN EligibilityAt - now ELSE 0',
+    after: 'THEN RetryDelay ELSE 0',
+    violation: 'Invariant EligibilityDeadlineIsOriginal is violated.',
+  },
+  {
+    model: 'EntryRecovery',
+    name: 'ordinary-source-polling',
+    before: 'ContinuationDelay == IF WithinAdmission /\\ ExpiredWork THEN RetryDelay',
+    after: 'ContinuationDelay == IF WithinAdmission /\\ (ExpiredWork \\/ mode = "STREAM") THEN RetryDelay',
+    violation: 'Invariant UnknownSourcesDoNotPoll is violated.',
   },
   {
     model: 'EntryRecovery',
@@ -178,6 +213,27 @@ if (conformance.exitCode !== 0) throw Error(`TLC production conformance failed; 
 
 const productionFaults = [
   {
+    name: 'expired-cancellation-admission',
+    file: 'src/execution/mutations/decisions.ts',
+    before: '    admittedAt < validUntil &&\n',
+    after: '',
+    test: 'expired entry cancellation rechecks current authority, identity and freshness at admission',
+  },
+  {
+    name: 'changed-cancellation-authority',
+    file: 'src/execution/mutations/decisions.ts',
+    before: '    admission.authorityVersion === facts.authorityVersion &&\n',
+    after: '',
+    test: 'expired entry cancellation rechecks current authority, identity and freshness at admission',
+  },
+  {
+    name: 'truncated-recovery-counter',
+    file: 'src/execution/controller.ts',
+    before: 'Math.min(current + 1, executionControllerMaximumRecoveryWindow)',
+    after: 'Math.min(current + 1, executionControllerMaximumRecoveryWindow - 1)',
+    test: 'recovery window transitions retain bounded production counters at saturation',
+  },
+  {
     name: 'stale-completion',
     file: 'src/execution/controller.ts',
     before: `  if (
@@ -192,9 +248,23 @@ const productionFaults = [
   {
     name: 'missed-short-retry',
     file: 'src/observe-composition/recovery-driver.ts',
-    before: '        ? Math.min(1_000, normalDelayMs, expiresAt - now)',
-    after: '        ? normalDelayMs',
-    test: 'initial and later input retries retain the original admission, binding and consumed-window guards',
+    before: '      ? 1\n      : undefined',
+    after: '      ? normalDelayMs\n      : undefined',
+    test: 'stream waits and named timers retain the original admission, binding and eligibility deadlines',
+  },
+  {
+    name: 'changed-eligibility-deadline',
+    file: 'src/observe-composition/recovery-driver.ts',
+    before: '    ? remainingMs\n    : undefined',
+    after: '    ? normalDelayMs\n    : undefined',
+    test: 'stream waits and named timers retain the original admission, binding and eligibility deadlines',
+  },
+  {
+    name: 'ordinary-source-polling',
+    file: 'src/observe-composition/recovery-driver.ts',
+    before: '    result.readiness.availableAt === undefined\n  )\n    return undefined',
+    after: '    result.readiness.availableAt === undefined\n  )\n    return 1',
+    test: 'stream waits and named timers retain the original admission, binding and eligibility deadlines',
   },
   {
     name: 'duplicate-dispatch',

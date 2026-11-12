@@ -610,7 +610,8 @@ const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number)
   if (
     pass?.result !== 'SUCCESS' ||
     pass.outcome !== 'ADMISSION_WAITING' ||
-    pass.readiness?.reason !== DecisionReadinessReason.AccountProtection ||
+    (pass.readiness?.reason !== DecisionReadinessReason.AccountProtection &&
+      pass.readiness?.reason !== DecisionReadinessReason.TurnoverBudgetExhausted) ||
     pass.admissionProtection === undefined ||
     state.cycle.current !== null ||
     state.cycle.unfinishedCycleCount !== 0 ||
@@ -701,7 +702,11 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
     Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
       ? pass.readiness
       : undefined
-  if (readiness?.reason === DecisionReadinessReason.AccountProtection) return result(ExecutionSessionCondition.Blocked)
+  if (
+    readiness?.reason === DecisionReadinessReason.AccountProtection ||
+    readiness?.reason === DecisionReadinessReason.TurnoverBudgetExhausted
+  )
+    return result(ExecutionSessionCondition.Blocked)
   if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
   if (readiness !== undefined) {
     if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)

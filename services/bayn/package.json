@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "rm -rf dist && bun build src/index.ts src/native-arrival-export-command.ts src/control-opening-command.ts src/verify-build-contract.ts src/glitchtip-smoke-command.ts src/forward-performance-command.ts src/inference-cost-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/market-data/streaming/market-projection-worker.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/webull-research-command.ts src/opencode-command.ts src/jev-evaluation-command.ts src/valkey-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist",
+    "build": "rm -rf dist && bun build src/index.ts src/native-arrival-export-command.ts src/control-opening-command.ts src/verify-build-contract.ts src/glitchtip-smoke-command.ts src/forward-performance-command.ts src/system-assessment-command.ts src/inference-cost-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/decision-construction-worker.ts src/market-data/streaming/market-projection-worker.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/webull-research-command.ts src/opencode-command.ts src/jev-evaluation-command.ts src/valkey-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "valkey:verify": "node dist/valkey-command.js",
@@ -48,9 +48,9 @@
     "native:export": "node dist/research/native-arrival-export-command.js"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.0",
-    "@effect/sql-clickhouse": "4.0.0",
-    "@effect/sql-pg": "4.0.0",
+    "@effect/platform-node": "4.1.4",
+    "@effect/sql-clickhouse": "4.1.4",
+    "@effect/sql-pg": "4.1.4",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/core": "2.10.0",
     "@opentelemetry/exporter-trace-otlp-proto": "0.221.0",
@@ -60,7 +60,7 @@
     "@restatedev/restate-sdk": "1.16.5",
     "@restatedev/restate-sdk-opentelemetry": "1.16.5",
     "@sentry/node": "11.8.0",
-    "effect": "4.0.0",
+    "effect": "4.1.4",
     "ml-matrix": "6.15.0",
     "redis": "6.3.0",
     "tigerbeetle-node": "0.17.9"

@@ -1,3 +1,10 @@
+import inferenceExpenseWakeups from '../../migrations/0197_inference_expense_wakeups'
+import streamingOperationalController from '../../migrations/0196_streaming_operational_controller'
+import jevInferenceWork from '../../migrations/0195_jev_inference_work'
+import brokerNotificationReceipts from '../../migrations/0194_broker_notification_receipts'
+import uncappedPaperTurnover from '../../migrations/0192_uncapped_paper_turnover'
+import executionControllerAtomicRotation from '../../migrations/0191_execution_controller_atomic_rotation'
+import settleRetiredJevBatches from '../../migrations/0190_settle_retired_jev_batches'
 import nativeProtectionCancelReceipts from '../../migrations/0189_native_protection_cancel_receipts'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
 import inferenceRequestGenerationIndex from '../../migrations/0187_inference_request_generation_index'
@@ -191,6 +198,13 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '197_inference_expense_wakeups': inferenceExpenseWakeups,
+  '196_streaming_operational_controller': streamingOperationalController,
+  '195_jev_inference_work': jevInferenceWork,
+  '194_broker_notification_receipts': brokerNotificationReceipts,
+  '192_uncapped_paper_turnover': uncappedPaperTurnover,
+  '191_execution_controller_atomic_rotation': executionControllerAtomicRotation,
+  '190_settle_retired_jev_batches': settleRetiredJevBatches,
   '189_native_protection_cancel_receipts': nativeProtectionCancelReceipts,
   '188_jev_box_inference': jevBoxInference,
   '187_inference_request_generation_index': inferenceRequestGenerationIndex,

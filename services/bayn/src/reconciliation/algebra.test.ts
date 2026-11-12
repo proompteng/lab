@@ -12,6 +12,7 @@ import { canonicalHashV1Result } from '../hash'
 import {
   AccountStatus,
   Authority,
+  DiscrepancyKind,
   IntentState,
   KillState,
   OrderSide,
@@ -392,6 +393,56 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(exact.accountingHash).not.toBe(missing.accountingHash)
   })
 
+  test('keeps fee cash discrepant until a later account observation reflects the same fees', () => {
+    const input = comparisonInput()
+    const beforeFees = successOf(compareOpeningCash(input))
+    expect(beforeFees.comparison.discrepancies).toEqual([])
+    const fees = ['-10000', '-5720000'].map((netAmountMicros, index) => ({
+      accountId,
+      activityId: `delayed-fee-${index}`,
+      date: '2026-07-22',
+      netAmountMicros,
+    }))
+    const compareObservation = (cashMicros: string, at: string) => {
+      const cashChange = BigInt(cashMicros) - BigInt(input.snapshot.account.cashMicros)
+      const equityMicros = (BigInt(input.snapshot.account.equityMicros) + cashChange).toString()
+      return successOf(
+        compareOpeningCash({
+          ...input,
+          fees: fees.map((fee) => ({ ...fee })),
+          brokerFeeCashDeltaMicros: '-5730000',
+          snapshot: {
+            ...input.snapshot,
+            account: { ...input.snapshot.account, cashMicros, equityMicros, observedAt: at },
+            valuation: { ...input.snapshot.valuation, cashMicros, equityMicros, asOf: at },
+            reconciledAt: at,
+          },
+        }),
+      )
+    }
+    const unchangedCash = input.snapshot.account.cashMicros
+    const arrival = compareObservation(unchangedCash, '2026-07-22T15:31:00.000Z')
+    expect(arrival.comparison.metrics.cashDifferenceMicros).toBe('5730000')
+    expect(arrival.comparison.discrepancies.map((item) => item.kind)).toEqual([DiscrepancyKind.Cash])
+    expect(arrival.accountingHash).not.toBe(beforeFees.accountingHash)
+
+    const repeated = compareObservation(unchangedCash, '2026-07-22T15:32:00.000Z')
+    expect(repeated.comparison.metrics.cashDifferenceMicros).toBe('5730000')
+    expect(repeated.comparison.discrepancies.map((item) => item.kind)).toEqual([DiscrepancyKind.Cash])
+    expect(repeated.accountingHash).toBe(arrival.accountingHash)
+
+    const debitedCash = (BigInt(unchangedCash) - 5730000n).toString()
+    const settled = compareObservation(debitedCash, '2026-07-22T15:33:00.000Z')
+    expect(settled.comparison.metrics.cashDifferenceMicros).toBe('0')
+    expect(settled.comparison.discrepancies).toEqual([])
+    expect(settled.accountingHash).toBe(arrival.accountingHash)
+
+    const shortDebit = compareObservation((BigInt(debitedCash) + 10000n).toString(), '2026-07-22T15:33:00.000Z')
+    expect(shortDebit.comparison.metrics.cashDifferenceMicros).toBe('10000')
+    expect(shortDebit.comparison.discrepancies.map((item) => item.kind)).toEqual([DiscrepancyKind.Cash])
+    expect(shortDebit.accountingHash).toBe(arrival.accountingHash)
+  })
+
   test('rejects fee history that predates the opening cash baseline', () => {
     const input = comparisonInput()
     const result = compareOpeningCash({
@@ -525,10 +576,18 @@ describe('PostgreSQL reconciliation algebra', () => {
   test('verifies fill economics and the stored transaction once before receipt verification', () => {
     const source = { transaction: prepared.transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }
     expect(successOf(verifyAccountingHistory([source], tigerBeetle.ledger))).toEqual([prepared])
+    const { contentHash: _contentHash, ...changedMaterial } = { ...prepared.transaction, feeMicros: '1' }
     for (const changed of [
       { ...source, transaction: { ...prepared.transaction, contentHash: hash('invalid-transaction-content') } },
       { ...source, fill: { ...fill, quantityAtoms: '2000000000' } },
       { ...source, transaction: { ...prepared.transaction, ledgerPlanHash: hash('changed-ledger') } },
+      {
+        ...source,
+        transaction: {
+          ...changedMaterial,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
+        },
+      },
     ]) {
       const failure = failureOf(verifyAccountingHistory([changed], tigerBeetle.ledger))
       expect(failure).toEqual({

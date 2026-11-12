@@ -104,7 +104,6 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
       ...runtimeConfig,
       ...config,
       runtimeMode: 'AutonomousService',
-      cyclePollIntervalMs: 30_000,
       execution: { ...runtimeConfig.execution, brokerIdentity: identity },
       alpaca: {
         identity,

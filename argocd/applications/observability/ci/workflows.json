@@ -24,11 +24,11 @@
   "arc-placement-acceptance.yml": [
     {
       "id": "publication-tools",
-      "pattern": "^Verify publication runner(?: \\(.*\\))?$"
+      "pattern": "^Publication slot .*(?: \\(.*\\))?$"
     },
     {
-      "id": "local-build",
-      "pattern": "^Slot .* local scratch build(?: \\(.*\\))?$"
+      "id": "ceph-build",
+      "pattern": "^Build slot .* Ceph scratch build(?: \\(.*\\))?$"
     },
     {
       "id": "verify-placement",
@@ -57,8 +57,24 @@
       "pattern": "^validation(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "broker-feed-validation",
+      "pattern": "^broker-feed-validation(?: \\(.*\\))?$"
+    },
+    {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "research-image",
+      "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "broker-feed-image",
+      "pattern": "^broker-feed-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "publish-cohort",
+      "pattern": "^publish-cohort(?: \\(.*\\))?$"
     }
   ],
   "bayn-ci.yml": [
@@ -87,6 +103,10 @@
       "pattern": "^market-data-replay(?: \\(.*\\))?$"
     },
     {
+      "id": "streaming-integration",
+      "pattern": "^streaming-integration(?: \\(.*\\))?$"
+    },
+    {
       "id": "postgres-integration",
       "pattern": "^postgres-integration(?: \\(.*\\))?$"
     },
@@ -99,16 +119,8 @@
       "pattern": "^ledger-integration(?: \\(.*\\))?$"
     },
     {
-      "id": "dependency-input-invariant",
-      "pattern": "^dependency-input-invariant(?: \\(.*\\))?$"
-    },
-    {
       "id": "replay-execution-observer",
       "pattern": "^replay-execution-observer(?: \\(.*\\))?$"
-    },
-    {
-      "id": "image",
-      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "required",

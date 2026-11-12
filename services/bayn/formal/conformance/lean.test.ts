@@ -3,7 +3,8 @@ import { nativeSafetyCoverage, SafetyCheckStatus } from '../../src/system-assess
 import { nextIntradayEntryAttemptOrdinal } from '../../src/cycle/runner/calendar-decisions'
 import { reconciliationCompletionSupported } from '../../src/system-assessment/obligation-witnesses'
 import { closedEntryWindowTimingSupported } from '../../src/system-assessment/decision-work'
-import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../../src/execution/trading-scope'
+import { currentEntryMarketEnabled } from '../../src/execution/trading-scope'
+import { currentSubmissionMarketAllowed } from '../../src/execution/mutation-authority'
 import { JevAcceptanceVersion } from '../../src/jev/acceptance'
 import { OrderStatus, OrderSchema } from '../../src/execution/contracts'
 import type { SystemSourceCut } from '../../src/system-assessment/source-cut'
@@ -2191,13 +2192,15 @@ formal('pinned Lean executable conformance', () => {
         [500, 30_000].map((normalDelay) => ({ ...c, inputState, normalDelay })),
       ),
     )
+    expect(pendingInputCases).toHaveLength(6_720)
     expect(
       model(
         pendingInputCases.map((c) => ({
-          operation: 'pendingMarketInputsContinuation',
-          pending: c.inputState === 'INITIAL' || c.inputState === 'LATER',
+          operation: 'sourceWindowContinuation',
+          known: false,
           cycle: encodeCycle(c.cycle),
           now: String(c.now),
+          availableAt: String(c.now + 1),
           normalDelay: c.normalDelay,
         })),
       ),

@@ -22,7 +22,9 @@ remain visible in metrics; stale collection never becomes a fabricated empty que
 The target is to collect a completed attempt within five minutes during healthy API operation. Newest completed
 attempts take priority over backfill. Completed jobs are collected while their workflow is still running, so one
 slow architecture cannot delay another job's telemetry. Backfill pauses below 2,000 remaining API requests, leaving
-headroom for current runs before the shared 1,000-request ARC reserve. The initial backfill covers attempts updated within 14 days. Detailed SQLite
+headroom for current runs before the shared 1,000-request ARC reserve. This applies to both historical index discovery
+and pending job collection; a paused index resumes its existing iterator after foreground polling observes renewed quota.
+The initial backfill covers attempts updated within 14 days. Detailed SQLite
 job records retain 90 days; collection-delay aggregates and deduplication keys survive Pod restarts on the 1 GiB retained
 Ceph claim. The single replica and `Recreate` rollout serialize SQLite writers. Do not scale this deployment.
 
@@ -48,7 +50,8 @@ cache class and fixed statistical windows. Run IDs, commit SHAs, job names and r
 not metric or Loki stream labels. Raw job logs, GitHub actor profiles and credentials are not stored or forwarded.
 Signed log download URLs receive no GitHub Authorization header.
 
-`workflows.json` enrolls image workflows and their reusable callers. The scripts CI check discovers build actions
+`workflows.json` enrolls image workflows, their reusable callers and Bayn's validation pipeline. Bayn remains
+observable after moving its images to main-only publication. The scripts CI check discovers build actions
 and reusable callers from workflow YAML and fails if a new image workflow is missing. Regenerate it with
 `bun run packages/scripts/src/ci/generate-observability-workflows.ts` when adding a workflow. Diagnostic image builds
 can be included; ordinary semantic checks are excluded.
@@ -109,9 +112,14 @@ The initial historical scan and backfill must complete before duration alerts ca
 continues when GitHub polling fails; GitHub collection continues during a Loki outage.
 
 Independent alerts cover failed or missing Attic probes, unsuccessful build-cache uploads, and exhausted cache download
-retries. `CiBuildStalled` alerts when one active push image build exceeds twenty minutes for two minutes, without requiring
+retries. `CiBuildStalled` alerts when one active push image job exceeds twenty minutes for two minutes, without requiring
 baseline samples. All use the existing email route. Completed cache errors remain visible for the one-hour event window;
 active build ages disappear on completion. Stale GitHub polling cannot trigger build/cache-event alerts.
+`ci_job_current_phase_age_seconds` separates building, publishing, artifacts and cleanup using the existing bounded phase
+names. `finalizing` means every reported step has completed while GitHub still reports the job as running; its age
+starts at the last step completion. Missing step telemetry remains `unattributed` and does not suppress the job-age
+alert. Check the exact GitHub job and ARC runner before attributing a long job to compilation. Nix OCI log uploads
+have a five-minute step budget and remain required for successful publication.
 
 Queue alerts select image build jobs and aggregate by namespace, runner pool and architecture. Workflow and job-family
 changes do not create new alert identities. The first alert still requires a queue over ten minutes for five minutes
@@ -122,6 +130,16 @@ Inspect `ci-observability` logs and its collection freshness/API-headroom panels
 and expiry through the existing ARC secret-sync procedure without printing its value or changing permissions.
 For a Loki backlog, check gateway health and collector errors; do not remove the PVC or clear the outbox. An observer
 failure does not stop builds. Recover code through a reviewed Git revert and Argo reconciliation, retaining the PVC.
+
+The `ci_observability_phase_*` metrics distinguish a blocked current poll from pending-attempt collection,
+history discovery, pruning, Loki delivery, metric refresh, and sleep. Active phase and elapsed time are read
+directly from a bounded in-memory snapshot on each scrape, even while the regular GitHub/SQLite metric snapshot
+is stale. Durations use a monotonic clock. Completion counters distinguish success, error, and interruption;
+all phase diagnostics reset on process restart and add only 48 fixed series. They contain no run IDs, URLs,
+exception text, or credentials and perform no network or database reads in the HTTP thread.
+Phase completion is not proof of a successful GitHub poll: the existing last-success timestamp, stale-collection
+alert, polling order, request budgets, and retained evidence remain unchanged. These diagnostics identify the
+phase of a future stall, not its network/storage cause or a latency improvement.
 
 ## Validation
 

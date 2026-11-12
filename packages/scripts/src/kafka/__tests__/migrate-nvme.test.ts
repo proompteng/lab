@@ -178,9 +178,12 @@ describe('Kafka NVMe migration plan contract', () => {
     expect(() => buildPlan(options({ expectedClusterId: 'wrong' }), resources())).toThrow('cluster ID mismatch')
   })
 
-  it('uses cp sparse copy plus complete digest and meta.properties checks', () => {
+  it('copies and hashes each source stream once with bounded concurrency', () => {
     const script = copyScript('cluster-a', 3)
-    expect(script).toContain('cp -a --sparse=always /source/. /target/')
+    expect(script).toContain('cp -a --attributes-only /source/. /target/')
+    expect(script).toContain('ThreadPoolExecutor(max_workers=4)')
+    expect(script).toContain('digest.update(chunk)')
+    expect(script).toContain('target.write(block)')
     expect(script).toContain('expected_cluster')
     expect(script).toContain('meta.properties')
     expect(script).toContain('COPY_VERIFIED')
@@ -241,15 +244,14 @@ describe('Kafka NVMe migration plan contract', () => {
 
       const gcp = Bun.which('gcp')
       const run = async (clusterId: string, destination: string, prelude = '') => {
-        const copyCommand = prelude
-          ? gcp
-            ? 'cp -a --sparse=always'
-            : 'cp -a'
-          : gcp
-            ? gcp + ' -a --sparse=always'
-            : 'cp -a'
+        const executable = gcp ?? Bun.which('cp')
+        if (!executable) throw new Error('GNU cp executable is required')
+        const copyCommand = prelude ? 'cp -a --attributes-only' : executable + ' -a --attributes-only'
+        const syncExecutable =
+          process.platform === 'darwin' ? (Bun.which('gsync') ?? Bun.which('sync')) : Bun.which('sync')
         const script = copyScript(clusterId, 3)
-          .replace('cp -a --sparse=always', copyCommand)
+          .replace('cp -a --attributes-only', copyCommand)
+          .replace('sync -f /target', syncExecutable + ' -f /target')
           .replaceAll('/tmp/source-manifest.json', '__SOURCE_MANIFEST__')
           .replaceAll('/tmp/target-manifest.json', '__TARGET_MANIFEST__')
           .replaceAll('/source', source)
@@ -274,7 +276,7 @@ describe('Kafka NVMe migration plan contract', () => {
       const sparseSource = await stat(join(source, 'sparse.log'))
       const sparseTarget = await stat(join(target, 'sparse.log'))
       expect(sparseTarget.size).toBe(sparseSource.size)
-      if (gcp) expect(sparseTarget.blocks).toBeLessThan(sparseTarget.size / 512)
+      if (process.platform === 'linux') expect(sparseTarget.blocks).toBeLessThan(sparseTarget.size / 512)
       const realCp = gcp ?? Bun.which('cp')
       if (!realCp) throw new Error('cp executable is required for the copy fixture')
       const quotedCp = "'" + realCp.replaceAll("'", "'\"'\"'") + "'"

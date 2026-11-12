@@ -119,7 +119,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
           dailyTradedNotionalMicros: 0n,
           maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
           maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
-          maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+          maxDailyTradedNotionalMicros:
+            policy.maxDailyTradedNotionalMicros === null ? null : BigInt(policy.maxDailyTradedNotionalMicros),
           maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
           targetWeights,
           positions: broker.positions,
