@@ -674,6 +674,8 @@ spec:
                 namespace: argo-workflows
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                  # The CRD installer uses Force/Replace for its immutable Job template.
+                  argocd.argoproj.io/compare-options: ServerSideDiff=false
                 automation: manual
                 enabled: "true"
               - name: attic
