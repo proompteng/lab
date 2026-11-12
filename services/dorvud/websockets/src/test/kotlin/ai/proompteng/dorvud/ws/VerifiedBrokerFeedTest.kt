@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -58,6 +59,8 @@ class VerifiedBrokerFeedTest {
     val result = signBrokerNotification(notification, fixture.getValue("secret").jsonPrimitive.content)
     assertEquals(message, result.message)
     assertEquals(signed.getValue("signature").jsonPrimitive.content, result.signature)
+    // Exercise the producer's default JSON serializer, including the required outer version.
+    assertEquals(signed, Json.parseToJsonElement(Json.encodeToString(result)))
   }
 
   @Test
