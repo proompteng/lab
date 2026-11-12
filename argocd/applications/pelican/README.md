@@ -24,7 +24,10 @@ kubectl -n pelican get secret pelican-bootstrap -o jsonpath='{.data.ADMIN_PASSWO
 
 Change the administrator password and set a real email in the Panel after login. Mail delivery is intentionally unconfigured. The generated password remains a bootstrap record rather than resetting the live account on restart.
 
-The forest/caves allocations are reserved for the discussed Don't Starve Together setup. This installs the management platform, not a game world. Starting DST additionally requires its Egg, a Klei cluster token, a world configuration and optional game password. Public internet exposure requires a separate explicit networking change.
+The forest/caves allocations are used by the [Don't Starve Together installation](dst/README.md).
+Its one-time provisioning helper creates the game through Pelican's native services and
+preserves subsequent user changes. Online activation requires the owner's Klei server token.
+Public internet exposure requires a separate explicit networking change.
 
 ## Validation and operations
 
