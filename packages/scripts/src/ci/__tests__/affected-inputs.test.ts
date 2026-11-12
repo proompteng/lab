@@ -613,6 +613,63 @@ const text = (value: unknown): string => {
   return value
 }
 
+const mainSelectors = readdirSync('.github/workflows').filter((filename) => {
+  if (!/\.ya?ml$/.test(filename)) return false
+  const source = readFileSync(`.github/workflows/${filename}`, 'utf8')
+  if (!source.includes('./.github/actions/affected-inputs')) return false
+  const workflow: unknown = Bun.YAML.parse(source)
+  const push = property(property(workflow, 'on'), 'push')
+  if (push === undefined || push === null) return false
+  const paths = property(push, 'paths')
+  return (
+    Array.isArray(paths) &&
+    matchesPaths('package.json', paths.map(text)) &&
+    source.includes('./.github/actions/affected-inputs')
+  )
+})
+
+test.each([...mainSelectors, 'bayn-ci.yml'])(
+  '%s keeps skipped main pushes out of another source publication',
+  (filename) => {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const concurrency = property(workflow, 'concurrency')
+    const evaluate = (
+      value: unknown,
+      sha: string,
+      runId: number,
+      pr: boolean,
+      ref = pr ? 'refs/pull/19866/merge' : 'refs/heads/main',
+    ) =>
+      String(value).replace(/\$\{\{([\s\S]*?)\}\}/g, (_match, expression: string) =>
+        String(
+          runInNewContext(expression, {
+            format: (template: string, ...values: unknown[]) =>
+              template.replace(/\{(\d+)\}/g, (_key, index: string) => String(values[Number(index)])),
+            github: {
+              workflow: property(workflow, 'name'),
+              sha,
+              run_id: runId,
+              event_name: pr ? 'pull_request' : 'push',
+              ref,
+              event: { pull_request: pr ? { number: 19866 } : {}, action: 'synchronize', changes: {} },
+            },
+          }),
+        ),
+      )
+    const group = property(concurrency, 'group')
+    const cancel = property(concurrency, 'cancel-in-progress')
+    expect(evaluate(group, 'a'.repeat(40), 1, false)).not.toBe(evaluate(group, 'b'.repeat(40), 2, false))
+    expect(evaluate(cancel, 'a'.repeat(40), 1, false)).toBe('false')
+    expect(evaluate(group, 'a'.repeat(40), 1, false)).not.toBe(
+      evaluate(group, 'a'.repeat(40), 2, false, 'refs/heads/diagnostic'),
+    )
+    if (property(property(workflow, 'on'), 'pull_request') !== undefined) {
+      expect(evaluate(group, 'a'.repeat(40), 1, true)).toBe(evaluate(group, 'b'.repeat(40), 2, true))
+      expect(evaluate(cancel, 'b'.repeat(40), 2, true)).toBe('true')
+    }
+  },
+)
+
 test('planner implementation, action, and map changes retain their owning validation', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
   for (const event of ['pull_request', 'push']) {

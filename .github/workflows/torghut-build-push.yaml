@@ -47,9 +47,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: torghut-build-${{ github.ref }}
-  # Finish the active registry publish; GitHub's single pending slot still
-  # coalesces later pushes to the newest source revision.
+  group: torghut-build-${{ github.ref }}-${{ github.sha }}
+  # Finish publication for this source; unrelated skipped pushes must not evict it.
   cancel-in-progress: false
 
 jobs:

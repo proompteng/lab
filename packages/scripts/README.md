@@ -101,6 +101,9 @@ the controller. Runtime compiler tools retain main-branch publication.
 Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
 GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 
+Main publication concurrency follows the source revision, so an input-skipped push cannot cancel or evict required
+work for another commit. Exact-source validation belongs to its run. PR validation still supersedes older heads.
+
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
 

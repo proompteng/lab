@@ -47,8 +47,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: torghut-notebook-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: torghut-notebook-build-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   changes:

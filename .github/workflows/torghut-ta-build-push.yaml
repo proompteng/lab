@@ -47,8 +47,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: torghut-ta-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: torghut-ta-build-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   changes:

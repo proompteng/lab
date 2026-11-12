@@ -47,7 +47,7 @@ on:
       - '!argocd/**/*.mdx'
 
 concurrency:
-  group: ${{ github.workflow }}-main
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
