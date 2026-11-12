@@ -1,3 +1,8 @@
+import { DecisionConstruction } from '../decision-construction'
+import {
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
+} from '../shadow-decision'
 import { buildResearchMutationCycleDecision } from './decision-builder'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
@@ -247,6 +252,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             initialAuthority.generationHash,
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(DecisionConstruction, { observe: buildObserveShadowDecision, execution: buildExecutionDecision }),
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),

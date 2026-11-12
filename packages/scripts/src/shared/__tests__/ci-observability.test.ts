@@ -3,19 +3,20 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
-import { imageWorkflowCatalog, imageWorkflows, repoRoot } from '../../ci/generate-observability-workflows'
+import { workflowCatalog, observedWorkflows, repoRoot } from '../../ci/generate-observability-workflows'
 
 describe('CI build observability', () => {
-  test('enrolls every image builder and its reusable workflow callers', () => {
+  test('enrolls Bayn validation, every image builder and its reusable workflow callers', () => {
     const catalog: unknown = JSON.parse(
       readFileSync(resolve(repoRoot, 'argocd/applications/observability/ci/workflows.json'), 'utf8'),
     )
-    const discovered = imageWorkflows(repoRoot)
+    const discovered = observedWorkflows(repoRoot)
+    expect(discovered).toContain('bayn-ci.yml')
     expect(discovered).toContain('temporal-worker-images.yml')
     expect(discovered).toContain('symphony-build-push.yaml')
     expect(discovered).toContain('arc-runner-build-push.yml')
     expect(discovered).not.toContain('semantic-pull-request.yml')
-    expect(catalog).toEqual(imageWorkflowCatalog(repoRoot))
+    expect(catalog).toEqual(workflowCatalog(repoRoot))
   })
 
   test('keeps the collector on Ryzen without changing its durable Ceph claim', () => {
@@ -74,7 +75,7 @@ describe('CI build observability', () => {
   })
 
   test('retains static suffixes that distinguish dynamic matrix job names', () => {
-    const families = imageWorkflowCatalog(repoRoot)['kata-firecracker-extension.yaml']
+    const families = workflowCatalog(repoRoot)['kata-firecracker-extension.yaml']
     if (!families) throw new Error('Kata workflow is missing from enrollment')
     const match = (name: string) =>
       families.filter((family) => new RegExp(family.pattern).test(name)).map((family) => family.id)

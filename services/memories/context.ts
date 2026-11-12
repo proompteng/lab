@@ -54,7 +54,7 @@ if (flags.json === true) {
   if (context.memory.state === 'ready') {
     for (const note of context.memory.items) {
       console.log(
-        `\nMemory ${note.id} · ${note.createdAt} · commit ${note.commit ?? 'unrecorded'}\n${note.summary}\n${note.excerpt}${note.truncated ? '\n[excerpt truncated; use memory_list with its namespace]' : ''}`,
+        `\nMemory ${note.id} · ${note.createdAt} · commit ${note.commit ?? 'unrecorded'}\n${note.summary}\n${note.excerpt}${note.truncated ? `\n[excerpt truncated; read with bun run --cwd services/memories retrieve-memory --id ${note.id}]` : ''}`,
       )
     }
     if (context.memory.omitted) console.log(`[${context.memory.omitted} notes omitted for the output budget]`)

@@ -30,9 +30,20 @@ without enabling retired decoders or new legacy inference.
 
 ## Research cost coverage triage
 
-`BaynResearchCostCoverageIncomplete` reports three independent retained-evidence conditions. The annotation shows
-the same maximum across worker replicas as the alert expression; it does not sum duplicate views of one store.
-An unavailable metric is not zero. Check worker telemetry separately before interpreting missing values.
+`BaynResearchCostCoverageIncomplete` is informational. It remains active while any retained receipt has unknown
+cost, including historical attempts. Those receipts still prevent a fully costed comparison.
+
+`BaynResearchCostCoverageDegraded` warns when the shared store's unpriced count increases within an hour, a claim
+remains ambiguous, or a priced expense waits more than 300 seconds for verification. Degradation must persist
+for ten minutes. An unchanged historical count does not keep this operational warning active. The one-hour window
+detects newly retained unknown costs; when it expires, the informational alert continues to report the debt.
+
+Both annotations show the maximum across worker replicas for each condition. Replicas read the same store, so
+their counts must not be summed. Recent growth compares that shared maximum with its minimum over the preceding
+hour, before considering individual worker lifetimes. The unpriced metric is a gauge; applying counter-reset
+correction would misinterpret a replacement worker's existing debt as new attempts. A first observation without
+an earlier baseline can establish retained debt but cannot establish recent growth. An unavailable metric is not
+zero. Check `BaynResearchWorkerStale` and worker telemetry separately before interpreting missing values.
 
 - **Unpriced retained attempts** have a receipt with `costPicoUsd: null`. They can be historical; the count does not
   establish a current failed worker or a backlog of priced expenses. Inspect the original run's `costBasis`, receipt
@@ -42,7 +53,7 @@ An unavailable metric is not zero. Check worker telemetry separately before inte
   evidence before recovery. Do not replay a claimed attempt to obtain a convenient successful receipt.
 - **Oldest pending priced expense** measures the age of receipts with a known cost but no verified expense projection.
   Inspect the existing projector and ledger verification. Zero lag means no pending priced receipt, not that unknown
-  allocations have been resolved. The alert retains its existing greater-than-300-second threshold and ten-minute hold.
+  allocations have been resolved. The warning retains the greater-than-300-second threshold and ten-minute hold.
 
 For a bounded read-only diagnosis, use the existing authorized database connection and retain only aggregate results:
 
