@@ -150,6 +150,7 @@ describe('ARC Nix runner toolchain', () => {
               { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
               { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
               { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
+              { name: 'scratch', mountPath: '/var/tmp', subPath: 'var-tmp' },
               workMount,
             ]),
           }),

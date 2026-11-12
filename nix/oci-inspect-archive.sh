@@ -21,7 +21,8 @@ fi
 inspect_json="$(mktemp)"
 trap 'rm -f "${inspect_json}"' EXIT
 
-skopeo inspect "docker-archive:${resolved_image_tar}" > "${inspect_json}"
+# Skopeo's large-file default is /var/tmp, which older ARC runners keep on overlay.
+skopeo --tmpdir "${RUNNER_TEMP:-${TMPDIR:-/var/tmp}}" inspect "docker-archive:${resolved_image_tar}" > "${inspect_json}"
 jq -e '(.Architecture | type == "string" and length > 0) and (.Os | type == "string" and length > 0)' \
   "${inspect_json}" >/dev/null
 jq '{name:(.Name // null), digest:(.Digest // null), os:.Os, architecture:.Architecture, tags:(.RepoTags // [])}' \

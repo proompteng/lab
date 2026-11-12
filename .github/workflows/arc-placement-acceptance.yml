@@ -120,8 +120,16 @@ jobs:
           buildkit_root="${BUILDKIT_HOST#unix://}"
           buildkit_root="${buildkit_root%/buildkitd.sock}/cache"
           test -d "$buildkit_root"
+          test "${CARGO_HOME:-}" = /home/runner/.cache/cargo
+          test "${RUSTUP_HOME:-}" = /home/runner/.cache/rustup
+          for cache in "$CARGO_HOME" "$RUSTUP_HOME"; do
+            test -w "$cache"
+            test "$(stat -c %u "$cache")" = "$(id -u)"
+            test "$(stat -c %a "$cache")" = 700
+          done
+          test "$(stat -c %a /var/tmp)" = 1777
           scratch_device=''
-          for path in /nix /home/runner/.cache /tmp /home/runner/_work "$RUNNER_TEMP" "$buildkit_root"; do
+          for path in /nix /home/runner/.cache /tmp /var/tmp /home/runner/_work "$CARGO_HOME" "$RUSTUP_HOME" "$RUNNER_TEMP" "$buildkit_root"; do
             read -r device fstype < <(df -P -T "$path" | awk 'NR == 2 {print $1, $2}')
             test "$fstype" = ext4
             [[ "$device" =~ ^/dev/rbd[0-9]+$ ]]
@@ -154,7 +162,8 @@ jobs:
             --arg inputSha256 "$input_sha" --arg outputSha256 "$output_sha" \
             --arg scratchDevice "$scratch_device" --arg scratchFilesystem "$fstype" \
             --arg runnerTemp "$RUNNER_TEMP" --arg buildkitRoot "$buildkit_root" \
-            '{role:"build",node:$node,pod:$pod,slot:$slot,inputBytes:$inputBytes,outputBytes:$outputBytes,inputSha256:$inputSha256,outputSha256:$outputSha256,scratchDevice:$scratchDevice,scratchFilesystem:$scratchFilesystem,runnerTemp:$runnerTemp,buildkitRoot:$buildkitRoot}' \
+            --arg cargoHome "$CARGO_HOME" --arg rustupHome "$RUSTUP_HOME" \
+            '{role:"build",node:$node,pod:$pod,slot:$slot,inputBytes:$inputBytes,outputBytes:$outputBytes,inputSha256:$inputSha256,outputSha256:$outputSha256,scratchDevice:$scratchDevice,scratchFilesystem:$scratchFilesystem,runnerTemp:$runnerTemp,buildkitRoot:$buildkitRoot,cargoHome:$cargoHome,rustupHome:$rustupHome}' \
             > "$RUNNER_TEMP/arc-ready.json"
       - name: Publish ready build slot
         uses: actions/upload-artifact@v4

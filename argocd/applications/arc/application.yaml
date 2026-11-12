@@ -170,7 +170,7 @@ spec:
                       # A terminated init can leave a partial staging tree on the same ephemeral volume.
                       # Remove old attempts before measuring/copying so retries cannot consume capacity.
                       find "$scratch" -mindepth 1 -maxdepth 1 -type d -name '.arc-bootstrap.*' -exec rm -rf -- {} +
-                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/.arc-bootstrap-complete"
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/var-tmp" "$scratch/work" "$scratch/.arc-bootstrap-complete"
                       scratch_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
                       [[ "$scratch_available_kib" =~ ^[0-9]+$ ]] ||
                         fail "scratch volume has no readable capacity"
@@ -192,19 +192,12 @@ spec:
 
                       stage="$scratch/.arc-bootstrap.$$"
                       trap 'rm -rf "$stage"' EXIT
-                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/work"
+                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/var-tmp" "$stage/work"
 
                       # Keep /nix visible from the image while copying. The runner mounts the
                       # completed subdirectory only after this init container exits successfully.
                       cp -a /nix/. "$stage/nix/"
                       cp -a /home/runner/.cache/. "$stage/cache/"
-
-                      post_copy_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
-                      [[ "$post_copy_available_kib" =~ ^[0-9]+$ ]] ||
-                        fail "scratch volume capacity cannot be read after copy"
-                      post_copy_available_bytes=$((post_copy_available_kib * 1024))
-                      (( post_copy_available_bytes >= reserve_bytes )) ||
-                        fail "scratch free space ${post_copy_available_bytes} is below 45GiB after copy"
 
                       staged_nix_file_bytes="$(find "$stage/nix" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
                       staged_nix_files="$(find "$stage/nix" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
@@ -229,21 +222,32 @@ spec:
 
                       # The runner remains a single-user UID 1001 process after the mount. Preserve all
                       # copied modes and links while making writable Nix state owned by that user.
+                      mkdir -p "$stage/cache/cargo" "$stage/cache/rustup"
                       chown -R 1001:1001 "$stage/nix" "$stage/cache"
                       chmod 755 "$stage/nix" "$stage/nix/store" "$stage/nix/var" "$stage/cache"
+                      chmod 00700 "$stage/cache/cargo" "$stage/cache/rustup"
                       # The leading zero clears fsGroup's inherited setgid bit before Nix builds use /tmp.
                       chmod 01777 "$stage/tmp"
+                      chmod 01777 "$stage/var-tmp"
                       chown 0:1001 "$stage/work"
                       chmod 2777 "$stage/work"
 
+                      post_copy_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
+                      [[ "$post_copy_available_kib" =~ ^[0-9]+$ ]] ||
+                        fail "scratch volume capacity cannot be read after copy"
+                      post_copy_available_bytes=$((post_copy_available_kib * 1024))
+                      (( post_copy_available_bytes >= reserve_bytes )) ||
+                        fail "scratch free space ${post_copy_available_bytes} is below 45GiB after copy"
+
                       # Install only after all validation and copies have succeeded. A failed init leaves
                       # no runnable main container and the next retry rebuilds from the image again.
-                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work"
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/var-tmp" "$scratch/work"
                       mv "$stage/nix" "$scratch/nix"
                       mv "$stage/cache" "$scratch/cache"
                       mv "$stage/tmp" "$scratch/tmp"
+                      mv "$stage/var-tmp" "$scratch/var-tmp"
                       mv "$stage/work" "$scratch/work"
-                      printf 'version=5\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
+                      printf 'version=6\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
                         "$nix_file_bytes" "$nix_files" "$nix_links" "$cache_file_bytes" "$cache_files" "$cache_links" > "$scratch/.arc-bootstrap-complete"
                       chown 1001:1001 "$scratch/.arc-bootstrap-complete"
                       rm -rf "$stage"
@@ -289,6 +293,10 @@ spec:
                           fieldPath: metadata.name
                     - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
                       value: "false"
+                    - name: CARGO_HOME
+                      value: /home/runner/.cache/cargo
+                    - name: RUSTUP_HOME
+                      value: /home/runner/.cache/rustup
                   volumeMounts:
                     - name: scratch
                       mountPath: /nix
@@ -299,6 +307,9 @@ spec:
                     - name: scratch
                       mountPath: /tmp
                       subPath: tmp
+                    - name: scratch
+                      mountPath: /var/tmp
+                      subPath: var-tmp
                     - name: scratch
                       mountPath: /home/runner/_work
                       subPath: work

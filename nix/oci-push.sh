@@ -109,7 +109,8 @@ echo "Pushing Nix-built OCI image tar to ${reference}."
 # to one layer so concurrent releases queue images fairly instead of six layers each.
 # dockerTools archives contain uncompressed layers; precompute their destination
 # digests so Skopeo can skip blobs already present instead of uploading them again.
-skopeo --policy "${policy_json}" copy --dest-precompute-digests \
+# Explicitly route archive expansion and precomputed layers to this job's storage.
+skopeo --tmpdir "${RUNNER_TEMP:-${TMPDIR:-/var/tmp}}" --policy "${policy_json}" copy --dest-precompute-digests \
   --image-parallel-copies 1 --format oci \
   "docker-archive:${resolved_tar_path}" "docker://${reference}"
 
