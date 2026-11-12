@@ -6,10 +6,12 @@ import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { ExecutionStageTimings, type ExecutionStageTiming, withObservedSpan } from '../telemetry'
 import { operationCurrentTimeMillis } from '../operation-timeout'
+import type { JevInferenceJob } from '../jev/inference-work'
 
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: CycleRunResult
+  readonly inferenceJobs?: readonly JevInferenceJob[]
   readonly nextDelayMs?: number
   readonly nextWakeAt?: string
 }
@@ -30,7 +32,10 @@ export type ExecutionBlocker =
       readonly failure: CycleRunnerError['failure']
     }
 
-export type AdvanceOutcome = { readonly nextWakeAt?: string } & (
+export type AdvanceOutcome = {
+  readonly nextWakeAt?: string
+  readonly inferenceJobs?: readonly JevInferenceJob[]
+} & (
   | {
       readonly _tag: 'Completed'
       readonly receiptHash: string
@@ -191,6 +196,7 @@ export const advanceExecutionOnce = <E, R>(
               receiptHash,
               nextDelayMs,
               ...(advance.nextWakeAt === undefined ? {} : { nextWakeAt: advance.nextWakeAt }),
+              ...(advance.inferenceJobs === undefined ? {} : { inferenceJobs: advance.inferenceJobs }),
               observation: {
                 ...advance.observation,
                 executionIssuedAt: command.issuedAt,

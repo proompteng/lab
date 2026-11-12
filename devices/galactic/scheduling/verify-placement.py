@@ -10,6 +10,7 @@ import time
 import uuid
 
 RYZEN = "talos-192-168-1-194"
+AMD64_HOSTS = {RYZEN, "turin"}
 KEY = "workload.proompteng.ai/compute-local"
 TOLERATION = {"key": KEY, "operator": "Equal", "value": "true", "effect": "NoSchedule"}
 ROOT = Path(__file__).resolve().parents[3]
@@ -70,17 +71,12 @@ def inventory(context, verify):
     runners = []
     for pod in pods:
         meta, spec = pod["metadata"], pod["spec"]
-        if spec.get("nodeName") != RYZEN or pod["status"].get("phase") in (
+        if pod["status"].get("phase") in (
             "Succeeded",
             "Failed",
         ):
             continue
         namespace = meta["namespace"]
-        if (
-            namespace == "rook-ceph"
-            and meta.get("labels", {}).get("app") == "rook-ceph-mon"
-        ):
-            monitors.append(meta["name"])
         if (
             namespace == "arc"
             and meta.get("labels", {}).get("actions.github.com/scale-set-name")
@@ -88,6 +84,13 @@ def inventory(context, verify):
             and meta.get("labels", {}).get("app.kubernetes.io/component") == "runner"
         ):
             runners.append(pod)
+        if spec.get("nodeName") != RYZEN:
+            continue
+        if (
+            namespace == "rook-ceph"
+            and meta.get("labels", {}).get("app") == "rook-ceph-mon"
+        ):
+            monitors.append(meta["name"])
         for volume in spec.get("volumes", []):
             if namespace != "rook-ceph" and (
                 volume.get("csi", {}).get("driver", "").endswith(".csi.ceph.com")
@@ -155,7 +158,7 @@ def inventory(context, verify):
         )
     )
     assert len(quorum["quorum_names"]) == 3, "Ceph monitor quorum is incomplete"
-    assert runners, "no AMD64 ARC runner on Ryzen"
+    assert runners, "no AMD64 ARC runner"
     assert any(
         any(
             c["type"] == "Ready" and c["status"] == "True"
@@ -164,6 +167,9 @@ def inventory(context, verify):
         for p in runners
     ), "no ready AMD64 ARC runner"
     for pod in runners:
+        assert pod["spec"].get("nodeName") in AMD64_HOSTS, (
+            "AMD64 runner is on an ineligible host"
+        )
         mounted = [
             claims[("arc", claim_name(pod, v))]["spec"].get("storageClassName")
             for v in pod["spec"].get("volumes", [])

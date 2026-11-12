@@ -17,9 +17,12 @@ jobs:
           bun-version: 1.4.2
       - name: Download pinned Temurin 21.0.9 archive
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl --fail --location --retry 3 --header 'Accept: application/octet-stream' \
+            --header "Authorization: Bearer $GH_TOKEN" \
             --output "$RUNNER_TEMP/temurin-21.0.9.tar.gz" \
             https://api.github.com/repos/adoptium/temurin21-binaries/releases/assets/307902599
           echo "810d3773df7e0d6c4394e4e244b264c8b30e0b05a0acf542d065fd78a6b65c2f  $RUNNER_TEMP/temurin-21.0.9.tar.gz" | sha256sum --check
@@ -65,12 +68,15 @@ jobs:
           bun-version: 1.4.2
       - name: Install pinned Lean and sandbox checker
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap zstd
           sudo chmod u+s "$(command -v bwrap)"
-          curl --fail --location --retry 3 --header 'Accept: application/octet-stream' -o "$RUNNER_TEMP/lean.tar.zst" \
+          curl --fail --location --retry 3 --header 'Accept: application/octet-stream' \
+            --header "Authorization: Bearer $GH_TOKEN" -o "$RUNNER_TEMP/lean.tar.zst" \
             https://api.github.com/repos/leanprover/lean4/releases/assets/634574462
           echo "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d  $RUNNER_TEMP/lean.tar.zst" | sha256sum --check
           tar --zstd -xf "$RUNNER_TEMP/lean.tar.zst" -C "$RUNNER_TEMP"

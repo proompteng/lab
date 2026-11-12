@@ -50,7 +50,6 @@ export interface RuntimeConfig {
     readonly tls: boolean
     readonly caPath: string
   }
-  readonly nativeArrivalPostgres?: RuntimeConfig['postgres'] | undefined
   readonly tigerBeetle: {
     readonly clusterId: bigint
     readonly replicaAddresses: readonly string[]
@@ -58,16 +57,10 @@ export interface RuntimeConfig {
   }
 }
 
-export interface AutonomousCycleRuntimeConfig {
-  readonly cyclePollIntervalMs: number
-}
-
 export type AlpacaRuntimeConfig = NonNullable<RuntimeConfig['alpaca']>
 
-type LoadedRuntimeConfigBase = Omit<RuntimeConfig, 'alpaca'> & AutonomousCycleRuntimeConfig
-
 /** The deployed binary has one runtime mode: an account-bound autonomous service. */
-export type LoadedRuntimeConfig = LoadedRuntimeConfigBase & {
+export type LoadedRuntimeConfig = Omit<RuntimeConfig, 'alpaca'> & {
   readonly runtimeMode: 'AutonomousService'
   readonly execution: Exclude<ExecutionPolicy, { readonly brokerIdentity?: undefined }>
   readonly alpaca: AlpacaRuntimeConfig
@@ -94,7 +87,6 @@ export interface ParsedRuntimeConfig {
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
-  readonly cyclePollIntervalMs: number
   readonly authorityGenerationHash: string | undefined
   readonly configuredAlpaca: {
     readonly provider: BrokerProvider
@@ -110,7 +102,6 @@ export interface ParsedRuntimeConfig {
   readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: RuntimeConfig['clickhouse']
   readonly postgres: RuntimeConfig['postgres']
-  readonly nativeArrivalPostgres?: RuntimeConfig['postgres'] | undefined
   readonly tigerBeetle: RuntimeConfig['tigerBeetle']
 }
 
@@ -126,11 +117,6 @@ export interface AlpacaCredentialPresence {
 }
 
 export type RuntimeConfigResolutionFailure =
-  | {
-      readonly _tag: 'CyclePollIntervalNotShorterThanStallThreshold'
-      readonly cyclePollIntervalMs: number
-      readonly cycleStallThresholdMs: number
-    }
   | {
       readonly _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold'
       readonly reconciliationIntervalMs: number

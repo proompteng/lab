@@ -4,6 +4,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
+import { projectJevProviderDiagnostics, type JevProviderDiagnostics } from './provider-diagnostics'
 import {
   decodeJevResponse,
   jevEndpoint,
@@ -19,6 +20,18 @@ const failedResponseUsageSchema = Schema.Struct({
   usage: JevResponseSchema.fields.usage,
 })
 const maximumFailureBodyBytes = 8192
+const inferenceTraceHeaders = new Set([
+  'retry-after',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
+  'x-ratelimit-limit-requests',
+  'x-ratelimit-remaining-requests',
+  'x-ratelimit-reset-requests',
+  'x-ratelimit-limit-tokens',
+  'x-ratelimit-remaining-tokens',
+  'x-ratelimit-reset-tokens',
+])
 
 export class JevError extends Data.TaggedError('JevError')<{
   readonly failure: JevFailure
@@ -26,6 +39,7 @@ export class JevError extends Data.TaggedError('JevError')<{
   readonly requestHash?: string
   readonly responseHash?: string
   readonly status?: number
+  readonly providerDiagnostics?: JevProviderDiagnostics
   readonly rejectedResponse?: Redacted.Redacted<unknown>
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
@@ -76,22 +90,31 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             })
           const started = yield* Clock.currentTimeMillis
           let failureHttpStatus: number | undefined
+          let providerDiagnostics: JevProviderDiagnostics | undefined
           return yield* Effect.gen(function* () {
             const request = HttpClientRequest.post(jevEndpoint).pipe(
               HttpClientRequest.bearerToken(key),
               HttpClientRequest.bodyText(prepared.body, 'application/json'),
               HttpClientRequest.acceptJson,
             )
-            const response = yield* http.execute(
-              prepared.request.assets === undefined
-                ? request
-                : HttpClientRequest.setHeader(request, 'TypeSafe-Danger-Zone-Images', 'true'),
-            )
+            const response = yield* http
+              .execute(
+                prepared.request.assets === undefined
+                  ? request
+                  : HttpClientRequest.setHeader(request, 'TypeSafe-Danger-Zone-Images', 'true'),
+              )
+              .pipe(
+                Effect.provideService(
+                  HttpClient.TracerHeaderFilter,
+                  (name, phase) => phase === 'response' && inferenceTraceHeaders.has(name),
+                ),
+              )
             if (response.status !== 200) {
               failureHttpStatus = response.status
-              // Retain only validated metering, never provider error text or echoed requests/credentials.
+              providerDiagnostics = projectJevProviderDiagnostics(response.headers, undefined, Redacted.value(key))
+              // Metering and diagnostic identifiers are independent projections. Neither retains raw error text.
               // The hash binds this exact projection, not the original error body. No missing usage is invented.
-              const rejected = yield* response.stream.pipe(
+              const body = yield* response.stream.pipe(
                 Stream.runFoldEffect(
                   () => new Uint8Array(0),
                   (body, chunk) => {
@@ -116,15 +139,18 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                       }),
                   }),
                 ),
-                Effect.flatMap(Schema.decodeUnknownEffect(failedResponseUsageSchema)),
                 Effect.result,
               )
+              if (Result.isSuccess(body))
+                providerDiagnostics = projectJevProviderDiagnostics(response.headers, body.success, Redacted.value(key))
+              const rejected = Result.flatMap(body, Schema.decodeUnknownResult(failedResponseUsageSchema))
               const responseHash = Result.isSuccess(rejected) ? canonicalHashV1Result(rejected.success) : undefined
               return yield* new JevError({
                 failure: JevFailure.Status,
                 message: 'Jev evaluation returned an unsuccessful status',
                 requestHash,
                 status: response.status,
+                ...(providerDiagnostics === undefined ? {} : { providerDiagnostics }),
                 ...(Result.isSuccess(rejected) && responseHash !== undefined && Result.isSuccess(responseHash)
                   ? { responseHash: responseHash.success, rejectedResponse: Redacted.make(rejected.success) }
                   : {}),
@@ -183,6 +209,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                     message: Cause.isTimeoutError(cause) ? 'Jev inference deadline elapsed' : 'Jev transport failed',
                     requestHash,
                     ...(failureHttpStatus === undefined ? {} : { status: failureHttpStatus }),
+                    ...(providerDiagnostics === undefined ? {} : { providerDiagnostics }),
                     cause: Redacted.make(cause),
                   }),
             ),

@@ -841,7 +841,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
           mode: ControlManagementMode.Mechanical,
         },
       )
-      expect(sandbox.risk.maxDailyTradedNotionalMicros).toBe('1000000000000')
+      expect(sandbox.risk.maxDailyTradedNotionalMicros).toBeNull()
       expect(sandbox.risk.maxDrawdownMicros).toBe('10000000000')
       expect(
         sandbox.sessions.every((session) => session.closingCapital.peakBrokerEquityMicros === '120000000000'),

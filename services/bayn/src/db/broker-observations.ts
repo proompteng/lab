@@ -20,6 +20,7 @@ import { canonicalHashV1Result } from '../hash'
 import { ValkeyCache } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import type { BrokerNotification } from '../broker/notifications'
 
 const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes', {
   boundaries: [4096, 16384, 65536, 262144, 1048576, 4194304],
@@ -119,7 +120,7 @@ export const makeBrokerObservationStore = (
     VALUES (${accountId}, ${sourceRevision}, to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
     ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
       generation = broker_observations.generation + 1, available = false,
-      poll_started_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
+      poll_started_at = NULL, notification_fence_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
       next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
           to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
   `.pipe(Effect.asVoid),
@@ -130,6 +131,27 @@ export const makeBrokerObservationStore = (
     WHERE account_id = ${accountId}
   `.pipe(Effect.asVoid),
   )
+  const recordNotification = (receipt: Pick<BrokerNotification, 'eventId' | 'receivedAt'>) =>
+    run(
+      Effect.gen(function* () {
+        // Permanent semantic identity and database arrival are independent of Kafka offset and source receipt time.
+        // Commit before acknowledging ingress so concurrent captures and reads can see the notification fence.
+        yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
+          VALUES (${accountId},${receipt.eventId},${sourceRevision},${receipt.receivedAt}::timestamptz)
+          ON CONFLICT (account_id,event_id) DO NOTHING`
+        const rows = yield* sql`SELECT EXISTS (
+          SELECT 1 FROM broker_observations AS observation
+          WHERE observation.account_id = receipt.account_id AND observation.available
+            AND observation.notification_fence_at >= receipt.recorded_at
+        ) AS covered FROM broker_notification_receipts AS receipt
+          WHERE receipt.account_id = ${accountId} AND receipt.event_id = ${receipt.eventId}`.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ covered: Schema.Boolean })]), strictParseOptions),
+          ),
+        )
+        return rows[0]
+      }),
+    )
   const recoverUnfinished = (captureId: string) =>
     run(
       sql`
@@ -155,7 +177,13 @@ export const makeBrokerObservationStore = (
     run(
       sql`
     WITH owner AS (
-      SELECT account_id, generation, next_poll_not_before, clock_timestamp() AS checked_at FROM broker_observations
+      SELECT account_id, generation,
+        GREATEST(next_poll_not_before, (
+          SELECT max(mutation.occurred_at) + ${mutationConsistencyDelayMs} * interval '1 millisecond'
+          FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
+          WHERE intent.account_id = broker_observations.account_id
+        )) AS next_poll_not_before,
+        clock_timestamp() AS checked_at FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
       FOR UPDATE
     ), claimed AS (
@@ -179,7 +207,7 @@ export const makeBrokerObservationStore = (
       SELECT 1 FROM broker_observation_captures WHERE account_id = owner.account_id AND capture_id = ${captureId}
     ) THEN 'ALREADY_CLAIMED' ELSE 'QUOTA_WAIT' END AS status,
       NULL::integer AS generation, NULL::text AS "startedAt",
-      (EXTRACT(EPOCH FROM next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
+      ceil(EXTRACT(EPOCH FROM next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
     FROM owner WHERE NOT EXISTS (SELECT 1 FROM reserved)
   `.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(claimRows, strictParseOptions)),
@@ -234,16 +262,24 @@ export const makeBrokerObservationStore = (
       UPDATE broker_observations SET available = true, poll_started_at = ${value.startedAt}::timestamptz,
         observed_at = ${value.observedAt}::timestamptz, completed_at = ${value.completedAt}::timestamptz,
         snapshot_hash = ${snapshotHash}, state_hash = ${stateHash},
+        notification_fence_at = (SELECT claimed_at FROM broker_observation_captures
+          WHERE account_id = ${accountId} AND generation = ${ticket.generation}),
         next_poll_not_before = to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0)
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND generation = ${ticket.generation}
         AND (poll_started_at IS NULL OR poll_started_at <= ${ticket.startedAt}::timestamptz)
         AND NOT EXISTS (
           SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
           WHERE intent.account_id = ${accountId}
-            AND mutation.occurred_at + ${mutationConsistencyDelayMs} * interval '1 millisecond' >= ${ticket.startedAt}::timestamptz
+            AND mutation.occurred_at + ${mutationConsistencyDelayMs} * interval '1 millisecond' >= (
+              SELECT claimed_at FROM broker_observation_captures
+              WHERE account_id = ${accountId} AND generation = ${ticket.generation}
+            )
         )
         AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
           AND observed_at > ${ticket.startedAt}::timestamptz)
+        AND NOT EXISTS (SELECT 1 FROM broker_notification_receipts WHERE account_id = ${accountId}
+          AND recorded_at > (SELECT claimed_at FROM broker_observation_captures
+            WHERE account_id = ${accountId} AND generation = ${ticket.generation}))
       RETURNING account_id
       )
       UPDATE broker_observation_captures SET settled = true
@@ -286,6 +322,8 @@ export const makeBrokerObservationStore = (
         )
         AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
           AND observed_at > completed_at)
+        AND NOT EXISTS (SELECT 1 FROM broker_notification_receipts WHERE account_id = ${accountId}
+          AND recorded_at > notification_fence_at)
         AND (${intentId}::text IS NULL OR NOT EXISTS (
           SELECT 1 FROM (
             SELECT DISTINCT ON (mutation.mutation_id) mutation.intent_id, mutation.event_type, mutation.operation, intent.state
@@ -319,6 +357,7 @@ export const makeBrokerObservationStore = (
             EXISTS (SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
               WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= poll_started_at)
             OR EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId} AND observed_at > completed_at)
+            OR EXISTS (SELECT 1 FROM broker_notification_receipts WHERE account_id = ${accountId} AND recorded_at > notification_fence_at)
           )
       `.pipe(Effect.flatMap(decodeProjectionRows))
           if (awaiting.length === 0) {
@@ -405,6 +444,7 @@ export const makeBrokerObservationStore = (
     failed,
     interrupt: recoverUnfinished,
     invalidate,
+    recordNotification,
     read,
     readState: readState(null),
     readForSubmit: readState,

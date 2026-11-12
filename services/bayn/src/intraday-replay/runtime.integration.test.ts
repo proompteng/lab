@@ -55,7 +55,7 @@ import {
   type ExecutionControllerStatus,
 } from '../execution/controller-status'
 import type { AdvanceExecutionCommand } from '../execution/advance'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
@@ -1231,6 +1231,7 @@ durableTest.each(
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           if (scenario === 'missing-candidate') {
+            expect(schedule.passCount).toBeGreaterThanOrEqual(5)
             expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
             expect(
               yield* sql`SELECT
@@ -1443,7 +1444,6 @@ durableTest.each(
                   intradayMarketData: runtime.marketData,
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
-                  pollIntervalMs: 1000,
                   reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
                   reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
                 },
@@ -1557,9 +1557,27 @@ durableTest.each(
             expect(yield* readAuthority).toEqual(restricted)
             expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
             if (scenario !== 'accepted-cancel-terminal') {
+              const reconciliationCount = sql<{ count: number }>`SELECT count(*)::int AS count
+                FROM reconciliations WHERE account_id=${accountId}`.pipe(
+                Effect.map(([row]) => {
+                  if (row === undefined) throw new Error('Missing persisted reconciliation count')
+                  return row.count
+                }),
+              )
               for (let pass = 0; pass < 3; pass++) {
-                yield* advanceBy(1000)
+                const lookupUnavailable = scenario === 'accepted-cancel-lookup-failed'
+                // Make the driver's normal reconciliation cadence due while only the isolated lookup is unavailable.
+                yield* advanceBy(lookupUnavailable ? config.operationTimeoutMs : 1000)
+                const beforeReconciliations = lookupUnavailable ? yield* reconciliationCount : undefined
                 yield* recovery.advance
+                if (beforeReconciliations !== undefined) {
+                  // This must come before runtime.reconcile below; that manual call used to mask driver starvation.
+                  expect(yield* reconciliationCount).toBeGreaterThan(beforeReconciliations)
+                  expect((yield* mutations.latest(entry.intent_id, MutationOperation.Cancel))?.eventType).toBe(
+                    MutationEventType.RecoveryUnknown,
+                  )
+                  expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+                }
                 expect(yield* readAuthority).toMatchObject({
                   generationHash: runtime.authorityGenerationHash,
                   effective: Authority.Observe,

@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { ConfigProvider, Effect, FileSystem, Layer, ManagedRuntime, Redacted, Result, Schedule, Schema } from 'effect'
 
-import { nativeArrivalArchiveMigrations } from './db/native-arrival-archive'
+import { postgresMigrations } from './db/postgres-migrations'
 import { makeNativeArrivalStore } from './db/native-arrival-postgres'
 import { PostgresClientLive } from './db/postgres-client'
 import { nativeArrivalExportFixture } from './intraday-replay/native-arrival-export.test-support'
@@ -48,7 +48,7 @@ describePostgres('read-only native prefix command lifecycle', () => {
         const sql = yield* PgClient.PgClient
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
-        yield* nativeArrivalArchiveMigrations
+        yield* postgresMigrations
       }),
     ),
   )
@@ -101,7 +101,7 @@ describePostgres('read-only native prefix command lifecycle', () => {
           Effect.provideService(
             ConfigProvider.ConfigProvider,
             ConfigProvider.fromUnknown({
-              BAYN_NATIVE_ARRIVAL_POSTGRES_URL: testUrl,
+              BAYN_POSTGRES_URL: testUrl,
               BAYN_POSTGRES_TLS: 'false',
             }),
           ),

@@ -9,11 +9,49 @@ Trading has one market-data capability: load a verified feature and raw-data sna
 The production adapter consumes Kafka; backtesting supplies recorded events on its simulated clock. An unavailable
 adapter blocks observations. ClickHouse remains the historical archive and does not supply an execution fallback.
 
+The isolated worker sends account-scoped advisory `MarketChanged` hints immediately after accepted incorporation,
+without waiting for native audit persistence. Each physical worker owns a producer UUID and increasing hint sequence.
+Its scoped publisher retains one immutable outstanding hint and one conflated latest change. A lost acknowledgement
+retries the same event identity and bytes. The authenticated Restate gateway waits for the private wake's exclusive
+metadata handler to complete. It does not wait for the financial tick that handler schedules. Waiting backpressures the
+publisher while source incorporation and its latest pending change continue independently. Hints from one producer reject duplicate or regressed
+sequences; unrelated physical workers' epochs, sequences and clocks are not comparable.
+Public requests and private wakes deduplicate by immutable event identity. The public handler retains active work but
+expires completed results immediately, so HTTP timeouts join one public waiter and an old deployment's completed
+registration rejection cannot poison source handover. The private wake retains its seven-day deduplication. Uncertain
+acknowledgements resend the same event, key and bytes. Malformed inputs, local source mismatches and unauthorized requests
+fail permanently. Each active publisher has at most one public waiter and one distinct private wake outstanding.
+Abandoned process incarnations can leave
+already accepted durable wakes behind; this is not a global bound across arbitrary process churn.
+
+Startup, failed source recovery and successful bootstrap emit hints even when topics are quiet. Recovery signals do not
+depend on bootstrap succeeding. A replacement still reconstructs and verifies its own complete source cut. Readiness
+hints do not carry a snapshot, quote, source availability, financial authority or a new decision deadline. The account
+controller verifies its actual projection and the existing completed-minute close plus two-second eligibility.
+Admission retains the full selected observation, rows, source reference, paid-work claims and original deadlines in one
+transaction. An acknowledged hint alone does not pin the sender's opportunity. Kafka reconstruction samples new local
+receipt clocks; it cannot recover a lost, unselected pre-crash arrival time or guarantee every historical opportunity.
+
+The audit journal independently keeps its existing 256 KiB size batching and one-second short-tail durability timer;
+quotes do not create individual database commits. Its bounded queue, exact-chunk retries and backpressure remain in
+force. Audit records retain their original bytes and availability without becoming an advisory delivery queue.
+
+Kafka incorporation and SDK fetch/offset progress now trigger bootstrap checks directly. The original per-epoch
+bootstrap deadline remains a timer; there is no one-second readiness-discovery loop. A replacement epoch still
+reconstructs and verifies its own source cut. Individual delivery attempts use the existing operation deadline;
+retained hints retry with bounded exponential backoff while their scope remains alive. A Restate ingress
+outage does not revoke healthy market source evidence. An incomplete native journal remains incomplete; it does not
+revoke the current full or liquidation projection reads. The next actual source-epoch replacement starts an independent
+capture with its own original observations. Scope shutdown interrupts pending handoffs. After Restate accepts a hint,
+its wake survives sender loss; worker restart and source recovery emit new level hints independently of further input.
+
 A replacement consumer captures partition bounds and rebuilds actual retained history before serving entry inputs.
-Separate equity quote and trade topics start at their captured end offsets: the strategy uses their latest values,
-so replaying obsolete ticks can exhaust the five-minute bootstrap budget and repeatedly restart an otherwise valid
-history rebuild. No old quote substitutes for a new delivery. Entries still require a newly observed, verified quote
-within the existing freshness limit. Bar and feature topics retain the full lookback; the mixed crypto topic also
+Separate equity quote topics seek the current financial protocol's unchanged ten-second quote-age bound, plus both existing
+five-second producer clock allowances. Equity trade topics retain the completed-minute-aligned thirty-minute query
+window plus those allowances. This lets another worker reconstruct a still-useful final quote and its earlier trade
+without waiting for another input. The original provider event and ingestion clocks remain unchanged; a replay's local
+availability records its actual new delivery. Replaying cannot refresh an expired quote or move an original decision
+deadline. Bootstrap must still complete before the applicable input expires. Bar and feature topics retain the full lookback; the mixed crypto topic also
 retains it because that topic carries historical bars alongside ticks. Explicit historical diagnostics retain all
 requested channels from their requested start. Every required partition must reach its frozen bootstrap end offset,
 and the five-minute deadline, source verification, calendar and quote-freshness checks remain enforced.
@@ -56,8 +94,11 @@ An individual valid chunk above the SQL byte target is written whole under the e
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-Connection failures, including a failed COMMIT acknowledgement reported as a SQL defect, retry the identical append
-at most twice with 100 milliseconds between attempts. Each retry reads the existing ordinals and verifies their
+Connection failures, statement timeouts and PostgreSQL `57P03` startup refusals retry the identical append with
+exponential delays capped at 30 seconds while the capture scope remains alive. Each SQL and socket attempt retains
+its existing deadline. The pinned driver classifies `57P03` as an unknown
+SQL error, so the append policy recognizes that exact code without retrying other unknown errors. A failed COMMIT
+acknowledgement reported as a SQL defect follows the same policy. Each retry reads the existing ordinals and verifies their
 exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.
 If every chunk already exists, a [transactional WAL acknowledgement](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-REPLICATION) makes the retry's COMMIT wait for the configured
 synchronous durability; a locally visible row alone does not prove that its lost COMMIT acknowledgement was durable.
@@ -433,3 +474,45 @@ scheduled observations; they do not establish profitability or replace a complet
 The research `native:export` command now exports a pinned original consumer prefix from the separate PostgreSQL
 archive. It preserves compressed journal members and validates the resulting source with the same whole-file
 reader used by independent controls. See [the control portfolio export procedure](../../../../../docs/bayn/control-portfolios.md#export-original-deliveries-for-the-controls).
+
+## Native capture health transport
+
+The isolated projection worker samples its scoped journals every 15 seconds without waiting on Kafka offsets,
+arrivals or PostgreSQL. One health frame may await acknowledgement on the existing worker MessagePort; stalled
+parents cannot accumulate an unbounded health queue. A final frame follows journal finalization before the normal
+stop acknowledgement. Health delivery has no persistence, retry, readiness or trading authority effect.
+
+The controller aggregates all locally owned projection workers into its existing OTLP exporter and existing
+service, source revision and instance resource identity. No exporter is added to the isolated worker. The metrics
+contain operational counts and times only, never capture IDs, epochs, hashes, markets, payloads or failure strings:
+
+- `bayn_capture_workers_expected`: currently owned worker scopes, including startup and shutdown.
+- `bayn_capture_workers_unobserved`: owned workers with no frame, a frame older than 45 seconds or more than five
+  seconds ahead of the parent's clock. A healthy sibling cannot satisfy another worker's observation.
+- `bayn_capture_active` and `bayn_capture_incomplete`: sums from fresh worker frames only. Missing workers are
+  excluded from these sums and remain explicitly unknown in `workers_unobserved`.
+- `bayn_capture_pending_stagnant_seconds`: maximum sampled duration with observed deliveries still awaiting durable
+  acknowledgement and no durable sequence advance. The monotonic timer begins at the first pending observation,
+  resets on acknowledged progress or no pending work, and excludes incomplete journals. Quiet markets alone cannot
+  increase it. Pending work during normal bounded retry is not itself a terminal failure.
+- `bayn_capture_terminal_failures_total`: each observed incomplete journal once, including failed final sealing.
+- `bayn_capture_last_failure_observed_timestamp_seconds`: parent wall-clock time of the latest newly observed
+  terminal failure. This is detection time, not the original failure time. It can retain a brief failure between
+  periodic samples; a later healthy capture does not repair that historical failure.
+- `bayn_capture_observation_timestamp_seconds`: parent aggregation time. This is not the worker's freshness proof;
+  always inspect `workers_unobserved` too. Retiring the final owner publishes zero expected workers, then stops its
+  sampler. A finite capture or orderly rollout is not an error.
+
+This change supplies instrumentation, not an activated capture alert or verified notification delivery. Existing
+GlitchTip retention-failure reporting remains in place. Before activating rules, prove per-live-instance ownership,
+source revision adoption, OTLP-to-Prometheus instance labels and telemetry freshness. Do not aggregate a healthy
+pod or newer revision over a failed sibling. Missing families or stale parent observations mean unknown, never
+healthy. Zero incomplete or pending values are meaningful only with fresh parent observation and no unobserved
+expected worker. Old-version pods during staged deployment and retired instances must not acquire an invented
+capture expectation. Conservative pending-work alerts must allow ordinary bounded retry and preserve the distinction
+between stagnation, terminal failure and unavailable telemetry. Rules, native PromQL regression cases and verified
+notification delivery are a separate activation boundary.
+
+These observations do not establish source authenticity, complete market coverage, durable suffix recovery,
+profitability or historical archive repair. An interrupted process can leave an unsealed capture; telemetry cannot
+fabricate its end receipt.

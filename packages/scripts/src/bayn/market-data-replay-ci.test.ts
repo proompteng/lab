@@ -30,19 +30,18 @@ const successful = {
   PATH: process.env.PATH ?? '',
   CHANGES_RESULT: 'success',
   BAYN_RELEVANT: 'true',
-  IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
   FORMAL_RELEVANT: 'true',
   FORMAL_RESULT: 'success',
+  GEPA_RELEVANT: 'true',
   GEPA_RESULT: 'success',
   UNIT_RESULT: 'success',
   ARCHIVE_RESULT: 'success',
   LEDGER_RESULT: 'success',
   POSTGRES_RESULT: 'success',
   MARKET_DATA_REPLAY_RESULT: 'success',
+  STREAMING_INTEGRATION_RESULT: 'success',
   REPLAY_EXECUTION_RESULT: 'success',
-  DEPENDENCY_INPUT_RESULT: 'success',
-  IMAGE_RESULT: 'skipped',
 }
 const run = async (overrides: Record<string, string>) => {
   const child = Bun.spawn(['bash', '-c', command], {
@@ -80,9 +79,16 @@ test('native replay cases run in isolated required groups without extending thei
   expect(gate.env?.LEDGER_RESULT).toBe('${{ needs.ledger-integration.result }}')
 })
 
-test.each(['kafka', 'restate', 'foreign'] as const)(
-  'created-but-failed %s fixture removes only verified job-owned container IDs',
-  async (mode) => {
+test.each([
+  { script: 'test-market-data-replay.sh', mode: 'kafka', removed: ['a'.repeat(64)] },
+  { script: 'test-market-data-replay.sh', mode: 'restate', removed: ['a'.repeat(64), 'b'.repeat(64)] },
+  { script: 'test-market-data-replay.sh', mode: 'foreign', removed: [] },
+  { script: 'test-streaming-integrations.sh', mode: 'postgres', removed: ['c'.repeat(64)] },
+  { script: 'test-streaming-integrations.sh', mode: 'restate', removed: ['c'.repeat(64), 'b'.repeat(64)] },
+  { script: 'test-streaming-integrations.sh', mode: 'foreign', removed: [] },
+])(
+  '$script created-but-failed $mode fixture removes only verified job-owned container IDs',
+  async ({ script, mode, removed: expectedRemoved }) => {
     const directory = await mkdtemp(join(tmpdir(), 'bayn-replay-cleanup-'))
     try {
       await writeFile(
@@ -92,7 +98,8 @@ set -eu
 command=$1
 shift
 case "$command" in
-  pull|logs) exit 0 ;;
+  pull|logs|exec) exit 0 ;;
+  port) printf '127.0.0.1:15432\\n' ;;
   run)
     name= owner=
     while (( $# > 0 )); do
@@ -102,7 +109,9 @@ case "$command" in
         *) shift ;;
       esac
     done
-    if [[ "$name" == *-kafka-* ]]; then id=$(printf 'a%.0s' {1..64}); else id=$(printf 'b%.0s' {1..64}); fi
+    if [[ "$name" == *-kafka-* ]]; then id=$(printf 'a%.0s' {1..64});
+    elif [[ "$name" == *-postgres-* ]]; then id=$(printf 'c%.0s' {1..64});
+    else id=$(printf 'b%.0s' {1..64}); fi
     if [[ "$BAYN_FAKE_DOCKER_MODE" == foreign ]]; then owner=another-run; fi
     printf '%s %s\\n' "$id" "$owner" > "$BAYN_FAKE_DOCKER_STATE/$name"
     if [[ "$BAYN_FAKE_DOCKER_MODE" != restate || "$name" == *-restate-* ]]; then exit 125; fi
@@ -117,7 +126,7 @@ esac
       )
       await writeFile(join(directory, 'removed'), '')
       const root = join(import.meta.dir, '../../../..')
-      const child = Bun.spawn(['bash', join(root, 'services/bayn/scripts/test-market-data-replay.sh')], {
+      const child = Bun.spawn(['bash', join(root, 'services/bayn/scripts', script)], {
         cwd: root,
         env: {
           PATH: `${directory}:${process.env.PATH ?? ''}`,
@@ -134,9 +143,7 @@ esac
       ])
       expect({ exit, stdout, stderr }).toEqual({ exit: 125, stdout: '', stderr: '' })
       const removed = (await readFile(join(directory, 'removed'), 'utf8')).trim().split('\n').filter(Boolean)
-      expect(removed).toEqual(
-        mode === 'foreign' ? [] : mode === 'kafka' ? ['a'.repeat(64)] : ['a'.repeat(64), 'b'.repeat(64)],
-      )
+      expect(removed).toEqual(expectedRemoved)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -158,14 +165,40 @@ test('market-data fixture runs for Bayn changes and participates in the existing
     ['postgres-integration', 'POSTGRES_RESULT'],
     ['formal-verification', 'FORMAL_RESULT'],
     ['replay-execution-observer', 'REPLAY_EXECUTION_RESULT'],
+    ['streaming-integration', 'STREAMING_INTEGRATION_RESULT'],
   ] as const) {
     expect(required.needs).toContain(job)
     expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
   }
 })
 
+test('streaming failure suites have an isolated required job in exact-revision validation', () => {
+  const streaming = workflow.jobs['streaming-integration']
+  expect(streaming?.if).toBe("needs.changes.outputs.bayn == 'true'")
+  expect(streaming?.needs).toBe('changes')
+  expect(streaming?.['timeout-minutes']).toBeLessThanOrEqual(15)
+  expect(
+    streaming?.steps.find((step) => step.name === 'Verify streaming failure boundaries against disposable services')
+      ?.run,
+  ).toBe('timeout 12m bash services/bayn/scripts/test-streaming-integrations.sh')
+  const publication = YAML.parse(
+    readFileSync(join(import.meta.dir, '../../../../.github/workflows/bayn-build-push.yml'), 'utf8'),
+  ) as {
+    readonly jobs: { readonly validation: { readonly uses: string } }
+    readonly on: { readonly push: { readonly paths: readonly string[] } }
+  }
+  expect(publication.jobs.validation.uses).toBe('./.github/workflows/bayn-ci.yml')
+  for (const script of [
+    'test-streaming-integrations.sh',
+    'test_verify_integration_results.py',
+    'verify-integration-results.py',
+  ])
+    expect(publication.on.push.paths).toContain(`!services/bayn/scripts/${script}`)
+})
+
 test.each([
   'MARKET_DATA_REPLAY_RESULT',
+  'STREAMING_INTEGRATION_RESULT',
   'GEPA_RESULT',
   'UNIT_RESULT',
   'ARCHIVE_RESULT',
@@ -182,10 +215,14 @@ test.each([
   }
 })
 
-test('irrelevant changes retain the existing skip policy but detection and required image failures still fail', async () => {
+test('irrelevant changes retain the existing skip policy but detection failures still fail', async () => {
   expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)
   expect((await run({ BAYN_RELEVANT: 'false', CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
-  expect((await run({ IMAGE_RELEVANT: 'true', IMAGE_RESULT: 'failure' })).exit).not.toBe(0)
+})
+
+test('unchanged Python inputs may skip GEPA independently of service validation', async () => {
+  expect((await run({ GEPA_RELEVANT: 'false', GEPA_RESULT: 'skipped' })).exit).toBe(0)
+  expect((await run({ BAYN_RELEVANT: 'false', GEPA_RESULT: 'failure' })).exit).not.toBe(0)
 })
 
 test('formal-only changes require a successful proof result independently of service jobs', async () => {

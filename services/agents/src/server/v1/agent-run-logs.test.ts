@@ -212,12 +212,12 @@ describe('getAgentRunLogs', () => {
     const result = await Effect.runPromise(
       getAgentRunLogsEffect(new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents')).pipe(
         Effect.provide(makeAgentRunLogsKubeLayer({ kubeClient: kube })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    if (result._tag !== 'Left') throw new Error('expected log read to fail')
-    expect(result.left).toBeInstanceOf(AgentRunLogsKubeError)
-    expect(result.left).toMatchObject({ operation: 'list-pods', namespace: 'agents', name: 'run-1' })
+    if (result._tag !== 'Failure') throw new Error('expected log read to fail')
+    expect(result.failure).toBeInstanceOf(AgentRunLogsKubeError)
+    expect(result.failure).toMatchObject({ operation: 'list-pods', namespace: 'agents', name: 'run-1' })
   })
 })

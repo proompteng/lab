@@ -8,16 +8,19 @@ import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,
   decodeExecutionControllerActivation,
+  decodeExecutionControllerRotation,
   decodeExecutionDeploymentActivation,
   decodeExecutionControllerDeactivation,
   decodeExecutionControllerState,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
+  decideExecutionControllerRotation,
   decideExecutionDeploymentActivation,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
   executionControllerMaximumDeliveryAttempt,
   executionControllerMaximumRecoveryWindow,
+  nextExecutionControllerRecoveryWindow,
   executionControllerSuccessorPassCompleted,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
@@ -29,8 +32,12 @@ import {
 import { sha256 } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
+import { decodeExecutionWakeup, MarketChangedSchema, marketChangedEventId } from '../execution/events'
+import { projectExecutionControllerHealth } from '../execution/controller-health'
 
 const stateKey = 'controller'
+const deadlineTickStateKey = 'deadlineTick'
+const DeadlineTickInvocationSchema = Schema.String.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/))
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   type: 'object',
   properties: {
@@ -200,7 +207,7 @@ const executionAdvanceRunFailure = (cause: unknown, issuedAt: string): restate.T
   })
 }
 
-type ControllerObjectState = { readonly controller: ExecutionControllerState }
+type ControllerObjectState = { readonly controller: ExecutionControllerState; readonly deadlineTick: string }
 
 const terminal = (message: string): restate.TerminalError =>
   new restate.TerminalError(message, {
@@ -316,6 +323,17 @@ const readState = async (
     : decodeOrTerminal(decodeExecutionControllerState(candidate), 'execution controller state failed validation')
 }
 
+const retireDeadlineTick = async (ctx: restate.ObjectContext<ControllerObjectState>): Promise<void> => {
+  const candidate = await ctx.get(deadlineTickStateKey)
+  if (candidate === null) return
+  const invocationId = decodeOrTerminal(
+    Schema.decodeUnknownResult(DeadlineTickInvocationSchema, strictParseOptions)(candidate),
+    'execution controller deadline invocation failed validation',
+  )
+  ctx.clear(deadlineTickStateKey)
+  if (invocationId !== ctx.request().id) ctx.invocation(restate.InvocationIdParser.fromString(invocationId)).cancel()
+}
+
 export const executionControllerTickIdempotencyKey = (epoch: number, sequence: number, attempt: number): string =>
   `bayn-execution-controller-${epoch}-${sequence}-${attempt}`
 
@@ -342,7 +360,7 @@ const scheduleTick = (
   sourceCatchUpRevision?: string,
   retryWindowHash?: string,
   recoveryWindow?: number,
-): void => {
+): restate.InvocationHandle => {
   let idempotencyKey: string
   if (retryWindowHash !== undefined) {
     idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
@@ -371,7 +389,7 @@ const scheduleTick = (
     ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
     ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
   }
-  ctx.genericSend({
+  return ctx.genericSend({
     service: 'BaynExecutionController',
     method: 'tick',
     key: ctx.key,
@@ -471,6 +489,46 @@ export const makeBaynExecutionController = (
               sourceRevision: config.sourceRevision,
             })
           }
+          return decision.state
+        },
+      ),
+
+      rotate: restate.handlers.object.exclusive(
+        { ingressPrivate: true, retryPolicy: executionControllerCommandRetryPolicy },
+        async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown) => {
+          const request = decodeOrTerminal(
+            decodeExecutionControllerRotation(candidate),
+            'execution controller rotation failed validation',
+          )
+          verifyDeploymentBinding(config, ctx.key, request.deployment)
+          verifyDeactivationBinding(config, ctx.key, request.predecessor)
+          const decision = decisionOrTerminal(decideExecutionControllerRotation(await readState(ctx), request))
+          await ctx.run(
+            'project Bayn execution controller rotation',
+            () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
+            executionControllerAdvanceRunOptions,
+          )
+          if (decision._tag === 'Activated') {
+            await retireDeadlineTick(ctx)
+            ctx.set(stateKey, decision.state)
+          }
+          scheduleTick(
+            ctx,
+            decision.state,
+            executionControllerInitialTickDelayMs,
+            0,
+            undefined,
+            decision._tag === 'Replayed' ? config.sourceRevision : undefined,
+            decision._tag === 'Replayed' ? sha256(ctx.request().id) : undefined,
+            undefined,
+          )
+          await writeRuntimeLog(runtime, 'info', 'Bayn execution controller rotated', {
+            controllerKey: ctx.key,
+            epoch: decision.state.epoch,
+            invocationId: ctx.request().id,
+            planHash: decision.state.planHash,
+            sourceRevision: decision.state.sourceRevision,
+          })
           return decision.state
         },
       ),
@@ -579,35 +637,9 @@ export const makeBaynExecutionController = (
             if (tick.sourceCatchUpRevision !== undefined) return
             if (state === null) throw terminal('execution controller state disappeared during retry recovery')
             const currentRecoveryWindow = tick.retryWindowHash === undefined ? 0 : (tick.recoveryWindow ?? 1)
-            if (currentRecoveryWindow >= executionControllerMaximumRecoveryWindow) {
-              await writeRuntimeLog(runtime, 'error', 'Bayn execution controller recovery budget exhausted', {
-                controllerKey: ctx.key,
-                epoch: state.epoch,
-                ...failure,
-                invocationId: ctx.request().id,
-                recoveryWindow: currentRecoveryWindow,
-                sequence: state.nextSequence,
-                sourceRevision: state.sourceRevision,
-              })
-              throw new restate.TerminalError('execution controller recovery budget exhausted', {
-                errorCode: 503,
-                metadata: {
-                  ...(failure.failureCauseCategory === undefined
-                    ? {}
-                    : { failureCauseCategory: failure.failureCauseCategory }),
-                  ...(failure.failureCauseOperation === undefined
-                    ? {}
-                    : { failureCauseOperation: failure.failureCauseOperation }),
-                  ...(failure.failureCauseTag === undefined ? {} : { failureCauseTag: failure.failureCauseTag }),
-                  failureFingerprint: failure.failureFingerprint,
-                  failureMessage: failure.failureMessage,
-                  failureOperation: failure.failureOperation,
-                  failureTag: failure.failureTag,
-                  recoveryWindow: String(currentRecoveryWindow),
-                },
-              })
-            }
-            const nextRecoveryWindow = currentRecoveryWindow + 1
+            // Bound each delivery's retries, not the lifetime of recovery. Saturating this diagnostic counter
+            // preserves the wire contract while the invocation-bound hash gives each later window a durable key.
+            const nextRecoveryWindow = nextExecutionControllerRecoveryWindow(currentRecoveryWindow)
             const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
             const recoveryDelayMs = executionControllerRecoveryTickDelayMs
             scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
@@ -631,19 +663,63 @@ export const makeBaynExecutionController = (
           const completed = decisionOrTerminal(
             completeExecutionControllerTick(state, tick, result, config.sourceRevision),
           )
+          // Only a successful pass replaces the original deadline owner. Failed catch-up probes intentionally
+          // leave its established delivery/recovery lineage intact; a normally firing timer never cancels itself.
+          await retireDeadlineTick(ctx)
           ctx.set(stateKey, completed)
+
+          if (
+            result.observation?.result === 'SUCCESS' &&
+            (result.observation.waitReason === 'POST_MUTATION_RECONCILIATION' ||
+              result.observation.waitReason === 'PROTECTION_EXIT_COMMITTED')
+          )
+            ctx.genericSend({
+              service: 'BaynBrokerObservations',
+              method: 'refresh',
+              key: ctx.key,
+              parameter: { sourceRevision: config.sourceRevision },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `bayn-post-mutation-refresh-${completed.epoch}-${tick.sequence}`,
+            })
+
+          for (const job of result.inferenceJobs ?? []) {
+            if (job.status !== 'Prepared') continue
+            ctx.genericSend({
+              service: 'BaynEntryInference',
+              method: 'evaluate',
+              parameter: {
+                schemaVersion: 'bayn.inference-dispatch.v1',
+                controllerKey: ctx.key,
+                epoch: completed.epoch,
+                sourceRevision: config.sourceRevision,
+                jobId: job.jobId,
+              },
+              inputSerde: brokerObservationJsonSerde,
+              idempotencyKey: `bayn-inference-${job.jobId}`,
+            })
+          }
 
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
           // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
-          // Ordinary polling waits retain the same due-time contract; projection and journaling must consume their
-          // delay budget too, rather than starting a fresh wait after the persisted deadline has already passed.
+          // Only a domain deadline schedules a successor. Projection and journaling consume its remaining time;
+          // an idle successful pass waits for a source, broker or inference event.
           const scheduleAt = clock.currentTimeMillisUnsafe()
           const completionDelay =
-            completed.nextDueAt === undefined
-              ? result.outcome.nextDelayMs
-              : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
-          scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined)
+            completed.nextDueAt === undefined ? undefined : Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt)
+          if (completionDelay !== undefined) {
+            const successor = scheduleTick(
+              ctx,
+              completed,
+              completionDelay,
+              0,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+            )
+            ctx.set(deadlineTickStateKey, await successor.invocationId)
+          }
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             completionToScheduleMs: scheduleAt - Date.parse(result.completedAt),
             controllerKey: ctx.key,
@@ -653,8 +729,144 @@ export const makeBaynExecutionController = (
             outcome: result.outcome._tag,
             receiptHash: result.outcome.receiptHash,
             requestedNextDelayMs: result.outcome.nextDelayMs,
-            scheduledNextDelayMs: completionDelay,
+            ...(completionDelay === undefined ? {} : { scheduledNextDelayMs: completionDelay }),
             sourceRevision: completed.sourceRevision,
+          })
+        },
+      ),
+
+      wake: restate.handlers.object.exclusive(
+        {
+          ingressPrivate: true,
+          idempotencyRetention: executionControllerActivationRetentionMs,
+          retryPolicy: executionControllerCommandRetryPolicy,
+        },
+        async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown): Promise<void> => {
+          const event = decodeOrTerminal(decodeExecutionWakeup(candidate), 'execution wakeup failed validation')
+          verifyTickKey(config, ctx.key)
+          const state = await readState(ctx)
+          if (state === null || !state.active || !ownsControllerState(config, state)) return
+          if (event.sourceRevision !== config.sourceRevision) return
+          let nextState = state
+          if (event._tag === 'InferenceCompleted' && event.epoch !== state.epoch) {
+            await writeRuntimeLog(runtime, 'info', 'Bayn ignored a stale inference completion', {
+              controllerKey: ctx.key,
+              completionEpoch: event.epoch,
+              currentEpoch: state.epoch,
+              jobId: event.jobId,
+            })
+            return
+          }
+          if (event._tag === 'MarketChanged') {
+            if (event.eventId !== marketChangedEventId(event.producerId, event.sequence))
+              throw terminal('market change identity differs')
+            const frontier = state.marketFrontier
+            if (frontier?.producerId === event.producerId && event.sequence <= frontier.sequence) return
+            nextState = {
+              ...state,
+              marketFrontier: {
+                producerId: event.producerId,
+                sequence: event.sequence,
+              },
+            }
+          }
+          if (event._tag === 'BrokerObservation') {
+            if (event.snapshotHash === state.lastBrokerSnapshotHash) return
+            nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
+          }
+          if (nextState !== state) ctx.set(stateKey, nextState)
+          let eligibilityCheckedAt: number | undefined
+          if (event._tag === 'MarketChanged' && state.marketEligibleAt !== undefined) {
+            eligibilityCheckedAt = await ctx.date.now()
+            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) {
+              await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
+                controllerKey: ctx.key,
+                eventId: event.eventId,
+                producerId: event.producerId,
+                hintSequence: event.sequence,
+                marketEligibleAt: state.marketEligibleAt,
+              })
+              return
+            }
+          }
+          if (state.wakeScheduledSequence === state.nextSequence) return
+          // The event only accelerates the serialized owner. Every account, quote, authority and deadline check
+          // remains inside the native financial pass; a market or broker hint never grants mutation authority.
+          ctx.set(stateKey, {
+            ...nextState,
+            wakeScheduledSequence: state.nextSequence,
+            wakeAcceptedAt: new Date(eligibilityCheckedAt ?? (await ctx.date.now())).toISOString(),
+          })
+          ctx.genericSend({
+            service: 'BaynExecutionController',
+            method: 'tick',
+            key: ctx.key,
+            parameter: {
+              schemaVersion: 'bayn.execution-controller-tick.v1',
+              epoch: state.epoch,
+              sequence: state.nextSequence,
+            },
+            inputSerde: executionTickSerde,
+            idempotencyKey: `bayn-execution-wake-${state.epoch}-${state.nextSequence}`,
+          })
+          if (event._tag === 'MarketChanged')
+            await writeRuntimeLog(runtime, 'info', 'Bayn scheduled the owner from a market change', {
+              controllerKey: ctx.key,
+              eventId: event.eventId,
+              producerId: event.producerId,
+              hintSequence: event.sequence,
+              reason: event.reason,
+              epoch: state.epoch,
+              nextSequence: state.nextSequence,
+            })
+        },
+      ),
+
+      marketChanged: restate.handlers.object.shared(
+        {
+          ingressPrivate: false,
+          idempotencyRetention: 0,
+          journalRetention: 0,
+          retryPolicy: executionControllerCommandRetryPolicy,
+        },
+        async (ctx: restate.ObjectSharedContext<ControllerObjectState>, candidate: unknown): Promise<void> => {
+          const event = decodeOrTerminal(
+            Schema.decodeUnknownResult(MarketChangedSchema, strictParseOptions)(candidate),
+            'market change notification failed validation',
+          )
+          verifyTickKey(config, ctx.key)
+          authorizeDeployment(config.activationAuthorizationHash, ctx.request().headers.get('authorization'))
+          if (event.eventId !== marketChangedEventId(event.producerId, event.sequence))
+            throw terminal('market change identity differs')
+          if (event.sourceRevision !== config.sourceRevision) {
+            await writeRuntimeLog(runtime, 'warning', 'Bayn market change awaits source registration', {
+              eventId: event.eventId,
+              producerId: event.producerId,
+              hintSequence: event.sequence,
+              expectedSourceRevision: event.sourceRevision,
+              registeredSourceRevision: config.sourceRevision,
+            })
+            throw new restate.TerminalError(
+              `market change source is not registered: expected ${event.sourceRevision}, served ${config.sourceRevision}`,
+              { errorCode: 412 },
+            )
+          }
+          // Backpressure the publisher until this small wake completes; the separate financial tick is not awaited.
+          await ctx.genericCall({
+            service: 'BaynExecutionController',
+            method: 'wake',
+            key: ctx.key,
+            parameter: event,
+            inputSerde: brokerObservationJsonSerde,
+            outputSerde: brokerObservationJsonSerde,
+            idempotencyKey: `bayn-market-change-${event.eventId}`,
+          })
+          await writeRuntimeLog(runtime, 'info', 'Bayn completed a market wake', {
+            controllerKey: ctx.key,
+            eventId: event.eventId,
+            producerId: event.producerId,
+            hintSequence: event.sequence,
+            reason: event.reason,
           })
         },
       ),
@@ -674,6 +886,7 @@ export const makeBaynExecutionController = (
             executionControllerAdvanceRunOptions,
           )
           if (decision._tag === 'Deactivated') {
+            await retireDeadlineTick(ctx)
             ctx.set(stateKey, decision.state)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller deactivated', {
               controllerKey: ctx.key,
@@ -709,6 +922,17 @@ export const makeBaynExecutionController = (
         async (ctx: restate.ObjectSharedContext<ControllerObjectState>, _candidate: unknown) => readState(ctx),
       ),
 
+      health: restate.handlers.object.shared(
+        { ingressPrivate: false, idempotencyRetention: 0, journalRetention: 0 },
+        async (ctx: restate.ObjectSharedContext<ControllerObjectState>, _candidate: unknown) => {
+          verifyTickKey(config, ctx.key)
+          return decodeOrTerminal(
+            projectExecutionControllerHealth(ctx.key, await readState(ctx)),
+            'execution controller operational health is unavailable',
+          )
+        },
+      ),
+
       activateDeployment: restate.handlers.object.shared(
         {
           ingressPrivate: false,
@@ -731,45 +955,90 @@ export const makeBaynExecutionController = (
           // Fence a pinned coordinator against the latest immutable target before reading its predecessor.
           const state = await client.prepareActivation(request)
           const decision = decisionOrTerminal(decideExecutionDeploymentActivation(state, request))
-          let activationState = decision._tag === 'Activate' ? decision.state : undefined
-          if (decision._tag === 'Rotate') {
-            const deactivated = await client.deactivate(decision.deactivation)
-            if (
-              deactivated.active ||
-              deactivated.epoch !== decision.deactivation.epoch + 1 ||
-              deactivated.planHash !== decision.deactivation.planHash ||
-              deactivated.sourceRevision !== decision.deactivation.sourceRevision
-            ) {
-              throw terminal('execution controller rotation did not prove the expected inactive previous binding')
-            }
-            activationState = deactivated
-          }
-          const observation = Schema.decodeUnknownResult(
-            BrokerObservationOwnerStateSchema,
-            strictParseOptions,
-          )(
-            await ctx.genericCall({
-              service: 'BaynBrokerObservations',
-              method: 'activate',
-              key: config.controllerKey,
-              parameter: { sourceRevision: config.sourceRevision },
-              inputSerde: brokerObservationJsonSerde,
-              outputSerde: brokerObservationJsonSerde,
-            }),
-          )
-          if (
-            Result.isFailure(observation) ||
-            observation.success.sourceRevision !== config.sourceRevision ||
-            observation.success.lastSnapshotHash === undefined
-          )
-            throw terminal('execution controller deployment activation requires a fresh published broker observation')
-          const activation = bindDeploymentActivation(activationState ?? null, request, config)
-          const completionBinding = {
-            ...activation,
-            firstSequence: Math.max(activation.firstSequence, state?.nextSequence ?? 0),
-          }
-          let activated: ExecutionControllerState | null = await client.activate(activation)
+          const expectedEpoch = decision._tag === 'Rotate' ? decision.deactivation.epoch + 1 : (state?.epoch ?? 1)
           const maximumAttempts = executionControllerDeploymentCompletionMaximumAttempts(config.operationTimeoutMs)
+          const observeBroker = async (method: 'activate' | 'status') => {
+            const observation = Schema.decodeUnknownResult(
+              BrokerObservationOwnerStateSchema,
+              strictParseOptions,
+            )(
+              await ctx.genericCall({
+                service: 'BaynBrokerObservations',
+                method,
+                key: config.controllerKey,
+                parameter: method === 'activate' ? { sourceRevision: config.sourceRevision } : {},
+                inputSerde: brokerObservationJsonSerde,
+                outputSerde: brokerObservationJsonSerde,
+              }),
+            )
+            if (Result.isFailure(observation) || observation.success.sourceRevision !== config.sourceRevision)
+              throw terminal('execution controller deployment activation requires a fresh published broker observation')
+            return observation.success
+          }
+          // A failed initial capture already schedules a serial broker poll. Let that owner recover before
+          // rotating the controller. Status proves progress, so confirm recovery with a fresh exclusive capture.
+          let brokerReady = false
+          while (!brokerReady) {
+            const brokerReadinessDeadline =
+              (await ctx.date.now()) + executionControllerDeploymentRotationBoundMs(config.operationTimeoutMs)
+            for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+              const observation = await observeBroker(attempt === 1 ? 'activate' : 'status')
+              if (
+                observation.lastSnapshotHash !== undefined &&
+                (attempt === 1 || (await observeBroker('activate')).lastSnapshotHash !== undefined)
+              ) {
+                brokerReady = true
+                break
+              }
+              if (attempt === maximumAttempts || (await ctx.date.now()) >= brokerReadinessDeadline) break
+              await ctx.sleep({ milliseconds: executionControllerDeploymentCompletionPollIntervalMs })
+            }
+            if (!brokerReady) {
+              await writeRuntimeLog(runtime, 'warning', 'Bayn deployment is waiting for broker publication recovery', {
+                controllerKey: ctx.key,
+                invocationId: ctx.request().id,
+                sourceRevision: config.sourceRevision,
+              })
+              // Advance the journal with a new wait and preflight, rather than retrying cached failed reads.
+              // The shared handler holds no execution lock; a newer deployment or withdrawn authority fences it.
+              await ctx.sleep({ milliseconds: executionControllerRecoveryTickDelayMs })
+              const prepared = await client.prepareActivation(request)
+              const predecessorUnchanged =
+                state === null
+                  ? prepared === null
+                  : prepared !== null &&
+                    prepared.active === state.active &&
+                    prepared.epoch === state.epoch &&
+                    prepared.initialSequence === state.initialSequence &&
+                    prepared.planHash === state.planHash &&
+                    prepared.sourceRevision === state.sourceRevision
+              const successorActivated =
+                prepared !== null &&
+                prepared.active &&
+                prepared.epoch === expectedEpoch &&
+                ownsControllerState(config, prepared)
+              if (!predecessorUnchanged && !successorActivated)
+                throw terminal(
+                  'execution controller deployment activation was superseded while awaiting broker readiness',
+                )
+            }
+          }
+          let activated: ExecutionControllerState | null =
+            decision._tag === 'Rotate'
+              ? await client.rotate({
+                  schemaVersion: 'bayn.execution-controller-rotation.v1',
+                  deployment: request,
+                  predecessor: decision.deactivation,
+                })
+              : await client.activate(bindDeploymentActivation(decision.state, request, config))
+          if (!activated.active || !ownsControllerState(config, activated))
+            throw terminal('execution controller deployment activation did not prove the expected active binding')
+          const completionBinding = {
+            epoch: activated.epoch,
+            planHash: activated.planHash,
+            sourceRevision: activated.sourceRevision,
+            firstSequence: Math.max(activated.initialSequence, state?.nextSequence ?? 0),
+          }
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
             if (executionControllerSuccessorPassCompleted(activated, completionBinding)) return activated
             if (attempt === maximumAttempts) {

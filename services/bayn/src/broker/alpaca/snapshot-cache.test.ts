@@ -7,6 +7,7 @@ import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBroke
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../../hash'
+import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
 import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
@@ -30,7 +31,7 @@ import {
 } from './model'
 import { brokerSnapshotCacheConfig, makeBrokerObservationCapture, makeProjectedBrokerRead } from './snapshot-cache'
 
-const config = { pollIntervalMs: 30_000, maxAgeMs: 60_000 }
+const config = { maxAgeMs: 60_000 }
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 
 const fixture = (
@@ -196,6 +197,11 @@ describe('durable broker observations', () => {
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure.cause).toMatchObject({ failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } })
+          expect(result.failure).toMatchObject({ pollFailureReason: 'SNAPSHOT_REJECTED' })
+          expect(brokerPollFailureAnnotations(result.failure)).toEqual({
+            'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+            'broker.snapshot_failure_reason': 'HistoryChanged',
+          })
         }
         expect(scans).toBe(2)
         const fresh = yield* captureBrokerObservation(
@@ -243,6 +249,7 @@ describe('durable broker observations', () => {
         const result = yield* Fiber.join(pending)
         expect(Result.isFailure(result)).toBe(true)
         expect(cancelled).toBe(1)
+        if (Result.isFailure(result)) expect(result.failure).toMatchObject({ pollFailureReason: 'POLL_DEADLINE' })
       }),
     )
   })
@@ -681,12 +688,12 @@ describe('durable broker observations', () => {
       }),
     )
   })
-  test('requires a poll interval shorter than maximum cache age', async () => {
+  test.each([0, 999, 60_001])('rejects an invalid maximum cache age %s', async (maxAgeMs) => {
     const result = await Effect.runPromise(
       brokerSnapshotCacheConfig.pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown({ BAYN_BROKER_POLL_INTERVAL_MS: 30_000, BAYN_BROKER_CACHE_MAX_AGE_MS: 30_000 }),
+          ConfigProvider.fromUnknown({ BAYN_BROKER_CACHE_MAX_AGE_MS: maxAgeMs }),
         ),
         Effect.result,
       ),

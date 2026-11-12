@@ -158,6 +158,7 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
     ...(
       [
         DecisionReadinessReason.AccountProtection,
+        DecisionReadinessReason.TurnoverBudgetExhausted,
         DecisionReadinessReason.LookbackWarmup,
         DecisionReadinessReason.NoEligibleCandidate,
         DecisionReadinessReason.SignalWindowObserved,
@@ -202,6 +203,7 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
   expect(outcome.unavailableDecisionPassCount).toBe(0)
   expect(outcome.readinessCounts).toEqual({
     ACCOUNT_PROTECTION: 1,
+    TURNOVER_BUDGET_EXHAUSTED: 1,
     LOOKBACK_WARMUP: 1,
     NO_ELIGIBLE_CANDIDATE: 1,
     SIGNAL_WINDOW_OBSERVED: 1,
@@ -325,4 +327,36 @@ test('final reporting does not repeat a command that already completed at the te
   expect(calls).toBe(0)
   expect(result.passCount).toBe(0)
   expect(result.nextPollAtMs).toBe(1265)
+})
+
+test('a forced terminal pass reports its actual start when the pending command lies beyond the reporting window', async () => {
+  const polls: number[] = []
+  const schedule = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      return yield* driveReplaySession(
+        {
+          nextDelayMs: 1000,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              polls.push(at)
+              return {
+                observation: {
+                  result: 'SUCCESS' as const,
+                  outcome: 'WINDOW_CLOSED' as const,
+                  observedAt: utcInstantFromEpochMillis(at),
+                },
+              }
+            }),
+          ),
+        },
+        (at) => TestClock.setTime(at),
+        1000,
+        10,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(polls).toEqual([10])
+  expect(schedule).toMatchObject({ firstPollAtMs: 10, lastPollAtMs: 10, completedAtMs: 10, passCount: 1 })
 })

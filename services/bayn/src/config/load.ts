@@ -15,11 +15,6 @@ interface RuntimeConfigFailurePresentation {
 
 const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): RuntimeConfigFailurePresentation => {
   switch (failure._tag) {
-    case 'CyclePollIntervalNotShorterThanStallThreshold':
-      return {
-        operation: 'cycle-loop',
-        message: 'cycle poll interval must be shorter than the cycle stall threshold',
-      }
     case 'ExecutionReconciliationCadenceNotWithinStaleThreshold':
       return {
         operation: 'cycle-loop',

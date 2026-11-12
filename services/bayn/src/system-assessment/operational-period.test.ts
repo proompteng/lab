@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
-import { QualificationRuntimeSchema } from './configuration'
+import { QualificationRuntimeSchema, qualificationDeadlines } from './configuration'
 import { MarketKind } from '../instruments'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import { validateOperationalRegistration, verifyStoredOperationalRegistration } from './operational-period'
@@ -8,6 +8,8 @@ import { registrationFixture, testHash } from './fixtures.test-support'
 import { JevAcceptanceVersion } from '../jev/acceptance'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
+import { sha256 } from '../hash'
+import { currentEntryMarkets } from '../execution/trading-scope'
 
 test('operational reporting needs one real native policy, retained incidents and no economic research quotas', () => {
   const registration = operationalRegistrationFixture()
@@ -51,6 +53,38 @@ test('stored v38 operational periods retain their exact identity but cannot regi
         }),
       ),
     ).toBe(true)
+})
+
+test('the streaming operational controller cannot borrow a retained polling runtime', () => {
+  const registration = operationalRegistrationFixture()
+  expect(registration.obligations.configuration.schemaVersion).toBe('bayn.qualification-runtime.v2')
+  expect(registration.obligations.configuration).not.toHaveProperty('cyclePollIntervalMs')
+  const polling = registrationFixture().obligations.configuration
+  const configuration = {
+    ...polling,
+    controllerPlanHash: registration.obligations.configuration.controllerPlanHash,
+    entryMarkets: currentEntryMarkets,
+  }
+  const mixed = {
+    ...registration,
+    obligations: {
+      ...registration.obligations,
+      ...Result.getOrThrow(qualificationDeadlines(configuration)),
+      configuration,
+    },
+  }
+  expect(Result.isFailure(validateOperationalRegistration(mixed))).toBe(true)
+  const retainedConfiguration = { ...configuration, controllerPlanHash: sha256('bayn.execution-controller-plan.v3') }
+  const retained = {
+    ...mixed,
+    obligations: {
+      ...mixed.obligations,
+      ...Result.getOrThrow(qualificationDeadlines(retainedConfiguration)),
+      configuration: retainedConfiguration,
+    },
+  }
+  expect(Result.getOrThrow(verifyStoredOperationalRegistration(retained)).registration).toEqual(retained)
+  expect(testHash(retained)).toBe(Result.getOrThrow(verifyStoredOperationalRegistration(retained)).registrationHash)
 })
 
 test('native reporting retains global signal alignment and original deadlines across its final boundary', () => {

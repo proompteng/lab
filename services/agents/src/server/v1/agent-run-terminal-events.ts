@@ -70,10 +70,10 @@ type AgentRunTerminalEventKubeServiceShape = {
   ) => Effect.Effect<Record<string, unknown>, AgentRunTerminalEventKubeError>
 }
 
-export class AgentRunTerminalEventKubeService extends Context.Tag('agents/AgentRunTerminalEventKubeService')<
+export class AgentRunTerminalEventKubeService extends Context.Service<
   AgentRunTerminalEventKubeService,
   AgentRunTerminalEventKubeServiceShape
->() {}
+>()('agents/AgentRunTerminalEventKubeService') {}
 
 export type AgentRunTerminalEventDeps = {
   kubeClient?: KubernetesClient
@@ -430,18 +430,18 @@ const errorDetails = (error: AgentRunTerminalEventError) => {
 const runTerminalEventEffect = async <A>(
   effect: Effect.Effect<A, AgentRunTerminalEventError, AgentRunTerminalEventKubeService>,
   deps: AgentRunTerminalEventDeps,
-) => Effect.runPromise(effect.pipe(Effect.provide(makeAgentRunTerminalEventKubeLayer(deps)), Effect.either))
+) => Effect.runPromise(effect.pipe(Effect.provide(makeAgentRunTerminalEventKubeLayer(deps)), Effect.result))
 
 export const listAgentRunTerminalEvents = async (request: Request, deps: AgentRunTerminalEventDeps = {}) => {
   const result = await runTerminalEventEffect(listAgentRunTerminalEventsEffect(request), deps)
-  if (result._tag === 'Right') return okResponse(result.right)
-  return errorResponse(errorMessage(result.left), errorStatus(result.left), errorDetails(result.left))
+  if (result._tag === 'Success') return okResponse(result.success)
+  return errorResponse(errorMessage(result.failure), errorStatus(result.failure), errorDetails(result.failure))
 }
 
 export const ackAgentRunTerminalEvent = async (request: Request, deps: AgentRunTerminalEventDeps = {}) => {
   const result = await runTerminalEventEffect(ackAgentRunTerminalEventEffect(request), deps)
-  if (result._tag === 'Right') return okResponse(result.right)
-  return errorResponse(errorMessage(result.left), errorStatus(result.left), errorDetails(result.left))
+  if (result._tag === 'Success') return okResponse(result.success)
+  return errorResponse(errorMessage(result.failure), errorStatus(result.failure), errorDetails(result.failure))
 }
 
 export const __test__ = {

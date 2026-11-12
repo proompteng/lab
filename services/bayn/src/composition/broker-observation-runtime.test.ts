@@ -1,7 +1,178 @@
 import { expect, test } from 'bun:test'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
-import { brokerPublicationFailureAnnotations } from './broker-observation-runtime'
+import { BrokerPollFailureReason } from '../broker/alpaca/failures'
+import { OrderStatus } from '../broker/alpaca/model'
+import {
+  FillActivityRelation,
+  FillMismatchOrderRole,
+  ReconciliationError,
+  snapshotFailure,
+} from '../simulation-reconciliation/broker-reconciler-model'
+import { brokerPollFailureAnnotations, brokerPublicationFailureAnnotations } from './broker-observation-runtime'
+
+test.each([
+  'retryable',
+  'timeout',
+  'identity',
+  'permission',
+  'mixed',
+  'defect',
+  'interruption',
+  'acquisition',
+] as const)('recovers a %s capture with the required session ownership and finalization', async (mode) => {
+  const child = Bun.spawn(['bun', `${import.meta.dir}/broker-observation-recovery.test-support.ts`, mode], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' })
+  const line = stdout.split('\n').find((value) => value.startsWith('BROKER_RECOVERY_RESULT='))
+  if (line === undefined) throw new Error(`Broker recovery worker returned no result: ${stdout}`)
+  const result = JSON.parse(line.slice('BROKER_RECOVERY_RESULT='.length))
+  const retained = mode === 'retryable' || mode === 'timeout'
+  expect(result.first).toBe(mode === 'defect' || mode === 'interruption' ? 'Failed' : 'Unavailable')
+  expect(result.recovered).toBe('Published')
+  expect(result.publications).toBe(1)
+  expect(result.acquisitions).toBe(retained ? 1 : 2)
+  expect(result.disposedAfterFirst).toBe(retained || mode === 'acquisition' ? 0 : 1)
+  expect(result.disposed).toBe(retained || mode === 'acquisition' ? 1 : 2)
+  expect(result.captures).toBe(mode === 'acquisition' ? 1 : 2)
+  expect(result.finalized).toBe(result.captures)
+  expect(result.settlements).toBe(mode === 'defect' || mode === 'interruption' ? 0 : 1)
+  if (mode === 'timeout')
+    expect(result.logs).toContainEqual({
+      message: ['Broker observation poll failed'],
+      annotations: expect.objectContaining({ 'broker.poll_failure_reason': 'POLL_DEADLINE' }),
+    })
+})
+
+test('snapshot diagnostics expose only direct typed reasons and allowlisted first-mismatch categories', () => {
+  for (const reason of [
+    'HistoryChanged',
+    'FillActivitiesPending',
+    'AccountBaselineMissing',
+    'TradingDayChanged',
+  ] as const) {
+    expect(
+      brokerPollFailureAnnotations(
+        observationUnavailable(
+          'private wrapper',
+          snapshotFailure(reason, 'private detail'),
+          BrokerPollFailureReason.SnapshotRejected,
+        ),
+      ),
+    ).toEqual({ 'broker.poll_failure_reason': 'SNAPSHOT_REJECTED', 'broker.snapshot_failure_reason': reason })
+  }
+  const cause = new ReconciliationError({
+    operation: 'snapshot',
+    message: 'private detail',
+    failure: {
+      _tag: 'Snapshot',
+      reason: 'FillActivitiesPending',
+      fillMismatch: {
+        activityRelation: FillActivityRelation.BelowOrder,
+        orderRole: FillMismatchOrderRole.Leg,
+        orderStatus: OrderStatus.Filled,
+      },
+    },
+  })
+  const failure = observationUnavailable('private wrapper', cause, BrokerPollFailureReason.SnapshotRejected)
+  expect(brokerPollFailureAnnotations(failure)).toEqual({
+    'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+    'broker.snapshot_failure_reason': 'FillActivitiesPending',
+    'broker.fill_activity_relation': 'FILLS_BELOW_ORDER',
+    'broker.fill_mismatch_order_role': 'LEG',
+    'broker.fill_mismatch_order_status': OrderStatus.Filled,
+  })
+  let reads = 0
+  const getter = () => {
+    reads++
+    throw new Error('private getter')
+  }
+  Object.defineProperties(cause, { message: { get: getter }, cause: { get: getter } })
+  const mismatch = cause.failure?._tag === 'Snapshot' ? cause.failure.fillMismatch : undefined
+  if (mismatch === undefined) throw new Error('missing fixture diagnostic')
+  Object.defineProperties(mismatch, {
+    activityRelation: { value: 'private value' },
+    orderRole: { get: getter },
+    orderStatus: { value: 'private status' },
+  })
+  expect(brokerPollFailureAnnotations(failure)).toEqual({
+    'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+    'broker.snapshot_failure_reason': 'FillActivitiesPending',
+  })
+  Object.defineProperty(cause, 'failure', { get: getter })
+  expect(brokerPollFailureAnnotations(failure)).toEqual({ 'broker.poll_failure_reason': 'SNAPSHOT_REJECTED' })
+  expect(reads).toBe(0)
+  const nested = new Error('private wrapper', { cause: snapshotFailure('HistoryChanged', 'private') })
+  expect(
+    brokerPollFailureAnnotations(observationUnavailable('private', nested, BrokerPollFailureReason.SnapshotRejected)),
+  ).toEqual({ 'broker.poll_failure_reason': 'SNAPSHOT_REJECTED' })
+  expect(
+    brokerPollFailureAnnotations(observationUnavailable('private', nested, BrokerPollFailureReason.PollDeadline)),
+  ).toEqual({ 'broker.poll_failure_reason': 'POLL_DEADLINE' })
+})
+test('poll diagnostics expose fixed reasons without invoking private messages or cause accessors', () => {
+  let reads = 0
+  const getter = () => {
+    reads++
+    throw new Error('private fixture detail')
+  }
+  for (const reason of Object.values(BrokerPollFailureReason)) {
+    const failure = observationUnavailable('private wrapper', undefined, reason)
+    Object.defineProperties(failure, { message: { get: getter }, cause: { get: getter } })
+    expect(brokerPollFailureAnnotations(failure)).toEqual({ 'broker.poll_failure_reason': reason })
+  }
+  const unknown = { 'broker.poll_failure_reason': 'unknown' }
+  const getterFailure = observationUnavailable('private wrapper')
+  Object.defineProperty(getterFailure, 'pollFailureReason', { get: getter })
+  const invalid = Object.assign(observationUnavailable('private wrapper'), { pollFailureReason: 'private value' })
+  const revoked = Proxy.revocable({}, {})
+  revoked.revoke()
+  const cyclic: { cause?: unknown } = {}
+  cyclic.cause = cyclic
+  for (const failure of [undefined, null, 'private value', getterFailure, invalid, revoked.proxy, cyclic])
+    expect(brokerPollFailureAnnotations(failure)).toEqual(unknown)
+  expect(brokerPollFailureAnnotations(observationUnavailable('private wrapper', cyclic))).toEqual(unknown)
+  expect(reads).toBe(0)
+})
+
+test('acquisition deadline logs its bounded reason after cancellation and preserves quota settlement', async () => {
+  const child = Bun.spawn(
+    ['bun', `${import.meta.dir}/broker-observation-runtime.test-support.ts`, 'acquisition-deadline'],
+    { stdout: 'pipe', stderr: 'pipe' },
+  )
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' })
+  const line = stdout.split('\n').find((value) => value.startsWith('BROKER_POLL_RESULT='))
+  if (line === undefined) throw new Error(`Broker poll worker returned no result: ${stdout}`)
+  const result = JSON.parse(line.slice('BROKER_POLL_RESULT='.length))
+  expect(result.failed).toBe(false)
+  expect(result.poll._tag).toBe('Unavailable')
+  expect(result.settlements).toBe(1)
+  expect(result.attemptsAtReturn).toBe(1)
+  expect(result.attemptsAfterReturn).toBe(1)
+  expect(result.mutationInvalidations).toBe(0)
+  expect(result.interruptedCaptures).toEqual([])
+  expect(result.logs).toContainEqual({
+    message: 'Broker observation poll failed',
+    annotations: expect.objectContaining({
+      'broker.operation': 'preflight',
+      'broker.failure_kind': 'TIMEOUT',
+      'broker.retryable': true,
+      'broker.poll_failure_reason': 'ACQUISITION_DEADLINE',
+    }),
+  })
+})
 
 test('publication diagnostics expose only allowlisted fields, without inspecting raw cause details', () => {
   let reads = 0
@@ -123,6 +294,7 @@ test('only a matching unused expired capture releases speculative debt after inv
   const line = stdout.split('\n').find((value) => value.startsWith('CAPTURE_CLAIM_RESULT='))
   if (line === undefined) throw new Error(`Capture claim worker returned no result: ${stdout}`)
   const result = JSON.parse(line.slice('CAPTURE_CLAIM_RESULT='.length))
+  expect(result.consistencyWait).toEqual({ _tag: 'QuotaWait', nextPollNotBeforeMs: result.consistencyDeadline })
   expect(result.expired).toMatchObject({
     _tag: 'Unavailable',
     nextPollNotBeforeMs: expect.any(Number),
@@ -176,14 +348,14 @@ test('failed capture disposes lazy broker acquisition before returning measured 
   expect(result.brokerTelemetry).toEqual({ loggerInherited: true, tracerInherited: true })
   const root = result.spans.find((span: { name: string }) => span.name === 'bayn.broker.observation.poll')
   const capture = result.spans.find((span: { name: string }) => span.name === 'bayn.broker.observation.capture')
-  const http = result.spans.find((span: { name: string }) => span.name === 'http.client GET')
+  const http = result.spans.find((span: { name: string }) => span.name === 'GET')
   expect(root).toMatchObject({
     sourceRevision: 'b'.repeat(40),
     traceId: 'a'.repeat(32),
     parentSpanId: 'b'.repeat(16),
   })
   expect(capture).toMatchObject({ parentSpanId: root.spanId, traceId: root.traceId })
-  expect(http).toMatchObject({ name: 'http.client GET' })
+  expect(http).toMatchObject({ name: 'GET' })
   expect(result.logs).toContainEqual({
     message: 'Broker observation poll completed without publication',
     annotations: {
@@ -229,6 +401,7 @@ test.each(['invalid-response', 'defect', 'interruption'])(
           'broker.failure_kind': 'INVALID_RESPONSE',
           'broker.retryable': false,
           'broker.http_status': 200,
+          'broker.poll_failure_reason': 'unknown',
         }),
       })
     } else {

@@ -23,6 +23,8 @@ import {
   type Observed,
   type OrderRead,
   ReconciliationError,
+  FillActivityRelation,
+  FillMismatchOrderRole,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
 
@@ -352,16 +354,32 @@ export const decideStableHistory = (
     for (const { value: fill } of after.fills) {
       filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
-    if (
-      after.orders.rows.some(({ value: order }) =>
-        [order, ...(order.legs ?? [])].some(
-          (member) => BigInt(member.filledQuantityAtoms) !== (filledByOrder.get(member.brokerOrderId) ?? 0n),
-        ),
-      )
-    ) {
-      return yield* Result.fail(
-        snapshotFailure('FillActivitiesPending', 'broker order quantities and fill activities have not converged'),
-      )
+    for (const { value: order } of after.orders.rows) {
+      for (const [index, member] of [order, ...(order.legs ?? [])].entries()) {
+        const orderQuantity = BigInt(member.filledQuantityAtoms)
+        const fillQuantity = filledByOrder.get(member.brokerOrderId) ?? 0n
+        if (orderQuantity !== fillQuantity) {
+          return yield* Result.fail(
+            new ReconciliationError({
+              operation: 'snapshot',
+              message: 'broker order quantities and fill activities have not converged',
+              failure: {
+                _tag: 'Snapshot',
+                reason: 'FillActivitiesPending',
+                fillMismatch: {
+                  activityRelation: !filledByOrder.has(member.brokerOrderId)
+                    ? FillActivityRelation.NoMatchingFills
+                    : fillQuantity < orderQuantity
+                      ? FillActivityRelation.BelowOrder
+                      : FillActivityRelation.AboveOrder,
+                  orderRole: index === 0 ? FillMismatchOrderRole.Order : FillMismatchOrderRole.Leg,
+                  orderStatus: member.status,
+                },
+              },
+            }),
+          )
+        }
+      }
     }
     return after
   })

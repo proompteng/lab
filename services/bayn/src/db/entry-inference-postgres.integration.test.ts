@@ -246,6 +246,7 @@ const retainReplayDispatch = Effect.gen(function* () {
     ),
     Effect.provide(TestClock.layer()),
   )
+  if (admission.dispatches === null) throw new Error('Expected in-process replay dispatch rights')
   const dispatch = admission.dispatches.find((entry) => entry.request.requestId === current.requestId)
   if (dispatch === undefined) throw new Error('Missing initial replay admission')
   return dispatch
@@ -305,7 +306,9 @@ integration('committed sequential provider handoff', () => {
   beforeEach(async () => {
     initialDispatch = undefined
     const admission = await resetDatabase()
-    initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
+    if (admission === undefined) return
+    if (admission.dispatches === null) throw new Error('Expected in-process fixture dispatch rights')
+    initialDispatch = admission.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
   }, 30_000)
 
   test.each([

@@ -644,10 +644,6 @@ def evaluate (json : Json) : Except String Json := do
   | "expiredInferenceContinuation" =>
     return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
-  | "pendingMarketInputsContinuation" =>
-    return toJson (pendingMarketInputsContinuation (← json.getObjValAs? Bool "pending")
-      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
-      (← json.getObjValAs? Nat "normalDelay"))
   | "sourceWaitReconciliationReusable" =>
     return toJson (sourceWaitReconciliationReusable
       (← json.getObjValAs? Bool "exact") (← json.getObjValAs? Bool "accounting")
@@ -1032,6 +1028,15 @@ def evaluate (json : Json) : Except String Json := do
   | "reconciliationCompletion" =>
     return toJson (reconciliationCompletionSupported (← readInteger json "due")
       (← readInteger json "deadline") (← readInteger json "observed") (← readInteger json "witnessed"))
+  | "protectionObservationOverlap" =>
+    let decode (key : String) : Except String ProtectionOrderFields := do
+      (← json.getObjValAs? (Array Json) key).toList.mapM fun field => do
+        return (← field.getObjValAs? String "name", ← field.getObjValAs? String "value")
+    return toJson (sameProtectionObservation (← decode "nested") (← decode "standalone"))
+  | "brokerClientIdentityCompatible" =>
+    return toJson (brokerClientIdentityCompatible (← json.getObjValAs? String "leftBroker")
+      (← json.getObjValAs? String "leftClient") (← json.getObjValAs? String "rightBroker")
+      (← json.getObjValAs? String "rightClient"))
   | "binaryEdge" =>
     let gain ← readNatural json "gainMicros"
     let loss ← readNatural json "lossMicros"

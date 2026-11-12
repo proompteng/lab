@@ -382,16 +382,16 @@ describe('run read v1 API', () => {
     const result = await Effect.runPromise(
       getRunWithServicesEffect('record-1', 'agents').pipe(
         Effect.provide(makeRunReadLayer({ storeFactory: () => store, kubeClient: kube })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    if (result._tag !== 'Left') throw new Error('expected run read to fail')
-    expect(result.left).toBeInstanceOf(RunReadKubeError)
-    if (!(result.left instanceof RunReadKubeError)) throw new Error('expected RunReadKubeError')
-    expect(result.left.operation).toBe('get-resource')
-    expect(result.left.resource).toBe(RESOURCE_MAP.AgentRun)
-    expect(result.left.namespace).toBe('agents')
+    if (result._tag !== 'Failure') throw new Error('expected run read to fail')
+    expect(result.failure).toBeInstanceOf(RunReadKubeError)
+    if (!(result.failure instanceof RunReadKubeError)) throw new Error('expected RunReadKubeError')
+    expect(result.failure.operation).toBe('get-resource')
+    expect(result.failure.resource).toBe(RESOURCE_MAP.AgentRun)
+    expect(result.failure.namespace).toBe('agents')
     expect(store.close).toHaveBeenCalled()
   })
 })
