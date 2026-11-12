@@ -21,7 +21,7 @@ spec:
                   namespace: kargo
                   repoUrl: ghcr.io/akuity/kargo-charts
                   chart: kargo
-                  version: 1.11.4
+                  version: 1.12.5
                   releaseName: kargo
                   enabled: "true"
                   managedNamespaceMetadata:
@@ -57,8 +57,6 @@ spec:
                     externalWebhooksServer:
                       enabled: false
                     global:
-                      clusterSecretsNamespace: kargo
-                      createClusterSecretsNamespace: false
                       systemResources:
                         namespace: kargo
                         createNamespace: false

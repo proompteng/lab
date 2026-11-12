@@ -45,13 +45,13 @@ CD:
 ```bash
 GALACTIC_CONTEXT=galactic-lan # or galactic-tailscale
 kubectl --context "$GALACTIC_CONTEXT" apply --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/crds/applicationset-crd.yaml
 ```
 
 If the server-side apply cannot create a missing CRD, the create-only fallback is:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml \
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/crds/applicationset-crd.yaml \
   | kubectl --context "$GALACTIC_CONTEXT" create -f -
 ```
 
