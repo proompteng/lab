@@ -4,7 +4,7 @@ import { expect, test } from 'bun:test'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeServices } from '@effect/platform-node'
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { backfillAlpacaHistory } from '../../../tools/backfill'
 import { publishHistoricalDataset, restoreHistoricalDataset } from '../../../tools/history-store'
 import { exportHistoricalDataset } from '../../../tools/history-export'
@@ -194,8 +194,7 @@ storeTest(
   'historical batch readback uses bounded indexed reads for a large quote capture',
   async () => {
     const quotes = HttpClient.make((request) => {
-      const url = new URL(request.url)
-      for (const [key, value] of request.urlParams) url.searchParams.set(key, value)
+      const url = Option.getOrThrow(HttpClientRequest.toUrl(request))
       if (!url.pathname.endsWith('/quotes')) return historyFixtureHttp.execute(request)
       const page = Number(url.searchParams.get('page_token') ?? '0')
       const start = Date.parse(url.searchParams.get('start') ?? '')

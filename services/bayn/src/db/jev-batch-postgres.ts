@@ -3,7 +3,7 @@ import { makeEntryInferenceWrites } from './entry-inference-postgres'
 import { prepareClaimedEntry } from '../jev/entry-inference'
 import { recordJevEvaluationReceipts } from './jev-evaluation-postgres'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Clock, Effect, Exit, Layer, Option, Schema } from 'effect'
+import { Array as Arr, Cause, Clock, Effect, Exit, Layer, Option, Schema } from 'effect'
 import type { Statement } from 'effect/sql'
 
 import { operationalError } from '../errors'
@@ -168,7 +168,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
           yield* recordReproducedJevObservation(sql, reproduced.observation, reproduced.plan.schemaVersion)
           const checkedAt = yield* checkWindow
           yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
-          if (plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)) {
+          const requests = plan.candidates.flatMap((candidate) =>
+            candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
+          )
+          if (!Arr.isArrayNonEmpty(requests)) {
             const result = yield* Effect.fromResult(
               makeJevBatchResult(plan, {
                 schemaVersion: 'bayn.jev-batch-result.v1',
@@ -205,11 +208,8 @@ export const makeJevBatchStore = Effect.gen(function* () {
       `,
             )
             if (inserted.length === 0) return []
-            const requests = plan.candidates.flatMap((candidate) =>
-              candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
-            )
             yield* sql`INSERT INTO jev_evaluation_requests ${sql.insert(
-              requests.map((request) => ({
+              Arr.map(requests, (request) => ({
                 request_id: request.requestId,
                 cycle_id: request.cycleId,
                 authority_generation_hash: request.authorityGenerationHash,

@@ -131,6 +131,10 @@ METRICS = {
         "gauge",
         "Age of the oldest currently running job in a cohort.",
     ),
+    "ci_job_current_phase_age_seconds": (
+        "gauge",
+        "Oldest age of each current phase among nonterminal running jobs in a cohort.",
+    ),
     "ci_observability_pending_attempts": (
         "gauge",
         "Discovered workflow attempts awaiting durable collection.",
@@ -1058,6 +1062,7 @@ class Collector:
         self.active_runs = active
         counts, oldest = collections.Counter(), collections.defaultdict(float)
         running = collections.defaultdict(float)
+        current_phases = collections.defaultdict(float)
         for run in active.values():
             workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
             run_attrs = {
@@ -1093,6 +1098,25 @@ class Collector:
                     running[encoded] = max(
                         running[encoded], now - timestamp(job["started_at"])
                     )
+                    steps = job.get("steps") or []
+                    current = next(
+                        (s for s in steps if s.get("status") == "in_progress"), None
+                    )
+                    phase_name = "unattributed"
+                    phase_start = timestamp(job["started_at"])
+                    if current and timestamp(current.get("started_at")):
+                        phase_name = phase(current["name"])
+                        phase_start = timestamp(current["started_at"])
+                    elif steps and all(s.get("status") == "completed" for s in steps):
+                        completed = [timestamp(s.get("completed_at")) for s in steps]
+                        if all(completed):
+                            phase_name, phase_start = "finalizing", max(completed)
+                    phase_labels = json.dumps(
+                        attrs | {"phase": phase_name}, sort_keys=True
+                    )
+                    current_phases[phase_labels] = max(
+                        current_phases[phase_labels], now - phase_start
+                    )
         self.active_metrics = "".join(
             exposition(metric, value, json.loads(encoded))
             for (metric, encoded), value in counts.items()
@@ -1108,6 +1132,10 @@ class Collector:
         self.active_metrics += "".join(
             exposition("ci_job_oldest_execution_seconds", value, json.loads(encoded))
             for encoded, value in running.items()
+        )
+        self.active_metrics += "".join(
+            exposition("ci_job_current_phase_age_seconds", value, json.loads(encoded))
+            for encoded, value in current_phases.items()
         )
         today = dt.datetime.fromtimestamp(now, UTC).date()
         for run in self.api.runs(
@@ -1128,7 +1156,7 @@ class Collector:
                     self.api.runs(day + "T00:00:00Z", day + "T23:59:59Z")
                 )
             while True:
-                if time.time() >= deadline:
+                if time.time() >= deadline or self.api.remaining < 2000:
                     return
                 try:
                     run = next(self.history_runs)

@@ -1,3 +1,4 @@
+import { buildExecutionDecision, buildObserveShadowDecision } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
   isProtectedEntryTarget,
@@ -63,13 +64,7 @@ import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { accountEntryProtectionReasons, BrokerMode, type Policy, type State, type EntryQuoteFreshness } from '../risk'
-import {
-  buildObserveShadowDecision,
-  buildExecutionDecision,
-  type ExecutionDecisionInput,
-  type ShadowDecisionError,
-  type ShadowDeltaRiskInput,
-} from '../shadow-decision'
+import { type ExecutionDecisionInput, type ShadowDecisionError, type ShadowDeltaRiskInput } from '../shadow-decision'
 import {
   ExecutionMarketDataBindingSchema,
   reconciledPositionLiquidationBindingSchemaVersion,
@@ -627,6 +622,7 @@ const requireEntryTurnoverCapacity = <R>(
   requiredAuthority: DecisionAuthorityRequirement,
 ): Result.Result<void, ObserveDecisionAwaitingSignal> =>
   requiredAuthority === Authority.Execution &&
+  input.policy.maxDailyTradedNotionalMicros !== null &&
   BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros) >=
     BigInt(input.policy.maxDailyTradedNotionalMicros)
     ? Result.fail(
@@ -1367,7 +1363,10 @@ export function buildStrategyCycleDecision<R>(
                 dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
                 maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
                 maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
-                maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
+                maxDailyTradedNotionalMicros:
+                  input.policy.maxDailyTradedNotionalMicros === null
+                    ? null
+                    : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                 targetWeights: planningTargetWeights,
                 positions: facts.reconciliation.brokerState.positions,

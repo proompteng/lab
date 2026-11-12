@@ -77,6 +77,50 @@ This telemetry change does not repair PCIe training or establish a client-latenc
 
 ## Diagnose the bottleneck
 
+### Investigate retained BlueStore slow-operation warnings
+
+For `CephClusterHealthWarning`, start with `ceph health detail` and identify the affected OSD and check name.
+`BLUESTORE_SLOW_OP_ALERT` retains slow-operation indications for `bluestore_slow_ops_warn_lifetime` seconds.
+The current default is 86400 seconds, with a threshold of one indication. Read both effective values before
+interpreting an alert's age. A retained warning can outlast the slow operation by a day.
+See [Ceph's health-check reference](https://docs.ceph.com/en/umbrella/rados/operations/health-checks/#bluestore-slow-op-alert).
+
+For an affected `osd.0`, run these read-only commands. Replace the OSD ID with the one reported by health detail.
+
+```sh
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd.0 bluestore_slow_ops_warn_lifetime
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd.0 bluestore_slow_ops_warn_threshold
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell osd.0 dump_ops_in_flight
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell osd.0 dump_scrub_reservations
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd metadata 0 -f json
+```
+
+Read the affected pod's `/var/log/ceph/ceph-osd.0.log` and rotated `.gz` files.
+Container stdout can omit an older event after rotation. Use `zgrep` for `slow operation observed` and `slow aio`,
+then sort by the log timestamp. Record the last event's function, duration, and I/O count.
+`ceph healthcheck history ls` reports when a check was last observed active, not when the underlying operation occurred.
+The manager's health metric timestamp also measures the scrape, so neither timestamp establishes a new slow operation.
+
+Compare the event window with the OSD's client latency, scrub read bytes, host disk queue, and BlueFS fsync means below.
+The four `ceph_bluestore_slow_*_count` counters identify some slow paths, but do not cover every BlueStore warning.
+An empty `dump_ops_in_flight` or a zero commit-latency snapshot does not exclude intermittent delays.
+For completed client stalls, inspect `dump_historic_ops` and separate local commit time from replica acknowledgement time.
+
+Use `bluestore_bdev_dev_node`, `bluefs_db_dev_node`, and `device_ids` from OSD metadata to locate the data and DB devices.
+Resolve both device-mapper paths with `lsblk -s -o NAME,TYPE,ROTA` inside the affected OSD pod before reading SMART data.
+Run `smartctl -a -j` against each verified parent device and compare error counters with an earlier sample.
+HDD data with an NVMe DB still requires HDD reads during deep scrub. Healthy NVMe latency does not prove healthy data reads.
+A passing SMART summary does not exclude a storage fault. Check media errors, pending sectors, timeouts, link errors,
+temperature, and kernel errors alongside the latency evidence.
+
+Keep detection thresholds, retention, integrity checks, and the committed scrub policy while investigating.
+Before a scrub or mClock experiment, capture equal-duration client latency and scrub-progress baselines under representative load.
+Change one setting through reviewed GitOps, verify its effective value, and require advancing deep-scrub completion timestamps.
+Reject a candidate that worsens application deadlines or scrub debt, and restore the exact previous value through GitOps.
+The previous single-object scrub-batch trial was reverted to the explicit five-object baseline in
+[PR #15463](https://github.com/proompteng/lab/pull/15463). Review that evidence before repeating the same change.
+
 ### Metadata-device latency and scrub progress
 
 Retain the native BlueFS SST/WAL write bytes, read bytes, log-compaction duration,

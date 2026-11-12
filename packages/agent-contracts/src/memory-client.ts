@@ -98,7 +98,22 @@ export type AgentsMemoryNoteFilters = {
 }
 
 export type AgentsRetrieveMemoryNotesInput = AgentsMemoryNoteFilters & { query: string }
-export type AgentsListMemoryNotesInput = AgentsMemoryNoteFilters
+export type AgentsListMemoryNotesInput = AgentsMemoryNoteFilters & { cursor?: string }
+export type AgentsMemoryNoteSummary = Pick<
+  AgentsMemoryNoteRecord,
+  'id' | 'createdAt' | 'retiredAt' | 'replacementId'
+> & {
+  summary: string
+  summaryTruncated: boolean
+  repository: string | null
+  commit: string | null
+  model: string | null
+}
+export type AgentsListMemoryNotesResult = {
+  ok: true
+  memories: AgentsMemoryNoteSummary[]
+  nextCursor: string | null
+}
 export type AgentsRetireMemoryNoteInput = { id: string; reason: string; replacementId?: string }
 
 export type AgentsMemoryNotesStatsInput = {
@@ -251,6 +266,24 @@ export const parseRetireMemoryNoteInput = (
   return { ok: true, value: { id, reason, replacementId } }
 }
 
+export const parseMemoryNoteId = (id: unknown): ValidationResult<string> =>
+  typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    ? { ok: true, value: id.toLowerCase() }
+    : { ok: false, message: 'id must be a UUID.' }
+
+export const parseListMemoryNotesInput = (
+  payload: Record<string, unknown>,
+  fallbackLimit = 5,
+): ValidationResult<AgentsListMemoryNotesInput> => {
+  const filters = parseMemoryNoteFilters(payload, fallbackLimit)
+  if (!filters.ok) return filters
+  if (payload.cursor === undefined) return filters
+  const cursor = parseMemoryNoteId(payload.cursor)
+  return cursor.ok
+    ? { ok: true, value: { ...filters.value, cursor: cursor.value } }
+    : { ok: false, message: 'cursor must be a note UUID returned by the previous page.' }
+}
+
 export const appendMemoryNoteFilters = (url: URL, input: AgentsMemoryNoteFilters) => {
   for (const key of ['namespace', 'repository', 'model', 'createdAfter', 'createdBefore'] as const) {
     const value = input[key]?.trim()
@@ -305,12 +338,13 @@ export const retrieveMemoryNotesFromAgentsService = async (
 export const listMemoryNotesFromAgentsService = (
   input: AgentsListMemoryNotesInput,
   env: EnvSource = process.env,
-): Promise<AgentsServiceJsonResult<AgentsRetrieveMemoryNotesResult>> => {
+): Promise<AgentsServiceJsonResult<AgentsListMemoryNotesResult>> => {
   const url = buildAgentsServiceUrl('/v1/memory-notes', env)
   url.searchParams.set('mode', 'latest')
   appendMemoryNoteFilters(url, input)
+  if (input.cursor) url.searchParams.set('cursor', input.cursor)
   return runAgentsJsonPromise(
-    requestAgentsJsonEffect<AgentsRetrieveMemoryNotesResult>({
+    requestAgentsJsonEffect<AgentsListMemoryNotesResult>({
       path: servicePath(url),
       method: 'GET',
       env,
@@ -318,6 +352,16 @@ export const listMemoryNotesFromAgentsService = (
     }),
   )
 }
+
+export const getMemoryNoteFromAgentsService = (id: string, env: EnvSource = process.env) =>
+  runAgentsJsonPromise(
+    requestAgentsJsonEffect<AgentsPersistMemoryNoteResult>({
+      path: `/v1/memory-notes/${encodeURIComponent(id)}`,
+      method: 'GET',
+      env,
+      signal: AbortSignal.timeout(30_000),
+    }),
+  )
 
 export const retireMemoryNoteInAgentsService = (
   input: AgentsRetireMemoryNoteInput,

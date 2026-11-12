@@ -1,8 +1,8 @@
+import { makePostgresFixture } from '../testing/postgres-fixture.test-support'
 import { expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Effectable, Exit, Result } from 'effect'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
@@ -29,7 +29,7 @@ const recordWithStatementLatency = (remainingMs: number) =>
     Effect.gen(function* () {
       const queries: string[] = []
       let commits = 0
-      const client = yield* SqlClient.make({
+      const client = yield* makePostgresFixture({
         acquirer: Effect.die('Receipt timing test must not connect to PostgreSQL'),
         compiler: PgClient.makeCompiler(undefined, false),
         spanAttributes: [],
@@ -94,7 +94,7 @@ const recordWithStatementLatency = (remainingMs: number) =>
           if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
           return Reflect.get(target, property, receiver)
         },
-      }) as PgClient.PgClient
+      })
       const start = Date.parse(plan.expiresAt) - remainingMs
       yield* TestClock.setTime(start)
       const store = yield* makeJevEvaluationStore.pipe(Effect.provideService(PgClient.PgClient, sql))

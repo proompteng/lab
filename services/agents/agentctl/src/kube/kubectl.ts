@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+
 export type KubectlOptions = {
   kubeconfig?: string
   context?: string
@@ -38,26 +40,24 @@ export const buildKubectlArgs = (options: KubectlOptions) => {
 
 export type KubectlRunner = (args: string[], options: KubectlOptions, stdin?: string) => Promise<KubectlResult>
 
-const defaultRunner: KubectlRunner = async (args, options, stdin) => {
-  const proc = Bun.spawn(['kubectl', ...buildKubectlArgs(options), ...args], {
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
+const defaultRunner: KubectlRunner = (args, options, stdin) =>
+  new Promise((resolve, reject) => {
+    const proc = execFile(
+      'kubectl',
+      [...buildKubectlArgs(options), ...args],
+      { encoding: 'utf8', maxBuffer: Infinity },
+      (error, stdout, stderr) => {
+        const exitCode = error ? error.code : 0
+        if (typeof exitCode !== 'number') {
+          reject(error)
+          return
+        }
+        resolve({ stdout, stderr, exitCode })
+      },
+    )
+    proc.stdin?.on('error', reject)
+    proc.stdin?.end(stdin)
   })
-
-  if (stdin) {
-    proc.stdin.write(stdin)
-  }
-  proc.stdin.end()
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ])
-
-  return { stdout, stderr, exitCode }
-}
 
 let runner: KubectlRunner = defaultRunner
 

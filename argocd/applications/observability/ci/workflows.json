@@ -107,20 +107,8 @@
       "pattern": "^ledger-integration(?: \\(.*\\))?$"
     },
     {
-      "id": "dependency-input-invariant",
-      "pattern": "^dependency-input-invariant(?: \\(.*\\))?$"
-    },
-    {
       "id": "replay-execution-observer",
       "pattern": "^replay-execution-observer(?: \\(.*\\))?$"
-    },
-    {
-      "id": "image",
-      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
-    },
-    {
-      "id": "research-image",
-      "pattern": "^research-image(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "required",

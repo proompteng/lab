@@ -190,6 +190,9 @@ bun --cwd services/jangar run start:worker
 
 ## Temporal worker notes
 
+Jangar and Bumba use the workspace Temporal SDK and one Effect 4.1.4 runtime. Follow Bumba's
+[major-version cutover contract](../bumba/README.md#worker-deployment-routing) before replacing an Effect 3 worker.
+
 - API enqueue path: `JANGAR_BUMBA_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `bumba`).
 - Worker consume path: `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `jangar`).
 - Production GitOps no longer deploys a separate `jangar-worker` Kubernetes Deployment or workspace PVC. Keep post-deploy checks scoped to `deployment/jangar`.

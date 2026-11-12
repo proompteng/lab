@@ -22,8 +22,8 @@ test discovery. The database tests share a small `src/system-assessment/formal-m
 it runs only when formal CI supplies the built executable. The image source still excludes `formal/`. Run `bun run --filter @proompteng/bayn test` for service tests. Formal-only PRs run the formal jobs;
 service, migration and relevant dependency changes also run them. Deployment/config-only PRs retain their service
 checks without rebuilding the proof environment. Exact-revision runtime publication still requires both Lean and TLC.
-Changes confined to `formal/` do not publish an image or reactivate the controller. PostgreSQL's normal matrix owns
-its full suites; the formal job selects the tests that actually exercise the Lean/database boundary.
+Changes confined to `formal/` do not publish an image or reactivate the controller. The PostgreSQL matrix and inference
+ledger group each own distinct full suites; the formal job selects the tests that exercise the Lean/database boundary.
 
 The TLA+ command also runs on macOS with Java 21 and curl. It checks safety and conditional liveness with pinned,
 checksum-verified TLC, verifies deliberate faults are detected, and compares every checked state with production
