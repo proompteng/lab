@@ -1,6 +1,4 @@
-import type * as ParseResult from '@effect/schema/ParseResult'
-import * as Schema from '@effect/schema/Schema'
-import * as TreeFormatter from '@effect/schema/TreeFormatter'
+import * as Schema from 'effect/Schema'
 import { Context, Effect, Layer } from 'effect'
 
 import { ConfigError, TrackerError, WorkflowError, toLogError } from './errors'
@@ -13,125 +11,139 @@ const PAGE_SIZE = 50
 const REQUEST_TIMEOUT_MS = 30_000
 const singleOperationPattern = /\b(query|mutation|subscription)\b/g
 
-const NullableStringSchema = Schema.optionalWith(Schema.String, { nullable: true })
+const NullableStringSchema = Schema.optional(Schema.NullOr(Schema.String))
 
 const IssueNodeSchema = Schema.Struct({
   id: NullableStringSchema,
   identifier: NullableStringSchema,
   title: NullableStringSchema,
   description: NullableStringSchema,
-  priority: Schema.optionalWith(Schema.Union(Schema.Number, Schema.String), { nullable: true }),
+  priority: Schema.optional(Schema.NullOr(Schema.Union([Schema.Number, Schema.String]))),
   branchName: NullableStringSchema,
   url: NullableStringSchema,
   createdAt: NullableStringSchema,
   updatedAt: NullableStringSchema,
-  state: Schema.optionalWith(
-    Schema.Struct({
-      name: NullableStringSchema,
-    }),
-    { nullable: true },
+  state: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        name: NullableStringSchema,
+      }),
+    ),
   ),
-  labels: Schema.optionalWith(
-    Schema.Struct({
-      nodes: Schema.optionalWith(
-        Schema.Array(
-          Schema.Struct({
-            name: NullableStringSchema,
-          }),
-        ),
-        { nullable: true },
-      ),
-    }),
-    { nullable: true },
-  ),
-  inverseRelations: Schema.optionalWith(
-    Schema.Struct({
-      nodes: Schema.optionalWith(
-        Schema.Array(
-          Schema.Struct({
-            type: NullableStringSchema,
-            issue: Schema.optionalWith(
+  labels: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nodes: Schema.optional(
+          Schema.NullOr(
+            Schema.Array(
               Schema.Struct({
-                id: NullableStringSchema,
-                identifier: NullableStringSchema,
-                state: Schema.optionalWith(
-                  Schema.Struct({
-                    name: NullableStringSchema,
-                  }),
-                  { nullable: true },
+                name: NullableStringSchema,
+              }),
+            ),
+          ),
+        ),
+      }),
+    ),
+  ),
+  inverseRelations: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nodes: Schema.optional(
+          Schema.NullOr(
+            Schema.Array(
+              Schema.Struct({
+                type: NullableStringSchema,
+                issue: Schema.optional(
+                  Schema.NullOr(
+                    Schema.Struct({
+                      id: NullableStringSchema,
+                      identifier: NullableStringSchema,
+                      state: Schema.optional(
+                        Schema.NullOr(
+                          Schema.Struct({
+                            name: NullableStringSchema,
+                          }),
+                        ),
+                      ),
+                    }),
+                  ),
                 ),
               }),
-              { nullable: true },
             ),
-          }),
+          ),
         ),
-        { nullable: true },
-      ),
-    }),
-    { nullable: true },
+      }),
+    ),
   ),
 })
 
 const IssuesPageSchema = Schema.Struct({
   issues: Schema.Struct({
-    nodes: Schema.optionalWith(Schema.Array(IssueNodeSchema), { nullable: true }),
-    pageInfo: Schema.optionalWith(
-      Schema.Struct({
-        hasNextPage: Schema.optionalWith(Schema.Boolean, { nullable: true }),
-        endCursor: NullableStringSchema,
-      }),
-      { nullable: true },
+    nodes: Schema.optional(Schema.NullOr(Schema.Array(IssueNodeSchema))),
+    pageInfo: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          hasNextPage: Schema.optional(Schema.NullOr(Schema.Boolean)),
+          endCursor: NullableStringSchema,
+        }),
+      ),
     ),
   }),
 })
 
 const GraphqlEnvelopeSchema = Schema.Struct({
-  data: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-  errors: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+  data: Schema.optional(Schema.Unknown),
+  errors: Schema.optional(Schema.Unknown),
 })
 
 const IssueTeamStatesSchema = Schema.Struct({
-  issue: Schema.optionalWith(
-    Schema.Struct({
-      team: Schema.optionalWith(
-        Schema.Struct({
-          states: Schema.optionalWith(
+  issue: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        team: Schema.optional(
+          Schema.NullOr(
             Schema.Struct({
-              nodes: Schema.optionalWith(
-                Schema.Array(
+              states: Schema.optional(
+                Schema.NullOr(
                   Schema.Struct({
-                    id: NullableStringSchema,
-                    name: NullableStringSchema,
+                    nodes: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Array(
+                          Schema.Struct({
+                            id: NullableStringSchema,
+                            name: NullableStringSchema,
+                          }),
+                        ),
+                      ),
+                    ),
                   }),
                 ),
-                { nullable: true },
               ),
             }),
-            { nullable: true },
           ),
-        }),
-        { nullable: true },
-      ),
-    }),
-    { nullable: true },
+        ),
+      }),
+    ),
   ),
 })
 
 const CommentMutationSchema = Schema.Struct({
-  commentCreate: Schema.optionalWith(
-    Schema.Struct({
-      success: Schema.optionalWith(Schema.Boolean, { nullable: true }),
-    }),
-    { nullable: true },
+  commentCreate: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        success: Schema.optional(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
   ),
 })
 
 const IssueUpdateMutationSchema = Schema.Struct({
-  issueUpdate: Schema.optionalWith(
-    Schema.Struct({
-      success: Schema.optionalWith(Schema.Boolean, { nullable: true }),
-    }),
-    { nullable: true },
+  issueUpdate: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        success: Schema.optional(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
   ),
 })
 
@@ -141,13 +153,11 @@ type IssueTeamStatesPayload = typeof IssueTeamStatesSchema.Type
 type CommentMutationPayload = typeof CommentMutationSchema.Type
 type IssueUpdateMutationPayload = typeof IssueUpdateMutationSchema.Type
 
-const decodeIssuesPage = Schema.decodeUnknown(IssuesPageSchema)
-const decodeGraphqlEnvelope = Schema.decodeUnknown(GraphqlEnvelopeSchema)
-const decodeIssueTeamStates = Schema.decodeUnknown(IssueTeamStatesSchema)
-const decodeCommentMutation = Schema.decodeUnknown(CommentMutationSchema)
-const decodeIssueUpdateMutation = Schema.decodeUnknown(IssueUpdateMutationSchema)
-
-const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
+const decodeIssuesPage = Schema.decodeUnknownEffect(IssuesPageSchema)
+const decodeGraphqlEnvelope = Schema.decodeUnknownEffect(GraphqlEnvelopeSchema)
+const decodeIssueTeamStates = Schema.decodeUnknownEffect(IssueTeamStatesSchema)
+const decodeCommentMutation = Schema.decodeUnknownEffect(CommentMutationSchema)
+const decodeIssueUpdateMutation = Schema.decodeUnknownEffect(IssueUpdateMutationSchema)
 
 const readText = (value: unknown): string | null => (typeof value === 'string' ? value : null)
 
@@ -188,8 +198,7 @@ const normalizeIssue = (node: IssueNode): Issue => ({
   updatedAt: parseIsoTimestamp(node.updatedAt),
 })
 
-const mapSchemaError = (error: ParseResult.ParseError) =>
-  new TrackerError('linear_unknown_payload', formatSchemaError(error), error)
+const mapSchemaError = (error: Schema.SchemaError) => new TrackerError('linear_unknown_payload', error.message, error)
 
 const validateOperationCount = (query: string): Effect.Effect<void, TrackerError, never> => {
   const matches = query.match(singleOperationPattern) ?? []
@@ -225,11 +234,13 @@ const requestGraphql = (
         }),
       catch: (error) => new TrackerError('linear_api_request', 'Linear API request failed', error),
     }).pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: REQUEST_TIMEOUT_MS,
-        onTimeout: () => {
+        orElse: () => {
           controller.abort()
-          return new TrackerError('linear_api_request', `Linear API request timed out after ${REQUEST_TIMEOUT_MS}ms`)
+          return Effect.fail(
+            new TrackerError('linear_api_request', `Linear API request timed out after ${REQUEST_TIMEOUT_MS}ms`),
+          )
         },
       }),
     )
@@ -282,7 +293,7 @@ export interface IssueTrackerClient {
   ) => Effect.Effect<void, WorkflowError | ConfigError | TrackerError>
 }
 
-export class TrackerService extends Context.Tag('symphony/TrackerService')<TrackerService, IssueTrackerClient>() {}
+export class TrackerService extends Context.Service<TrackerService, IssueTrackerClient>()('symphony/TrackerService') {}
 
 const issueSelection = `
   id

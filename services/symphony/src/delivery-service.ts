@@ -135,7 +135,7 @@ const readOptionalFile = (filePath: string) =>
     catch: (error) => new OrchestratorError('runtime_unavailable', `failed to read ${filePath}`, error),
   }).pipe(
     Effect.map((value) => value.trim()),
-    Effect.catchAll(() => Effect.succeed<string | null>(null)),
+    Effect.catch(() => Effect.succeed<string | null>(null)),
   )
 
 const requestKubernetes = (
@@ -386,10 +386,9 @@ export interface DeliveryServiceDefinition {
   ) => Effect.Effect<DeliveryTransaction, OrchestratorError>
 }
 
-export class DeliveryService extends Context.Tag('symphony/DeliveryService')<
-  DeliveryService,
-  DeliveryServiceDefinition
->() {}
+export class DeliveryService extends Context.Service<DeliveryService, DeliveryServiceDefinition>()(
+  'symphony/DeliveryService',
+) {}
 
 export const makeDeliveryServiceLayer = (logger: Logger) =>
   Layer.effect(
@@ -522,7 +521,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           )
 
         return findPage(1).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             error.message.endsWith(': 404')
               ? Effect.succeed<DeliveryKargoObservation | null>(null)
               : Effect.fail(error),
@@ -633,7 +632,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
               merge_method: input.method ?? 'squash',
             }),
           },
-        ).pipe(Effect.zipRight(getPullRequestPayload(input.repo, input.number)), Effect.map(toPullRequestRef))
+        ).pipe(Effect.andThen(getPullRequestPayload(input.repo, input.number)), Effect.map(toPullRequestRef))
       }
 
       const getWorkflowRun = (repo: string, runId: number) =>
@@ -699,7 +698,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         (issue.delivery?.codePr?.number
           ? getPullRequestPayload(config.target.repo, issue.delivery.codePr.number).pipe(
               Effect.map((pullRequest) => [pullRequest] as GitHubPullRequest[]),
-              Effect.catchAll(() => listPullRequests(config.target.repo, config.target.defaultBranch)),
+              Effect.catch(() => listPullRequests(config.target.repo, config.target.defaultBranch)),
             )
           : listPullRequests(config.target.repo, config.target.defaultBranch)
         ).pipe(
@@ -724,7 +723,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         (previousNumber
           ? getPullRequestPayload(repo, previousNumber).pipe(
               Effect.map((pullRequest) => [pullRequest] as GitHubPullRequest[]),
-              Effect.catchAll(() => listPullRequests(repo, config.target.defaultBranch)),
+              Effect.catch(() => listPullRequests(repo, config.target.defaultBranch)),
             )
           : listPullRequests(repo, config.target.defaultBranch)
         ).pipe(
@@ -758,7 +757,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         (previousNumber
           ? getPullRequestPayload(repo, previousNumber).pipe(
               Effect.map((pullRequest) => [pullRequest] as GitHubPullRequest[]),
-              Effect.catchAll(() => listPullRequests(repo, baseBranch)),
+              Effect.catch(() => listPullRequests(repo, baseBranch)),
             )
           : listPullRequests(repo, baseBranch)
         ).pipe(
@@ -782,7 +781,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           const requiredChecks =
             codePrPayload && codePrPayload.head.sha
               ? yield* inspectRequiredChecks(config.target.repo, codePrPayload.head.sha).pipe(
-                  Effect.catchAll(() =>
+                  Effect.catch(() =>
                     Effect.succeed<DeliveryChecksSummary | null>({
                       state: 'not_found',
                       headSha: codePrPayload.head.sha,
@@ -826,7 +825,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           const argo =
             kargo || promotionPr?.state === 'merged'
               ? yield* observeArgo(config).pipe(
-                  Effect.catchAll((error) => {
+                  Effect.catch((error) => {
                     deliveryLogger.log('warn', 'delivery_argo_observation_failed', toLogError(error))
                     return Effect.succeed<DeliveryArgoObservation | null>(null)
                   }),
@@ -882,7 +881,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
             lastError: deriveLastError(stage, observation),
           } satisfies DeliveryTransaction
         }).pipe(
-          Effect.catchAll((error) => {
+          Effect.catch((error) => {
             deliveryLogger.log('warn', 'delivery_refresh_failed', {
               issue_identifier: issue.issueIdentifier,
               ...toLogError(error),

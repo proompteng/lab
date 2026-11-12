@@ -53,10 +53,10 @@ export class ControlPlaneWatchReliabilityError extends Data.TaggedError('Control
   readonly message: string
 }> {}
 
-export class ControlPlaneWatchReliabilityApi extends Context.Tag('ControlPlaneWatchReliabilityApi')<
+export class ControlPlaneWatchReliabilityApi extends Context.Service<
   ControlPlaneWatchReliabilityApi,
   ControlPlaneWatchReliabilityService
->() {}
+>()('ControlPlaneWatchReliabilityApi') {}
 
 const DEFAULT_WATCH_WINDOW_MINUTES = 15
 const DEFAULT_WATCH_STREAM_LIMIT = 20
@@ -249,7 +249,7 @@ export const createControlPlaneWatchReliabilityService = ({
           (currentMax, stream) => Math.max(currentMax, stream.restarts),
           0,
         )
-        const status =
+        const status: ControlPlaneWatchReliability['status'] =
           totalErrors > 0 || maxStreamRestarts >= config.restartDegradeThreshold
             ? 'degraded'
             : observedStreams.length > 0

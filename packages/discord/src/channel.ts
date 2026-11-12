@@ -324,7 +324,7 @@ const discordFetch = async (config: DiscordConfig, path: string, init: RequestIn
 
       return response
     }).pipe(
-      Effect.catchAll((error) => {
+      Effect.catch((error) => {
         if (error instanceof DiscordRetryableError) {
           const hasRetryBudget = error.rateLimited || attempt < 5
           if (!hasRetryBudget) {

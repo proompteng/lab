@@ -1557,9 +1557,11 @@ export type AgentsControllerService = {
   getHealth: Effect.Effect<AgentsControllerHealth, never>
 }
 
-export class AgentsController extends Context.Tag('AgentsController')<AgentsController, AgentsControllerService>() {}
+export class AgentsController extends Context.Service<AgentsController, AgentsControllerService>()(
+  'AgentsController',
+) {}
 
-export const AgentsControllerLive = Layer.scoped(
+export const AgentsControllerLive = Layer.effect(
   AgentsController,
   Effect.gen(function* () {
     initializeRuntimeMutableStateForLayer()
