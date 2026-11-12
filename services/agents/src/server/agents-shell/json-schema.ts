@@ -1,5 +1,4 @@
-import * as JSONSchema from 'effect/JSONSchema'
-import type * as Schema from 'effect/Schema'
+import * as Schema from 'effect/Schema'
 
 const compactNullableAnyOf = (
   source: Record<string, unknown>,
@@ -68,5 +67,13 @@ export const sanitizeJsonSchemaForChatGpt = (schema: unknown, propertyKey?: stri
   return sanitized
 }
 
-export const effectSchemaToJsonSchema = (schema: Schema.Schema.Any) =>
-  sanitizeJsonSchemaForChatGpt(JSONSchema.make(schema, { target: 'openApi3.1' }))
+export const effectSchemaToJsonSchema = (schema: Schema.Constraint) => {
+  const document = Schema.toJsonSchemaDocument(schema, {
+    onExcessProperty: 'error',
+    generateDescriptions: false,
+  })
+  return sanitizeJsonSchemaForChatGpt({
+    ...document.schema,
+    ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
+  })
+}

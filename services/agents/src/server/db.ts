@@ -107,6 +107,10 @@ type MemoryEntries = {
   encoder_version: string | null
   last_accessed_at: Timestamp | null
   next_review_at: Timestamp | null
+  retired_at: Timestamp | null
+  retirement_reason: string | null
+  replacement_id: string | null
+  save_key: string | null
 }
 
 type OrchestrationRuns = {

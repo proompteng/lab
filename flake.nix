@@ -279,6 +279,16 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "bayn-research-image" = import ./nix/images/bayn.nix {
+              inherit pkgs lib nodejs repoRevision;
+              repoRoot = ./.;
+              bun = exact.bun;
+              research = true;
+            };
+            "bayn-broker-feed-image" = import ./nix/images/bayn-broker-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
             "signal-publisher-image" = import ./nix/images/signal-publisher.nix {
               inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;

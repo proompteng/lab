@@ -181,15 +181,16 @@ jobs:
           bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
             bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
-      - name: Verify Bayn forward-performance command from image
-        if: inputs.image_name == 'bayn'
+      - name: Verify Bayn image contents
+        if: inputs.image_name == 'bayn' || inputs.image_name == 'bayn-research'
         env:
           IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
           ARCH: ${{ matrix.arch }}
+          BAYN_IMAGE_ROLE: ${{ inputs.image_name == 'bayn' && 'trading' || 'research' }}
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "verify-bayn-command-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-bayn-command-${ARCH}.log" \
-            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}"
+            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}" "${BAYN_IMAGE_ROLE}"
 
       - name: Verify Headlamp frontend assets from image
         if: inputs.image_name == 'headlamp'
@@ -277,6 +278,7 @@ jobs:
 
       - name: Upload Nix OCI log artifact
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: nix-oci-logs-${{ inputs.image_name }}-${{ matrix.arch }}
@@ -416,12 +418,17 @@ jobs:
           if [ "${LATEST}" = "true" ]; then
             args+=(--latest)
           fi
-          if [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          # Receipt validation needs the exact future alias even when a cohort publishes it later.
+          if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ] ||
+            { [ "${PUBLISH_KARGO_TAG}" = "true" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; then
             kargo_tag="kargo-sha-${SOURCE_SHA}"
             if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ]; then
               kargo_tag="${kargo_tag}-run-${GITHUB_RUN_ID}"
             fi
             args+=(--kargo-tag "${kargo_tag}")
+            if [ "${PUBLISH_KARGO_TAG}" != "true" ] || [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+              args+=(--defer-kargo-tag)
+            fi
           fi
           bash nix/ci-run-timed.sh "create-oci-index" "${NIX_OCI_LOG_DIR}/create-oci-index.log" "${args[@]}"
 

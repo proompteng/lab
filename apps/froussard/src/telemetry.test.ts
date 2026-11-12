@@ -140,7 +140,7 @@ describe('native Effect telemetry', () => {
     expect(response.status).toBe(status)
     await flush()
     expect(traceBodies().join('')).toContain(`"intValue":${status}`)
-    expect(traceBodies().join('')).toContain(`"status":{"code":${status >= 500 ? 2 : 1}`)
+    expect(traceBodies().join('')).toContain(`"status":{"code":${status >= 500 ? 2 : 0}`)
     const metrics = requests.find(({ path }) => path === '/v1/metrics')?.body ?? ''
     expect(metrics).toContain('froussard_http_requests_total')
     expect(metrics).toContain(`"stringValue":"${status}"`)

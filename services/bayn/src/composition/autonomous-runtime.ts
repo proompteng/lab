@@ -1,4 +1,5 @@
-import { Effect, Layer } from 'effect'
+import { buildMutationShadowCycleDecision } from '../observe-composition/decision-builder'
+import { Context, Effect, Layer } from 'effect'
 
 import { makeApplicationPlan, type ApplicationPlan } from '../app'
 import { operationalError } from '../errors'
@@ -48,7 +49,7 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
     const runtimeContext = yield* Layer.build(AutonomousRuntimeResourcesLive(observePlan))
     const services = yield* autonomousRuntimeServices.pipe(Effect.provideContext(runtimeContext))
     const cycleResources = makeAutonomousCycleResources(services, marketData, plan.config.operationTimeoutMs)
-    const context = yield* Layer.build(cycleResources)
+    const context = Context.merge(yield* Layer.build(cycleResources), runtimeContext)
     const reconcile = runOnce.pipe(Effect.provideContext(context))
     const settle = recoverTerminalGenerationToObserve({
       accountId: plan.config.alpaca.expectedAccountId,
@@ -82,7 +83,6 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
         const start = yield* makeObserveAutonomousCycleStartup({
           accountId: observePlan.config.alpaca.expectedAccountId,
           authorityGenerationHash: generationHash,
-          pollIntervalMs: observePlan.config.cyclePollIntervalMs,
           reconciliationIntervalMs: observePlan.config.alpaca.reconciliationIntervalMs,
           reconciliationPassTimeoutMs: observePlan.config.operationTimeoutMs,
           strategy: observePlan.strategy,
@@ -138,6 +138,7 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
       )
       const mode = restricted ? 'CloseOnly' : 'Mutation'
       const engine = yield* makeTradingEngine({
+        buildDecision: buildMutationShadowCycleDecision,
         authority,
         riskPolicyHash: generation.riskPolicyHash,
         cycle: {
@@ -147,7 +148,6 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
           intradayMarketData: marketData,
           executionCycleClosureStore: services.executionCycleClosureStore,
           blockedCycleIntentStore: services.blockedCycleIntentStore,
-          pollIntervalMs: plan.config.cyclePollIntervalMs,
           reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
           reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
         },

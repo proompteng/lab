@@ -12,8 +12,8 @@ import { jsonTextResult } from '../results'
 import { CliInputSchema, CommandResultSchema } from '../schemas'
 
 export const BmcInputSchema = Schema.Struct({
-  node: Schema.Literal('altra', 'turin'),
-  operation: Schema.Literal(
+  node: Schema.Literals(['altra', 'turin']),
+  operation: Schema.Literals([
     'identity',
     'sensors',
     'module_sensors',
@@ -21,7 +21,7 @@ export const BmcInputSchema = Schema.Struct({
     'events',
     'inventory',
     'power_status',
-  ),
+  ]),
   timeoutSeconds: CliInputSchema.fields.timeoutSeconds,
   maxOutputBytes: CliInputSchema.fields.maxOutputBytes,
 })

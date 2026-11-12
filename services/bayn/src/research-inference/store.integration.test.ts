@@ -67,6 +67,71 @@ integration('research attempt durability with real PostgreSQL', () => {
   afterAll(async () => {
     if (runtime !== undefined) await runtime.dispose()
   })
+  test('reports complete expense coverage across unpriced, pending, verified and orphaned research', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const schema = `bayn_research_coverage_${crypto.randomUUID().replaceAll('-', '')}_test`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE SCHEMA ${sql(schema)}`
+            yield* sql`SET LOCAL search_path TO ${sql(schema)}`
+            yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable fixture'; END; $$`
+            yield* migration
+            const store = makeResearchStore(sql)
+            expect(yield* store.coverage).toEqual({ unpriced: 0, pending: 0, lag: 0, ambiguous: 0 })
+            expect(yield* store.continuation).toEqual({ pending: false, nextWakeAt: null })
+            const receipts = [
+              { cost: undefined, age: 900, verified: false },
+              { cost: null, age: 800, verified: false },
+              { cost: '0', age: 600, verified: false },
+              { cost: '7', age: 120, verified: false },
+              { cost: '9', age: 1_000, verified: true },
+            ]
+            for (let index = 0; index < receipts.length + 2; index++) {
+              const runId = index.toString(16).padStart(64, '0')
+              const receipt = receipts[index]
+              yield* sql`INSERT INTO research_inference_runs (run_id, payload, claimed_at)
+                VALUES (${runId}, ${sql.json({ schemaVersion: 'bayn.research-run.v1' })},
+                  transaction_timestamp() - ${index === receipts.length + 1 ? 0 : 300} * interval '1 second')`
+              if (receipt === undefined) continue
+              const receiptHash = 'a'.repeat(64)
+              const payload = {
+                schemaVersion: 'bayn.research-receipt.v1',
+                runId,
+                receiptHash,
+                qualification: 'UNQUALIFIED',
+                ...(receipt.cost === undefined ? {} : { costPicoUsd: receipt.cost }),
+              }
+              yield* sql`INSERT INTO research_inference_receipts (run_id, receipt_hash, payload, created_at)
+                VALUES (${runId}, ${receiptHash}, ${sql.json(payload)},
+                  transaction_timestamp() - ${receipt.age} * interval '1 second')`
+              if (receipt.verified) yield* store.acknowledge(runId)
+            }
+            const elapsed =
+              sql`SELECT extract(epoch FROM statement_timestamp() - transaction_timestamp())::double precision AS seconds`.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ seconds: Schema.Finite })]))),
+                Effect.map(([row]) => row.seconds),
+              )
+            const before = yield* elapsed
+            const coverage = yield* store.coverage
+            const after = yield* elapsed
+            expect(coverage.unpriced).toBe(2)
+            expect(coverage.pending).toBe(2)
+            expect(yield* store.continuation).toEqual({ pending: true, nextWakeAt: null })
+            expect(coverage.ambiguous).toBe(1)
+            expect(coverage.lag).toBeGreaterThanOrEqual(600 + before)
+            expect(coverage.lag).toBeLessThanOrEqual(600 + after)
+            yield* store.acknowledge('2'.padStart(64, '0'))
+            yield* store.acknowledge('3'.padStart(64, '0'))
+            expect(yield* store.coverage).toEqual({ unpriced: 2, pending: 0, lag: 0, ambiguous: 1 })
+            expect(yield* store.continuation).toEqual({ pending: false, nextWakeAt: null })
+            yield* sql`DROP SCHEMA ${sql(schema)} CASCADE`
+          }),
+        )
+      }),
+    )
+  })
   test('hard migration preserves retained bytes and rejects new retired registrations', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {

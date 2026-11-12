@@ -123,16 +123,16 @@ describe('resource read v1 API', () => {
       getOrchestrationRunWithServicesEffect('orchestration-record-1', 'agents').pipe(
         Effect.provide(makeResourceReadKubernetesLayer({ kubeClient: kube })),
         Effect.provide(makeOrchestrationRunReadStoreLayer(() => store)),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    if (result._tag !== 'Left') throw new Error('expected resource refresh to fail')
-    expect(result.left).toBeInstanceOf(ResourceReadKubeError)
-    if (!(result.left instanceof ResourceReadKubeError)) throw new Error('expected ResourceReadKubeError')
-    expect(result.left.operation).toBe('get-resource')
-    expect(result.left.resource).toBe(RESOURCE_MAP.OrchestrationRun)
-    expect(result.left.namespace).toBe('agents')
+    if (result._tag !== 'Failure') throw new Error('expected resource refresh to fail')
+    expect(result.failure).toBeInstanceOf(ResourceReadKubeError)
+    if (!(result.failure instanceof ResourceReadKubeError)) throw new Error('expected ResourceReadKubeError')
+    expect(result.failure.operation).toBe('get-resource')
+    expect(result.failure.resource).toBe(RESOURCE_MAP.OrchestrationRun)
+    expect(result.failure.namespace).toBe('agents')
     expect(store.close).toHaveBeenCalledTimes(1)
   })
 

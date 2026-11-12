@@ -5,17 +5,29 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../../src/broker/alpaca-mutations/model'
 import { AutonomousCycleSchema, CycleState } from '../../src/cycle/model'
-import { DecisionReadinessReason } from '../../src/cycle/runner/readiness'
-import { Authority, KillState } from '../../src/execution/contracts'
-import { completeExecutionControllerTick, decideExecutionControllerTick } from '../../src/execution/controller'
+import { DecisionReadinessReason, type DecisionReadiness } from '../../src/cycle/runner/readiness'
+import { Authority, KillState, OrderSide } from '../../src/execution/contracts'
+import { reconciliationIncompleteRestrictionReason } from '../../src/execution/authority'
+import {
+  completeExecutionControllerTick,
+  decideExecutionControllerTick,
+  executionControllerMaximumRecoveryWindow,
+  nextExecutionControllerRecoveryWindow,
+} from '../../src/execution/controller'
 import { ExecutionControllerOutcome } from '../../src/execution/controller-status'
 import {
   allowsOutcomeEvent,
   decideMutationAuthority,
   decideMutationStartReplay,
+  expiredEntryCancellationAdmissionIsCurrent,
   mutationIdResult,
 } from '../../src/execution/mutations/decisions'
-import { MutationEventType, type MutationEvent } from '../../src/execution/mutations/model'
+import {
+  MutationEventType,
+  type ExpiredEntryCancellationAdmission,
+  type ExpiredEntryCancellationFacts,
+  type MutationEvent,
+} from '../../src/execution/mutations/model'
 import { nativeJevFixture } from '../../src/jev/native.test-support'
 import { preflightTransfers, verifyExactTransfers } from '../../src/ledger-plan/verification'
 import type { LedgerTransferRecord } from '../../src/ledger-plan/model'
@@ -65,7 +77,7 @@ const EntryState = Schema.Struct({
   state: Schema.Enum(CycleState),
   snapshotBound: bool,
   decisionBound: bool,
-  mode: Schema.Literals(['INITIAL', 'LATER', 'CONSUMED', 'SOURCE_UNAVAILABLE']),
+  mode: Schema.Literals(['STREAM', 'ELIGIBILITY', 'AT_EXPIRY', 'INFERENCE_EXPIRED', 'RISK_EXPIRED']),
   inputReady: bool,
   wake: int,
   lastDelay: int,
@@ -77,6 +89,22 @@ const EntryState = Schema.Struct({
   deadline: int,
   normalDelay: int,
   retryDelay: int,
+  eventPending: bool,
+  admissionOpen: int,
+  openDelivered: bool,
+  eligibilityAt: int,
+})
+const RecoverySchedulerState = Schema.Struct({
+  active: bool,
+  scheduled: bool,
+  due: bool,
+  dependencyReady: bool,
+  recovered: bool,
+  recoveryWindow: int,
+  deliveryParity: int,
+  nextRecoveryWindow: int,
+  maximumRecoveryWindow: int,
+  canDeliver: bool,
 })
 const MutationState = Schema.Struct({
   operation: Schema.Enum(MutationOperation),
@@ -116,11 +144,90 @@ const MutationState = Schema.Struct({
   recoveryNotFound: bool,
   recoveryUnknown: bool,
 })
+const CancellationAdmissionState = Schema.Struct({
+  phase: Schema.Literals(['Read', 'Admitted', 'Rejected']),
+  authority: int,
+  identity: int,
+  clock: int,
+  starts: int,
+  admittedEligible: bool,
+  eligible: bool,
+  canAdmit: bool,
+})
 const hash = 'a'.repeat(64)
 const revision = (source: number) => String(source).repeat(40)
 const at = (seconds: number) => new Date(Date.parse('2026-09-04T14:31:02.000Z') + seconds * 1_000).toISOString()
 
 describe.skipIf(directory === undefined)('TLC reachable states conform to production', () => {
+  test('expired entry cancellation rechecks current authority, identity and freshness at admission', () => {
+    const cases = Schema.decodeUnknownSync(
+      Schema.Array(CancellationAdmissionState),
+      strictParseOptions,
+    )(states('CancellationAdmission'))
+    const admission: ExpiredEntryCancellationAdmission = {
+      accountId: 'account',
+      authorityGenerationHash: hash,
+      authorityVersion: 1,
+      intentId: hash,
+      clientOrderId: 'client',
+      brokerOrderId: 'parent',
+      observedAt: at(0),
+      validUntil: at(1),
+    }
+    expect(new Set(cases.map((s) => s.authority)).size).toBe(9)
+    expect(new Set(cases.map((s) => s.identity)).size).toBe(8)
+    expect(new Set(cases.map((s) => s.clock)).size).toBe(4)
+    expect(cases.some((s) => s.phase === 'Admitted' && !s.eligible && s.admittedEligible)).toBe(true)
+    expect(cases.some((s) => s.phase === 'Rejected' && s.starts === 0)).toBe(true)
+    for (const s of cases) {
+      const facts: ExpiredEntryCancellationFacts = {
+        accountId: s.identity === 1 ? 'other-account' : admission.accountId,
+        authorityGenerationHash: s.authority === 6 ? 'b'.repeat(64) : admission.authorityGenerationHash,
+        authorityVersion: s.authority === 7 ? 2 : admission.authorityVersion,
+        maximum: s.authority === 5 ? Authority.Observe : Authority.Execution,
+        effective: [1, 2, 3, 8].includes(s.authority) ? Authority.Observe : Authority.Execution,
+        killState: [1, 2, 4, 8].includes(s.authority) ? KillState.Active : KillState.Clear,
+        ...(s.authority === 1 ? { reason: reconciliationIncompleteRestrictionReason } : {}),
+        ...(s.authority === 2 ? { reason: 'operator requested PAPER stop' } : {}),
+        intentId: s.identity === 2 ? 'b'.repeat(64) : admission.intentId,
+        intentAuthorityGenerationHash: s.identity === 3 ? 'b'.repeat(64) : admission.authorityGenerationHash,
+        clientOrderId: s.identity === 4 ? 'other-client' : admission.clientOrderId,
+        side: s.identity === 6 ? OrderSide.Sell : OrderSide.Buy,
+        brokerOrderId: s.identity === 5 ? 'other-parent' : admission.brokerOrderId,
+        admittedAt: at(s.clock - 1),
+      }
+      expect(expiredEntryCancellationAdmissionIsCurrent(admission, s.identity === 7 ? undefined : facts)).toBe(
+        s.eligible,
+      )
+      expect(s.canAdmit).toBe(s.phase === 'Read' && s.eligible)
+    }
+  })
+
+  test('recovery window transitions retain bounded production counters at saturation', () => {
+    const cases = Schema.decodeUnknownSync(
+      Schema.Array(RecoverySchedulerState),
+      strictParseOptions,
+    )(states('RecoveryScheduler'))
+    expect(cases.some((s) => !s.active)).toBe(true)
+    expect(cases.some((s) => s.recovered)).toBe(true)
+    for (const parity of [0, 1]) {
+      expect(
+        cases.some(
+          (s) =>
+            s.active &&
+            !s.dependencyReady &&
+            s.canDeliver &&
+            s.recoveryWindow === executionControllerMaximumRecoveryWindow &&
+            s.deliveryParity === parity,
+        ),
+      ).toBe(true)
+    }
+    for (const s of cases) {
+      expect(s.maximumRecoveryWindow).toBe(executionControllerMaximumRecoveryWindow)
+      expect(nextExecutionControllerRecoveryWindow(s.recoveryWindow)).toBe(s.nextRecoveryWindow)
+    }
+  })
+
   test('controller delivery and completion guards reject stale epochs, sequences and worker sources', () => {
     const cases = Schema.decodeUnknownSync(Schema.Array(ControllerState), strictParseOptions)(states('Controller'))
     expect(cases.some((s) => s.canAdvance)).toBe(true)
@@ -136,6 +243,8 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
         planHash: hash,
         initialSequence: 0,
         nextSequence: s.sequence,
+        nextDueAt: at(0),
+        marketEligibleAt: at(0),
       } as const
       const tick = {
         schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -144,30 +253,38 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
       } as const
       const advance = decideExecutionControllerTick(state, tick, hash, revision(s.deliverySource))
       expect(Result.isSuccess(advance) && advance.success._tag === 'Advance').toBe(s.canAdvance)
-      const complete = completeExecutionControllerTick(
-        state,
-        {
-          ...tick,
-          epoch: s.proposalEpoch,
-          sequence: s.proposalSequence,
-        },
-        {
-          completedAt: at(1),
-          outcome: { _tag: ExecutionControllerOutcome.Completed, receiptHash: hash, nextDelayMs: 1_000 },
-        },
-        revision(s.proposalSource),
-      )
-      expect(Result.isSuccess(complete)).toBe(s.canComplete)
-      if (Result.isSuccess(complete)) {
-        expect(complete.success.nextSequence).toBe(s.sequence + 1)
-        expect(complete.success.epoch).toBe(s.epoch)
-        expect(complete.success.sourceRevision).toBe(revision(s.source))
-        expect(complete.success.nextDueAt).toBe(at(2))
+      for (const nextWakeAt of [undefined, at(1), at(4)]) {
+        const complete = completeExecutionControllerTick(
+          state,
+          {
+            ...tick,
+            epoch: s.proposalEpoch,
+            sequence: s.proposalSequence,
+          },
+          {
+            completedAt: at(1),
+            outcome: {
+              _tag: ExecutionControllerOutcome.Completed,
+              receiptHash: hash,
+              nextDelayMs: 1_000,
+              ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+            },
+          },
+          revision(s.proposalSource),
+        )
+        expect(Result.isSuccess(complete)).toBe(s.canComplete)
+        if (Result.isSuccess(complete)) {
+          expect(complete.success.nextSequence).toBe(s.sequence + 1)
+          expect(complete.success.epoch).toBe(s.epoch)
+          expect(complete.success.sourceRevision).toBe(revision(s.source))
+          expect(complete.success.nextDueAt).toBe(nextWakeAt)
+          expect(complete.success.marketEligibleAt).toBeUndefined()
+        }
       }
     }
   })
 
-  test('initial and later input retries retain the original admission, binding and consumed-window guards', () => {
+  test('stream waits and named timers retain the original admission, binding and eligibility deadlines', () => {
     const cases = Schema.decodeUnknownSync(Schema.Array(EntryState), strictParseOptions)(states('EntryRecovery'))
     const native = nativeJevFixture()
     const base = Schema.decodeUnknownSync(
@@ -181,45 +298,68 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
       createdAt: at(0),
       updatedAt: at(0),
     })
-    expect(new Set(cases.map((s) => s.mode)).size).toBe(4)
+    expect(new Set(cases.map((s) => s.mode)).size).toBe(5)
     expect(cases.some((s) => s.state === CycleState.Completed && s.sawInput)).toBe(true)
     expect(cases.some((s) => s.state === CycleState.Blocked && !s.sawInput)).toBe(true)
     expect(cases.some((s) => s.continuationDelay > 0)).toBe(true)
     expect(cases.some((s) => s.now === s.deadline && s.continuationDelay === 0)).toBe(true)
+    expect(cases.some((s) => s.mode === 'STREAM' && !s.eventPending && !s.scheduled && !s.inputReady)).toBe(true)
+    expect(cases.some((s) => s.mode === 'ELIGIBILITY' && s.scheduled && s.wake === s.eligibilityAt)).toBe(true)
+    expect(cases.some((s) => s.now < s.admissionOpen && s.continuationDelay === 0)).toBe(true)
+    const atMillis = (milliseconds: number) => new Date(Date.parse(at(0)) + milliseconds).toISOString()
     for (const s of cases) {
+      const readiness: DecisionReadiness =
+        s.mode === 'RISK_EXPIRED'
+          ? {
+              reason: DecisionReadinessReason.ExecutionRiskExpired,
+              message: 'Expired original risk clock',
+              riskClockRejection: {
+                schemaVersion: 'bayn.intent-risk-clock-rejection.v1',
+                violation: 'EXPIRED',
+                intentId: hash,
+                decisionId: hash,
+                decidedAt: atMillis(s.now - 3),
+                updatedAt: atMillis(s.now - 2),
+                expiresAt: atMillis(s.now - 1),
+                checkedAt: atMillis(s.now),
+              },
+            }
+          : {
+              reason:
+                s.mode === 'INFERENCE_EXPIRED'
+                  ? DecisionReadinessReason.InferenceExpired
+                  : DecisionReadinessReason.SnapshotUnavailable,
+              message: 'Original stream eligibility and admission',
+              ...(s.mode === 'ELIGIBILITY'
+                ? { availableAt: atMillis(s.eligibilityAt) }
+                : s.mode === 'AT_EXPIRY'
+                  ? { availableAt: atMillis(s.deadline) }
+                  : {}),
+            }
       const actual = decisionReadinessContinuationDelayMs(
         {
           outcome: 'RECOVERED',
           action: 'WAITING',
-          observedAt: at(s.now),
+          observedAt: atMillis(s.now),
           cycle: {
             ...base,
             state: s.state,
-            window: { ...base.window, submissionOpenAt: at(0), submissionCutoffAt: at(s.deadline) },
+            window: {
+              ...base.window,
+              submissionOpenAt: atMillis(s.admissionOpen),
+              submissionCutoffAt: atMillis(s.deadline),
+            },
             bindings: {
               ...(s.snapshotBound ? { snapshotId: hash } : {}),
               ...(s.decisionBound ? { decisionHash: hash } : {}),
             },
           },
-          readiness: {
-            reason: DecisionReadinessReason.SnapshotUnavailable,
-            message: 'Captured pending input query',
-            ...(s.mode === 'SOURCE_UNAVAILABLE'
-              ? {}
-              : {
-                  snapshotQuery: {
-                    rangeStartAt: at(-60),
-                    rangeEndAt: at(0),
-                    symbols: ['AAPL'],
-                    ...(s.mode === 'INITIAL' ? {} : { previousWindowEndAt: at(s.mode === 'LATER' ? -60 : 0) }),
-                  },
-                }),
-          },
+          readiness,
         },
-        s.normalDelay * 1_000,
-        at(s.now),
+        s.normalDelay,
+        atMillis(s.now),
       )
-      expect(actual ?? 0).toBe(s.continuationDelay * 1_000)
+      expect(actual ?? 0).toBe(s.continuationDelay)
     }
   })
 

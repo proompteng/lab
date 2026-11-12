@@ -1,3 +1,9 @@
+import { DecisionConstruction } from '../decision-construction'
+import {
+  constructExecutionDecision as buildExecutionDecision,
+  constructObserveShadowDecision as buildObserveShadowDecision,
+} from '../shadow-decision'
+import { buildResearchMutationCycleDecision } from './decision-builder'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
 import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
@@ -246,6 +252,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             initialAuthority.generationHash,
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(DecisionConstruction, { observe: buildObserveShadowDecision, execution: buildExecutionDecision }),
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
@@ -298,6 +305,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           }),
         )
         const engine = yield* makeTradingEngine({
+          buildDecision: buildResearchMutationCycleDecision,
           authority,
           riskPolicyHash: generation.riskPolicyHash,
           cycle: {
@@ -307,7 +315,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
             blockedCycleIntentStore,
-            pollIntervalMs: input.pollIntervalMs,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
           },
@@ -369,8 +376,15 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      advance: driver.advance.pipe(Effect.provideContext(resources)),
-      nextDelayMs: driver.nextDelayMs,
+      // Offline studies retain their registered sampling cadence even when the live owner waits for a stream event.
+      advance: driver.advance.pipe(
+        Effect.provideContext(resources),
+        Effect.map((pass) => ({
+          ...pass,
+          nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
+        })),
+      ),
+      nextDelayMs: input.pollIntervalMs,
       reconcile,
       decisionLatencyEvidence: latency.evidence,
     }

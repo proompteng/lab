@@ -376,6 +376,8 @@ export const nativeLatencyBacktestFixture = (
     runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
   }
   const configuration = registration.obligations.configuration
+  if (configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Polling backtest fixture requires a retained polling runtime')
   const input = Schema.decodeUnknownSync(BacktestInputSchema)({
     schemaVersion: 'bayn.backtest.v11',
     policy,

@@ -66,16 +66,10 @@ spec:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kargo-delivery
                 path: argocd/applications/kargo
-                namespace: lab-delivery
+                namespace: kargo
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
-                managedNamespaceMetadata:
-                  labels:
-                    kargo.akuity.io/project: "true"
-                    pod-security.kubernetes.io/enforce: restricted
-                    pod-security.kubernetes.io/audit: restricted
-                    pod-security.kubernetes.io/warn: restricted
                 automation: auto
                 enabled: "true"
               - name: cloudnative-pg
@@ -154,7 +148,7 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
-                  kargo.akuity.io/authorized-stage: lab-delivery:ofz
+                  kargo.akuity.io/authorized-stage: ofz-release:ofz
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
@@ -171,7 +165,7 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
-                  kargo.akuity.io/authorized-stage: lab-delivery:relay
+                  kargo.akuity.io/authorized-stage: relay-release:relay
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
@@ -256,6 +250,49 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: penpot
+                path: argocd/applications/penpot
+                namespace: penpot
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: paperless
+                path: argocd/applications/paperless
+                namespace: paperless
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: pelican
+                path: argocd/applications/pelican
+                namespace: pelican
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    # KubeVirt launcher only; the Panel has a restricted pod security context.
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
@@ -299,7 +336,7 @@ spec:
                 targetRevision: kargo/devbox
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                  kargo.akuity.io/authorized-stage: lab-delivery:devbox
+                  kargo.akuity.io/authorized-stage: devbox-release:devbox
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
@@ -315,7 +352,7 @@ spec:
                 targetRevision: kargo/tengri
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                  kargo.akuity.io/authorized-stage: lab-delivery:tengri
+                  kargo.akuity.io/authorized-stage: ofz-release:tengri
                 automation: auto
                 enabled: "true"
                 ignoreDifferences:
@@ -453,7 +490,7 @@ spec:
                 targetRevision: kargo/opencode
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                  kargo.akuity.io/authorized-stage: lab-delivery:opencode
+                  kargo.akuity.io/authorized-stage: opencode-release:opencode
                 automation: auto
                 enabled: "true"
               - name: hermes
@@ -462,7 +499,7 @@ spec:
                 targetRevision: kargo/hermes-toolchain
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                  kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain
+                  kargo.akuity.io/authorized-stage: hermes-release:hermes-toolchain
                 automation: auto
                 enabled: "true"
                 ignoreDifferences:
@@ -631,6 +668,8 @@ spec:
                 namespace: argo-workflows
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                  # The CRD installer uses Force/Replace for its immutable Job template.
+                  argocd.argoproj.io/compare-options: ServerSideDiff=false
                 automation: manual
                 enabled: "true"
               - name: attic
@@ -639,7 +678,7 @@ spec:
                 targetRevision: kargo/attic
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
-                  kargo.akuity.io/authorized-stage: lab-delivery:attic
+                  kargo.akuity.io/authorized-stage: attic-release:attic
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -653,7 +692,7 @@ spec:
                 targetRevision: kargo/buzz
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
-                  kargo.akuity.io/authorized-stage: lab-delivery:buzz
+                  kargo.akuity.io/authorized-stage: buzz-release:buzz
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -724,7 +763,7 @@ spec:
                 targetRevision: kargo/restate
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                  kargo.akuity.io/authorized-stage: lab-delivery:restate
+                  kargo.akuity.io/authorized-stage: restate-release:restate
                 automation: auto
                 enabled: "true"
                 ignoreDifferences:
@@ -764,7 +803,7 @@ spec:
                 targetRevision: kargo/temporal-worker
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                  kargo.akuity.io/authorized-stage: lab-delivery:temporal-worker
+                  kargo.akuity.io/authorized-stage: temporal-release:temporal-worker
                 automation: auto
                 enabled: "true"
               - name: inngest
@@ -820,7 +859,7 @@ spec:
                 targetRevision: kargo/arc-runner
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                  kargo.akuity.io/authorized-stage: lab-delivery:arc-runner
+                  kargo.akuity.io/authorized-stage: arc-release:arc-runner
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: privileged
@@ -911,7 +950,7 @@ spec:
                 targetRevision: kargo/headlamp
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                  kargo.akuity.io/authorized-stage: lab-delivery:headlamp
+                  kargo.akuity.io/authorized-stage: headlamp-release:headlamp
                 automation: auto
                 enabled: "true"
               - name: pgadmin

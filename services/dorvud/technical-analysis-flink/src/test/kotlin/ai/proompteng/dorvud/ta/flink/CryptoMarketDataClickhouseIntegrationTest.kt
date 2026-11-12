@@ -16,15 +16,86 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
+import java.sql.SQLException
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CryptoMarketDataClickhouseIntegrationTest {
+  @Test
+  fun `TA startup verifies real metadata without repairing incompatible schemas`() {
+    val endpoint = System.getenv("BAYN_TEST_CLICKHOUSE_URL")
+    assumeTrue(endpoint != null, "requires a guarded disposable ClickHouse service")
+    val guard = requireNotNull(System.getenv("BAYN_TEST_CLICKHOUSE_GUARD_TOKEN"))
+    require(guard.matches(Regex("[0-9a-f]{32}")))
+    val database = "ta_startup_schema_test"
+    val schema = requireNotNull(javaClass.getResourceAsStream("/ta-schema.sql")).bufferedReader().use { it.readText() }
+    DriverManager.getConnection("jdbc:clickhouse:$endpoint/default", "default", "").use { connection ->
+      connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT toString(token) FROM bayn_ci_guard.endpoint_identity").use { result ->
+          assertTrue(result.next())
+          assertEquals(guard, result.getString(1))
+          assertFalse(result.next())
+        }
+        statement.executeQuery("SELECT getSetting('max_execution_time') $CLICKHOUSE_TA_METADATA_QUERY_SETTINGS").use { result ->
+          assertTrue(result.next())
+          assertEquals(15, result.getInt(1))
+          assertFalse(result.next())
+        }
+        // Exercise the real driver's synchronous path: the server rejects a long query even without a JDBC timeout.
+        statement.queryTimeout = 0
+        val timeout =
+          assertFailsWith<SQLException> {
+            statement
+              .executeQuery(
+                "SELECT sleepEachRow(0.01) FROM numbers(2000) " +
+                  "SETTINGS max_execution_time = 1, timeout_before_checking_execution_speed = 0, max_block_size = 1",
+              ).use { result ->
+                while (result.next()) {
+                  result.getInt(1)
+                }
+              }
+          }
+        assertTrue(timeout.message.orEmpty().contains("TIMEOUT_EXCEEDED"), timeout.message)
+        statement.execute("CREATE DATABASE $database")
+        try {
+          for (table in requiredClickhouseTaColumns.keys) {
+            val ddl =
+              schema
+                .split(';')
+                .first { it.trimStart().startsWith("CREATE TABLE IF NOT EXISTS torghut.$table ") }
+                .replace(" ON CLUSTER default", "")
+                .replace("torghut.", "$database.")
+                .replace(Regex("ENGINE = ReplicatedReplacingMergeTree\\([^\\n]+\\)"), "ENGINE = ReplacingMergeTree(ingest_ts)")
+            statement.execute(ddl)
+          }
+          // The disposable fixture has no Keeper. Production's replicated-engine fence still rejects it.
+          verifyClickhouseTaSchema(connection, database, false)
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, true) }
+          statement.execute("ALTER TABLE $database.ta_signals DROP COLUMN microstructure_signal_v1")
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
+          statement.execute("ALTER TABLE $database.ta_signals ADD COLUMN microstructure_signal_v1 Nullable(String)")
+          statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 14 DAY")
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
+          statement.execute("ALTER TABLE $database.ta_microbars MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY")
+          verifyClickhouseTaSchema(connection, database, false)
+          statement.execute(
+            "ALTER TABLE $database.ta_microbars MODIFY TTL " +
+              "toDateTime(event_ts) + INTERVAL 35 DAY DELETE WHERE symbol = 'BTC/USD'",
+          )
+          assertFailsWith<IllegalStateException> { verifyClickhouseTaSchema(connection, database, false) }
+        } finally {
+          statement.execute("DROP DATABASE $database")
+        }
+      }
+    }
+  }
+
   @Test
   fun `production crypto JDBC and schema preserve exact events and deduplicate retries`() {
     val endpoint = System.getenv("BAYN_TEST_CLICKHOUSE_URL")
@@ -33,13 +104,12 @@ class CryptoMarketDataClickhouseIntegrationTest {
     require(guard.matches(Regex("[0-9a-f]{32}")))
     val schemaPath =
       generateSequence(Path.of("").toAbsolutePath()) { it.parent }
-        .map { it.resolve("argocd/applications/torghut/clickhouse/intraday-bars-schema-job.yaml") }
+        .map { it.resolve("argocd/applications/torghut/clickhouse/schema/intraday-bars.sql") }
         .first { Files.exists(it) }
     val schema = Files.readString(schemaPath)
     val ddl =
-      requireNotNull(Regex("CREATE TABLE IF NOT EXISTS signal\\.crypto_market_events_v1 ON CLUSTER default[\\s\\S]+?;").find(schema))
+      requireNotNull(Regex("CREATE TABLE IF NOT EXISTS signal\\.crypto_market_events_v1[\\s\\S]+?;").find(schema))
         .value
-        .replace(" ON CLUSTER default", "")
         .replace(Regex("ReplicatedReplacingMergeTree\\([\\s\\S]+?\\)"), "ReplacingMergeTree()")
     val fixtureDate =
       Instant
