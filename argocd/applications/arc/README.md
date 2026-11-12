@@ -41,11 +41,15 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   publication jobs use `arc-amd64-publish`. Their native builds keep the existing architecture-specific labels.
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
-- Each AMD64 build runner uses one 130Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
-  for `/nix`, `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
+- Each AMD64 and normal ARM64 build runner uses one 130Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
+  for `/nix`, `/home/runner/.cache`, `/tmp`, `/var/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
   filesystem in `replicapool`. The init rejects other filesystems, non-RBD devices and the runner root filesystem,
   then copies the image's Nix tree and cache with the existing byte, file-count, symlink and ownership checks.
-  The PVC is deleted with its runner Pod. ARM64, analysis and publication workspaces retain their existing storage.
+  The PVC is deleted with its runner Pod. Analysis and publication workspaces retain their existing storage.
+- `/var/tmp` has a separate `var-tmp` subdirectory with explicit mode `01777`; large archive tools can use their
+  normal temporary directory without writing to the runner overlay. Both native build sets expose `CARGO_HOME`
+  and `RUSTUP_HOME` beneath the Ceph-backed cache. The init creates these directories after verifying the seed
+  copy, assigns them to UID 1001 with mode `00700`, and checks the 45Gi free-space reserve afterward.
 - A 130Gi RBD claim has a real filesystem capacity ceiling, unlike the former unbounded local-path directory.
   The init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
   filesystem overhead. The claim size is separate from the runner's unchanged ephemeral-storage resource limit.
@@ -53,9 +57,10 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - New AMD64 scratch claims never use `local-path-ci-amd64`. Existing busy runners keep their old local claims until
   their normal Pod lifecycle ends; no data migration or active-job deletion is required. Retain the old local-path
   mappings for that cleanup. Ceph RBD data uses the existing HDD OSDs and dedicated BlueStore DB NVMe devices,
-  separate from Turin's system NVMe and Talos `/var`. Image layers, runtime metadata and runner logs still use node
+  separate from the build nodes' system NVMe and Talos `/var`. ARM64 build scratch no longer uses node-local
+  `emptyDir` or the runner overlay. Image layers, runtime metadata and runner logs still use node
   storage, so verify system-disk and control-plane latency during representative builds.
-- The AMD64 scratch init requests 2Gi and is limited to 8Gi of memory. Its full Nix-tree bootstrap exceeded the prior
+- Each native build scratch init requests 2Gi and is limited to 8Gi of memory. The AMD64 Nix-tree bootstrap exceeded the prior
   512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's 16Gi aggregate
   memory request for the runner, so the init does not increase its scheduling reservation.
 - Tailscale connectivity comes from the Omni-owned node configuration in
@@ -83,7 +88,8 @@ Ryzen/Turin host allowlist and soft spreading; no BIOS or node configuration cha
 Verify the existing Ceph class, pool and CSI health before promoting ARC through Kargo. Busy runners
 finish normally and retain their original claims until ARC retires them. ARM64 placement stays on Altra, with its
 normal eight-slot maximum and the separate analysis set's one-slot maximum. Do not override a pressure taint.
-The Kargo Stage updates the two native build sets, the publication set and the separate analysis set together.
+The Kargo Stage updates both native init/runner image pairs, the publication set and the separate analysis set
+together. An init must seed the same promoted image that its runner executes.
 
 Deploy new runner pools through the runner-image/Kargo path before changing workflow routing. Otherwise the image
 workflow's own publication job can wait for a pool whose creation depends on that image. Keep publication outside
@@ -92,8 +98,9 @@ the native build queues and retain its validation, signatures and discovery gate
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. The manual
 `ARC placement acceptance` workflow verifies ten distinct Turin build runners on ten different ext4 RBD devices
 and two distinct publication runners, with at least 45 seconds of shared occupancy and exact BuildKit output
-checksums. All four scratch mounts, `RUNNER_TEMP` and the private BuildKit cache must share each runner's RBD
-filesystem. Run it after the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot
+checksums. The current workflow checks the four original scratch mounts, `RUNNER_TEMP` and the private BuildKit
+cache. Also verify `/var/tmp` and both Rust cache homes on each new native runner's same RBD filesystem after
+storage promotion. Run acceptance after the existing build wave clears; its five-minute rendezvous fails promptly if a slot cannot
 start. This proves slots, placement and tooling. Sustained throughput also requires the representative-build
 observation below. The [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
 checks with the Actions service before deleting a runner. Do not delete runner Pods manually.
@@ -116,6 +123,22 @@ Ten fully written 130Gi claims require 1.27TiB logical and approximately 2.54TiB
 This fits the measured capacity without reducing replication or changing a durable volume. RBD is thin-provisioned;
 the arithmetic does not reserve pool headroom or prove throughput. `HEALTH_WARN` already reported BlueStore slow
 operation indications on OSDs 3 and 5. Keep that warning visible and recheck it; capacity alone is not health proof.
+
+ARM64 builds reproduced the same system-disk contention on Altra later that day. From 13:20:49 to 13:23:35 UTC,
+the active Kata ARM64 runner Pod wrote 19.75 MB/s to Altra's system NVMe, while the device averaged 42.67 MB/s.
+The Pod's workspace was a local XFS `emptyDir`; its Nix and temporary/cache paths were on the overlay.
+Altra's etcd logged 1.459, 2.421 and 1.074-second WAL syncs inside that measured interval. The ARM64 build set now
+uses the same verified Ceph bootstrap, five mounts and Rust cache homes as AMD64, preserving its one-to-eight
+capacity, ARM64 placement, service account and runner resources. Accepted jobs finish on their existing storage.
+At 13:25 UTC, `replicapool` had 9.66TiB `MAX AVAIL` and the cluster had 29.45TiB raw free, with replication still two.
+The ten AMD64 plus eight ARM64 maximum requires 2.29TiB logical and approximately 4.57TiB raw if every 130Gi
+claim is fully written. Retain the existing BlueStore warning and qualify actual ARM64 builds and all three
+etcd members after rollout; the ten-slot AMD64 workflow alone does not prove ARM64 throughput.
+
+When heavy native CI reproduces system-disk contention, deliver the independently reviewed storage prerequisite
+through its normal CI, runner-image and Kargo path first. Verify the new mounts and a clean control-plane baseline
+before resuming the affected native gates. A cancelled or incomplete run remains unqualified; storage admission
+and a successful runner rollout do not replace native build or sustained-throughput acceptance.
 
 Verify the promoted Kargo revision, ten-runner configuration, Turin placement and `rook-ceph-block` claims first.
 After the slot/output acceptance succeeds, record a continuous 30-minute representative native-image-build window
