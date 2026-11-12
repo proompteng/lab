@@ -10,11 +10,13 @@ import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { JevEvaluationStore } from './evaluation'
 import { JevInferenceWorkStore } from './inference-work'
 import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { restoreJevObservation } from './observation'
 import { evaluateJevObservationFromSnapshot } from './runtime'
 
 const fixture = nativeJevFixture()
 const evidence = nativeJevDecisionEvidence(fixture)
 const saved = { plan: evidence.batchPlan, result: evidence.batchResult }
+const restored = Result.getOrThrow(restoreJevObservation(fixture.observation.payload))
 const baseLayer = Layer.mergeAll(
   entryInferenceFixtureLayer,
   Layer.succeed(JevBatchStore, {
@@ -42,7 +44,7 @@ const baseLayer = Layer.mergeAll(
     resume: (cycleId, generation) => {
       expect(cycleId).toBe(saved.plan.cycleId)
       expect(generation).toBe(saved.plan.authorityGenerationHash)
-      return Effect.succeed({ batchId: saved.plan.batchId, observation: fixture.observation.payload })
+      return Effect.succeed({ batchId: saved.plan.batchId, source: restored })
     },
   }),
 )
@@ -66,6 +68,7 @@ test('streaming completion resumes the original admitted source without rereadin
   expect(resumed.evidence.batchPlan).toEqual(saved.plan)
   expect(resumed.evidence.batchResult).toEqual(saved.result)
   expect(resumed.snapshot.manifest.contentHash).toBe(fixture.snapshot.manifest.contentHash)
+  expect(resumed.snapshot).toBe(restored.snapshot)
   expect(resumed.evidence.batchPlan.observedAt).toBe(fixture.observation.payload.observedAt)
   expect(resumed.evidence.batchPlan.expiresAt).toBe(saved.plan.expiresAt)
 })
