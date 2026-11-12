@@ -1,9 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type * as ParseResult from '@effect/schema/ParseResult'
-import * as Schema from '@effect/schema/Schema'
-import * as TreeFormatter from '@effect/schema/TreeFormatter'
+import * as Schema from 'effect/Schema'
 import { Context, Effect, Layer } from 'effect'
 
 import { ConfigError, OrchestratorError, WorkflowError, toLogError } from './errors'
@@ -20,12 +18,12 @@ const RecentEventSchema = Schema.Struct({
   at: Schema.String,
   event: Schema.String,
   message: Schema.NullOr(Schema.String),
-  issueId: Schema.optionalWith(Schema.NullOr(Schema.String), { nullable: true }),
-  issueIdentifier: Schema.optionalWith(Schema.NullOr(Schema.String), { nullable: true }),
-  level: Schema.optionalWith(Schema.Union(Schema.Literal('info'), Schema.Literal('warn'), Schema.Literal('error')), {
-    nullable: true,
-  }),
-  reason: Schema.optionalWith(Schema.NullOr(Schema.String), { nullable: true }),
+  issueId: Schema.optional(Schema.NullOr(Schema.String)),
+  issueIdentifier: Schema.optional(Schema.NullOr(Schema.String)),
+  level: Schema.optional(
+    Schema.NullOr(Schema.Union([Schema.Literal('info'), Schema.Literal('warn'), Schema.Literal('error')])),
+  ),
+  reason: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
 const RecentErrorSchema = Schema.Struct({
@@ -43,12 +41,7 @@ const TokenUsageTotalsSchema = Schema.Struct({
   totalTokens: Schema.Number,
 })
 
-const CodexTotalsSchema = Schema.extend(
-  TokenUsageTotalsSchema,
-  Schema.Struct({
-    endedRuntimeSeconds: Schema.Number,
-  }),
-)
+const CodexTotalsSchema = Schema.Struct({ ...TokenUsageTotalsSchema.fields, endedRuntimeSeconds: Schema.Number })
 
 const SessionLogRefSchema = Schema.Struct({
   label: Schema.String,
@@ -60,7 +53,7 @@ const DeliveryPullRequestRefSchema = Schema.Struct({
   number: Schema.Number,
   url: Schema.String,
   branch: Schema.String,
-  state: Schema.Union(Schema.Literal('open'), Schema.Literal('merged'), Schema.Literal('closed')),
+  state: Schema.Union([Schema.Literal('open'), Schema.Literal('merged'), Schema.Literal('closed')]),
   title: Schema.NullOr(Schema.String),
   createdAt: Schema.NullOr(Schema.String),
   updatedAt: Schema.NullOr(Schema.String),
@@ -69,12 +62,12 @@ const DeliveryPullRequestRefSchema = Schema.Struct({
 })
 
 const DeliveryChecksSummarySchema = Schema.Struct({
-  state: Schema.Union(
+  state: Schema.Union([
     Schema.Literal('pending'),
     Schema.Literal('success'),
     Schema.Literal('failure'),
     Schema.Literal('not_found'),
-  ),
+  ]),
   headSha: Schema.String,
   requiredCount: Schema.Number,
   passingCount: Schema.Number,
@@ -87,7 +80,7 @@ const DeliveryWorkflowRunRefSchema = Schema.Struct({
   id: Schema.Number,
   url: Schema.String,
   name: Schema.String,
-  state: Schema.Union(
+  state: Schema.Union([
     Schema.Literal('queued'),
     Schema.Literal('in_progress'),
     Schema.Literal('success'),
@@ -96,7 +89,7 @@ const DeliveryWorkflowRunRefSchema = Schema.Struct({
     Schema.Literal('skipped'),
     Schema.Literal('neutral'),
     Schema.Literal('not_found'),
-  ),
+  ]),
   status: Schema.NullOr(Schema.String),
   conclusion: Schema.NullOr(Schema.String),
   event: Schema.NullOr(Schema.String),
@@ -137,7 +130,7 @@ const DeliveryKargoObservationSchema = Schema.Struct({
 })
 
 const DeliveryTransactionSchema = Schema.Struct({
-  stage: Schema.Union(
+  stage: Schema.Union([
     Schema.Literal('coding'),
     Schema.Literal('code_pr_open'),
     Schema.Literal('checks_pending'),
@@ -155,7 +148,7 @@ const DeliveryTransactionSchema = Schema.Struct({
     Schema.Literal('rolled_back'),
     Schema.Literal('handoff_required'),
     Schema.Literal('failed'),
-  ),
+  ]),
   updatedAt: Schema.String,
   codePr: Schema.NullOr(DeliveryPullRequestRefSchema),
   requiredChecks: Schema.NullOr(DeliveryChecksSummarySchema),
@@ -163,7 +156,7 @@ const DeliveryTransactionSchema = Schema.Struct({
   build: Schema.NullOr(DeliveryWorkflowRunRefSchema),
   releaseContract: Schema.NullOr(DeliveryReleaseContractSchema),
   promotionPr: Schema.NullOr(DeliveryPullRequestRefSchema),
-  kargo: Schema.optionalWith(Schema.NullOr(DeliveryKargoObservationSchema), { nullable: true }),
+  kargo: Schema.optional(Schema.NullOr(DeliveryKargoObservationSchema)),
   argo: Schema.NullOr(DeliveryArgoObservationSchema),
   postDeploy: Schema.NullOr(DeliveryWorkflowRunRefSchema),
   rollbackPr: Schema.NullOr(DeliveryPullRequestRefSchema),
@@ -216,12 +209,9 @@ const IssueRecordSchema = Schema.Struct({
   }),
   recentEvents: Schema.Array(RecentEventSchema),
   lastError: Schema.NullOr(Schema.String),
-  tracked: Schema.Record({
-    key: Schema.String,
-    value: Schema.Unknown,
-  }),
+  tracked: Schema.Record(Schema.String, Schema.Unknown),
   runHistory: Schema.Array(RunHistoryEntrySchema),
-  delivery: Schema.optionalWith(Schema.NullOr(DeliveryTransactionSchema), { nullable: true }),
+  delivery: Schema.optional(Schema.NullOr(DeliveryTransactionSchema)),
   updatedAt: Schema.String,
 })
 
@@ -234,19 +224,17 @@ const PersistedRetryEntrySchema = Schema.Struct({
 })
 
 const PersistedSchedulerStateSchema = Schema.Struct({
-  version: Schema.Union(Schema.Literal(LEGACY_STATE_VERSION), Schema.Literal(STATE_VERSION)),
+  version: Schema.Union([Schema.Literal(LEGACY_STATE_VERSION), Schema.Literal(STATE_VERSION)]),
   updatedAt: Schema.String,
   codexTotals: CodexTotalsSchema,
-  rateLimits: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+  rateLimits: Schema.optional(Schema.Unknown),
   recentEvents: Schema.Array(RecentEventSchema),
   recentErrors: Schema.Array(RecentErrorSchema),
   retrying: Schema.Array(PersistedRetryEntrySchema),
   issues: Schema.Array(IssueRecordSchema),
 })
 
-const decodePersistedState = Schema.decodeUnknown(PersistedSchedulerStateSchema)
-const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
-
+const decodePersistedState = Schema.decodeUnknownEffect(PersistedSchedulerStateSchema)
 const cloneDeliveryTransaction = (delivery: DeliveryTransaction | null): DeliveryTransaction | null =>
   delivery
     ? {
@@ -273,7 +261,7 @@ const normalizePersistedState = (value: typeof PersistedSchedulerStateSchema.Typ
     endedRuntimeSeconds: value.codexTotals.endedRuntimeSeconds,
   },
   rateLimits: (value.rateLimits ?? null) as PersistedSchedulerState['rateLimits'],
-  recentEvents: value.recentEvents.map((event) => ({ ...event })),
+  recentEvents: value.recentEvents.map((event) => ({ ...event, level: event.level ?? undefined })),
   recentErrors: value.recentErrors.map((error) => ({ ...error })),
   retrying: value.retrying.map((entry) => ({ ...entry })),
   issues: value.issues.map((issue) => ({
@@ -285,7 +273,7 @@ const normalizePersistedState = (value: typeof PersistedSchedulerStateSchema.Typ
     logs: {
       codex_session_logs: issue.logs.codex_session_logs.map((log) => ({ ...log })),
     },
-    recentEvents: issue.recentEvents.map((event) => ({ ...event })),
+    recentEvents: issue.recentEvents.map((event) => ({ ...event, level: event.level ?? undefined })),
     tracked: { ...issue.tracked },
     runHistory: issue.runHistory.map((entry) => ({
       ...entry,
@@ -337,10 +325,9 @@ export interface StateStoreServiceDefinition {
   readonly stateFilePath: Effect.Effect<string, WorkflowError | ConfigError>
 }
 
-export class StateStoreService extends Context.Tag('symphony/StateStoreService')<
-  StateStoreService,
-  StateStoreServiceDefinition
->() {}
+export class StateStoreService extends Context.Service<StateStoreService, StateStoreServiceDefinition>()(
+  'symphony/StateStoreService',
+) {}
 
 export const makeStateStoreLayer = (logger: Logger) =>
   Layer.effect(
@@ -373,13 +360,13 @@ export const makeStateStoreLayer = (logger: Logger) =>
                     (error) =>
                       new OrchestratorError(
                         'durable_state_error',
-                        `failed to decode durable state ${filePath}: ${formatSchemaError(error)}`,
+                        `failed to decode durable state ${filePath}: ${error.message}`,
                         error,
                       ),
                   ),
                 ),
               ),
-              Effect.catchAll((error) => {
+              Effect.catch((error) => {
                 const nodeError = error instanceof Error ? (error as NodeJS.ErrnoException) : null
                 if (nodeError?.code === 'ENOENT') {
                   return Effect.succeed(emptyPersistedSchedulerState())
@@ -390,7 +377,7 @@ export const makeStateStoreLayer = (logger: Logger) =>
                     state_file: filePath,
                     ...toLogError(error),
                   })
-                }).pipe(Effect.zipRight(Effect.succeed(emptyPersistedSchedulerState())))
+                }).pipe(Effect.andThen(Effect.succeed(emptyPersistedSchedulerState())))
               }),
             ),
           ),
@@ -409,13 +396,13 @@ export const makeStateStoreLayer = (logger: Logger) =>
                 catch: (error) =>
                   new OrchestratorError('durable_state_error', `failed to write durable state ${filePath}`, error),
               }).pipe(
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   Effect.sync(() => {
                     stateLogger.log('warn', 'durable_state_save_failed', {
                       state_file: filePath,
                       ...toLogError(error),
                     })
-                  }).pipe(Effect.zipRight(Effect.fail(error))),
+                  }).pipe(Effect.andThen(Effect.fail(error))),
                 ),
               ),
             ),

@@ -46,10 +46,10 @@ export type ControlPlaneRuntimeEvidenceService = {
   ) => Effect.Effect<ControlPlaneRuntimeEvidence, ControlPlaneRuntimeEvidenceError>
 }
 
-export class ControlPlaneRuntimeEvidenceApi extends Context.Tag('ControlPlaneRuntimeEvidenceApi')<
+export class ControlPlaneRuntimeEvidenceApi extends Context.Service<
   ControlPlaneRuntimeEvidenceApi,
   ControlPlaneRuntimeEvidenceService
->() {}
+>()('ControlPlaneRuntimeEvidenceApi') {}
 
 export type ControlPlaneRuntimeEvidenceDependencies = {
   kubeGateway?: Pick<KubeGateway, 'listJobs' | 'listDeployments'>

@@ -158,10 +158,10 @@ export type CodexAppServerClientFactoryService = {
   create: (options: CodexAppServerOptions) => Effect.Effect<CodexAppServerRunnerClient, CodexRunnerClientError>
 }
 
-export class CodexAppServerClientFactory extends Context.Tag('CodexAppServerClientFactory')<
+export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactory,
   CodexAppServerClientFactoryService
->() {}
+>()('CodexAppServerClientFactory') {}
 
 export type RunnerCommandService = {
   run: (
@@ -171,7 +171,7 @@ export type RunnerCommandService = {
   ) => Effect.Effect<CommandResult, CodexRunnerWorkspaceError>
 }
 
-export class RunnerCommand extends Context.Tag('RunnerCommand')<RunnerCommand, RunnerCommandService>() {}
+export class RunnerCommand extends Context.Service<RunnerCommand, RunnerCommandService>()('RunnerCommand') {}
 
 type VcsWorkspaceContext = {
   repository: string
@@ -979,7 +979,7 @@ const runCodexEffectPromise = async <A>(effect: Effect.Effect<A, CodexRunnerErro
   if (Exit.isSuccess(exit)) {
     return exit.value
   }
-  const failure = Cause.failureOption(exit.cause)
+  const failure = Cause.findErrorOption(exit.cause)
   if (Option.isSome(failure)) {
     throw failure.value
   }

@@ -763,3 +763,38 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     formal: false,
   })
 })
+
+test.each([
+  'bumba-ci.yml',
+  'oirat-ci.yml',
+  'froussard-ci.yml',
+  'signal-publisher-build-push.yml',
+  'product-nix-images.yml',
+])('%s gives shared verifier changes one native App owner', (filename) => {
+  const workflow = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing planner steps')
+  const inputs = property(
+    steps.find((step) => property(step, 'id') === 'filter'),
+    'with',
+  )
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters') ?? '{}'),
+    text(property(inputs, 'workflow') ?? ''),
+    'pull_request',
+  )
+  const workspaces = Object.fromEntries(
+    Object.values(configured)
+      .flatMap((target) => target.workspaces)
+      .map((path) => [path, { name: path || 'root' }]),
+  )
+  const lock = { ...before, workspaces: { ...workspaces, ...before.workspaces } }
+  const plan = selectAffectedInputs(['nix/check-bun-dependency-closure.sh'], configured, lock, lock)
+  expect(Object.keys(plan).filter((name) => plan[name])).toEqual(
+    filename === 'product-nix-images.yml' ? ['app_dependencies'] : [],
+  )
+  expect(
+    Object.values(selectAffectedInputs(['nix/images/bun-workspace-service.nix'], configured, lock, lock)).some(Boolean),
+  ).toBe(true)
+})

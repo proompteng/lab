@@ -1,4 +1,4 @@
-import { Command, Options } from '@effect/cli'
+import { Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { loadConfig, resolveConfigPath, saveConfig } from '../../config'
@@ -19,8 +19,8 @@ const readStdin = async () =>
   })
 
 const makeLoginCommand = () => {
-  const token = Options.optional(Options.text('token'))
-  const withToken = Options.boolean('with-token')
+  const token = Flag.optional(Flag.String('token'))
+  const withToken = Flag.Boolean('with-token').pipe(Flag.withDefault(false))
   return Command.make('login', { token, withToken }, ({ token, withToken }) =>
     Effect.gen(function* () {
       const { flags } = yield* AgentctlContext
