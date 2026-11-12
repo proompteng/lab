@@ -41,7 +41,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   publication jobs use `arc-amd64-publish`. Their native builds keep the existing architecture-specific labels.
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
-- `local-path-ci-amd64` uses Ryzen's local XFS mount or Turin's dedicated `/var/local-path-provisioner/ci-amd64`
+- `local-path-ci-amd64` uses Ryzen's local XFS mount or Turin's dedicated `/var/mnt/ci-amd64`
   directory on its large system NVMe. Other storage classes retain their existing paths. Each
   runner uses one 45Gi generic ephemeral PVC for `/nix`,
   `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The init copies the image's Nix tree before the

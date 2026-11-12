@@ -4,7 +4,7 @@ General node-local claims use `local-path`; AMD64 CI scratch uses `local-path-ci
 Neither class replicates data. Retained PostgreSQL WAL uses the separate class described below.
 
 AMD64 CI scratch is restricted to Ryzen and Turin. Turin's CI allocations use the dedicated directory
-`/var/local-path-provisioner/ci-amd64` on its large system NVMe. Its general `local-path` allocations use
+`/var/mnt/ci-amd64` on its large system NVMe. Its general `local-path` allocations use
 `/var/local-path-provisioner` on that same filesystem; the directory separates ownership, not I/O.
 The small Intel and Transcend devices remain reserved for explicit retained workloads. Existing bound volumes
 keep their original paths. Kafka's static volumes are owned by the [Kafka application](../kafka/README.md),
