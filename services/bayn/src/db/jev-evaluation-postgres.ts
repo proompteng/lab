@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Array as Arr, Effect, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -30,7 +30,7 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
     if (new Set(entries.map(({ request }) => request.requestId)).size !== entries.length)
       return yield* persistError('A receipt batch repeats a request')
     const resolutions = new Map<string, JevResolution>()
-    if (entries.length === 0) return resolutions
+    if (!Arr.isArrayNonEmpty(entries)) return resolutions
     const ids = entries.map(({ request }) => request.requestId)
     const scopes = [
       ...new Map(
@@ -69,7 +69,7 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
     }
     const { evidence } = yield* readJevEvaluationEvidence(sql, ids)
     yield* sql`INSERT INTO jev_evaluation_receipts ${sql.insert(
-      entries.map(({ request, receipt }) => ({
+      Arr.map(entries, ({ request, receipt }) => ({
         request_id: request.requestId,
         receipt_hash: receipt.receiptHash,
         payload: sql.json(receipt),
@@ -81,7 +81,7 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
     )(
       yield* sql`SELECT NOT EXISTS (
         SELECT 1 FROM jsonb_to_recordset(${sql.json(
-          entries.map(({ request, receipt }) => ({
+          Arr.map(entries, ({ request, receipt }) => ({
             request_id: request.requestId,
             receipt_hash: receipt.receiptHash,
             payload: receipt,
@@ -108,9 +108,9 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
       if (existing == null) pending.push(resolution)
       resolutions.set(request.requestId, resolution)
     }
-    if (pending.length > 0)
+    if (Arr.isArrayNonEmpty(pending))
       yield* sql`INSERT INTO jev_evaluation_resolutions ${sql.insert(
-        pending.map((resolution) => ({
+        Arr.map(pending, (resolution) => ({
           request_id: resolution.requestId,
           resolution_hash: resolution.resolutionHash,
           payload: sql.json(resolution),

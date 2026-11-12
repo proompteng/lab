@@ -1,4 +1,5 @@
 import { type Selectable, sql } from 'kysely'
+import { summarizeMemoryNote } from '@proompteng/agent-contracts'
 
 import type {
   AgentsMemoryNoteRecord as MemoryRecord,
@@ -7,11 +8,14 @@ import type {
   AgentsPersistMemoryNoteInput as PersistMemoryInput,
   AgentsRetrieveMemoryNotesInput as RetrieveMemoryInput,
   AgentsMemoryNoteFilters,
+  AgentsListMemoryNotesInput,
+  AgentsListMemoryNotesResult,
   AgentsRetireMemoryNoteInput,
 } from '@proompteng/agent-contracts'
 
 import { resolveStoreDb, type AgentsDatabase, type Db } from './db'
 import { requestEmbedding } from './embedding-client'
+import { resolveMemoryNoteSave } from './memory-note-save'
 import { ensureMigrations } from './kysely-migrations'
 import { resolveEmbeddingConfig, resolveMemoriesIvfflatProbes } from './memory-config'
 
@@ -20,7 +24,8 @@ export type { MemoriesStats, MemoriesStatsInput, MemoryRecord, PersistMemoryInpu
 export type MemoriesStore = {
   persist: (input: PersistMemoryInput) => Promise<MemoryRecord>
   retrieve: (input: RetrieveMemoryInput, signal?: AbortSignal) => Promise<MemoryRecord[]>
-  list: (input: AgentsMemoryNoteFilters) => Promise<MemoryRecord[]>
+  list: (input: AgentsListMemoryNotesInput) => Promise<AgentsListMemoryNotesResult>
+  get: (id: string) => Promise<MemoryRecord | null>
   retire: (input: AgentsRetireMemoryNoteInput) => Promise<MemoryRecord>
   count: (input?: { namespace?: string }) => Promise<number>
   stats: (input?: MemoriesStatsInput) => Promise<MemoriesStats>
@@ -33,7 +38,6 @@ type PostgresMemoriesStoreOptions = {
   createDb?: (url: string) => Db
 }
 
-const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_LIMIT = 10
 
 const DEFAULT_STATS_DAYS = 30
@@ -135,8 +139,8 @@ const memoryRecord = (row: NoteRow): MemoryRecord => ({
   ...(row.distance === undefined ? {} : { distance: Number(row.distance) }),
 })
 
-const selectNotes = (db: Pick<Db, 'selectFrom'>, input: AgentsMemoryNoteFilters) => {
-  let query = db.selectFrom('memories.entries').select(noteColumns)
+const filteredNotes = (db: Pick<Db, 'selectFrom'>, input: AgentsMemoryNoteFilters) => {
+  let query = db.selectFrom('memories.entries')
   if (!input.includeRetired) query = query.where('retired_at', 'is', null)
   if (input.namespace) query = query.where('task_name', '=', input.namespace)
   if (input.repository) query = query.where(sql<string>`metadata->>'repository'`, '=', input.repository)
@@ -146,6 +150,9 @@ const selectNotes = (db: Pick<Db, 'selectFrom'>, input: AgentsMemoryNoteFilters)
   if (input.tags?.length) query = query.where(sql<boolean>`tags @> ${sql.value(input.tags)}::text[]`)
   return query
 }
+
+const selectNotes = (db: Pick<Db, 'selectFrom'>, input: AgentsMemoryNoteFilters) =>
+  filteredNotes(db, input).select(noteColumns)
 
 export const rankMemoryNotes = (records: MemoryRecord[], query: string, limit: number) => {
   const terms = normalizeQueryTerms(query)
@@ -242,53 +249,36 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     await schemaReady
   }
 
-  const persist: MemoriesStore['persist'] = async ({ namespace, content, summary, tags, metadata }) => {
+  const persist: MemoriesStore['persist'] = async (input) => {
     await ensureSchema()
-
-    const resolvedNamespace = (namespace && namespace.trim().length > 0 ? namespace.trim() : DEFAULT_NAMESPACE).slice(
-      0,
-      200,
-    )
-    const resolvedContent = content.trim()
-    if (resolvedContent.length === 0) {
-      throw new Error('content is required')
-    }
-
-    const resolvedSummary = summary == null ? null : summary.trim()
-    const resolvedTags = (tags ?? [])
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0)
-      .slice(0, 50)
-
-    const embedding = await embed(resolvedSummary ? `${resolvedSummary}\n\n${resolvedContent}` : resolvedContent)
+    const { namespace, content, summary, tags, metadataJson, saveKey, embeddingText } = resolveMemoryNoteSave(input)
+    const findSaved = () =>
+      db.selectFrom('memories.entries').select(noteColumns).where('save_key', '=', saveKey).executeTakeFirst()
+    const saved = await findSaved()
+    if (saved) return memoryRecord(saved)
+    const embedding = await embed(embeddingText)
     const vectorString = vectorToPgArray(embedding)
-    const encoderModel = resolveEmbeddingConfig(process.env).model
-    const derivedSummary = resolvedSummary ?? resolvedContent.slice(0, 300)
-    const resolvedMetadata = {
-      ...normalizeMetadata(metadata),
-      namespace: resolvedNamespace,
-    }
-    const metadataJson = JSON.stringify(resolvedMetadata)
-    const source = 'agents.memory-notes'
 
     const row = await db
       .insertInto('memories.entries')
       .values({
-        task_name: resolvedNamespace,
-        content: resolvedContent,
-        summary: derivedSummary,
-        tags: sql`${sql.value(resolvedTags)}::text[]`,
+        task_name: namespace,
+        content,
+        summary,
+        tags: sql`${sql.value(tags)}::text[]`,
         metadata: sql`${metadataJson}::jsonb`,
-        source,
+        source: 'agents.memory-notes',
         embedding: sql`${vectorString}::vector`,
-        encoder_model: encoderModel,
+        encoder_model: resolveEmbeddingConfig(process.env).model,
+        save_key: saveKey,
       })
+      .onConflict((conflict) => conflict.column('save_key').doNothing())
       .returning(noteColumns)
       .executeTakeFirst()
 
-    if (!row) throw new Error('insert failed')
-
-    return memoryRecord(row)
+    const result = row ?? (await findSaved())
+    if (!result) throw new Error('Memory save did not return its persisted note.')
+    return memoryRecord(result)
   }
 
   const retrieve: MemoriesStore['retrieve'] = async (input, signal) => {
@@ -349,12 +339,44 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
 
   const list: MemoriesStore['list'] = async (input) => {
     await ensureSchema()
-    const rows = await selectNotes(db, input)
+    let query = filteredNotes(db, input)
+    if (input.cursor) {
+      const cursor = await db
+        .selectFrom('memories.entries')
+        .select(sql<string>`created_at::text`.as('createdAt'))
+        .where('id', '=', input.cursor)
+        .executeTakeFirst()
+      if (!cursor) throw new Error('Memory cursor note not found.')
+      query = query.where(sql<boolean>`(created_at, id) < (${cursor.createdAt}::timestamptz, ${input.cursor}::uuid)`)
+    }
+    const limit = input.limit ?? DEFAULT_LIMIT
+    const rows = await query
+      .select(['id', 'summary', 'metadata', 'created_at', 'retired_at', 'replacement_id'])
       .orderBy('created_at', 'desc')
       .orderBy('id', 'desc')
-      .limit(input.limit ?? DEFAULT_LIMIT)
+      .limit(limit + 1)
       .execute()
-    return rows.map(memoryRecord)
+    const page = rows.slice(0, limit)
+    return {
+      ok: true,
+      memories: page.map((row) =>
+        summarizeMemoryNote({
+          id: row.id,
+          summary: row.summary,
+          metadata: normalizeMetadata(row.metadata),
+          createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+          retiredAt: timestamp(row.retired_at),
+          replacementId: row.replacement_id,
+        }),
+      ),
+      nextCursor: rows.length > limit ? (page.at(-1)?.id ?? null) : null,
+    }
+  }
+
+  const get: MemoriesStore['get'] = async (id) => {
+    await ensureSchema()
+    const row = await db.selectFrom('memories.entries').select(noteColumns).where('id', '=', id).executeTakeFirst()
+    return row ? memoryRecord(row) : null
   }
 
   const retire: MemoriesStore['retire'] = async (input) => {
@@ -496,5 +518,5 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     }
   }
 
-  return { persist, retrieve, list, retire, count, stats, close }
+  return { persist, retrieve, list, get, retire, count, stats, close }
 }

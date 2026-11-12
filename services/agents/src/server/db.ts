@@ -110,6 +110,7 @@ type MemoryEntries = {
   retired_at: Timestamp | null
   retirement_reason: string | null
   replacement_id: string | null
+  save_key: string | null
 }
 
 type OrchestrationRuns = {

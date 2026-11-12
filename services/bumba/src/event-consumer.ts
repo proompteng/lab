@@ -1188,7 +1188,7 @@ const runEventConsumerTickEffect = ({
               }
             }),
           ),
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.sync(() => {
               blockedRepositories.add(event.repository)
               console.warn('[bumba][event-consumer] event processing failed; retaining event for retry', {
