@@ -134,3 +134,64 @@ and missing-status fixtures:
 ```bash
 bun test packages/scripts/src/argocd/__tests__/cnpg-cluster-health.test.ts
 ```
+
+Dex uses memory storage, matching the behavior enforced by the Argo CD wrapper before 3.6. Argo CD 3.6 honors an
+explicit storage override; the formerly ignored Kubernetes override cannot work without Dex CRDs and storage RBAC.
+Keep the native memory configuration. The Dex readiness probe checks its listener so a failed child process cannot
+leave the deployment falsely ready.
+
+## Regenerable GitOps scratch
+
+Kargo Git checkouts and promotion workspaces, Argo CD repository/Helm caches, and Lovely render workspaces use bounded
+memory-backed `emptyDir` volumes. These paths previously wrote to the node system disk shared with etcd. During the
+2026-11-12 incident, Kargo wrote 13.2 MB/s of a measured 21.2 MB/s on that disk after the ARC local scratch claims had
+drained, and etcd continued reporting WAL flushes above one second. An earlier render wave wrote another 12.7 MB/s
+from the repo-server Pod. Moving the regenerable files preserves their existing Pod-lifetime semantics.
+
+| Consumer | Temporary paths | Total tmpfs cap | Memory request and limit | Process headroom |
+| --- | --- | --- | --- | --- |
+| Kargo controller | `/gitops-tmp`, selected by `TMPDIR` | 32 GiB | 40 GiB | 8 GiB |
+| Argo CD repo-server | `/tmp` (8 GiB), `/helm-working-dir` (2 GiB) | 10 GiB | 12 GiB | 2 GiB |
+| Lovely plugin | Its separate `/tmp` | 8 GiB | 12 GiB | 4 GiB |
+
+The Kargo 1.12.5 chart hardcodes its existing disk-backed `/tmp` mount. The supported extra-volume and extra-mount
+values add `/gitops-tmp`; `TMPDIR` moves both `os.TempDir()` promotion directories and default `os.MkdirTemp()` Git
+directories without duplicating the chart-owned mount. The existing `/tmp` remains available for other consumers.
+Kargo's four warehouse and four promotion workers remain unchanged. Requeued promotions retain their directories,
+so the 32 GiB cap also budgets for the current 28 Stages: approximately 641 MiB per observed promotion workspace,
+plus concurrent discovery, Git packing and growth. The measured controller cgroup peak was 2.98 GiB during the
+observed wave; the retained-workspace envelope is deliberately larger than that instantaneous peak.
+
+The main repo-server cache occupied 647 MiB and its cgroup peaked at 1.27 GiB. Lovely peaked at 2.84 GiB; the current
+tracked checkout contains 179 MiB, so 16 concurrent source copies occupy about 2.8 GiB before generated output.
+The caps leave room for those copies and rendering while retaining the existing parallelism of 16. Each repo-server
+Pod reserves 24 GiB for its two containers. At the incident preflight, Turin had 1,038 GiB allocatable and 503 GiB
+requested; adding Kargo and its repo-server reservation increases requested memory by 63 GiB. Altra had 753 GiB
+allocatable and 179 GiB requested; its repo-server reservation increases requests by 23 GiB. Neither node reported
+memory pressure. Recheck these budgets when placement, repository size, Stage count or rendering concurrency changes.
+
+Kubernetes counts tmpfs pages against the writing container's memory. The request reserves capacity for the full
+scratch cap plus process headroom; `sizeLimit` alone would not reserve it. ENOSPC, OOM kills, rising memory usage or
+manifest-generation failures require investigation and a reviewed capacity adjustment. Do not remove the limits to
+hide them. Lovely keeps its own filesystem, preserving upstream isolation from the main repo-server's `/tmp`.
+The standard emptyDir root is writable by the existing non-root users (the deployed Kargo root was mode 0777); no
+root init container, fsGroup, credential change or new privilege is required. GPG, TLS, plugin binaries and durable
+volumes retain their existing storage. Runtime layers and logs still use node storage.
+
+Render both the pinned Kargo chart with the ApplicationSet's values and the full Argo CD Kustomization before merge.
+The focused contract verifies every tmpfs cap, combined per-container memory budget and Lovely filesystem isolation:
+
+```bash
+bun test packages/scripts/src/shared/__tests__/gitops-scratch.test.ts
+```
+
+Roll out through the existing root/ApplicationSet and self-managed Argo CD reconciliation at the reviewed commit.
+Prefer the interval between Kargo promotions; its singleton uses `Recreate`, while repo-server preserves its existing
+one-at-a-time rolling strategy. Verify the rendered requests/limits, `TMPDIR`, actual `tmpfs` mounts, writability as
+the existing container user, and a normal Git discovery/promotion and Lovely/Helm render. Then require a fresh
+30-minute representative native-build observation with API readiness passing, no new slow-WAL warnings or monitor
+quorum losses, and the existing Ceph latency/slow-operation alerts evaluated. A cancelled qualification is not proof.
+
+Rollback by reverting these scratch/resource changes through Git and reconciling the same Applications. Temporary
+checkouts regenerate as they already do after a Pod replacement; Kargo resources, Git promotion history and durable
+volumes are retained. Reverting returns these writes to the system disk, so the original contention risk also returns.

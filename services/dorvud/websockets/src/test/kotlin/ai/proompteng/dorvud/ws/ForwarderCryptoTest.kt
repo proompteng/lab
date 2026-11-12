@@ -3,6 +3,9 @@ package ai.proompteng.dorvud.ws
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.statement.HttpResponseContainer
+import io.ktor.client.statement.HttpResponsePipeline
 import io.ktor.http.encodedPath
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
@@ -15,14 +18,20 @@ import io.ktor.server.websocket.WebSocketServerSession
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.server.websocket.webSocketRaw
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.DefaultWebSocketSession
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -42,6 +51,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -87,6 +97,10 @@ class ForwarderCryptoTest {
   fun `silent established crypto socket reconnects even when peer ignores the close handshake`() =
     verifyCryptoSession(reconnectAfterSilence = true)
 
+  @Test
+  fun `crypto reauthenticates and resubscribes after a stalled close without restarting equity`() =
+    verifyCryptoSession(stallFirstClose = true)
+
   private enum class EstablishmentStage { Upgrade, Authentication, Subscription }
 
   private fun verifyCryptoSession(
@@ -95,6 +109,7 @@ class ForwarderCryptoTest {
     surviveDeadline: Boolean = false,
     stopWhileEstablishing: Boolean = false,
     reconnectAfterSilence: Boolean = false,
+    stallFirstClose: Boolean = false,
   ) = runBlocking {
     val payloads = Json.parseToJsonElement(File("../fixtures/alpaca-crypto-v1.json").readText()) as JsonArray
     val authentications = ConcurrentLinkedQueue<JsonObject>()
@@ -105,11 +120,15 @@ class ForwarderCryptoTest {
     val stalled = CompletableDeferred<Unit>()
     val stalledSocketClosed = CompletableDeferred<Unit>()
     val publishAfterDeadline = CompletableDeferred<Unit>()
+    val closeStarted = CompletableDeferred<Unit>()
+    val stalledSession = AtomicReference<Job?>(null)
+    val stalledCall = AtomicReference<Job?>(null)
+    val stalledWriter = AtomicReference<Job?>(null)
     val stallNext = AtomicBoolean(stall != null)
     val cryptoConnections = AtomicInteger()
     val now = Instant.parse("2026-10-10T02:04:01Z")
     val clock = AtomicLong(now.toEpochMilli())
-    val expectedPublications = payloads.size * if (reconnectAfterSilence) 2 else 1
+    val expectedPublications = payloads.size * if (reconnectAfterSilence || stallFirstClose) 2 else 1
     val server =
       embeddedServer(CIO, port = 0) {
         install(WebSockets)
@@ -159,6 +178,10 @@ class ForwarderCryptoTest {
                       ) + payloads.drop(1),
                     )
                   send(Frame.Text(batch.toString()))
+                  if (stallFirstClose && cryptoConnections.get() == 1) {
+                    close(CloseReason(CloseReason.Codes.GOING_AWAY, "test disconnect"))
+                    return@session
+                  }
                   if (reconnectAfterSilence && cryptoConnections.get() == 1) clock.addAndGet(1001)
                   if (surviveDeadline) {
                     publishAfterDeadline.await()
@@ -199,10 +222,42 @@ class ForwarderCryptoTest {
           ),
         ).let { if (reconnectAfterSilence) it.copy(marketDataReadIdleTimeoutMs = 100) else it }
     val cancelConnect = AtomicBoolean(cancelFirstConnect)
+    val stallClose = AtomicBoolean(stallFirstClose)
     val client =
       HttpClient(ClientCIO) {
         install(ClientWebSockets)
       }.apply {
+        responsePipeline.intercept(HttpResponsePipeline.After) {
+          val session = subject.response as? DefaultClientWebSocketSession
+          if (session != null &&
+            session.call.request.url.encodedPath
+              .endsWith("/crypto/us") &&
+            stallClose.compareAndSet(true, false)
+          ) {
+            // Model a disconnected transport whose close frame queues successfully
+            // but whose flush remains suspended until the caller cancels it.
+            val lifecycle = Job()
+            stalledSession.set(lifecycle)
+            stalledCall.set(session.call.coroutineContext.job)
+            // A stuck raw writer keeps HttpStatement's final call-job join open
+            // even after the higher-level WebSocket session has been cancelled.
+            stalledWriter.set(Job(session.call.coroutineContext.job))
+            val delegate =
+              object : DefaultWebSocketSession by session {
+                override val coroutineContext = session.coroutineContext.minusKey(Job) + lifecycle
+
+                override suspend fun send(frame: Frame) {
+                  if (frame !is Frame.Close) session.send(frame)
+                }
+
+                override suspend fun flush() {
+                  closeStarted.complete(Unit)
+                  if (lifecycle.isActive) awaitCancellation()
+                }
+              }
+            proceedWith(HttpResponseContainer(subject.expectedType, DefaultClientWebSocketSession(session.call, delegate)))
+          }
+        }
         plugin(HttpSend).intercept { request ->
           if (request.url.encodedPath.endsWith("/crypto/us") && cancelConnect.compareAndSet(true, false)) {
             throw CancellationException("Crypto session handshake canceled")
@@ -239,7 +294,14 @@ class ForwarderCryptoTest {
         bothAuthenticated.await()
         if (stall != null && stall != EstablishmentStage.Upgrade) stalledSocketClosed.await()
       }
-      val reestablished = stall == EstablishmentStage.Authentication || stall == EstablishmentStage.Subscription || reconnectAfterSilence
+      if (stallFirstClose) {
+        assertTrue(closeStarted.isCompleted)
+        assertTrue(requireNotNull(stalledSession.get()).isCancelled)
+        assertTrue(requireNotNull(stalledCall.get()).isCancelled)
+        assertTrue(requireNotNull(stalledWriter.get()).isCancelled)
+      }
+      val reestablished =
+        stall == EstablishmentStage.Authentication || stall == EstablishmentStage.Subscription || reconnectAfterSilence || stallFirstClose
       assertEquals(if (reestablished) 3 else 2, authentications.size)
       assertEquals(if (reestablished) 2 else 1, cryptoConnections.get())
       assertTrue(
@@ -250,7 +312,7 @@ class ForwarderCryptoTest {
       )
       assertTrue(subscriptions.any { "orderbooks" in it && "updatedBars" in it })
       val crypto = records.filter { it.topic() == "crypto-events" }
-      val expectedPayloads = if (reconnectAfterSilence) payloads + payloads else payloads
+      val expectedPayloads = if (reconnectAfterSilence || stallFirstClose) payloads + payloads else payloads
       assertEquals(expectedPayloads, crypto.map { Json.parseToJsonElement(it.value()).jsonObject.getValue("payload") })
       assertTrue(crypto.all { it.key() == "BTC/USD" })
       assertEquals(
@@ -296,6 +358,8 @@ class ForwarderCryptoTest {
         providerMarketDataIdleRequiresReconnect(now, now, now.plusSeconds(180), AlpacaMarketType.CRYPTO, emptySet(), null, 180_000),
       )
     } finally {
+      stalledSession.get()?.cancel()
+      stalledCall.get()?.cancel()
       app.stop()
       withTimeout(5000) { job.join() }
       server.stop(0, 1000)

@@ -14,7 +14,6 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
-import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -635,7 +634,7 @@ class ForwarderApp(
     onReady: () -> Unit,
   ) {
     val url = alpacaMarketDataStreamUrl(config, feed.config)
-    httpClient.webSocket({
+    httpClient.webSocketWithBoundedCleanup({
       url(url)
       if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
         header("Content-Type", "application/msgpack")
