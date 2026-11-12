@@ -80,6 +80,19 @@ export const makeBrokerObservationStore = (
     ),
     strictParseOptions,
   )
+  const decodePendingProjectionRows = Schema.decodeUnknownEffect(
+    Schema.Array(
+      Schema.Struct({
+        snapshot_hash: Schema.String,
+        state_hash: Schema.String,
+        observedAt: UtcInstantSchema,
+        newerMutation: Schema.Boolean,
+        newerBrokerEvent: Schema.Boolean,
+        newerNotification: Schema.Boolean,
+      }),
+    ),
+    strictParseOptions,
+  )
   const run = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, BrokerReadError, R> =>
     effect.pipe(
       Effect.mapError((cause) =>
@@ -348,7 +361,11 @@ export const makeBrokerObservationStore = (
           const now = yield* currentUtcInstant
           const awaiting = yield* sql`
         SELECT snapshot_hash, state_hash,
-          to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
+          to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt",
+          EXISTS (SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
+            WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= poll_started_at) AS "newerMutation",
+          EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId} AND observed_at > completed_at) AS "newerBrokerEvent",
+          EXISTS (SELECT 1 FROM broker_notification_receipts WHERE account_id = ${accountId} AND recorded_at > notification_fence_at) AS "newerNotification"
         FROM broker_observations
         WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
           AND observed_at > ${now}::timestamptz - ${maximumAgeMs} * interval '1 millisecond'
@@ -359,7 +376,7 @@ export const makeBrokerObservationStore = (
             OR EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId} AND observed_at > completed_at)
             OR EXISTS (SELECT 1 FROM broker_notification_receipts WHERE account_id = ${accountId} AND recorded_at > notification_fence_at)
           )
-      `.pipe(Effect.flatMap(decodeProjectionRows))
+      `.pipe(Effect.flatMap(decodePendingProjectionRows))
           if (awaiting.length === 0) {
             // Diagnose only an already rejected read. A rollout changes the
             // account's observation owner before all predecessor APIs retire.
@@ -389,7 +406,19 @@ export const makeBrokerObservationStore = (
           }
           const pending = awaiting[0]
           if (pending === undefined) return yield* observationUnavailable('Broker observation metadata is absent')
-          return { ...pending, pending: true }
+          // These are the selected pending cut's fences, from that query's own
+          // snapshot, not the cause of the earlier admission query's rejection.
+          yield* Effect.annotateCurrentSpan({
+            'bayn.broker.observation.pending.newer_mutation': pending.newerMutation,
+            'bayn.broker.observation.pending.newer_broker_event': pending.newerBrokerEvent,
+            'bayn.broker.observation.pending.newer_notification': pending.newerNotification,
+          }).pipe(Effect.catchDefect(() => Effect.void))
+          return {
+            snapshot_hash: pending.snapshot_hash,
+            state_hash: pending.state_hash,
+            observedAt: pending.observedAt,
+            pending: true,
+          }
         }
         // Keep an expired available cut distinct from NO_ADMISSIBLE_CUT: recovery
         // uses that marker to retain its post-mutation cadence. Its cache TTL has
