@@ -93,17 +93,22 @@ const cycleLoopHealth = (
       return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
     }
     const completedAtMs = Date.parse(status.completedAt)
-    const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
-    if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
+    const nextDueAtMs = status.nextDueAt === undefined ? undefined : Date.parse(status.nextDueAt)
+    if (
+      !Number.isFinite(completedAtMs) ||
+      (nextDueAtMs !== undefined && (!Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs))
+    ) {
       return unavailable('Restate execution-controller projection has an invalid completion schedule')
     }
     if (clock._tag === 'Unavailable') return previous
     if (completedAtMs > clock.checkedAtMs) {
       return unavailable('Restate execution-controller completion time is in the future')
     }
-    const overdueMs = clock.checkedAtMs - nextDueAtMs
-    if (overdueMs >= stallThresholdMs) {
-      return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+    if (nextDueAtMs !== undefined) {
+      const overdueMs = clock.checkedAtMs - nextDueAtMs
+      if (overdueMs >= stallThresholdMs) {
+        return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+      }
     }
     return available()
   }
