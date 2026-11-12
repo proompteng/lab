@@ -101,6 +101,8 @@ Agents' existing Kind smoke job forces a rebuild of its shared dependency closur
 inputs, installed workspace manifests or installed Effect patch change. Ordinary runtime edits reuse the cache;
 test-only edits retain the unit tier. The Effect patch is also an image-publication and Kargo discovery input.
 A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
+The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services
+retain their native checks for dependency changes without repeating the same shared-script validation.
 
 The root-scripts job uses the same impact router with `.github/ci/root-script-map.yml` to select owned suites.
 Changes to the router or its configuration run all six suites; a Tengri NetworkPolicy change runs kube-router only.

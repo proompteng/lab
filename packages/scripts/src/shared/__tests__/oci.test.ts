@@ -913,13 +913,11 @@ describe('native OCI build workflows', () => {
         'nix/images/bun-workspace-service.nix',
         'nix/images/bun-workspace-deps-source.nix',
         'nix/images/bun-workspace-deps-source.test.sh',
-        'nix/check-bun-dependency-closure.sh',
         '.github/workflows/nix-bun-dependency-closure.yml',
       ]) {
-        expect(triggers.split(`- '${input}'`)).toHaveLength(
-          input.startsWith('.github/') || input === 'nix/check-bun-dependency-closure.sh' ? 2 : 3,
-        )
+        expect(triggers.split(`- '${input}'`)).toHaveLength(input.startsWith('.github/') ? 2 : 3)
       }
+      expect(triggers).not.toContain("- 'nix/check-bun-dependency-closure.sh'")
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
       expect(workflow).toMatch(/needs: (dependency-closure|\[dependency-closure, test\])/)
     }
