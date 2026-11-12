@@ -143,8 +143,8 @@ uses the same verified Ceph bootstrap, five mounts and Rust cache homes as AMD64
 capacity, ARM64 placement, service account and runner resources. Accepted jobs finish on their existing storage.
 At 13:25 UTC, `replicapool` had 9.66TiB `MAX AVAIL` and the cluster had 29.45TiB raw free, with replication still two.
 The ten AMD64 plus eight ARM64 maximum requires 2.29TiB logical and approximately 4.57TiB raw if every 130Gi
-claim is fully written. Retain the existing BlueStore warning and qualify actual ARM64 builds and both control
-planes after rollout; the ten-slot AMD64 workflow alone does not prove ARM64 throughput.
+claim is fully written. Retain the existing BlueStore warning and qualify actual ARM64 builds and all three
+etcd members after rollout; the ten-slot AMD64 workflow alone does not prove ARM64 throughput.
 
 Verify the promoted Kargo revision, ten-runner configuration, Turin placement and `rook-ceph-block` claims first.
 After the slot/output acceptance succeeds, record a continuous 30-minute representative native-image-build window
