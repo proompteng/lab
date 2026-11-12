@@ -446,6 +446,77 @@ test('the authenticated market gateway awaits only its small private wake and re
   expect(deliveries).toHaveLength(1)
 })
 
+test.each(['broker', 'market-boundary'] as const)(
+  'failed reconciliation retains market backoff and releases on %s',
+  async (recovery) => {
+    let now = Date.parse('2026-08-13T18:00:01.000Z')
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const deliveries: unknown[] = []
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        prepareActivation: async () => undefined,
+        projectState: async () => undefined,
+        log: async () => undefined,
+        advance: async () => ({
+          completedAt: '2026-08-13T18:00:00.000Z',
+          observation: {
+            result: 'FAILURE',
+            observedAt: '2026-08-13T18:00:00.000Z',
+            operation: 'reconcile',
+            failure: 'market-data',
+            message: 'Broker observation is unavailable or invalidated by a mutation',
+          },
+          outcome: {
+            _tag: ExecutionControllerOutcome.Blocked,
+            receiptHash: 'd'.repeat(64),
+            nextDelayMs: 30_000,
+            nextWakeAt: '2026-08-13T18:00:30.000Z',
+          },
+        }),
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: unknown) => deliveries.push(delivery),
+      request: () => ({ id: 'broker-retry-eligibility', attemptCompletedSignal: new AbortController().signal }),
+      date: { now: async () => now },
+    } as unknown as TestContext
+    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+    expect(state.marketEligibleAt).toBe('2026-08-13T18:00:30.000Z')
+    expect(state.nextDueAt).toBe(state.marketEligibleAt)
+    for (let sequence = 1; sequence <= 100; sequence++) await object.wake(context, marketChange(sequence))
+    expect(deliveries).toHaveLength(1)
+    expect(state.marketFrontier?.sequence).toBe(100)
+    if (recovery === 'market-boundary') {
+      now = Date.parse('2026-08-13T18:00:30.000Z')
+      await object.wake(context, marketChange(101))
+    } else
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'BrokerObservation',
+        sourceRevision,
+        eventId: 'a'.repeat(64),
+        snapshotHash: 'b'.repeat(64),
+        observedAt: '2026-08-13T18:00:01.000Z',
+      })
+    expect(deliveries).toHaveLength(2)
+    expect(state.wakeScheduledSequence).toBe(5)
+  },
+)
+
 test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
   let state: ExecutionControllerState = {
     schemaVersion: 1,
@@ -487,6 +558,109 @@ test('closed-session completion retains the next eligibility boundary against un
   expect(deliveries).toHaveLength(1)
   expect(state.nextDueAt).toBe(nextWakeAt)
 })
+
+test.each(['BROKER_OBSERVATION_PENDING', 'POST_MUTATION_RECONCILIATION'] as const)(
+  'market bursts wait for the broker boundary while completion events accelerate %s',
+  async (waitReason) => {
+    for (const completion of ['BrokerObservation', 'InferenceCompleted'] as const) {
+      let state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: 1,
+        planHash,
+        sourceRevision,
+        initialSequence: 4,
+        nextSequence: 4,
+      }
+      const deliveries: unknown[] = []
+      const nextWakeAt = '2026-08-13T18:00:30.000Z'
+      let advances = 0
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: async () => {
+            advances++
+            return {
+              completedAt: '2026-08-13T18:00:01.000Z',
+              observation:
+                waitReason === 'BROKER_OBSERVATION_PENDING'
+                  ? {
+                      result: 'SUCCESS',
+                      outcome: 'WAITING',
+                      waitReason,
+                      observedAt: '2026-08-13T18:00:01.000Z',
+                    }
+                  : {
+                      result: 'SUCCESS',
+                      outcome: 'RECOVERED',
+                      recoveryAction: 'WAITING',
+                      waitReason,
+                      observedAt: '2026-08-13T18:00:01.000Z',
+                    },
+              outcome: {
+                _tag: ExecutionControllerOutcome.Waiting,
+                receiptHash: 'd'.repeat(64),
+                nextDelayMs: 1,
+                nextWakeAt,
+              },
+            }
+          },
+        }),
+      )
+      const context = {
+        key: controllerKey,
+        get: async () => state,
+        set: (_key: string, next: ExecutionControllerState) => {
+          state = next
+        },
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        genericSend: (delivery: unknown) => deliveries.push(delivery),
+        request: () => ({ id: 'broker-wait-eligibility', attemptCompletedSignal: new AbortController().signal }),
+        date: { now: async () => Date.parse('2026-08-13T18:00:02.000Z') },
+      } as unknown as TestContext
+      await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+      deliveries.length = 0
+      await object.wake(context, marketChange(1))
+      await object.wake(context, marketChange(2))
+      await object.wake(context, marketChange(3))
+      expect(deliveries).toHaveLength(0)
+      expect(state.marketEligibleAt).toBe(nextWakeAt)
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      const common = {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        sourceRevision,
+        eventId: 'e'.repeat(64),
+      }
+      await object.wake(
+        context,
+        completion === 'BrokerObservation'
+          ? { ...common, _tag: completion, snapshotHash: 'f'.repeat(64), observedAt: '2026-08-13T18:00:02.000Z' }
+          : {
+              ...common,
+              _tag: completion,
+              epoch: 1,
+              jobId: '1'.repeat(64),
+              batchId: '2'.repeat(64),
+              cycleId: '3'.repeat(64),
+              authorityGenerationHash: '4'.repeat(64),
+              expiresAt: '2026-08-13T18:00:10.000Z',
+              completedAt: '2026-08-13T18:00:02.000Z',
+            },
+      )
+      expect(deliveries).toEqual([
+        expect.objectContaining({
+          service: 'BaynExecutionController',
+          method: 'tick',
+          parameter: { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 5 },
+        }),
+      ])
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      expect(advances).toBe(1)
+    }
+  },
+)
 
 test.each(['POST_MUTATION_RECONCILIATION', 'PROTECTION_EXIT_COMMITTED'] as const)(
   'an accepted %s outcome requests one quota-bound canonical refresh',
