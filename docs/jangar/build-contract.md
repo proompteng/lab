@@ -86,7 +86,7 @@ Checks:
 
 1. `jangar-build-push` validates the runtime contract, completes the final multi-architecture index, and publishes the
    eligible `kargo-sha-<40>` image after a merge to `main`; legacy `sha-*` and mutable `latest` are not Warehouse inputs.
-2. The Kargo `jangar` Warehouse discovers the image and creates Freight in `lab-delivery`.
+2. The Kargo `jangar` Warehouse discovers the image and creates Freight in `jangar-release`.
 3. The exact automatic `jangar` Stage policy promotes the Freight. Kargo copies the source commit and writes the full
    digest/build metadata to `kargo/jangar`, then Argo tracks that branch and waits for sync/health.
 4. The configured Jangar post-deploy health checks validate the rollout, promoted digest, running image ID, and Argo

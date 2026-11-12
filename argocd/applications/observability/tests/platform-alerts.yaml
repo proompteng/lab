@@ -45,15 +45,15 @@ tests:
         values: 1+0x45
       - series: argocd_app_info{name="opencode",health_status="Healthy",sync_status="Synced"}
         values: 1+0x45
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="ofz",phase="Succeeded"}
         values: 1+0x45
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="relay",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="relay-release",stage="relay",phase="Succeeded"}
         values: 1+0x45
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="tengri",phase="Succeeded"}
         values: 1+0x45
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="proompteng",phase="Succeeded"}
         values: 1+0x45
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="opencode-release",stage="opencode",phase="Succeeded"}
         values: 1+0x45
       - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-1"}
         values: 1+0x45
@@ -122,9 +122,9 @@ tests:
   - name: a failed promotion fires and a subsequent success clears it
     interval: 1m
     input_series:
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Failed"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="ofz",phase="Failed"}
         values: 1+0x7 stale
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="ofz",phase="Succeeded"}
         values: _x8 1+0x20
     promql_expr_test:
       - expr: count(ALERTS{alertname="PlatformPromotionFailed",alertstate="firing"}) or vector(0)
@@ -139,7 +139,7 @@ tests:
   - name: a stalled active promotion fires and completion clears it
     interval: 1m
     input_series:
-      - series: kube_kargo_stage_current_promotion_started_at{namespace="lab-delivery",stage="relay"}
+      - series: kube_kargo_stage_current_promotion_started_at{namespace="relay-release",stage="relay"}
         values: 0+0x39 stale
     promql_expr_test:
       - expr: count(ALERTS{alertname="PlatformPromotionStalled",alertstate="firing"}) or vector(0)
@@ -154,13 +154,13 @@ tests:
   - name: missing stage observations have their own alert
     interval: 1m
     input_series:
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="ofz",phase="Succeeded"}
         values: 1+0x20
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="tengri",phase="Succeeded"}
         values: 1+0x20
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="ofz-release",stage="proompteng",phase="Succeeded"}
         values: 1+0x20
-      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode",phase="Succeeded"}
+      - series: kube_kargo_stage_last_promotion_info{namespace="opencode-release",stage="opencode",phase="Succeeded"}
         values: 1+0x20
     promql_expr_test:
       - expr: count(ALERTS{alertname="PlatformPromotionTelemetryMissing",alertstate="firing"}) or vector(0)

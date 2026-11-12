@@ -6,7 +6,7 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 ## Restoring retained service
 
 Restore the gateway, egress proxy, backup schedule, rollout alert label, and `hermes_rollout_enabled` recording rule through
-reviewed GitOps. The Application follows `kargo/hermes-toolchain` and authorizes Stage `lab-delivery/hermes-toolchain`;
+reviewed GitOps. The Application follows `kargo/hermes-toolchain` and authorizes Stage `hermes-release/hermes-toolchain`;
 automatic promotion is enabled. Preserve the retained data and backup PVCs. Verify that OpenClaw remains stopped and the
 live NetworkPolicy enforcement probe passes before restoring Hermes. Wait for the selected source's successful image
 publication and Kargo promotion, then verify authenticated inference through Flamingo and the Hermes gateway.
@@ -55,8 +55,8 @@ Do not race a new image promotion with any maintenance operation.
 ## Release evidence
 
 Before each rollout, verify and record the Kargo promotion and the immutable references it produced. A merge to `main`
-starts the Hermes toolchain build. After the image is published, Warehouse `lab-delivery/hermes-toolchain` creates Freight
-and Stage `lab-delivery/hermes-toolchain` automatically copies the exact source commit into `kargo/hermes-toolchain`,
+starts the Hermes toolchain build. After the image is published, Warehouse `hermes-release/hermes-toolchain` creates Freight
+and Stage `hermes-release/hermes-toolchain` automatically copies the exact source commit into `kargo/hermes-toolchain`,
 updates the StatefulSet reference, commits and pushes that branch, and lets Argo CD reconcile it. Do not create or merge a
 digest bump PR, release PR, or manual SHA change.
 
@@ -1154,13 +1154,13 @@ state, backup verification failure, or repeated gateway restarts.
 
 ### Before Discord cutover
 
-Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`. Kargo must generate and
+Re-promote a previously verified Hermes Freight through Stage `hermes-release/hermes-toolchain`. Kargo must generate and
 sync the rollback commit on `kargo/hermes-toolchain`; do not sync a `main` SHA or hand-edit an image reference. Verify the
 selected Freight, successful promotion, generated commit, and exact Argo revision before the authenticated API canary.
 
 ```bash
 set -euo pipefail
-kubectl --context galactic-tailscale -n lab-delivery get stage hermes-toolchain -o json | jq -e \
+kubectl --context galactic-tailscale -n hermes-release get stage hermes-toolchain -o json | jq -e \
   '.status.lastPromotion.status.phase == "Succeeded"'
 kubectl --context galactic-tailscale -n argocd get application hermes -o json | jq \
   '{source: .spec.source.targetRevision, deployedCommit: .status.sync.revision}'
