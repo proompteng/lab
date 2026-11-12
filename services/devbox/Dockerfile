@@ -17,8 +17,11 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     locale-gen en_US.UTF-8
 COPY flake.nix flake.lock /opt/lab-toolchain/
 COPY nix /opt/lab-toolchain/nix
-RUN mkdir -p /etc/nix /opt/devbox && \
+RUN --mount=type=secret,id=nix-config,required=true \
+    NIX_CONFIG="$(cat /run/secrets/nix-config)" && export NIX_CONFIG && \
+    mkdir -p /etc/nix /opt/devbox && \
     printf 'experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root codex\n' > /etc/nix/nix.conf && \
+    nix show-config 2>/dev/null | sed -n '/^substituters =/p; /^require-sigs =/p' && \
     NIX_REMOTE=local nix build --no-link --print-out-paths /opt/lab-toolchain#ciToolchain > /opt/devbox/toolchain-path && \
     ln -s "$(cat /opt/devbox/toolchain-path)" /opt/devbox/toolchain
 ENV PATH=/opt/devbox/toolchain/bin:/home/codex/.local/bin:/opt/devbox/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -34,7 +37,9 @@ COPY --exclude=services/devbox . /opt/lab-seed
 COPY --chmod=0755 services/devbox/install-deps.sh /usr/local/bin/devbox-install-deps
 WORKDIR /opt/lab-seed
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/devbox/playwright
-RUN devbox-install-deps && \
+RUN --mount=type=secret,id=nix-config,required=true \
+    NIX_CONFIG="$(cat /run/secrets/nix-config)" && export NIX_CONFIG && \
+    devbox-install-deps && \
     bunx --no-install playwright install --with-deps chromium && \
     NIX_REMOTE=local nix develop /opt/lab-toolchain --command toolchain-doctor && \
     NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration && \

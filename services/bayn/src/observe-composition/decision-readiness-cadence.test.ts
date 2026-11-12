@@ -89,15 +89,17 @@ test('unused-entry handoff accelerates only an expired, unbound block before the
     ).toBeUndefined()
 })
 
-test.each([DecisionReadinessReason.SignalWindowObserved, DecisionReadinessReason.LookbackWarmup])(
-  '%s schedules the known future boundary before the normal poll',
-  (reason) => {
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, observedAt)).toBe(7_000)
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 5_000, observedAt)).toBeUndefined()
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 7_000, observedAt)).toBeUndefined()
-    expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, instant(2_000))).toBe(5_000)
-  },
-)
+test.each([
+  DecisionReadinessReason.SignalWindowObserved,
+  DecisionReadinessReason.LookbackWarmup,
+  DecisionReadinessReason.DecisionPending,
+  DecisionReadinessReason.InferenceUnavailable,
+])('%s schedules the known future boundary before the normal poll', (reason) => {
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, observedAt)).toBe(7_000)
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 5_000, observedAt)).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 7_000, observedAt)).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, instant(2_000))).toBe(5_000)
+})
 
 test.each([DecisionReadinessReason.SnapshotUnavailable, DecisionReadinessReason.SnapshotStale])(
   '%s preserves the known next-window wake before the original unused entry expires',
@@ -163,6 +165,8 @@ test('rejects missing or invalid timing and boundaries outside the entry session
 test.each(
   Object.values(DecisionReadinessReason).filter(
     (reason) =>
+      reason !== DecisionReadinessReason.DecisionPending &&
+      reason !== DecisionReadinessReason.InferenceUnavailable &&
       reason !== DecisionReadinessReason.LookbackWarmup &&
       reason !== DecisionReadinessReason.SignalWindowObserved &&
       reason !== DecisionReadinessReason.SnapshotUnavailable &&
@@ -231,7 +235,7 @@ const pendingInputs = (previousWindowEndAt?: string) => ({
 })
 
 test.each([native.query.rangeEndAt, instant(60_000), 'invalid'])(
-  'already consumed or inconsistent missing inputs keep the ordinary cadence (%s)',
+  'missing source inputs wait for stream evidence (%s)',
   (previousWindowEndAt) => {
     const result = pendingInputs(previousWindowEndAt)
     expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(37_171))).toBeUndefined()
@@ -239,15 +243,14 @@ test.each([native.query.rangeEndAt, instant(60_000), 'invalid'])(
 )
 
 test.each([undefined, instant(-60_000)])(
-  'rechecks initial or later snapshot inputs inside the original admission (%s)',
+  'missing initial or later snapshot inputs do not create discovery timers (%s)',
   (previousWindowEndAt) => {
-    // The retained 16:24 cycle had 22,829 ms left when its next feature cut was unavailable.
     const checkedAt = instant(37_171)
     const result = pendingInputs(previousWindowEndAt)
-    expect(decisionReadinessContinuationDelayMs(result, 30_000, checkedAt)).toBe(1_000)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, checkedAt)).toBeUndefined()
     expect(Date.parse(checkedAt) + 30_000).toBeGreaterThan(unusedEntryExpiresAt(cycle))
-    expect(decisionReadinessContinuationDelayMs(result, 500, checkedAt)).toBe(500)
-    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(59_900))).toBe(100)
+    expect(decisionReadinessContinuationDelayMs(result, 500, checkedAt)).toBeUndefined()
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(59_900))).toBeUndefined()
     expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(60_000))).toBeUndefined()
     expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(-1))).toBeUndefined()
     expect(decisionReadinessContinuationDelayMs(result, 30_000, 'invalid')).toBeUndefined()
@@ -262,28 +265,15 @@ test.each([undefined, instant(-60_000)])(
   },
 )
 
-test('initial missing inputs recheck during a quote window that the ordinary poll misses', async () => {
+test('late source arrival remains inside the original quote and admission window', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      // Retained 16:54 pass: first wait ended 2,466ms after issue; MU arrived at +17,380ms.
-      const firstWaitMs = 2_466
-      const quoteAvailableMs = 17_380
-      const quoteExpiresMs = 25_904
-      yield* TestClock.setTime(observedMs + firstWaitMs)
-      const result = pendingInputs()
-      let retries = 0
-      while (Date.parse(yield* currentUtcInstant) < observedMs + quoteAvailableMs) {
-        const delay = decisionReadinessContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
-        expect(delay).toBe(1_000)
-        if (delay === undefined) return yield* Effect.die('Initial missing inputs require a bounded continuation')
-        yield* TestClock.adjust(delay)
-        retries += 1
-      }
-      const readyAt = Date.parse(yield* currentUtcInstant)
-      expect(retries).toBe(15)
-      expect(readyAt).toBeLessThan(observedMs + quoteExpiresMs)
-      expect(observedMs + firstWaitMs + 30_000).toBeGreaterThan(observedMs + quoteExpiresMs)
+      yield* TestClock.setTime(observedMs + 2_466)
+      expect(decisionReadinessContinuationDelayMs(pendingInputs(), 30_000, yield* currentUtcInstant)).toBeUndefined()
+      // A source-ready event, rather than a discovery loop, resumes this exact admission.
+      yield* TestClock.setTime(observedMs + 17_380)
       expect(hasExpiredUnusedEntryAdmission(cycle, yield* currentUtcInstant)).toBe(false)
+      expect(Date.parse(yield* currentUtcInstant)).toBeLessThan(observedMs + 25_904)
       expect(unusedEntryExpiresAt(cycle)).toBe(observedMs + 60_000)
     }).pipe(Effect.provide(TestClock.layer())),
   )
@@ -309,6 +299,7 @@ test('the captured late-commit retry pattern finishes before the unchanged entry
         advance: Effect.succeed({
           result,
           nextDelayMs: delay,
+          nextWakeAt: instant(12_548 + delay),
           observation: {
             result: 'SUCCESS',
             outcome: 'RECOVERED',
@@ -339,6 +330,7 @@ test('the captured late-commit retry pattern finishes before the unchanged entry
               _tag: ExecutionControllerOutcome.Waiting,
               receiptHash: outcome.receiptHash,
               nextDelayMs: outcome.nextDelayMs,
+              ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
             },
           },
           command.sourceRevision,
@@ -394,7 +386,7 @@ test.each([
             observedAt,
             readiness: result.readiness,
           } as const,
-          ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+          ...(nextDelayMs === undefined ? {} : { nextDelayMs, nextWakeAt: instant(nextDelayMs) }),
         }),
         nextDelayMs: 30_000,
       }
@@ -422,6 +414,7 @@ test.each([
               _tag: ExecutionControllerOutcome.Waiting,
               receiptHash: outcome.receiptHash,
               nextDelayMs: outcome.nextDelayMs,
+              ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
             },
           },
           command.sourceRevision,

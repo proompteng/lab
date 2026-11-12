@@ -440,7 +440,7 @@ const withCodexRunProjectionStore = <A>(
     const stores = yield* CodexRunProjectionStoreService
     return yield* Effect.acquireUseRelease(
       stores.open,
-      (store) => stores.ready(store).pipe(Effect.zipRight(run(store, stores))),
+      (store) => stores.ready(store).pipe(Effect.andThen(run(store, stores))),
       stores.close,
     )
   })
@@ -495,9 +495,9 @@ const githubEventStatus = (error: CodexGithubEventError) => {
 }
 
 export const postCodexGithubEventsHandler = async (request: Request, deps: CodexGithubEventsApiDependencies = {}) => {
-  const result = await Effect.runPromise(ingestCodexGithubEventEffect(request, deps).pipe(Effect.either))
-  if (result._tag === 'Right') return okResponse(result.right, 202)
-  return errorResponse(describeGithubEventError(result.left), githubEventStatus(result.left))
+  const result = await Effect.runPromise(ingestCodexGithubEventEffect(request, deps).pipe(Effect.result))
+  if (result._tag === 'Success') return okResponse(result.success, 202)
+  return errorResponse(describeGithubEventError(result.failure), githubEventStatus(result.failure))
 }
 
 export const __test__ = {

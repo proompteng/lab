@@ -14,7 +14,7 @@ import { AuthorityGenerationStore } from './db/execution-store/contract'
 import { ExecutionStoreLive } from './db/execution-store'
 import { PostgresClientLive } from './db/postgres-client'
 import { WriterFenceLive } from './execution/writer-fence'
-import { makeExecutionRiskPolicy } from './execution/risk-policy'
+import { resolveExecutionRiskPolicy } from './execution/risk-policy'
 import { sha256 } from './hash'
 import { ControlStudyPlanSchema } from './intraday-replay/control-binding'
 import {
@@ -73,10 +73,11 @@ export const runControlOpeningCommand = (args: readonly string[]) =>
       })
     yield* validateResearchCapitalRiskPolicy(application, configured.request)
     const policy = yield* Effect.fromResult(
-      makeExecutionRiskPolicy(
+      resolveExecutionRiskPolicy(
         config.alpaca.expectedAccountId,
         defaultJevProtocolDocument.universe,
         config.alpaca.environment,
+        configured.request.riskPolicyHash,
       ),
     )
     const { verification: _verification, ...build } = config.build

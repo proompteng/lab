@@ -1,4 +1,7 @@
 import { positionProtectionIntervalMs } from '../jev/exit-policy'
+import { firstIntradayObservationAtMs, selectIntradayExecutionSession } from '../cycle/runner/calendar-decisions'
+import { strategyTradingProtocol } from '../strategy'
+import { continuousExecutionPolicy } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
@@ -19,7 +22,6 @@ import {
   validateCyclePassTimeout,
   validateReconciliationInterval,
 } from '../cycle/runner/reconciliation-cadence'
-import { validateCycleLoopInterval } from '../cycle/runner/pass-decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { CycleDecisionBindingEvidence } from '../cycle/store/model'
@@ -52,6 +54,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleAdvance,
   RecoveryFirstRuntime,
+  RecoveryFirstCyclePassResult,
   PostMutationReconciliation,
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
@@ -73,6 +76,8 @@ import {
   isPostMutationReconciliation,
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
+  recoverExpiredEntryBeforeReconciliation,
+  readUnfinishedMutationCycle,
 } from './execution-cycle'
 
 type MutationReconciliationCadenceState = ReconciliationCadenceState & {
@@ -417,17 +422,16 @@ const observeMutationCycleResult = (
   )
 
 export const recoveryFirstCycleNextDelayMs = (input: {
-  readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly postMutationDelayMs?: number
 }): number => {
-  const cadence = Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
+  const cadence = input.reconciliationIntervalMs
   return input.postMutationDelayMs === undefined
     ? cadence
     : Math.min(cadence, Math.max(mutationConsistencyDelayMs, input.postMutationDelayMs))
 }
 
-/** Expected quote or broker publication waits use a short continuation; source failures keep their backoff. */
+/** Protection reconciliation remains bounded even when its source stops publishing. */
 export const executionEvidenceContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
@@ -437,15 +441,12 @@ export const executionEvidenceContinuationDelayMs = (
     result.outcome !== 'RECOVERED' ||
     result.action !== 'WAITING' ||
     (result.waitReason !== 'CLOSE_QUOTE_PENDING' &&
-      result.waitReason !== 'BROKER_OBSERVATION_PENDING' &&
       result.waitReason !== 'JEV_POSITION_AWAITING_RECONCILIATION' &&
       result.waitReason !== 'PROTECTION_PUBLICATION_PENDING')
   )
     return undefined
   const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
-  return remainingMs > 0
-    ? Math.min(result.waitReason === 'PROTECTION_PUBLICATION_PENDING' ? 5_000 : 1_000, normalDelayMs, remainingMs)
-    : undefined
+  return remainingMs > 0 ? Math.min(positionProtectionIntervalMs, normalDelayMs, remainingMs) : undefined
 }
 
 /** The expired attempt has ended; the next pass must revalidate a distinct attempt before the unchanged cutoff. */
@@ -469,22 +470,16 @@ export const unusedEntryHandoffDelayMs = (
     : undefined
 }
 
-/** Recheck missing entry inputs inside their original admission; consumed windows retain their backoff. */
+/** A known eligibility boundary is a timer; missing source evidence waits for its stream. */
 export const decisionReadinessContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
 ): number | undefined => {
   if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.readiness === undefined) return undefined
-  const query = result.readiness.snapshotQuery
-  const pendingSnapshot =
-    result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
-    query !== undefined &&
-    (query.previousWindowEndAt === undefined || Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt))
   if (
     result.readiness.reason === DecisionReadinessReason.InferenceExpired ||
-    result.readiness.reason === DecisionReadinessReason.ExecutionRiskExpired ||
-    pendingSnapshot
+    result.readiness.reason === DecisionReadinessReason.ExecutionRiskExpired
   ) {
     const now = Date.parse(observedAt)
     const cycle = result.cycle
@@ -494,9 +489,7 @@ export const decisionReadinessContinuationDelayMs = (
       cycle.bindings.decisionHash === undefined &&
       now >= Math.max(Date.parse(cycle.createdAt), Date.parse(cycle.window.submissionOpenAt)) &&
       now < expiresAt
-      ? pendingSnapshot
-        ? Math.min(1_000, normalDelayMs, expiresAt - now)
-        : 1
+      ? 1
       : undefined
   }
   const sourceWindow =
@@ -505,6 +498,8 @@ export const decisionReadinessContinuationDelayMs = (
   if (
     (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
       result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved &&
+      result.readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      result.readiness.reason !== DecisionReadinessReason.InferenceUnavailable &&
       !sourceWindow) ||
     result.readiness.availableAt === undefined
   )
@@ -548,6 +543,130 @@ export const maximumHoldContinuationDelayMs = (
   // fresh management pass takes the maximum-hold exit path and cannot emit this pre-eligibility wait again.
   const evaluatedAt = Date.parse(result.maximumHoldEvaluatedAt ?? '')
   return evaluatedAt < dueAt && evaluatedAt <= Date.parse(observedAt) ? 1 : undefined
+}
+
+export enum ExecutionDeadlineReason {
+  Eligibility = 'Eligibility',
+  Expiry = 'Expiry',
+  Protection = 'Protection',
+  Close = 'Close',
+  FinancialFreshness = 'FinancialFreshness',
+  Recovery = 'Recovery',
+  UnknownMutation = 'UnknownMutation',
+  StateTransition = 'StateTransition',
+}
+
+export interface ExecutionAdvanceDeadline {
+  readonly at: string
+  readonly reason: ExecutionDeadlineReason
+}
+
+/** Stream events discover new work. Timers only discharge a previously established obligation. */
+export const executionAdvanceDeadline = (
+  advanced: RecoveryFirstCycleAdvance,
+  observedAt: string,
+  policy: {
+    readonly recoveryDelayMs: number
+    readonly financialFreshnessMs: number
+    readonly sessionCloseStartLeadMs: number
+  },
+): ExecutionAdvanceDeadline | undefined => {
+  const now = Date.parse(observedAt)
+  const deadlines: { readonly at: number; readonly reason: ExecutionDeadlineReason }[] = []
+  const add = (at: number, reason: ExecutionDeadlineReason) => {
+    if (Number.isSafeInteger(at)) deadlines.push({ at: Math.max(now + 1, at), reason })
+  }
+  const after = (delay: number, reason: ExecutionDeadlineReason) => add(now + Math.max(1, delay), reason)
+  if (!Number.isSafeInteger(now)) return undefined
+  if (advanced.nextWakeAt !== undefined) add(Date.parse(advanced.nextWakeAt), ExecutionDeadlineReason.Recovery)
+  if (advanced.observation.result === 'FAILURE') {
+    after(advanced.nextDelayMs ?? policy.recoveryDelayMs, ExecutionDeadlineReason.Recovery)
+  } else if (advanced.result === undefined) {
+    if (advanced.observation.waitReason === 'BROKER_OBSERVATION_PENDING')
+      after(policy.financialFreshnessMs, ExecutionDeadlineReason.FinancialFreshness)
+  } else {
+    const result = advanced.result
+    if (result.outcome === 'WINDOW_CLOSED' && result.closedEntryWindow !== undefined) {
+      const evidence = result.closedEntryWindow
+      const session = selectIntradayExecutionSession(evidence.calendar, evidence.executionPolicy, observedAt)
+      if (session !== undefined) {
+        const eligibleAt = firstIntradayObservationAtMs(session, evidence.executionPolicy)
+        if (eligibleAt > now) add(eligibleAt, ExecutionDeadlineReason.Eligibility)
+      }
+    } else if (result.outcome === 'ADMISSION_WAITING') {
+      const validUntil = Date.parse(result.admissionProtection.validUntil)
+      add(validUntil > now ? validUntil : now + policy.financialFreshnessMs, ExecutionDeadlineReason.FinancialFreshness)
+    } else if (result.outcome === 'ACQUIRED' || result.outcome === 'REACQUIRED') {
+      after(1, ExecutionDeadlineReason.StateTransition)
+    } else if (result.outcome === 'RECOVERED') {
+      const handoff = unusedEntryHandoffDelayMs(result, Number.MAX_SAFE_INTEGER, observedAt)
+      if (handoff !== undefined) after(handoff, ExecutionDeadlineReason.StateTransition)
+      if (result.action === 'ACTIVATED' || result.action === 'BOUND_DECISION')
+        after(1, ExecutionDeadlineReason.StateTransition)
+      if (result.action === 'WAITING') {
+        const cycle = result.cycle
+        const closeAt = Date.parse(cycle.window.executionCloseAt)
+        const bound = cycle.bindings.snapshotId !== undefined || cycle.bindings.decisionHash !== undefined
+        if (!bound && cycle.state === CycleState.Active)
+          add(unusedEntryExpiresAt(cycle), ExecutionDeadlineReason.Expiry)
+        const eligibility = decisionReadinessContinuationDelayMs(result, Number.MAX_SAFE_INTEGER, observedAt)
+        if (eligibility !== undefined) after(eligibility, ExecutionDeadlineReason.Eligibility)
+        const hold = maximumHoldContinuationDelayMs(result, Number.MAX_SAFE_INTEGER, observedAt)
+        if (hold !== undefined) after(hold, ExecutionDeadlineReason.Protection)
+        const protection = executionEvidenceContinuationDelayMs(result, Number.MAX_SAFE_INTEGER, observedAt)
+        if (protection !== undefined) after(protection, ExecutionDeadlineReason.Protection)
+        if (bound) {
+          const closeStartAt =
+            closeAt -
+            (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+              ? continuousExecutionPolicy.closeRecoveryMs
+              : policy.sessionCloseStartLeadMs)
+          if (closeStartAt > now) add(closeStartAt, ExecutionDeadlineReason.Close)
+          if (closeAt > now) add(closeAt, ExecutionDeadlineReason.Close)
+        }
+        const reason = result.waitReason
+        if (reason === 'AWAITING_SUBMISSION_OPEN')
+          add(Date.parse(cycle.window.submissionOpenAt), ExecutionDeadlineReason.Eligibility)
+        if (reason === 'BROKER_OBSERVATION_PENDING')
+          after(policy.financialFreshnessMs, ExecutionDeadlineReason.FinancialFreshness)
+        if (
+          reason === 'JEV_POSITION_HELD' ||
+          reason === 'JEV_POSITION_AWAITING_RECONCILIATION' ||
+          reason === 'open-position' ||
+          reason === 'CLOSE_QUOTE_PENDING' ||
+          reason === 'CLOSE_MARKET_DATA_UNAVAILABLE' ||
+          (reason !== undefined && reason.startsWith('PROTECTION_'))
+        )
+          after(positionProtectionIntervalMs, ExecutionDeadlineReason.Protection)
+        if (reason === 'POST_MUTATION_RECONCILIATION')
+          after(advanced.nextDelayMs ?? mutationConsistencyDelayMs, ExecutionDeadlineReason.FinancialFreshness)
+        if (
+          reason === 'MUTATION_RECOVERY_BACKOFF' ||
+          reason === 'MUTATION_EVIDENCE_PENDING' ||
+          reason === 'COMPLETION_EVIDENCE_PENDING' ||
+          reason === 'unknown-mutation' ||
+          reason === 'unknown-order' ||
+          reason === 'intent-unsuccessful' ||
+          reason === 'intent-nonterminal'
+        )
+          after(advanced.nextDelayMs ?? policy.recoveryDelayMs, ExecutionDeadlineReason.UnknownMutation)
+        if (
+          reason === 'CLOSE_STORE_UNAVAILABLE' ||
+          reason === 'CLOSE_RECONCILIATION_PENDING' ||
+          reason === 'MUTATION_NOT_ADVANCED' ||
+          reason === 'accounting-inexact' ||
+          reason === 'reconciliation-not-later' ||
+          reason === 'reconciliation-not-exact'
+        )
+          after(advanced.nextDelayMs ?? policy.recoveryDelayMs, ExecutionDeadlineReason.Recovery)
+      }
+    }
+  }
+  const selected = deadlines.reduce<(typeof deadlines)[number] | undefined>(
+    (earliest, candidate) => (earliest === undefined || candidate.at < earliest.at ? candidate : earliest),
+    undefined,
+  )
+  return selected === undefined ? undefined : { at: new Date(selected.at).toISOString(), reason: selected.reason }
 }
 
 /** Projection health is checked after the pass; a later failure owns its continuation timing. */
@@ -681,7 +800,43 @@ const makeRecoveryFirstCycleDriverEffect = (
             : observeCycleFailure(error),
         ),
       )
-    const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
+    const completeCycleAdvance = (result: RecoveryFirstCyclePassResult) =>
+      Effect.gen(function* () {
+        if (isPostMutationReconciliation(result)) {
+          yield* Ref.set(
+            cancellationContinuation,
+            result.cancellationConfirmationIntentId !== undefined ? result : undefined,
+          )
+          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
+          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
+          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
+          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
+          yield* Ref.set(cadence, {})
+          yield* Ref.set(
+            postExitCloseAt,
+            result.logContext.mutationPhase === 'CLOSE' ? result.cycle.window.executionCloseAt : undefined,
+          )
+          return {
+            result: deferPostMutationReconciliation(result),
+            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
+          }
+        }
+        return { result }
+      }).pipe(
+        Effect.flatMap(({ result, nextDelayMs }) =>
+          observeMutationCycleResult(startup, cadence, result).pipe(
+            Effect.map((observation) => ({
+              observation,
+              result,
+              ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+            })),
+          ),
+        ),
+      )
+    const advanceCycle = (
+      preflight: ReconciliationPassResult | undefined,
+      unfinished?: { readonly cycle: AutonomousCycle | undefined },
+    ) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
         const {
@@ -712,65 +867,36 @@ const makeRecoveryFirstCycleDriverEffect = (
             { read: reconcileForAdvance, refresh: refreshForAdvance },
             capability,
             preflight,
+            unfinished,
           ),
           cyclePassTimeoutMs,
         )
-        if (isPostMutationReconciliation(result)) {
-          yield* Ref.set(
-            cancellationContinuation,
-            result.cancellationConfirmationIntentId !== undefined ? result : undefined,
-          )
-          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
-          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
-          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
-          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
-          yield* Ref.set(cadence, {})
-          yield* Ref.set(
-            postExitCloseAt,
-            result.logContext.mutationPhase === 'CLOSE' ? result.cycle.window.executionCloseAt : undefined,
-          )
-          return {
-            result: deferPostMutationReconciliation(result),
-            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
-          }
-        }
-        return { result }
-      }).pipe(
-        Effect.matchEffect({
-          onFailure: observeCycleFailure,
-          onSuccess: ({ result, nextDelayMs }) =>
-            observeMutationCycleResult(startup, cadence, result).pipe(
-              Effect.map((observation) => ({
-                observation,
-                result,
-                ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
-              })),
-            ),
-        }),
-      )
+        return result
+      }).pipe(Effect.matchEffect({ onFailure: observeCycleFailure, onSuccess: completeCycleAdvance }))
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(
       input,
       policy.maxBrokerStateAgeMs,
       cadence,
       reconcile,
     )
-    const reconcileAndAdvance = Ref.set(preflightOnly, true).pipe(
-      Effect.andThen(reconciliationPreflight),
-      Effect.matchEffect({
-        onFailure: observeReconciliationFailure,
-        onSuccess: (preflight) =>
-          Ref.set(preflightOnly, false).pipe(
-            Effect.andThen(advanceCycle(preflight)),
-            Effect.flatMap((advanced) =>
-              capability._tag !== 'Mutation' ||
-              input.intradayMarketData === undefined ||
-              advanced.observation.result === 'FAILURE'
-                ? Effect.succeed(advanced)
-                : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
+    const reconcileAndAdvance = (unfinished?: { readonly cycle: AutonomousCycle | undefined }) =>
+      Ref.set(preflightOnly, true).pipe(
+        Effect.andThen(reconciliationPreflight),
+        Effect.matchEffect({
+          onFailure: observeReconciliationFailure,
+          onSuccess: (preflight) =>
+            Ref.set(preflightOnly, false).pipe(
+              Effect.andThen(advanceCycle(preflight, unfinished)),
+              Effect.flatMap((advanced) =>
+                capability._tag !== 'Mutation' ||
+                input.intradayMarketData === undefined ||
+                advanced.observation.result === 'FAILURE'
+                  ? Effect.succeed(advanced)
+                  : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
+              ),
             ),
-          ),
-      }),
-    )
+        }),
+      )
     const runCycleAdvance = Effect.gen(function* () {
       // Confirmation can persist recovery evidence, so its failures keep the cycle-phase restriction policy.
       yield* Ref.set(preflightOnly, false)
@@ -793,46 +919,47 @@ const makeRecoveryFirstCycleDriverEffect = (
         // Confirmation never replaces fresh, post-recovery reconciliation or grants submission authority.
         yield* Ref.set(cadence, {})
       }
-      return yield* reconcileAndAdvance
-    }).pipe(
-      Effect.map((advanced): RecoveryFirstCycleAdvance => advanced),
-      Effect.flatMap((advanced) => {
-        if (advanced.observation.result === 'FAILURE' || !('result' in advanced) || advanced.result === undefined)
-          return Effect.succeed(advanced)
-        const result = advanced.result
-        return currentUtcInstant.pipe(
-          Effect.map((observedAt) => {
-            const cadence = advanced.nextDelayMs ?? nextDelayMs
-            const continuation =
-              unusedEntryHandoffDelayMs(result, cadence, observedAt) ??
-              executionEvidenceContinuationDelayMs(result, cadence, observedAt) ??
-              decisionReadinessContinuationDelayMs(result, cadence, observedAt)
-            const maximumHold = maximumHoldContinuationDelayMs(result, cadence, observedAt)
-            if (maximumHold !== undefined) {
-              const delay = Math.min(continuation ?? cadence, maximumHold)
-              return {
-                ...advanced,
-                nextDelayMs: delay,
-                nextWakeAt: new Date(Date.parse(observedAt) + delay).toISOString(),
-              }
-            }
-            return continuation === undefined
-              ? advanced
-              : {
-                  ...advanced,
-                  nextDelayMs: continuation,
-                  nextWakeAt: new Date(Date.parse(observedAt) + continuation).toISOString(),
-                }
-          }),
-        )
-      }),
-    )
+      const lookup =
+        capability._tag === 'RecoveryOnly'
+          ? Result.succeed(undefined)
+          : yield* readUnfinishedMutationCycle({
+              cycleBindingId: startup.cycleBindingId,
+              accountId: input.accountId,
+            }).pipe(Effect.result)
+      if (Result.isFailure(lookup)) return yield* observeCycleFailure(lookup.failure)
+      const unfinished = capability._tag === 'RecoveryOnly' ? undefined : { cycle: lookup.success }
+      const containment = yield* recoverExpiredEntryBeforeReconciliation(
+        input,
+        unfinished?.cycle,
+        policy,
+        capability,
+      ).pipe(Effect.result)
+      if (Result.isFailure(containment)) return yield* observeCycleFailure(containment.failure)
+      if (containment.success !== undefined) return yield* completeCycleAdvance(containment.success)
+      return yield* reconcileAndAdvance(unfinished)
+    }).pipe(Effect.map((advanced): RecoveryFirstCycleAdvance => advanced))
+    const selectDeadline = (advanced: RecoveryFirstCycleAdvance) =>
+      currentUtcInstant.pipe(
+        Effect.map((observedAt) => {
+          const deadline = executionAdvanceDeadline(advanced, observedAt, {
+            recoveryDelayMs: input.reconciliationIntervalMs,
+            financialFreshnessMs: input.reconciliationIntervalMs,
+            sessionCloseStartLeadMs: strategyTradingProtocol(input.strategy).flattenBeforeCloseMinutes * 60_000,
+          })
+          if (deadline === undefined) return advanced
+          return {
+            ...advanced,
+            nextDelayMs: Math.max(1, Date.parse(deadline.at) - Date.parse(observedAt)),
+            nextWakeAt: deadline.at,
+          }
+        }),
+      )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
       runCycleAdvance.pipe(
         Effect.tap((advanced) => {
           const result = 'result' in advanced ? advanced.result : undefined
-          // Only an unbound source wait may carry a flat, exact preflight into a short retry.
+          // Only an unbound source wait may reuse a flat, exact preflight after its next stream event.
           // Every mutation, terminal/bound cycle, failure or other recovery path discards it.
           if (
             advanced.observation.result !== 'FAILURE' &&
@@ -859,11 +986,11 @@ const makeRecoveryFirstCycleDriverEffect = (
       ),
       cyclePassTimeoutMs,
       observeTimeout,
-    )
+    ).pipe(Effect.flatMap(selectDeadline))
     return {
       advance,
       timeoutMs: cyclePassTimeoutMs,
-      onTimeout: observeTimeout,
+      onTimeout: (error) => observeTimeout(error).pipe(Effect.flatMap(selectDeadline)),
       nextDelayMs,
     }
   })
@@ -879,8 +1006,7 @@ export const makeRecoveryFirstCycleDriver = (
 ): Result.Result<Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime>, OperationalError> => {
   const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
   return Result.mapError(
-    Result.map(validateCycleLoopInterval(input.pollIntervalMs), () => input.reconciliationIntervalMs).pipe(
-      Result.flatMap(validateReconciliationInterval),
+    validateReconciliationInterval(input.reconciliationIntervalMs).pipe(
       Result.flatMap(() => validateCyclePassTimeout(cyclePassTimeoutMs, input.reconciliationIntervalMs)),
       Result.map(() =>
         makeRecoveryFirstCycleDriverEffect(input, startup, preparation, policy, capability, buildDecision),

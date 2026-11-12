@@ -2,7 +2,7 @@ import { Config, DateTime, Effect, Exit, Schema, Semaphore } from 'effect'
 
 import { readBrokerSnapshotOnce } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
-import { BrokerReadError, configurationError } from './failures'
+import { BrokerPollFailureReason, BrokerReadError, configurationError } from './failures'
 import { OrderCollection, SortDirection, type BrokerHistory, type BrokerReadShape } from './model'
 import {
   BrokerObservations,
@@ -14,28 +14,16 @@ import {
 } from './observed-snapshot'
 
 export interface BrokerSnapshotCacheConfig {
-  readonly pollIntervalMs: number
   readonly maxAgeMs: number
 }
 const interval = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: maximumBrokerObservationAgeMs }))
 export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig, BrokerReadError> = Config.all({
-  pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(10_000)),
   maxAgeMs: Config.schema(interval, 'BAYN_BROKER_CACHE_MAX_AGE_MS').pipe(
     Config.withDefault(maximumBrokerObservationAgeMs),
   ),
 }).pipe(
   Effect.mapError((cause) =>
     configurationError({ operation: 'configuration', message: 'Invalid broker cache configuration', cause }),
-  ),
-  Effect.flatMap((config) =>
-    config.maxAgeMs <= config.pollIntervalMs
-      ? Effect.fail(
-          configurationError({
-            operation: 'configuration',
-            message: 'Broker cache maximum age must exceed its poll interval',
-          }),
-        )
-      : Effect.succeed(config),
   ),
 )
 
@@ -123,11 +111,22 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
-            : observationUnavailable('Broker polling could not establish a stable history', cause),
+            : observationUnavailable(
+                'Broker polling could not establish a stable history',
+                cause,
+                BrokerPollFailureReason.SnapshotRejected,
+              ),
         ),
         Effect.timeoutOrElse({
           duration: timeoutMs,
-          orElse: () => Effect.fail(observationUnavailable('Broker observation polling exceeded its deadline')),
+          orElse: () =>
+            Effect.fail(
+              observationUnavailable(
+                'Broker observation polling exceeded its deadline',
+                undefined,
+                BrokerPollFailureReason.PollDeadline,
+              ),
+            ),
         }),
         Effect.withSpan('broker.observation.poll'),
       )

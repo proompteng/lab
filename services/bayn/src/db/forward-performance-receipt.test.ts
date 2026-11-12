@@ -1,3 +1,5 @@
+import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
+import type { SqlClient } from 'effect/sql'
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect'
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../execution/writer-fence'
 import { PgClient } from '@effect/sql-pg'
@@ -15,7 +17,7 @@ import {
 } from './forward-performance-receipt'
 import { makePersistenceReceipt } from './forward-performance-receipt.test-support'
 
-const testDatabase = (sql: PgClient.PgClient) =>
+const testDatabase = (sql: PgClient.PgClient & SqlClient.SqlClient) =>
   Layer.mergeAll(
     Layer.succeed(PgClient.PgClient, sql),
     Layer.succeed(WriterFence, {
@@ -152,10 +154,12 @@ const fencedPersistenceHarness = () => {
       events.push('verify')
       return Effect.succeed([{ matches: true }])
     })
-  const sql = Object.assign(query, {
-    json: (value: unknown) => value,
-    withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-  }) as unknown as PgClient.PgClient
+  const sql = postgresQueryFixture(
+    Object.assign(query, {
+      json: (value: unknown) => value,
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }),
+  )
   const fence: WriterFenceService = { check: Effect.void, transaction }
   return {
     events,
@@ -273,10 +277,12 @@ describe('forward-performance receipt persistence contract', () => {
       const existing = rows.find((row) => row.authorityGenerationHash === incoming.authorityGenerationHash)
       return Effect.succeed([{ matches: existing?.contentHash === incoming.contentHash }])
     }
-    const sql = Object.assign(query, {
-      json: (value: unknown) => value,
-      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-    }) as unknown as PgClient.PgClient
+    const sql = postgresQueryFixture(
+      Object.assign(query, {
+        json: (value: unknown) => value,
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      }),
+    )
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* persistForwardPerformanceReceipt(packet)
@@ -294,10 +300,12 @@ describe('forward-performance receipt persistence contract', () => {
           ? []
           : [{ matches: strings.join('').includes('FROM authority_generations') }],
       )
-    const sql = Object.assign(query, {
-      json: (value: unknown) => value,
-      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-    }) as unknown as PgClient.PgClient
+    const sql = postgresQueryFixture(
+      Object.assign(query, {
+        json: (value: unknown) => value,
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      }),
+    )
     const exit = await Effect.runPromiseExit(
       persistForwardPerformanceReceipt(packet).pipe(Effect.provide(testDatabase(sql))),
     )
@@ -340,10 +348,12 @@ describe('forward-performance receipt persistence contract', () => {
         calls += 1
         return Effect.succeed([{ matches: true }])
       }
-      const sql = Object.assign(query, {
-        json: (value: unknown) => value,
-        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-      }) as unknown as PgClient.PgClient
+      const sql = postgresQueryFixture(
+        Object.assign(query, {
+          json: (value: unknown) => value,
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        }),
+      )
       const result = await Effect.runPromise(
         persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provide(testDatabase(sql))),
       )
@@ -359,10 +369,12 @@ describe('forward-performance receipt persistence contract', () => {
       if (strings.join('').includes('INSERT INTO')) inserts += 1
       return Effect.succeed([])
     }
-    const sql = Object.assign(query, {
-      json: (value: unknown) => value,
-      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-    }) as unknown as PgClient.PgClient
+    const sql = postgresQueryFixture(
+      Object.assign(query, {
+        json: (value: unknown) => value,
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      }),
+    )
     const result = await Effect.runPromise(
       persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provide(testDatabase(sql))),
     )
@@ -396,10 +408,12 @@ describe('forward-performance receipt persistence contract', () => {
         calls += 1
         return Effect.succeed([{ matches: true }])
       }
-      const sql = Object.assign(query, {
-        json: (value: unknown) => value,
-        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-      }) as unknown as PgClient.PgClient
+      const sql = postgresQueryFixture(
+        Object.assign(query, {
+          json: (value: unknown) => value,
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        }),
+      )
       const result = await Effect.runPromise(
         persistForwardPerformanceReceipt(candidate).pipe(Effect.result, Effect.provide(testDatabase(sql))),
       )

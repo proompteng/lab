@@ -119,7 +119,7 @@ requests, migrate the latest state with the same checks before changing writers.
 Never activate two writers for one study or retry an already claimed financial attempt.
 
 Image delivery is reviewed main -> immutable `lab/opencode` publication ->
-Warehouse/Stage `opencode` in `lab-delivery` -> `kargo/opencode` -> Argo. The Stage
+Warehouse/Stage `opencode` in `opencode-release` -> `kargo/opencode` -> Argo. The Stage
 updates the Kustomize input by digest. `bayn` keeps its trading runtime, Jev
 credentials, risk checks and capital authority. This deployment does not qualify
 Bayn's trading performance or complete prior failed financial experiments.

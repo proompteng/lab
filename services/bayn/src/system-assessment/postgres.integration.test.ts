@@ -126,6 +126,29 @@ const registerFixture = (value: ReturnType<typeof registrationFixture>) =>
     ]),
   )
 
+const seedOperationalAuthority = (base: ReturnType<typeof operationalRegistrationFixture>) =>
+  Effect.gen(function* () {
+    const binding = base.policies[0].capitalAuthorization
+    if (binding === undefined) throw new Error('Missing existing capital fixture')
+    const { generation, request } = binding
+    const sql = yield* PgClient.PgClient
+    yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+      VALUES (${generation.previousGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,clock_timestamp())`
+    yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+      VALUES (${generation.reconciliationId},${legacyReconciliationSchemaVersion},${request.broker.accountId},${testHash('expected')},${testHash('expected')},${generation.reconciliationContentHash},'EXACT','[]'::jsonb,clock_timestamp())`
+    yield* sql`INSERT INTO authority_generations
+      (generation_hash,schema_version,maximum,authority_version,previous_generation_hash,activation_schema_version,
+      account_id,broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,risk_policy_hash,
+      activated_at,activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
+      strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,strategy_protocol_hash,
+      proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash)
+      VALUES (${generation.generationHash},'bayn.authority-generation-history.v1','PAPER',2,${generation.previousGenerationHash},
+      'bayn.paper-authority-generation.v3',${request.broker.accountId},'bayn.broker-identity.v2',${request.broker.identityHash},'alpaca','sandbox',
+      ${request.riskPolicyHash},clock_timestamp(),${request.activation.sourceRevision},${request.activation.imageRepository},${request.activation.imageDigest},
+      'jev',${request.strategy.behaviorHash},${request.strategy.parameterHash},${request.strategy.parameterSchemaVersion},${request.strategy.protocolHash},
+      ${request.grant.planHash},${generation.reconciliationId},${generation.reconciliationContentHash},${request.grant.planHash})`
+  })
+
 const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     PostgresClientLive({
@@ -303,9 +326,6 @@ postgres('PostgreSQL prospective system qualification', () => {
   test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
     const base = operationalRegistrationFixture()
     const definition = base.policies[0]
-    const binding = definition.capitalAuthorization
-    if (binding === undefined) throw new Error('Missing existing capital fixture')
-    const { generation, request } = binding
     const operationalHistory = {
       ...history,
       program: 'BAYN_OPERATIONAL_RELIABILITY',
@@ -346,22 +366,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     ])
     await runtime.runPromise(
       Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
-        VALUES (${generation.previousGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,clock_timestamp())`
-        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
-        VALUES (${generation.reconciliationId},${legacyReconciliationSchemaVersion},${request.broker.accountId},${testHash('expected')},${testHash('expected')},${generation.reconciliationContentHash},'EXACT','[]'::jsonb,clock_timestamp())`
-        yield* sql`INSERT INTO authority_generations
-        (generation_hash,schema_version,maximum,authority_version,previous_generation_hash,activation_schema_version,
-        account_id,broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,risk_policy_hash,
-        activated_at,activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
-        strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,strategy_protocol_hash,
-        proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash)
-        VALUES (${generation.generationHash},'bayn.authority-generation-history.v1','PAPER',2,${generation.previousGenerationHash},
-        'bayn.paper-authority-generation.v3',${request.broker.accountId},'bayn.broker-identity.v2',${request.broker.identityHash},'alpaca','sandbox',
-        ${request.riskPolicyHash},clock_timestamp(),${request.activation.sourceRevision},${request.activation.imageRepository},${request.activation.imageDigest},
-        'jev',${request.strategy.behaviorHash},${request.strategy.parameterHash},${request.strategy.parameterSchemaVersion},${request.strategy.protocolHash},
-        ${request.grant.planHash},${generation.reconciliationId},${generation.reconciliationContentHash},${request.grant.planHash})`
+        yield* seedOperationalAuthority(base)
         yield* initializeQualificationHistory(operationalHistory, sources)
       }),
     )
@@ -370,8 +375,16 @@ postgres('PostgreSQL prospective system qualification', () => {
         return yield* (yield* PgClient.PgClient)`SELECT * FROM authority_generations ORDER BY authority_version`
       }),
     )
-    for (const controllerPlanHash of [null, testHash('unregistered controller plan')]) {
-      const configuration = { ...prospective.obligations.configuration, controllerPlanHash }
+    for (const configuration of [
+      ...[null, sha256('bayn.execution-controller-plan.v3'), testHash('unregistered controller plan')].map(
+        (controllerPlanHash) => ({ ...prospective.obligations.configuration, controllerPlanHash }),
+      ),
+      {
+        ...registration().obligations.configuration,
+        controllerPlanHash: prospective.obligations.configuration.controllerPlanHash,
+        entryMarkets: currentEntryMarkets,
+      },
+    ]) {
       const unbound = {
         ...prospective,
         obligations: {
@@ -684,6 +697,91 @@ postgres('PostgreSQL prospective system qualification', () => {
           ),
         ),
       ).toBe(true)
+  })
+
+  test('the streaming controller migration preserves retained polling registrations and their exact history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 195))),
+          table: 'schema_migrations',
+        })
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
+      }),
+    )
+    const financial = await runtime.runPromise(registerFixture(registration(1)))
+    expect(financial.registration.obligations.configuration.schemaVersion).toBe('bayn.qualification-runtime.v1')
+    const base = operationalRegistrationFixture()
+    const operationalHistory = {
+      ...history,
+      program: 'BAYN_OPERATIONAL_RELIABILITY',
+      historySourceHash: base.retainedIncidentSources[0]!,
+    }
+    const observedAt = await runtime.runPromise(databaseNow)
+    const open = new Date((Math.floor(Date.parse(observedAt) / 86_400_000) + 1) * 86_400_000).toISOString()
+    const configuration = {
+      ...financial.registration.obligations.configuration,
+      controllerPlanHash: sha256('bayn.execution-controller-plan.v3'),
+      entryMarkets: currentEntryMarkets,
+    }
+    const material = {
+      ...base,
+      registeredAt: new Date(Date.parse(observedAt) - 1000).toISOString(),
+      priorAttemptHash: testHash(operationalHistory),
+      calendar: {
+        ...base.calendar,
+        sessions: [
+          {
+            sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(open.slice(0, 10)),
+            openAt: open,
+            closeAt: new Date(Date.parse(open) + 120_000).toISOString(),
+          },
+        ],
+      },
+      obligations: {
+        ...base.obligations,
+        ...Result.getOrThrow(qualificationDeadlines(configuration)),
+        configuration,
+      },
+    }
+    const schedule = Result.getOrThrow(registeredSchedule(material))
+    const retained = {
+      ...material,
+      obligations: {
+        ...material.obligations,
+        decisionScheduleHash: schedule.find((row) => row.class === ObligationClass.Decision)!.scheduleEvidenceHash,
+        reconciliationScheduleHash: schedule.find((row) => row.class === ObligationClass.Reconciliation)!
+          .scheduleEvidenceHash,
+      },
+    }
+    const retainedHash = testHash(retained)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* seedOperationalAuthority(base)
+        yield* initializeQualificationHistory(operationalHistory, new Set([operationalHistory.historySourceHash]))
+        yield* sql`INSERT INTO system_qualification_registrations
+          (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
+          VALUES (${retainedHash},${retained.program},${retained.attemptIndex},${retained.priorAttemptHash},
+            ${retained.registeredAt},${open},${retained.calendar.sessions[0]?.closeAt},
+            ${Result.getOrThrow(canonicalJsonV1Result(retained))})`
+        const before = yield* sql`SELECT registration_hash,payload_text,attempt_index,prior_attempt_hash,created_at
+          FROM system_qualification_registrations ORDER BY program,attempt_index`
+        const origins = yield* sql`SELECT * FROM system_qualification_origin ORDER BY program`
+        yield* postgresMigrations
+        expect(
+          yield* sql`SELECT registration_hash,payload_text,attempt_index,prior_attempt_hash,created_at
+          FROM system_qualification_registrations ORDER BY program,attempt_index`,
+        ).toEqual(before)
+        expect(yield* sql`SELECT * FROM system_qualification_origin ORDER BY program`).toEqual(origins)
+        expect(yield* readSystemRegistration(financial.registrationHash)).toEqual(financial.registration)
+        expect(yield* readAssessmentRegistration(retainedHash)).toEqual(retained)
+      }),
+    )
   })
 
   test('persists and reproduces an equity-only financial registration with its explicit native entry scope', async () => {
@@ -1243,6 +1341,30 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(asApplication(registerFixture(input)))).registration.attemptIndex).toBe(1)
   })
 
+  test('prospective registration accepts explicit uncapped sandbox turnover and retains its policy bytes', async () => {
+    const input = registration()
+    const policies = input.policies.map((definition) => {
+      const riskPolicy = Result.getOrThrow(
+        makeExecutionRiskPolicy(
+          definition.riskPolicy.accountId,
+          definition.riskPolicy.allowedSymbols,
+          BrokerEnvironment.Sandbox,
+        ),
+      )
+      return { ...definition, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
+    })
+    const accepted = await runtime.runPromise(
+      asApplication(registerFixture(withRegistrationCommitments({ ...input, policies }))),
+    )
+    const retained = await runtime.runPromise(readSystemRegistration(accepted.registrationHash))
+    expect(retained.policies.map((definition) => definition.riskPolicy)).toEqual(
+      policies.map((definition) => definition.riskPolicy),
+    )
+    expect(retained.policies.every((definition) => definition.riskPolicy.maxDailyTradedNotionalMicros === null)).toBe(
+      true,
+    )
+  })
+
   test('risk expansion and missing material are rejected before a prospective attempt is admitted', async () => {
     const input = registration()
     const candidate = input.policies.find((policy) => policy.policy === 'JEV')
@@ -1257,8 +1379,15 @@ postgres('PostgreSQL prospective system qualification', () => {
           'maxNetExposureMicros',
           'maxDailyTradedNotionalMicros',
         ] as const
-      ).map((key) => ({ ...risk, [key]: (BigInt(risk[key]) + 1n).toString() })),
+      ).map((key) => {
+        const limit = risk[key]
+        if (limit === null) throw new Error('Expected bounded fixture policy')
+        return { ...risk, [key]: (BigInt(limit) + 1n).toString() }
+      }),
       { ...risk, maxGrossExposureMicros: null },
+      { ...risk, maxDailyTradedNotionalMicros: null },
+      { ...risk, schemaVersion: 'bayn.execution-risk-policy.v5', maxDailyTradedNotionalMicros: null },
+      { ...risk, schemaVersion: 'bayn.execution-risk-policy.v5', maxDrawdownMicros: '10000000000' },
       null,
     ]
     for (const riskPolicy of invalid) {

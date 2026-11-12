@@ -211,3 +211,19 @@ export const makeJevObservation = (input: {
   })
 
 export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']
+
+/** Restore the current typed graph while retaining the exact admitted source identity. */
+export const restoreJevObservation = (input: unknown) =>
+  Result.gen(function* () {
+    const { snapshot, contentHash, ...source } = yield* reproduceJevCandidateObservation(input)
+    const observation: JevObservation = {
+      ...source,
+      manifest: snapshot.manifest,
+      rows: yield* persistIntradayRecordRows(snapshot),
+    }
+    if ((yield* canonicalHashV1Result(observation)) !== contentHash)
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
+    return { observation, snapshot, contentHash }
+  })
+
+export type RestoredJevObservation = Result.Result.Success<ReturnType<typeof restoreJevObservation>>

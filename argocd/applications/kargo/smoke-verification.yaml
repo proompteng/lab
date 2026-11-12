@@ -1,0 +1,263 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ClusterAnalysisTemplate
+metadata:
+  name: kargo-http-smoke
+spec:
+  args:
+  - name: url
+  - name: pattern
+  metrics:
+  - name: kargo-http-smoke
+    count: 1
+    failureLimit: 0
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          activeDeadlineSeconds: 300
+          ttlSecondsAfterFinished: 300
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: kargo-smoke
+            spec:
+              automountServiceAccountToken: false
+              restartPolicy: Never
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                runAsGroup: 1001
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+              - name: smoke
+                image: curlimages/curl@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40
+                command:
+                - /bin/sh
+                - -ec
+                - |
+                  response=$(mktemp)
+                  trap 'rm -f "$response"' EXIT
+                  curl --fail --silent --show-error --location --retry 5 --retry-connrefused --retry-delay 2 --retry-max-time 20 --connect-timeout 5 --max-time 20 "$SMOKE_URL" -o "$response"
+                  if [ "$SMOKE_PATTERN" != "HTTP_STATUS_ONLY" ]; then
+                    grep -Eq "$SMOKE_PATTERN" "$response"
+                  fi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                    - ALL
+                resources:
+                  requests:
+                    cpu: 25m
+                    memory: 32Mi
+                  limits:
+                    cpu: 250m
+                    memory: 128Mi
+                volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                env:
+                - name: SMOKE_URL
+                  value: '{{args.url}}'
+                - name: SMOKE_PATTERN
+                  value: '{{args.pattern}}'
+              volumes:
+              - name: tmp
+                emptyDir: {}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ClusterAnalysisTemplate
+metadata:
+  name: kargo-workload-smoke
+spec:
+  args:
+  - name: namespace
+  - name: resource
+  - name: image
+  metrics:
+  - name: kargo-workload-smoke
+    count: 1
+    failureLimit: 0
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          activeDeadlineSeconds: 300
+          ttlSecondsAfterFinished: 300
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: kargo-smoke
+            spec:
+              automountServiceAccountToken: true
+              restartPolicy: Never
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                runAsGroup: 1001
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+              - name: smoke
+                image: bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+                command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n "{{args.namespace}}" rollout status "{{args.resource}}" --timeout=60s
+                  kubectl -n "{{args.namespace}}" get "{{args.resource}}" -o json | jq -e --arg image "{{args.image}}" '(.status.observedGeneration >= .metadata.generation) and (.status.readyReplicas > 0) and any(.spec.template.spec.containers[]; .image == $image)' >/dev/null
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                    - ALL
+                resources:
+                  requests:
+                    cpu: 25m
+                    memory: 32Mi
+                  limits:
+                    cpu: 250m
+                    memory: 128Mi
+                volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              volumes:
+              - name: tmp
+                emptyDir: {}
+              serviceAccountName: kargo-smoke
+              nodeSelector:
+                kubernetes.io/arch: amd64
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ClusterAnalysisTemplate
+metadata:
+  name: kargo-runner-smoke
+spec:
+  args:
+  - name: image
+  metrics:
+  - name: kargo-runner-smoke
+    count: 1
+    failureLimit: 0
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          activeDeadlineSeconds: 300
+          ttlSecondsAfterFinished: 300
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: kargo-smoke
+            spec:
+              automountServiceAccountToken: false
+              restartPolicy: Never
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                runAsGroup: 1001
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+              - name: smoke
+                image: '{{args.image}}'
+                command:
+                - /bin/bash
+                - -ec
+                - |
+                  git --version
+                  gh --version
+                  bun --version
+                  kubectl version --client
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                    - ALL
+                resources:
+                  requests:
+                    cpu: 25m
+                    memory: 32Mi
+                  limits:
+                    cpu: 250m
+                    memory: 128Mi
+                volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              volumes:
+              - name: tmp
+                emptyDir: {}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ClusterAnalysisTemplate
+metadata:
+  name: kargo-discord-smoke
+spec:
+  args:
+  - name: namespace
+  - name: resource
+  - name: image
+  metrics:
+  - name: discord-login
+    count: 1
+    failureLimit: 0
+    provider:
+      job:
+        spec:
+          backoffLimit: 0
+          activeDeadlineSeconds: 300
+          ttlSecondsAfterFinished: 300
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: kargo-smoke
+            spec:
+              automountServiceAccountToken: true
+              restartPolicy: Never
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                runAsGroup: 1001
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+              - name: smoke
+                image: bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+                command:
+                - /bin/sh
+                - -ec
+                - |
+                  kubectl -n "{{args.namespace}}" rollout status "{{args.resource}}" --timeout=60s
+                  kubectl -n "{{args.namespace}}" get "{{args.resource}}" -o json | jq -e --arg image "{{args.image}}" '(.status.observedGeneration >= .metadata.generation) and (.status.readyReplicas > 0) and any(.spec.template.spec.containers[]; .image == $image)' >/dev/null
+                  pods=$(kubectl -n "{{args.namespace}}" get pods -l app.kubernetes.io/name=oirat -o json | jq -r --arg image "{{args.image}}" '.items[] | select(.metadata.deletionTimestamp == null) | select(any(.spec.containers[]; .image == $image)) | .metadata.name')
+                  test -n "$pods"
+                  for pod in $pods; do
+                    kubectl -n "{{args.namespace}}" logs "$pod" -c oirat --tail=10000 | grep -Fq 'Discord mention bot ready as'
+                  done
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                    - ALL
+                resources:
+                  requests:
+                    cpu: 25m
+                    memory: 32Mi
+                  limits:
+                    cpu: 250m
+                    memory: 128Mi
+                volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              volumes:
+              - name: tmp
+                emptyDir: {}
+              serviceAccountName: kargo-smoke
+              nodeSelector:
+                kubernetes.io/arch: amd64

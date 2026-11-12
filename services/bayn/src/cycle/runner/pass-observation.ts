@@ -115,7 +115,8 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
         if (observation.outcome === 'ADMISSION_WAITING')
           return (
             observation.waitReason === undefined &&
-            observation.readiness?.reason === DecisionReadinessReason.AccountProtection &&
+            (observation.readiness?.reason === DecisionReadinessReason.AccountProtection ||
+              observation.readiness?.reason === DecisionReadinessReason.TurnoverBudgetExhausted) &&
             observation.admissionProtection !== undefined &&
             observation.admissionProtection.validUntil > observation.observedAt &&
             observation.nextWakeAt === undefined

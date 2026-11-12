@@ -18,7 +18,11 @@ import {
   type Position,
 } from '../execution/contracts'
 import { legacyOrderV2SchemaVersion } from '../execution/legacy-wire'
-import { MutationEventType, type MutationEvent } from '../execution/mutations/model'
+import {
+  MutationEventType,
+  type ExpiredEntryCancellationAdmission,
+  type MutationEvent,
+} from '../execution/mutations/model'
 
 export const countOpenPositions = (positions: readonly Pick<Position, 'quantityAtoms'>[]): number =>
   positions.filter((position) => BigInt(position.quantityAtoms) !== 0n).length
@@ -516,7 +520,14 @@ export type PreparedMutationCycleStep =
   | { readonly _tag: 'RunCycle' }
   | {
       readonly _tag: 'Execute'
-      readonly action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL'
+      readonly action: 'CANCEL'
+      readonly intentId: string
+      readonly observedAt: string
+      readonly cancellationAdmission?: ExpiredEntryCancellationAdmission
+    }
+  | {
+      readonly _tag: 'Execute'
+      readonly action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL'
       readonly intentId: string
       readonly observedAt: string
     }

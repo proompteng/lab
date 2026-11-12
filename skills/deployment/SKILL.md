@@ -35,10 +35,10 @@ without a pull request; Argo Applications track those branches.
 Use explicit namespaces and read-only commands:
 
 ```bash
-kubectl -n lab-delivery get project,warehouse,freight,stage
-kubectl -n lab-delivery get warehouse/<warehouse> -o yaml
-kubectl -n lab-delivery get freight/<freight> -o yaml
-kubectl -n lab-delivery get stage/<stage> -o yaml
+kubectl -n <project>-release get project,warehouse,freight,stage
+kubectl -n <project>-release get warehouse/<warehouse> -o yaml
+kubectl -n <project>-release get freight/<freight> -o yaml
+kubectl -n <project>-release get stage/<stage> -o yaml
 kubectl -n argocd get application/<application> -o jsonpath='{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
 kubectl -n argocd get application/<application> -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'
 kubectl -n <workload-namespace> rollout status deployment/<deployment> --timeout=5m
@@ -56,7 +56,7 @@ and pushes the deployment branch; Argo reconciles it. Do not edit a live Deploym
 or make a deployment PR. A direct deployment is permitted only with explicit break-glass authorization recorded in the
 incident; restore Kargo control afterward.
 
-Bayn uses `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates all three runtime image bindings and the activation
+Bayn uses `bayn-release/bayn` and `kargo/bayn`. Its Stage updates all three runtime image bindings and the activation
 build lineage while preserving the authored research request. The native activation hook and trading runtime retain
 account, strategy, capital grant, reconciliation, and order-risk enforcement. Recover image delivery through Kargo.
 

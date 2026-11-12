@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
@@ -390,7 +391,8 @@ export const verifyAccountingHistory = (
           cause,
         }),
       )
-      if ((yield* accountingHash(transaction)) !== (yield* accountingHash(expected.transaction)))
+      // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
+      if (!isDeepStrictEqual(transaction, expected.transaction))
         return yield* fail({
           _tag: 'AccountingTransactionMismatch',
           transactionId: transaction.transactionId,

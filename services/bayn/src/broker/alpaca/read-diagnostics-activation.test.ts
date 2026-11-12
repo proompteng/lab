@@ -16,8 +16,9 @@ import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { make } from './http'
 import { makeBrokerObservationCapture } from './snapshot-cache'
 import { diagnosticLogPrefix } from './read-diagnostics'
+import { verifyBrokerNotification } from '../notifications'
 
-test('normal broker polling emits diagnostics while native deployment activation remains blocked, without order mutations', async () => {
+test('broker capture recovery emits diagnostics while native deployment activation remains blocked, without order mutations', async () => {
   const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
   const sourceRevision = 'b'.repeat(40)
   const controllerKey = 'c'.repeat(64)
@@ -92,10 +93,13 @@ test('normal broker polling emits diagnostics while native deployment activation
       const execute = Effect.runPromiseWith(yield* Effect.context<never>())
       const read = yield* make(connection)
       const durable = new Map<string, unknown>()
-      const ticks: Array<{ parameter: unknown }> = []
+      const ticks: Array<{ method: string; parameter: unknown }> = []
       const observation = makeBaynBrokerObservations(
-        { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 },
+        { controllerKey, sourceRevision, maxAgeMs: 60_000, freshnessLeadMs: 30_000, operationTimeoutMs: 30_000 },
         {
+          verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+          recordNotification: async () => ({ covered: false }),
+          invalidate: async () => undefined,
           activate: async () => undefined,
           poll: (signal) =>
             execute(
@@ -110,6 +114,7 @@ test('normal broker polling emits diagnostics while native deployment activation
                   poll: {
                     _tag: 'Published',
                     snapshotHash: Result.getOrThrow(canonicalHashV1Result(snapshot)),
+                    observedAt: snapshot.observedAt,
                     nextPollNotBeforeMs: 0,
                   },
                   startedAtMs: Date.parse(snapshot.startedAt),
@@ -132,8 +137,8 @@ test('normal broker polling emits diagnostics while native deployment activation
         date: { now: () => execute(Clock.currentTimeMillis) },
         request: () => ({ attemptCompletedSignal: new AbortController().signal }),
         run: async (_name: string, action: () => Promise<unknown>) => action(),
-        genericSend: (delivery: { parameter: unknown }) => {
-          ticks.push(delivery)
+        genericSend: (delivery: { service: string; method: string; parameter: unknown }) => {
+          if (delivery.service === 'BaynBrokerObservations') ticks.push(delivery)
         },
         console: { warn: () => undefined },
       } as unknown as ObjectContext
@@ -141,14 +146,22 @@ test('normal broker polling emits diagnostics while native deployment activation
         observation as unknown as {
           object: {
             activate: (ctx: ObjectContext, input: unknown) => Promise<unknown>
-            poll: (ctx: ObjectContext, input: unknown) => Promise<void>
+            capture: (ctx: ObjectContext, input: unknown) => Promise<void>
+            freshness: (ctx: ObjectContext, input: unknown) => Promise<void>
           }
         }
       ).object
       const pollNext = async () => {
         const next = ticks.shift()
-        if (next === undefined) throw new Error('missing ordinary observer tick')
-        await owner.poll(observationContext, next.parameter)
+        if (next === undefined) throw new Error('missing observation recovery timer')
+        if (next.method === 'freshness') {
+          await owner.freshness(observationContext, next.parameter)
+          const capture = ticks.shift()
+          if (capture === undefined) throw new Error('missing completeness refresh')
+          await owner.capture(observationContext, capture.parameter)
+          return
+        }
+        await owner.capture(observationContext, next.parameter)
       }
       const controller = makeBaynExecutionController(
         {
@@ -187,6 +200,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       }
       const context = {
         key: controllerKey,
+        date: { now: async () => Date.parse('2026-11-09T18:00:00.000Z') },
         request: () => ({
           id: 'blocked-activation',
           headers: new Map([['authorization', `Bearer ${token}`]]),

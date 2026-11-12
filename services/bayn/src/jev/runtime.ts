@@ -34,6 +34,8 @@ import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { CandidateObservationStore, candidateObservationLog } from '../observe-composition/candidate-observation'
 import { makeJevObservation } from './observation'
+import { canonicalHashV1Result } from '../hash'
+import { JevInferenceWorkStore } from './inference-work'
 import {
   adverseQuotePrices,
   executionMarketDataBinding,
@@ -50,7 +52,12 @@ import {
   decodeJevBatchResult,
   usableEntryBatchInferences,
 } from './batch'
-import { evaluateJevBatch, recoverPendingJevBatches, type JevBatchEvaluationOptions } from './batch-evaluation'
+import {
+  evaluateJevBatch,
+  JevBatchStore,
+  recoverPendingJevBatches,
+  type JevBatchEvaluationOptions,
+} from './batch-evaluation'
 import { JevContractError } from './contract'
 import { JevAvailabilityReason, jevAvailabilityMessage } from './evidence'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './decision'
@@ -212,81 +219,124 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
   options: JevBatchEvaluationOptions = {},
 ) =>
   Effect.gen(function* () {
-    if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
-      return yield* new JevAwaitingEvidence({
-        message: 'A committed Jev batch still awaits its original deadline',
-        readiness: DecisionReadinessReason.DecisionPending,
-      })
-    if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
-      return yield* new JevAwaitingEvidence({
-        message: 'Entry admission expired before Jev observation dispatch',
-        readiness: DecisionReadinessReason.DecisionPending,
-      })
-    const { snapshot, observation, inputAvailableAt } = yield* loadNativeEntryObservation(
-      input,
-      rangeEndAt,
-      loadSnapshot,
-    )
-    if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
-      return yield* new JevAwaitingEvidence({
-        message: 'Entry admission expired before Jev batch admission',
-        readiness: DecisionReadinessReason.DecisionPending,
-      })
-    const batchPlan = yield* Effect.suspend(() =>
-      Effect.fromResult(
-        makeJevTradingSignalBatch({
-          observation: observation.payload,
-          expiresAt: utcInstantFromEpochMillis(
-            Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
-          ),
-          planVersion,
-        }),
-      ),
-    ).pipe(
-      Effect.tap((plan) =>
-        Effect.gen(function* () {
-          yield* Effect.annotateCurrentSpan({
-            'bayn.entry_timing.batch_id': plan.batchId,
-            'bayn.entry_timing.observation_hash': plan.observationHash,
-            'bayn.entry_timing.snapshot_hash': snapshot.manifest.contentHash,
-            'bayn.entry_timing.input_available_at': inputAvailableAt,
-          })
+    const { snapshot, observation, batchPlan, saved } = yield* Effect.gen(function* () {
+      const deferred = yield* Effect.serviceOption(JevInferenceWorkStore)
+      if (Option.isSome(deferred)) {
+        const resumed = yield* deferred.value.resume(input.cycleId, input.authorityGenerationHash)
+        if (resumed !== null) {
+          const batches = yield* JevBatchStore
+          const retained = yield* batches.read(resumed.batchId)
+          const original = resumed.source
           if (
-            input.portfolio.purpose === JevPurpose.Entry &&
-            (plan.schemaVersion === JevBatchPlanVersion.V8 || plan.schemaVersion === JevBatchPlanVersion.Ablation)
+            retained === null ||
+            retained.result === null ||
+            retained.plan.batchId !== resumed.batchId ||
+            retained.plan.cycleId !== input.cycleId ||
+            retained.plan.authorityGenerationHash !== input.authorityGenerationHash ||
+            retained.plan.schemaVersion !== planVersion ||
+            retained.plan.protocolHash !== (yield* Effect.fromResult(canonicalHashV1Result(input.protocol))) ||
+            retained.plan.observationHash !== original.contentHash ||
+            original.snapshot.manifest.rangeEndAt > rangeEndAt ||
+            (yield* Clock.currentTimeMillis) >= Date.parse(retained.plan.expiresAt) ||
+            (options.admissionDeadlineAt !== undefined &&
+              (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
           )
-            yield* Effect.annotateCurrentSpan('bayn.entry_timing.deterministic_selected_at', yield* currentUtcInstant)
-        }),
-      ),
-      withObservedStage('bayn.jev.batch-plan'),
-    )
-    if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
-      return yield* new JevAwaitingEvidence({
-        message: 'Entry admission expired before Jev provider dispatch',
-        readiness: DecisionReadinessReason.DecisionPending,
-      })
-    const saved = yield* evaluateJevBatch(batchPlan, observation.payload, options).pipe(
-      Effect.catchTag('JevBatchExpired', (cause) =>
-        Effect.logWarning('Jev observation expired before batch admission').pipe(
-          Effect.annotateLogs({
-            batchId: cause.batchId,
-            cycleId: cause.cycleId,
-            observedAt: cause.observedAt,
-            expiresAt: cause.expiresAt,
-            checkedAt: cause.checkedAt,
-            admissionLagMs: Date.parse(cause.checkedAt) - Date.parse(cause.observedAt),
+            return yield* new JevAwaitingEvidence({
+              message: 'Completed Jev inference no longer matches the current admission',
+              readiness: DecisionReadinessReason.InferenceExpired,
+            })
+          return {
+            snapshot: original.snapshot,
+            observation: { payload: original.observation, contentHash: original.contentHash },
+            batchPlan: retained.plan,
+            saved: retained,
+          }
+        }
+      }
+      const pending = yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)
+      if (pending.length > 0)
+        return yield* new JevAwaitingEvidence({
+          message: 'A committed Jev batch still awaits its original deadline',
+          availableAt: utcInstantFromEpochMillis(
+            pending.reduce(
+              (earliest, plan) => Math.min(earliest, Date.parse(plan.expiresAt)),
+              options.admissionDeadlineAt ?? Number.POSITIVE_INFINITY,
+            ),
+          ),
+          readiness: DecisionReadinessReason.DecisionPending,
+        })
+      if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission expired before Jev observation dispatch',
+          readiness: DecisionReadinessReason.DecisionPending,
+        })
+      const { snapshot, observation, inputAvailableAt } = yield* loadNativeEntryObservation(
+        input,
+        rangeEndAt,
+        loadSnapshot,
+      )
+      if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission expired before Jev batch admission',
+          readiness: DecisionReadinessReason.DecisionPending,
+        })
+      const batchPlan = yield* Effect.suspend(() =>
+        Effect.fromResult(
+          makeJevTradingSignalBatch({
+            observation: observation.payload,
+            expiresAt: utcInstantFromEpochMillis(
+              Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
+            ),
+            planVersion,
           }),
-          Effect.andThen(
-            Effect.fail(
-              new JevAwaitingEvidence({
-                message: 'The committed Jev observation expired before batch admission',
-                readiness: DecisionReadinessReason.InferenceExpired,
-              }),
+        ),
+      ).pipe(
+        Effect.tap((plan) =>
+          Effect.gen(function* () {
+            yield* Effect.annotateCurrentSpan({
+              'bayn.entry_timing.batch_id': plan.batchId,
+              'bayn.entry_timing.observation_hash': plan.observationHash,
+              'bayn.entry_timing.snapshot_hash': snapshot.manifest.contentHash,
+              'bayn.entry_timing.input_available_at': inputAvailableAt,
+            })
+            if (
+              input.portfolio.purpose === JevPurpose.Entry &&
+              (plan.schemaVersion === JevBatchPlanVersion.V8 || plan.schemaVersion === JevBatchPlanVersion.Ablation)
+            )
+              yield* Effect.annotateCurrentSpan('bayn.entry_timing.deterministic_selected_at', yield* currentUtcInstant)
+          }),
+        ),
+        withObservedStage('bayn.jev.batch-plan'),
+      )
+      if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission expired before Jev provider dispatch',
+          readiness: DecisionReadinessReason.DecisionPending,
+        })
+      const saved = yield* evaluateJevBatch(batchPlan, observation.payload, options).pipe(
+        Effect.catchTag('JevBatchExpired', (cause) =>
+          Effect.logWarning('Jev observation expired before batch admission').pipe(
+            Effect.annotateLogs({
+              batchId: cause.batchId,
+              cycleId: cause.cycleId,
+              observedAt: cause.observedAt,
+              expiresAt: cause.expiresAt,
+              checkedAt: cause.checkedAt,
+              admissionLagMs: Date.parse(cause.checkedAt) - Date.parse(cause.observedAt),
+            }),
+            Effect.andThen(
+              Effect.fail(
+                new JevAwaitingEvidence({
+                  message: 'The committed Jev observation expired before batch admission',
+                  readiness: DecisionReadinessReason.InferenceExpired,
+                }),
+              ),
             ),
           ),
         ),
-      ),
-    )
+      )
+      return { snapshot, observation, batchPlan, saved }
+    })
     yield* Effect.logInfo(candidateObservationLog(observation))
     const decidedAt = yield* currentUtcInstant
     const availability =
@@ -331,6 +381,16 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             : JevAvailabilityReason.InvalidEvidence
       return yield* new JevAwaitingEvidence({
         message: jevAvailabilityMessage(reason),
+        ...(saved.result === null
+          ? {
+              availableAt: utcInstantFromEpochMillis(
+                Math.min(
+                  Date.parse(saved.plan.expiresAt),
+                  options.admissionDeadlineAt ?? Date.parse(saved.plan.expiresAt),
+                ),
+              ),
+            }
+          : {}),
         readiness:
           reason === JevAvailabilityReason.OutsideValidityWindow &&
           saved.result !== null &&

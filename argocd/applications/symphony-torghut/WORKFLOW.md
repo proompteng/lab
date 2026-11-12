@@ -116,7 +116,7 @@ target:
 release:
   mode: kargo_auto
   promotion_authority: kargo
-  kargo_project: lab-delivery
+  kargo_project: torghut-release
   kargo_warehouse: torghut
   kargo_branch: kargo/torghut
   kargo_stages:
