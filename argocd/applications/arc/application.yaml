@@ -231,7 +231,7 @@ spec:
                       # copied modes and links while making writable Nix state owned by that user.
                       chown -R 1001:1001 "$stage/nix" "$stage/cache"
                       chmod 755 "$stage/nix" "$stage/nix/store" "$stage/nix/var" "$stage/cache"
-                      # Five digits clear fsGroup's inherited setgid bit; plain 1777 preserves it.
+                      # The leading zero clears fsGroup's inherited setgid bit before Nix builds use /tmp.
                       chmod 01777 "$stage/tmp"
                       chown 0:1001 "$stage/work"
                       chmod 2777 "$stage/work"
