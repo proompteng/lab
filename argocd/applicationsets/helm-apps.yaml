@@ -64,6 +64,8 @@ spec:
                         namespace: kargo
                         createNamespace: false
                     controller:
+                      # Pause reconciliation while Project histories move namespaces.
+                      enabled: false
                       env:
                         - name: GIT_TERMINAL_PROMPT
                           value: "0"
