@@ -98,8 +98,9 @@ Changes to CI planning code, its action, or its tests run `packages-scripts` val
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
 
 Agents' existing Kind smoke job forces a rebuild of its shared dependency closure only when its Nix dependency
-inputs, installed workspace manifests or installed Effect patch change. Ordinary runtime edits reuse the cache;
-test-only edits retain the unit tier. The Effect patch is also an image-publication and Kargo discovery input.
+inputs, installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache;
+test-only edits retain the unit tier. All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
+semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
 A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
 The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services
 retain their native checks for dependency changes without repeating the same shared-script validation.

@@ -47,9 +47,8 @@ const STATIC_EXACT_PATHS = new Set([
   'scripts/download_crd_schema.py',
 ])
 
-// Effect is the only root patch installed in the shared Agents dependency cache.
 const DEPENDENCY_EXACT_PATHS = new Set([
-  'patches/effect@4.0.0.patch',
+  'patches/effect@4.1.4.patch',
   'flake.lock',
   'flake.nix',
   'nix/packages.nix',
@@ -65,6 +64,7 @@ const DEPENDENCY_EXACT_PATHS = new Set([
 ])
 
 const ALL_IMAGE_EXACT_PATHS = new Set([
+  'patches/effect@4.1.4.patch',
   'services/agents/package.json',
   'services/agents/scripts/apply_patch.py',
   'flake.lock',
@@ -72,7 +72,6 @@ const ALL_IMAGE_EXACT_PATHS = new Set([
   'nix/images/agents.nix',
   'nix/images/bun-workspace-service.nix',
   'nix/images/relativize-bun-cache.sh',
-  'patches/effect@4.0.0.patch',
   'nix/packages.nix',
   'packages/scripts/src/shared/nix-oci-deploy.ts',
 ])

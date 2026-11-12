@@ -34,7 +34,7 @@ export interface ShellServiceDefinition {
   ) => Effect.Effect<ShellResult, WorkspaceError>
 }
 
-export class ShellService extends Context.Tag('symphony/ShellService')<ShellService, ShellServiceDefinition>() {}
+export class ShellService extends Context.Service<ShellService, ShellServiceDefinition>()('symphony/ShellService') {}
 
 export interface WorkspaceServiceDefinition {
   readonly createForIssue: (
@@ -51,10 +51,9 @@ export interface WorkspaceServiceDefinition {
   readonly removeWorkspace: (identifier: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
 }
 
-export class WorkspaceService extends Context.Tag('symphony/WorkspaceService')<
-  WorkspaceService,
-  WorkspaceServiceDefinition
->() {}
+export class WorkspaceService extends Context.Service<WorkspaceService, WorkspaceServiceDefinition>()(
+  'symphony/WorkspaceService',
+) {}
 
 const cleanupEphemeralArtifacts = (workspacePath: string): Effect.Effect<void, never, never> =>
   Effect.tryPromise({
@@ -69,7 +68,7 @@ const cleanupEphemeralArtifacts = (workspacePath: string): Effect.Effect<void, n
     catch: () => undefined,
   }).pipe(
     Effect.asVoid,
-    Effect.catchAll(() => Effect.void),
+    Effect.catch(() => Effect.void),
   )
 
 export const makeShellLayer = (logger: Logger) =>
@@ -95,7 +94,7 @@ export const makeShellLayer = (logger: Logger) =>
             }),
         ).pipe(
           Effect.flatMap((child) =>
-            Effect.async<ShellResult, WorkspaceError>((resume) => {
+            Effect.callback<ShellResult, WorkspaceError>((resume) => {
               let stdout = ''
               let stderr = ''
 
@@ -138,12 +137,14 @@ export const makeShellLayer = (logger: Logger) =>
 
               return Effect.void
             }).pipe(
-              Effect.timeoutFail({
+              Effect.timeoutOrElse({
                 duration: Duration.millis(options.timeoutMs),
-                onTimeout: () =>
-                  new WorkspaceError(
-                    'workspace_hook_timeout',
-                    `hook ${options.hookName} timed out after ${options.timeoutMs}ms`,
+                orElse: () =>
+                  Effect.fail(
+                    new WorkspaceError(
+                      'workspace_hook_timeout',
+                      `hook ${options.hookName} timed out after ${options.timeoutMs}ms`,
+                    ),
                   ),
               }),
             ),
@@ -198,7 +199,7 @@ export const makeWorkspaceLayer = (logger: Logger) =>
               })
             }),
           ),
-          Effect.catchAll((error) => {
+          Effect.catch((error) => {
             const logLevel = failOnError ? 'error' : 'warn'
             const logEffect = Effect.sync(() => {
               workspaceLogger.log(logLevel, 'workspace_hook_failed', {
@@ -211,7 +212,7 @@ export const makeWorkspaceLayer = (logger: Logger) =>
               })
             })
 
-            return failOnError ? logEffect.pipe(Effect.zipRight(Effect.fail(error))) : logEffect.pipe(Effect.asVoid)
+            return failOnError ? logEffect.pipe(Effect.andThen(Effect.fail(error))) : logEffect.pipe(Effect.asVoid)
           }),
         )
 
@@ -237,7 +238,7 @@ export const makeWorkspaceLayer = (logger: Logger) =>
 
             let createdNow = false
 
-            const metadataResult = yield* Effect.either(
+            const metadataResult = yield* Effect.result(
               Effect.tryPromise({
                 try: () => stat(workspacePath),
                 catch: (error) =>
@@ -245,10 +246,10 @@ export const makeWorkspaceLayer = (logger: Logger) =>
               }),
             )
 
-            if (metadataResult._tag === 'Left') {
-              const nodeError = metadataResult.left.causeValue as NodeJS.ErrnoException | undefined
+            if (metadataResult._tag === 'Failure') {
+              const nodeError = metadataResult.failure.causeValue as NodeJS.ErrnoException | undefined
               if (nodeError?.code && nodeError.code !== 'ENOENT') {
-                return yield* Effect.fail(metadataResult.left)
+                return yield* Effect.fail(metadataResult.failure)
               }
 
               yield* Effect.tryPromise({
@@ -257,7 +258,7 @@ export const makeWorkspaceLayer = (logger: Logger) =>
                   new WorkspaceError('workspace_create_failed', `failed to create workspace ${workspacePath}`, error),
               })
               createdNow = true
-            } else if (!metadataResult.right.isDirectory()) {
+            } else if (!metadataResult.success.isDirectory()) {
               return yield* Effect.fail(
                 new WorkspaceError(
                   'workspace_path_not_directory',
@@ -309,7 +310,7 @@ export const makeWorkspaceLayer = (logger: Logger) =>
               )
             }
 
-            const metadataResult = yield* Effect.either(
+            const metadataResult = yield* Effect.result(
               Effect.tryPromise({
                 try: () => stat(workspacePath),
                 catch: (error) =>
@@ -317,15 +318,15 @@ export const makeWorkspaceLayer = (logger: Logger) =>
               }),
             )
 
-            if (metadataResult._tag === 'Left') {
-              const nodeError = metadataResult.left.causeValue as NodeJS.ErrnoException | undefined
+            if (metadataResult._tag === 'Failure') {
+              const nodeError = metadataResult.failure.causeValue as NodeJS.ErrnoException | undefined
               if (nodeError?.code === 'ENOENT') {
                 return
               }
-              return yield* Effect.fail(metadataResult.left)
+              return yield* Effect.fail(metadataResult.failure)
             }
 
-            if (!metadataResult.right.isDirectory()) {
+            if (!metadataResult.success.isDirectory()) {
               return yield* Effect.fail(
                 new WorkspaceError(
                   'workspace_path_not_directory',

@@ -495,6 +495,7 @@ WORKDIR /app
 RUN rm -rf /app/packages /app/services
 COPY full/ .
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
+RUN bun --cwd=packages/temporal-bun-sdk run build
 WORKDIR /app/services/jangar
 ARG JANGAR_BUILD_NODE_OPTIONS="--max-old-space-size=2048"
 ARG JANGAR_BUILD_MINIFY=0
@@ -551,6 +552,8 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
   && chmod +x /app/packages/cx-tools/dist/*.js
 
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+COPY --from=jangar-build /app/packages/temporal-bun-sdk/package.json ./packages/temporal-bun-sdk/package.json
+COPY --from=jangar-build /app/packages/temporal-bun-sdk/dist ./packages/temporal-bun-sdk/dist
 COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebuilds
 
@@ -606,6 +609,8 @@ RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-r
 
 WORKDIR /app
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+COPY --from=jangar-build /app/packages/temporal-bun-sdk/package.json ./packages/temporal-bun-sdk/package.json
+COPY --from=jangar-build /app/packages/temporal-bun-sdk/dist ./packages/temporal-bun-sdk/dist
 COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebuilds
 

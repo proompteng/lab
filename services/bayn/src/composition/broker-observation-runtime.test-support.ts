@@ -1,3 +1,4 @@
+import { postgresQueryFixture } from '../testing/postgres-fixture.test-support'
 import { ValkeyCache } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
@@ -83,7 +84,7 @@ await mock.module('../db/postgres-client', () => ({
           loggerInherited: (yield* Logger.CurrentLoggers) === loggers,
           tracerInherited: (yield* Tracer.Tracer) === tracer,
         }
-        return sql as unknown as PgClient.PgClient
+        return postgresQueryFixture(sql)
       }),
     ),
 }))

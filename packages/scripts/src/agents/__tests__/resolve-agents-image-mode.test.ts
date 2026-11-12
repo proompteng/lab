@@ -151,12 +151,16 @@ describe('classifyAgentsImageMode', () => {
     ])
   })
 
-  it('rebuilds and verifies the shared closure when the installed Effect patch changes', () => {
-    const result = classifyAgentsImageMode(['patches/effect@4.0.0.patch'])
-    expect(result.tier).toBe('local-smoke')
-    expect(result.imageTargets).toEqual(['control-plane', 'controller', 'runner', 'agents-shell'])
-    expect(result.verifyDependencyClosure).toBe(true)
-    expect(classifyAgentsImageMode(['patches/@platformatic%2Fkafka@2.12.1.patch']).runIntegration).toBe(false)
+  it('verifies the installed Effect patch without coupling builds to unrelated patches', () => {
+    const installed = classifyAgentsImageMode(['patches/effect@4.1.4.patch'])
+    expect(installed.tier).toBe('local-smoke')
+    expect(installed.imageTargets).toEqual(['control-plane', 'controller', 'runner', 'agents-shell'])
+    expect(installed.verifyDependencyClosure).toBe(true)
+    for (const path of ['patches/@effect%2Fsql-pg@4.1.4.patch', 'patches/@platformatic%2Fkafka@2.12.1.patch']) {
+      const result = classifyAgentsImageMode([path])
+      expect(result.runIntegration).toBe(false)
+      expect(result.verifyDependencyClosure).toBe(false)
+    }
   })
 
   it('checks cold dependency output only for selected dependency inputs', () => {
