@@ -446,6 +446,77 @@ test('the authenticated market gateway awaits only its small private wake and re
   expect(deliveries).toHaveLength(1)
 })
 
+test.each(['broker', 'market-boundary'] as const)(
+  'failed reconciliation retains market backoff and releases on %s',
+  async (recovery) => {
+    let now = Date.parse('2026-08-13T18:00:01.000Z')
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const deliveries: unknown[] = []
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        prepareActivation: async () => undefined,
+        projectState: async () => undefined,
+        log: async () => undefined,
+        advance: async () => ({
+          completedAt: '2026-08-13T18:00:00.000Z',
+          observation: {
+            result: 'FAILURE',
+            observedAt: '2026-08-13T18:00:00.000Z',
+            operation: 'reconcile',
+            failure: 'market-data',
+            message: 'Broker observation is unavailable or invalidated by a mutation',
+          },
+          outcome: {
+            _tag: ExecutionControllerOutcome.Blocked,
+            receiptHash: 'd'.repeat(64),
+            nextDelayMs: 30_000,
+            nextWakeAt: '2026-08-13T18:00:30.000Z',
+          },
+        }),
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: unknown) => deliveries.push(delivery),
+      request: () => ({ id: 'broker-retry-eligibility', attemptCompletedSignal: new AbortController().signal }),
+      date: { now: async () => now },
+    } as unknown as TestContext
+    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+    expect(state.marketEligibleAt).toBe('2026-08-13T18:00:30.000Z')
+    expect(state.nextDueAt).toBe(state.marketEligibleAt)
+    for (let sequence = 1; sequence <= 100; sequence++) await object.wake(context, marketChange(sequence))
+    expect(deliveries).toHaveLength(1)
+    expect(state.marketFrontier?.sequence).toBe(100)
+    if (recovery === 'market-boundary') {
+      now = Date.parse('2026-08-13T18:00:30.000Z')
+      await object.wake(context, marketChange(101))
+    } else
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'BrokerObservation',
+        sourceRevision,
+        eventId: 'a'.repeat(64),
+        snapshotHash: 'b'.repeat(64),
+        observedAt: '2026-08-13T18:00:01.000Z',
+      })
+    expect(deliveries).toHaveLength(2)
+    expect(state.wakeScheduledSequence).toBe(5)
+  },
+)
+
 test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
   let state: ExecutionControllerState = {
     schemaVersion: 1,
