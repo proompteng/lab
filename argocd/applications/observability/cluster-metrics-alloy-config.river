@@ -372,6 +372,62 @@ prometheus.scrape "bayn" {
 	forward_to      = [prometheus.relabel.bayn_metrics.receiver]
 }
 
+discovery.kubernetes "bayn_broker_stream_pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["bayn"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name in (bayn-broker-feed,bayn-broker-kafka-ingress)"
+	}
+}
+
+discovery.relabel "bayn_broker_stream_metrics" {
+	targets = discovery.kubernetes.bayn_broker_stream_pods.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_port_name"]
+		regex         = "metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+		target_label  = "service"
+	}
+}
+
+prometheus.relabel "bayn_broker_stream_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|dorvud_broker_feed_.*|restate_kafka_.*|kafka_consumer_.*"
+	}
+}
+
+prometheus.scrape "bayn_broker_stream" {
+	job_name        = "bayn-broker-stream"
+	targets         = discovery.relabel.bayn_broker_stream_metrics.output
+	scrape_interval = "15s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.bayn_broker_stream_metrics.receiver]
+}
+
 discovery.kubernetes "bayn_valkey_pods" {
 	role = "pod"
 
@@ -646,7 +702,7 @@ discovery.relabel "bayn_pod_logs" {
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_name"]
-		regex         = "bayn|execution-controller|activate|research|postgres|squid|tigerbeetle|vllm|provision-model"
+		regex         = "bayn|execution-controller|activate|research|broker-feed|kafka-ingress|postgres|squid|tigerbeetle|vllm|provision-model"
 	}
 
 	rule {

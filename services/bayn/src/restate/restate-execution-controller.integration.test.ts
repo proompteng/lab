@@ -26,7 +26,14 @@ const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_IN
 )
 const describeRestate = admin === undefined || ingress === undefined ? describe.skip : describe
 
-describeRestate('Real Restate execution deployment activation', () => {
+// Discovery must disable cached execution for the private streaming handlers under test.
+const alwaysReplay = <A extends { name: string }>(service: A): A => {
+  const definition = service as A & { options?: restate.ObjectOptions }
+  definition.options = { ...definition.options, inactivityTimeout: 0 }
+  return service
+}
+
+describeRestate('Real always-replay Restate execution deployment activation', () => {
   test('one durable activation recovers after dependency failure while restarted waiters reuse its coordinator', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress]) {
@@ -55,70 +62,94 @@ describeRestate('Real Restate execution deployment activation', () => {
     let warmupEntered = () => {}
     const advanced: number[] = []
     const initialAdvanceAttempts: Array<{ readonly sequence: number; readonly issuedAt: string }> = []
-    const controller = makeBaynExecutionController(config, {
-      advance: async (command) => {
-        if (initialAdvanceAttempts.length < 2) {
-          initialAdvanceAttempts.push(command)
-          if (initialAdvanceAttempts.length === 1) throw new Error('Injected first advance failure')
-        }
-        advanced.push(command.sequence)
-        return {
-          completedAt: command.issuedAt,
-          observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
-          outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 500 },
-        }
-      },
-      prepareActivation: async () => {
-        warmupEntered()
-        await warmupGate
-      },
-      projectState: async () => {
-        controllerActivations += 1
-      },
-      log: () => Promise.resolve(),
-    })
-    const observations = makeBaynBrokerObservations(
-      { ...config, pollIntervalMs: 1_000 },
-      {
-        activate: async () => {
-          brokerActivations += 1
+    let financialHandlerAttempts = 0
+    const controller = alwaysReplay(
+      makeBaynExecutionController(config, {
+        advance: async (command) => {
+          if (initialAdvanceAttempts.length < 2) {
+            initialAdvanceAttempts.push(command)
+            if (initialAdvanceAttempts.length === 1) throw new Error('Injected first advance failure')
+          }
+          advanced.push(command.sequence)
+          return {
+            completedAt: command.issuedAt,
+            observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
+            outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 500 },
+          }
         },
-        poll: async () => {
-          const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
-          if (failedPollNotBeforeMs > now) {
+        prepareActivation: async () => {
+          warmupEntered()
+          await warmupGate
+        },
+        projectState: async () => {
+          controllerActivations += 1
+        },
+        log: () => Promise.resolve(),
+      }),
+    )
+    const observations = alwaysReplay(
+      makeBaynBrokerObservations(
+        { ...config, maxAgeMs: 60_000, freshnessLeadMs: 5_000 },
+        {
+          verifyNotification: () => {
+            throw new Error('activation does not ingest signed notifications')
+          },
+          recordNotification: async () => ({ covered: false }),
+          invalidate: async () => undefined,
+          activate: async () => {
+            brokerActivations += 1
+          },
+          poll: async () => {
+            const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+            if (failedPollNotBeforeMs > now) {
+              brokerPollAttempts.push({
+                startedAtMs: now,
+                nextPollNotBeforeMs: failedPollNotBeforeMs,
+                outcome: 'QuotaWait',
+              })
+              return {
+                poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
+                startedAtMs: now,
+                completedAtMs: now,
+              }
+            }
+            brokerPolls += 1
+            if (!brokerReady) {
+              failedPollNotBeforeMs = now + 5_000
+              brokerPollAttempts.push({
+                startedAtMs: now,
+                nextPollNotBeforeMs: failedPollNotBeforeMs,
+                outcome: 'Failed',
+              })
+              throw new Error('Broker observation dependency is temporarily unavailable')
+            }
             brokerPollAttempts.push({
               startedAtMs: now,
               nextPollNotBeforeMs: failedPollNotBeforeMs,
-              outcome: 'QuotaWait',
+              outcome: 'Published',
             })
             return {
-              poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
+              poll: {
+                _tag: 'Published',
+                snapshotHash: 'e'.repeat(64),
+                observedAt: new Date(now).toISOString(),
+                nextPollNotBeforeMs: 0,
+              },
               startedAtMs: now,
               completedAtMs: now,
             }
-          }
-          brokerPolls += 1
-          if (!brokerReady) {
-            failedPollNotBeforeMs = now + 5_000
-            brokerPollAttempts.push({
-              startedAtMs: now,
-              nextPollNotBeforeMs: failedPollNotBeforeMs,
-              outcome: 'Failed',
-            })
-            throw new Error('Broker observation dependency is temporarily unavailable')
-          }
-          brokerPollAttempts.push({
-            startedAtMs: now,
-            nextPollNotBeforeMs: failedPollNotBeforeMs,
-            outcome: 'Published',
-          })
-          return {
-            poll: { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
-            startedAtMs: now,
-            completedAtMs: now,
-          }
+          },
         },
-      },
+      ),
+    )
+    const bridge = alwaysReplay(
+      restate.service({
+        name: 'ExecutionDeploymentTestBridge',
+        handlers: {
+          wake: (ctx: restate.Context, candidate: unknown) =>
+            ctx.objectClient(controller, config.controllerKey).wake(candidate),
+        },
+      }),
     )
     const loadAttempt = (jobUid: string) =>
       restateExecutionActivationTransportConfig.pipe(
@@ -162,7 +193,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                 try: async (signal) => {
                   const response = await fetch(`${admin}/deployments`, {
                     method: 'POST',
-                    body: JSON.stringify({ uri: `http://host.docker.internal:${address.port}` }),
+                    body: JSON.stringify({ uri: `http://host.docker.internal:${address.port}`, force: true }),
                     headers: { 'content-type': 'application/json' },
                     signal,
                   })
@@ -180,10 +211,33 @@ describeRestate('Real Restate execution deployment activation', () => {
               deactivate: (_ctx: restate.ObjectContext, candidate: unknown) => Promise.resolve(candidate),
               status: restate.handlers.object.shared(() => Promise.resolve(null)),
             },
-            options: { ingressPrivate: true },
+            options: { ingressPrivate: true, inactivityTimeout: 0 },
           })
           yield* register(createServer(restate.createEndpointHandler({ services: [predecessor, observations] })))
-          yield* register(createServer(restate.createEndpointHandler({ services: [controller, observations] })))
+          const endpoint = restate.createEndpointHandler({ services: [controller, observations, bridge] })
+          yield* register(
+            createServer((request, response) => {
+              if (request.url.endsWith('/tick')) financialHandlerAttempts += 1
+              endpoint(request, response)
+            }),
+          )
+          const discovery = yield* Effect.tryPromise({
+            try: async (signal) => {
+              const response = await fetch(`${admin}/services/BaynExecutionController`, { signal })
+              if (!response.ok) throw new Error('Local Restate controller discovery readback failed')
+              return response.json() as Promise<unknown>
+            },
+            catch: (cause) => cause,
+          })
+          expect(discovery).toMatchObject({
+            inactivity_timeout: '0s',
+            enable_lazy_state: false,
+            handlers: expect.arrayContaining([
+              expect.objectContaining({ name: 'tick', public: false }),
+              expect.objectContaining({ name: 'wake', public: false }),
+              expect.objectContaining({ name: 'marketChanged', public: true }),
+            ]),
+          })
           const unauthenticated = yield* invoke(config.controllerKey, 'activateDeployment')
           expect(unauthenticated.ok).toBe(false)
           expect(yield* Effect.promise(() => unauthenticated.text())).toContain(
@@ -194,7 +248,7 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(yield* Effect.promise(() => wrongKey.text())).toContain('does not match this immutable deployment')
           expect(brokerActivations).toBe(0)
           expect(controllerActivations).toBe(0)
-          for (const method of ['activate', 'rotate', 'tick', 'deactivate', 'prepareActivation', 'status']) {
+          for (const method of ['activate', 'rotate', 'tick', 'wake', 'deactivate', 'prepareActivation', 'status']) {
             const denied = yield* invoke(config.controllerKey, method, `Bearer ${token}`)
             expect(denied.status).toBe(400)
             expect(yield* Effect.promise(() => denied.text())).toContain('the invoked service is not public')
@@ -241,12 +295,13 @@ describeRestate('Real Restate execution deployment activation', () => {
             planHash: config.planHash,
             sourceRevision: config.sourceRevision,
           })
-          expect(state.lastCompletion?.sequence).toBeGreaterThan(state.initialSequence)
+          expect(state.lastCompletion?.sequence).toBeGreaterThanOrEqual(state.initialSequence)
           expect(state.nextSequence).toBe((state.lastCompletion?.sequence ?? -1) + 1)
-          expect(advanced.length).toBeGreaterThanOrEqual(2)
+          expect(advanced.length).toBeGreaterThanOrEqual(1)
           expect(new Set(advanced).size).toBe(advanced.length)
           expect(initialAdvanceAttempts).toHaveLength(2)
           expect(initialAdvanceAttempts[1]).toEqual(initialAdvanceAttempts[0])
+          expect(financialHandlerAttempts).toBeGreaterThan(initialAdvanceAttempts.length)
           expect(brokerPolls).toBeGreaterThanOrEqual(1)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
@@ -289,8 +344,9 @@ describeRestate('Real Restate execution deployment activation', () => {
             },
             catch: (cause) => cause,
           })
+          // The idle pass also reads deadline ownership before completing without a successor timer.
           expect(journal).toMatchObject({
-            rows: [{ journal_entries: 0, lazy_tick_state_reads: 0, minimum_tick_entries: 8, maximum_tick_entries: 8 }],
+            rows: [{ journal_entries: 0, lazy_tick_state_reads: 0, minimum_tick_entries: 7, maximum_tick_entries: 7 }],
           })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
@@ -322,7 +378,30 @@ describeRestate('Real Restate execution deployment activation', () => {
           })
           yield* Effect.promise(() => warmingEntered)
           const beforeWarm = advanced.length
-          yield* Effect.sleep(1200)
+          const eventAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+          yield* Effect.tryPromise({
+            try: async (signal) => {
+              const response = await fetch(`${ingress}/ExecutionDeploymentTestBridge/wake`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  schemaVersion: 'bayn.execution-wakeup.v1',
+                  _tag: 'BrokerObservation',
+                  sourceRevision: config.sourceRevision,
+                  eventId: randomUUID().replaceAll('-', '').repeat(2),
+                  snapshotHash: '7'.repeat(64),
+                  observedAt: eventAt,
+                }),
+                headers: { 'content-type': 'application/json' },
+                signal,
+              })
+              if (!response.ok) throw new Error('Local explicit wake failed during activation prewarm')
+              await response.body?.cancel()
+            },
+            catch: (cause) => cause,
+          })
+          yield* Effect.suspend(() =>
+            advanced.length > beforeWarm ? Effect.void : Effect.fail('financial wake pending'),
+          ).pipe(Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 100 }))
           expect(advanced.length).toBeGreaterThan(beforeWarm)
           expect(controllerActivations).toBe(1)
           expect(brokerActivations).toBe(1)
@@ -351,34 +430,52 @@ describeRestate('Real Restate execution deployment activation', () => {
             allReplacementAdvances.push(replacementAdvances)
             const projected: Array<{ active: boolean; epoch: number; sourceRevision: string }> = []
             allProjections.push(projected)
-            const replacementController = makeBaynExecutionController(replacementConfig, {
-              advance: async (command) => {
-                replacementAdvances.push(command)
-                return {
-                  completedAt: command.issuedAt,
-                  observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
-                  outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'f'.repeat(64), nextDelayMs: 500 },
-                }
-              },
-              prepareActivation: () => Promise.resolve(),
-              projectState: async (_key, next) => {
-                projected.push(next)
-              },
-              log: () => Promise.resolve(),
-            })
-            const replacementObservations = makeBaynBrokerObservations(
-              { ...replacementConfig, pollIntervalMs: 1_000 },
-              {
-                activate: () => Promise.resolve(),
-                poll: async () => {
-                  const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+            const replacementController = alwaysReplay(
+              makeBaynExecutionController(replacementConfig, {
+                advance: async (command) => {
+                  replacementAdvances.push(command)
                   return {
-                    poll: { _tag: 'Published', snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs: 0 },
-                    startedAtMs: now,
-                    completedAtMs: now,
+                    completedAt: command.issuedAt,
+                    observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
+                    outcome: {
+                      _tag: ExecutionControllerOutcome.Waiting,
+                      receiptHash: 'f'.repeat(64),
+                      nextDelayMs: 500,
+                    },
                   }
                 },
-              },
+                prepareActivation: () => Promise.resolve(),
+                projectState: async (_key, next) => {
+                  projected.push(next)
+                },
+                log: () => Promise.resolve(),
+              }),
+            )
+            const replacementObservations = alwaysReplay(
+              makeBaynBrokerObservations(
+                { ...replacementConfig, maxAgeMs: 60_000, freshnessLeadMs: 5_000 },
+                {
+                  verifyNotification: () => {
+                    throw new Error('activation does not ingest signed notifications')
+                  },
+                  recordNotification: async () => ({ covered: false }),
+                  invalidate: async () => undefined,
+                  activate: () => Promise.resolve(),
+                  poll: async () => {
+                    const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+                    return {
+                      poll: {
+                        _tag: 'Published',
+                        snapshotHash: 'f'.repeat(64),
+                        observedAt: new Date(now).toISOString(),
+                        nextPollNotBeforeMs: 0,
+                      },
+                      startedAtMs: now,
+                      completedAtMs: now,
+                    }
+                  },
+                },
+              ),
             )
             yield* register(
               createServer(
@@ -404,7 +501,7 @@ describeRestate('Real Restate execution deployment activation', () => {
               sourceRevision: replacementConfig.sourceRevision,
             })
             expect(rotated.initialSequence).toBeGreaterThanOrEqual(previousNextSequence)
-            expect(rotated.lastCompletion?.sequence).toBeGreaterThan(rotated.initialSequence)
+            expect(rotated.lastCompletion?.sequence).toBeGreaterThanOrEqual(rotated.initialSequence)
             expect(projected).toEqual([
               expect.objectContaining({
                 active: true,
@@ -412,7 +509,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                 sourceRevision: replacementConfig.sourceRevision,
               }),
             ])
-            expect(replacementAdvances.length).toBeGreaterThanOrEqual(2)
+            expect(replacementAdvances.length).toBeGreaterThanOrEqual(1)
             expect(
               replacementAdvances.every(
                 (command) =>
@@ -527,41 +624,45 @@ describeRestate('Real Restate execution deployment activation', () => {
       readonly succeeded: boolean
     }> = []
     const recoveryWindows: Array<Readonly<Record<string, string | number | boolean>>> = []
-    const controller = makeBaynExecutionController(config, {
-      advance: async (command) => {
-        const startedAtMs = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
-        attempts.push({ ...command, startedAtMs, succeeded: dependencyReady })
-        if (!dependencyReady) throw new Error('Injected saturated-window dependency failure')
-        // Completion time stays live while issuedAt remains the original command's receipt provenance.
-        // The ordinary 60-second successor cannot satisfy the earlier 30-second recovery assertion.
-        const completedAt = new Date(startedAtMs).toISOString()
-        return {
-          completedAt,
-          outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 60_000 },
-        }
-      },
-      prepareActivation: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
-      log: async (_level, message, annotations) => {
-        if (message === 'Bayn execution controller scheduled a recovery window') recoveryWindows.push(annotations)
-      },
-    })
+    const controller = alwaysReplay(
+      makeBaynExecutionController(config, {
+        advance: async (command) => {
+          const startedAtMs = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+          attempts.push({ ...command, startedAtMs, succeeded: dependencyReady })
+          if (!dependencyReady) throw new Error('Injected saturated-window dependency failure')
+          // Completion time stays live while issuedAt remains the original command's receipt provenance.
+          // A successful pass becomes idle; only the retained recovery obligation can resume this command.
+          const completedAt = new Date(startedAtMs).toISOString()
+          return {
+            completedAt,
+            outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 60_000 },
+          }
+        },
+        prepareActivation: () => Promise.resolve(),
+        projectState: () => Promise.resolve(),
+        log: async (_level, message, annotations) => {
+          if (message === 'Bayn execution controller scheduled a recovery window') recoveryWindows.push(annotations)
+        },
+      }),
+    )
     // This public bridge exists only in the local fixture. All state changes still pass through the real
     // controller's private, validated handlers; the test never writes Restate object state directly.
-    const bridge = restate.service({
-      name: 'ExecutionRecoveryTestBridge',
-      handlers: {
-        activate: (ctx: restate.Context) => ctx.objectClient(controller, config.controllerKey).activate(activation),
-        status: (ctx: restate.Context) => ctx.objectClient(controller, config.controllerKey).status(undefined),
-        tick: async (ctx: restate.Context, candidate: unknown) => {
-          const client = ctx.objectClient(controller, config.controllerKey)
-          await client.tick(candidate)
-          return client.status(undefined)
+    const bridge = alwaysReplay(
+      restate.service({
+        name: 'ExecutionRecoveryTestBridge',
+        handlers: {
+          activate: (ctx: restate.Context) => ctx.objectClient(controller, config.controllerKey).activate(activation),
+          status: (ctx: restate.Context) => ctx.objectClient(controller, config.controllerKey).status(undefined),
+          tick: async (ctx: restate.Context, candidate: unknown) => {
+            const client = ctx.objectClient(controller, config.controllerKey)
+            await client.tick(candidate)
+            return client.status(undefined)
+          },
+          deactivate: (ctx: restate.Context) =>
+            ctx.objectClient(controller, config.controllerKey).deactivate(deactivation),
         },
-        deactivate: (ctx: restate.Context) =>
-          ctx.objectClient(controller, config.controllerKey).deactivate(deactivation),
-      },
-    })
+      }),
+    )
     class LocalRestateResponseError extends Error {
       constructor(
         readonly status: number,
@@ -602,7 +703,17 @@ describeRestate('Real Restate execution deployment activation', () => {
           yield* acquireRestateHttp2Server(server, 0)
           const address = server.address()
           if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
-          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}` })
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+          expect(
+            yield* Effect.tryPromise({
+              try: async (signal) => {
+                const response = await fetch(`${admin}/services/BaynExecutionController`, { signal })
+                if (!response.ok) throw new Error('Local Restate controller discovery readback failed')
+                return response.json() as Promise<unknown>
+              },
+              catch: (cause) => cause,
+            }),
+          ).toMatchObject({ inactivity_timeout: '0s' })
           // Admin registration can precede ingress visibility. Probe only the read-only status handler;
           // activation and tick mutations keep their original single-attempt behavior and assertions.
           const uninitialized = yield* invoke('status').pipe(

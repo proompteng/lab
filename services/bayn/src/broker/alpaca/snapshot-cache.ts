@@ -14,28 +14,16 @@ import {
 } from './observed-snapshot'
 
 export interface BrokerSnapshotCacheConfig {
-  readonly pollIntervalMs: number
   readonly maxAgeMs: number
 }
 const interval = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: maximumBrokerObservationAgeMs }))
 export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig, BrokerReadError> = Config.all({
-  pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(10_000)),
   maxAgeMs: Config.schema(interval, 'BAYN_BROKER_CACHE_MAX_AGE_MS').pipe(
     Config.withDefault(maximumBrokerObservationAgeMs),
   ),
 }).pipe(
   Effect.mapError((cause) =>
     configurationError({ operation: 'configuration', message: 'Invalid broker cache configuration', cause }),
-  ),
-  Effect.flatMap((config) =>
-    config.maxAgeMs <= config.pollIntervalMs
-      ? Effect.fail(
-          configurationError({
-            operation: 'configuration',
-            message: 'Broker cache maximum age must exceed its poll interval',
-          }),
-        )
-      : Effect.succeed(config),
   ),
 )
 

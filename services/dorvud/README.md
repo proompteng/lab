@@ -15,6 +15,47 @@ Dorvud ingests market data, calculates technical signals, and archives source re
 Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
 and reconciliation. Dorvud does not grant trading authority or establish strategy profitability.
 
+## Bayn broker notifications
+
+The separate `bayn-broker-feed` image runs `ai.proompteng.dorvud.ws.BrokerFeedMain` from the websockets module.
+It uses Bayn's existing paper account secret and egress proxy. Before opening each socket, it calls Alpaca's account
+endpoint with the loaded credentials and requires the returned account ID to match Bayn's configured account.
+It then authenticates the socket and verifies the `trade_updates` subscription acknowledgement. The shared session
+parser accepts Alpaca's text and binary JSON frames; the original update JSON retains decimal and timestamp precision.
+
+```mermaid
+flowchart LR
+  A[Verify Bayn account] --> B[Authenticate and acknowledge subscription]
+  B --> C[Signed SessionReady and TradeUpdate]
+  C --> K[Kafka: bayn.broker-notifications.v1]
+  K --> R[Standalone Restate Kafka ingress]
+  R --> O[Bayn canonical broker observation]
+  O --> D[Serialized account decision and execution]
+```
+
+Notifications carry a session ID, account identity hash, credential fingerprint, source revision and original receipt
+time. HMAC-SHA256 over the exact message bytes uses the existing broker secret; the Kafka adapter receives only Kafka
+credentials. The Kotlin/TypeScript contract is checked against `fixtures/bayn-broker-notification-v1.json`, which
+contains synthetic credentials. These notifications request canonical account reconciliation; they never post fills,
+fees or ledger transfers directly.
+
+The producer awaits Kafka acknowledgement before reading the next update. A failed acknowledgement closes the session
+and reconnects with a new verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than
+once. Stable update IDs deduplicate transport retries; the financial stores retain their independent idempotency rules.
+`/readyz` becomes ready only after the verified session notification has been acknowledged by Kafka, and resets on
+disconnect. `/metrics` exposes `dorvud_broker_feed_ready`, publications and session failures without account labels.
+
+Configuration requires `BAYN_ALPACA_ACCOUNT_ID`, `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`,
+`BAYN_ALPACA_BASE_URL=https://paper-api.alpaca.markets`,
+`BAYN_ALPACA_PROXY_URL=http://bayn-egress-proxy:3128`, the 40-character `DORVUD_SOURCE_REVISION`,
+`BAYN_BROKER_NOTIFICATIONS_TOPIC=bayn.broker-notifications.v1`, and authenticated `KAFKA_BOOTSTRAP`,
+`KAFKA_SECURITY_PROTOCOL`, `KAFKA_SASL_USER` and `KAFKA_SASL_PASSWORD`. Live broker destinations are rejected.
+The existing Torghut collector retains its own account, topics and release path.
+
+Run `./gradlew :websockets:ktlintCheck :websockets:test` for real local HTTP/WebSocket contract tests, including
+wrong-account rejection, binary frames, failed publication, reconnect and the shared signature vector. Deployment and
+runtime acceptance follow the [Bayn deployment guide](../../argocd/applications/bayn/README.md).
+
 ## Exception tracking
 
 The forwarder, Flink TA and market-data archive report ERROR/FATAL logs and uncaught JVM exceptions to the
@@ -236,6 +277,58 @@ Run the producer checks from this directory:
 
 Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
 Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
+
+## Same-session IEX subscription qualification
+
+`ALPACA_IEX_SUBSCRIPTION_QUALIFICATION=true` enables a diagnostic on the existing core IEX connection. The reviewed
+baseline remains sixteen bar, seven quote and seven trade subscriptions. The nine REST-only symbols continue through
+the existing latest-observation path. Neither the summed baseline subscription budget nor its REST/WS overlap guard
+is relaxed. Credentials, destination, preferred feed, delay class, topics, private trade updates, crypto and delayed SIP
+retain their existing contracts.
+
+After authentication and a complete baseline acknowledgement, the diagnostic waits for a regular equity session and
+sends one additive subscription containing only the nine missing quote and trade memberships. It never adds a fourth
+channel or another connection. Alpaca documents that subscriptions are additive, acknowledgements contain the full
+current membership, and error 405 preserves the previous membership. See the
+[provider protocol](https://docs.alpaca.markets/us/docs/streaming-market-data).
+
+Candidate data is blocked before sequence allocation, deduplication, Kafka publication and ordinary freshness tracking,
+including frames before acknowledgement, buffered frames after rollback and frames on a later connection. Candidate
+and admitted maps are separate. The diagnostic records only membership, counters and provider/receipt/processing
+times; it retains no prices, raw source payloads, credentials or account identity.
+
+A complete sixteen-quote/sixteen-trade/sixteen-bar acknowledgement starts a bounded observation window: two sixty-second bar intervals plus the existing ten-second provider-age allowance
+(130 seconds).
+Qualification requires usable coverage of every member across that active window, quote/trade age and receipt gaps
+within ten seconds, bar coverage within 130 seconds, and decoded-frame processing delay within one second. Silence,
+unusable values, clock or queue violations and departure from the regular session leave coverage unproved. These are
+qualification limits, not measured production latency or an entitlement claim. The bar budget accommodates starting
+just after a minute boundary and receiving a completed bar after that minute; bars retain their minute-start timestamp.
+
+The diagnostic removes only its added quote/trade memberships after the observation window, including success, and
+requires the full original baseline acknowledgement within ten seconds. A partial or delayed candidate acknowledgement
+also triggers that exact rollback; an uncertain rollback closes the connection for coherent baseline recovery. Error
+405 is consumed only while the additive request is pending: it latches rejection and preserves baseline authentication
+without reconnecting. Other provider errors retain normal recovery. The process attempts the amendment once and does
+not repeat it on reconnect. Session generations fence late diagnostic updates; historical completed proof never makes
+a replacement session appear fresh.
+
+Inspect `/readyz` field `iex_subscription_qualification` alongside the exact Kargo revision, running image and ordinary
+channel readiness. `qualified` requires a completed observation window and verified baseline restoration; it does not
+switch financial admission. `outcome` retains the last trial decision; a new connection resets current qualification
+and retains any completed proof under its original generation. Retain the full diagnostic outcome and timing coverage during a real regular session.
+Infrastructure health, an accepted subscription or a quiet after-hours connection alone cannot establish qualification.
+
+The reviewed desired configuration changes the existing single-replica Recreate Deployment's configuration generation.
+Its normal immutable image/Kargo rollout has a restart gap; it preserves neither the old TCP connection nor uninterrupted
+market capture. Within the replacement process, baseline admission and the additive trial share one authenticated TCP
+session. A failed trial preserves current inputs or reconnects to the baseline. Recovery disables the flag through
+reviewed GitOps and the same Kargo path; it does not repoint an account or change entitlements. A process restart creates
+a new diagnostic attempt, so retain evidence and disable the flag after the bounded qualification is assessed.
+
+After live qualification, a separately reviewed hard cutover must promote one admitted source map under a new source
+generation, fence in-flight REST publications and delete ordinary latest polling and the temporary qualification path.
+The full forty-eight-membership target remains open until that product proof and hard migration are complete.
 
 ## Producer stall diagnostics
 

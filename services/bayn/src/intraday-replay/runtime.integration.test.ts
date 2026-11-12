@@ -55,7 +55,7 @@ import {
   type ExecutionControllerStatus,
 } from '../execution/controller-status'
 import type { AdvanceExecutionCommand } from '../execution/advance'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
@@ -1231,6 +1231,7 @@ durableTest.each(
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           if (scenario === 'missing-candidate') {
+            expect(schedule.passCount).toBeGreaterThanOrEqual(5)
             expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
             expect(
               yield* sql`SELECT
@@ -1443,7 +1444,6 @@ durableTest.each(
                   intradayMarketData: runtime.marketData,
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
-                  pollIntervalMs: 1000,
                   reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
                   reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
                 },

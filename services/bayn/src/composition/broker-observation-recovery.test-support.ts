@@ -37,7 +37,7 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
     if (query.includes('RETURNING broker_observations.generation')) {
       generation++
       startedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-      return [{ status: 'RESERVED', generation, startedAt, nextPollNotBeforeMs: Number(values[3]) }]
+      return [{ status: 'RESERVED', generation, startedAt, nextPollNotBeforeMs: Number(values[4]) }]
     }
     if (query.includes('WITH failed AS')) settlements++
     if (query.includes('WITH published AS')) {

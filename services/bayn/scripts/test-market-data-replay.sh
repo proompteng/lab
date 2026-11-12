@@ -26,7 +26,7 @@ trap cleanup EXIT
 trap 'exit 143' TERM INT
 
 kafka_image='apache/kafka:4.1.1@sha256:0bc1bb2478f45b6cea78864df86acdc11e8df2c5172477819a4d12942cbe5d40'
-restate_image='docker.restate.dev/restatedev/restate:1.7.9@sha256:3efeb748ebea40f0a895ca858321d0ef33396d40fe6d16ec593cd5553eb98441'
+restate_image='docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1'
 timeout 180s docker pull "$kafka_image" >/dev/null
 timeout 180s docker pull "$restate_image" >/dev/null
 kafka_id=$(docker run --detach --name "$kafka_name" --memory 2g --cpus 2 --pids-limit 512 \
@@ -79,3 +79,5 @@ timeout 150s bun test "$root/services/bayn/src/restate/restate-execution-control
 timeout 120s bun test "$root/services/bayn/src/restate/restate-broker-observations.integration.test.ts"
 timeout 120s bun test "$root/services/bayn/src/restate/restate-research-run.integration.test.ts"
 
+timeout 120s bun test "$root/services/bayn/src/restate/restate-streaming-execution.integration.test.ts" \
+  "$root/services/bayn/src/restate/restate-market-hints.integration.test.ts"
