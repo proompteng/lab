@@ -90,6 +90,7 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
   marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
   wakeScheduledSequence: Schema.optionalKey(CounterSchema),
+  wakeAcceptedAt: Schema.optionalKey(UtcInstantSchema),
   marketFrontier: Schema.optionalKey(
     Schema.Struct({
       producerId: Schema.String.check(Schema.isUUID(4)),
@@ -297,7 +298,13 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
-  const { nextDueAt: _previousDeadline, marketEligibleAt: _previousEligibility, ...completedState } = state
+  const {
+    nextDueAt: _previousDeadline,
+    marketEligibleAt: _previousEligibility,
+    wakeScheduledSequence: _previousWake,
+    wakeAcceptedAt: _previousWakeAcceptedAt,
+    ...completedState
+  } = state
   const availableAt =
     result.observation?.result !== 'SUCCESS'
       ? undefined

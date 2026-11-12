@@ -79,7 +79,7 @@ const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeB
       executionEligible: false,
       executionDisabledReason: 'READ_ONLY',
     }
-    const controller = { controllerKey: 'primary', planHash: 'c'.repeat(64) }
+    const controller = { controllerKey: 'a'.repeat(64), planHash: 'c'.repeat(64) }
     const state = yield* Ref.make(
       initialState({
         broker,
@@ -128,17 +128,28 @@ const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeB
         controllerKey: controller.controllerKey,
         read: () =>
           Effect.succeed({
-            schemaVersion: 1,
-            ...controller,
-            active: true,
-            epoch: 1,
-            nextSequence: 2,
-            lastSequence: 1,
-            lastOutcome: ExecutionControllerOutcome.Waiting,
-            lastReceiptHash: 'd'.repeat(64),
-            completedAt: at,
-            nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
-            lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: at },
+            operational: {
+              schemaVersion: 'bayn.execution-controller-health.v1',
+              ...controller,
+              sourceRevision: runtimeConfig.build.sourceRevision,
+              active: true,
+              epoch: 1,
+              nextSequence: 2,
+              nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
+            },
+            status: {
+              schemaVersion: 1,
+              ...controller,
+              active: true,
+              epoch: 1,
+              nextSequence: 2,
+              lastSequence: 1,
+              lastOutcome: ExecutionControllerOutcome.Waiting,
+              lastReceiptHash: 'd'.repeat(64),
+              completedAt: at,
+              nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
+              lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: at },
+            },
           }),
       },
     )

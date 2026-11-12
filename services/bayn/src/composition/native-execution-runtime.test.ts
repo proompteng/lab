@@ -22,7 +22,21 @@ import { nativeActivationPreflight, NativeActivationPreflightError } from './nat
 
 import type { ApplicationPlan } from '../app'
 import type { NativeExecutionRuntime } from '../restate/restate-execution-controller'
-import { config, fixtureRuntime } from '../testing/runtime-fixtures'
+import { config, fixtureRuntime, readyState } from '../testing/runtime-fixtures'
+import { Logger } from 'effect'
+import { InvocationIdParser, type ObjectContext, type ObjectSharedContext } from '@restatedev/restate-sdk'
+import { readinessResponseDecision } from '../http'
+import { deriveHealthTransition } from '../health/decisions'
+import type { ExecutionControllerHealth } from '../execution/controller-health'
+import {
+  decodeExecutionControllerTick,
+  type ExecutionControllerState,
+  type ExecutionControllerTick,
+} from '../execution/controller'
+import {
+  executionActivationAuthorizationHash,
+  makeBaynExecutionController,
+} from '../restate/restate-execution-controller'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import {
@@ -359,6 +373,213 @@ describe('native execution runtime', () => {
     expect(projects).toBe(0)
     expect(result).toMatchObject({ _tag: 'Failure', failure: { _tag: 'TransientExecutionFailure', cause: failure } })
   })
+
+  test.each(['pending lookup', 'completion projection'] as const)(
+    'accepted work exposes 120 %s failures, then recovers to genuinely idle health',
+    async (fault) => {
+      let now = Date.parse(completedAt)
+      let invocation = 0
+      let projects = 0
+      let projectionAttempts = 0
+      let pendingReads = 0
+      let healthy = false
+      let projected = status({
+        lastSequence: command.sequence - 1,
+        nextSequence: command.sequence,
+        nextDueAt: undefined,
+      })
+      let state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: command.epoch,
+        planHash: controllerPlanHash,
+        sourceRevision,
+        initialSequence: 0,
+        nextSequence: command.sequence,
+        lastCompletion: {
+          sequence: command.sequence - 1,
+          outcome: ExecutionControllerOutcome.Blocked,
+          receiptHash: hash('2'),
+          completedAt,
+        },
+      }
+      const failure = operationalError({
+        component: 'database',
+        operation: 'jev-batch',
+        message: 'pending query failed',
+      })
+      const bound = await Effect.runPromise(
+        bindPendingDriver(
+          windowClosedDriver,
+          Effect.suspend(() => {
+            pendingReads++
+            return healthy || fault === 'completion projection' ? Effect.succeed([]) : Effect.fail(failure)
+          }),
+        ),
+      )
+      const store: ExecutionControllerStatusStoreShape = {
+        read: () => Effect.succeed(projected),
+        project: (candidate) =>
+          Effect.suspend(() => {
+            projectionAttempts++
+            if (!healthy && fault === 'completion projection')
+              return Effect.fail(
+                new ExecutionControllerStatusStoreError({
+                  operation: 'project',
+                  failure: 'query',
+                  message: 'completion write failed',
+                }),
+              )
+            projects++
+            projected = candidate
+            return Effect.succeed({ _tag: 'Applied' as const, status: candidate })
+          }),
+      }
+      const controller = makeBaynExecutionController(
+        {
+          controllerKey: command.controllerKey,
+          operationTimeoutMs: 30_000,
+          planHash: controllerPlanHash,
+          sourceRevision,
+          activationAuthorizationHash: Result.getOrThrow(
+            executionActivationAuthorizationHash(Buffer.alloc(32, 7).toString('base64url')),
+          ),
+        },
+        {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: (advanceCommand, signal) =>
+            Effect.runPromise(
+              Effect.gen(function* () {
+                yield* TestClock.setTime(now)
+                return yield* executeNativeExecutionAdvance(advanceCommand, bound, store, controllerPlanHash)
+              }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([]))),
+              { signal },
+            ),
+        },
+        undefined,
+        { currentTimeMillisUnsafe: () => now },
+      )
+      type ControllerContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
+      const object = (
+        controller as unknown as {
+          readonly object: {
+            readonly wake: (ctx: ControllerContext, candidate: unknown) => Promise<void>
+            readonly tick: (ctx: ControllerContext, candidate: unknown) => Promise<void>
+            readonly health: (ctx: ObjectSharedContext, candidate: unknown) => Promise<ExecutionControllerHealth | null>
+          }
+        }
+      ).object
+      const queued: Array<{ readonly parameter: ExecutionControllerTick; readonly delay: number }> = []
+      const privateState = new Map<string, unknown>()
+      const context = {
+        key: command.controllerKey,
+        get: async (key: string) => (key === 'controller' ? state : (privateState.get(key) ?? null)),
+        set: (key: string, value: ExecutionControllerState) => {
+          if (key === 'controller') state = value
+          else privateState.set(key, value)
+        },
+        clear: (key: string) => privateState.delete(key),
+        run: async <A>(_name: string, work: () => Promise<A>) => work(),
+        date: { now: async () => now },
+        request: () => ({ id: `inv_idlefailure${invocation}`, attemptCompletedSignal: new AbortController().signal }),
+        genericSend: (delivery: { readonly parameter: unknown; readonly delay?: number }) => {
+          queued.push({
+            parameter: Result.getOrThrow(decodeExecutionControllerTick(delivery.parameter)),
+            delay: delivery.delay ?? 0,
+          })
+          return { invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_idlehealth${queued.length}`)) }
+        },
+        invocation: () => ({ cancel: () => undefined }),
+      } as unknown as ControllerContext
+      const readiness = async () => {
+        const current = readyState()
+        const operational = await object.health(context as unknown as ObjectSharedContext, {})
+        const transition = deriveHealthTransition(
+          {
+            ...current,
+            executionController: {
+              configured: true,
+              controllerKey: command.controllerKey,
+              planHash: controllerPlanHash,
+              status: null,
+              readAvailable: true,
+              checkedAt: new Date(now).toISOString(),
+              error: null,
+            },
+          },
+          {
+            config,
+            results: {
+              postgresql: { _tag: 'Available', value: undefined },
+              tigerBeetle: { _tag: 'Available', value: undefined },
+              broker: null,
+              executionController: { _tag: 'Available', value: { operational, status: projected } },
+              cycle: {
+                _tag: 'Available',
+                value: {
+                  current: null,
+                  last: null,
+                  unfinishedCycleCount: 0,
+                  authority: null,
+                  reconciliation: null,
+                  mutations: {
+                    eventCount: 0,
+                    recoveryFoundCount: 0,
+                    approvedIntentCount: 0,
+                    acknowledgedIntentCount: 0,
+                    unresolvedCount: 0,
+                    oldestUnresolvedAt: null,
+                    latestOccurredAt: null,
+                  },
+                },
+              },
+            },
+            broker: undefined,
+            cycleFiber: { _tag: 'NotProvided' },
+            clock: { _tag: 'Available', checkedAt: new Date(now).toISOString(), checkedAtMs: now },
+          },
+        )
+        return readinessResponseDecision(transition.next, { nowMs: now, leaseMs: 1_000 })
+      }
+      expect((await readiness()).status).toBe(200)
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'BrokerObservation',
+        sourceRevision,
+        eventId: hash('e'),
+        snapshotHash: hash('e'),
+        observedAt: completedAt,
+      })
+      const acceptedAt = state.wakeAcceptedAt
+      expect(acceptedAt).toBe(completedAt)
+      for (invocation = 1; invocation <= 120; invocation++) {
+        const delivery = queued.shift()
+        if (delivery === undefined) throw new Error('failed execution did not retain its recovery delivery')
+        now += delivery.delay
+        await object.tick(context, delivery.parameter)
+        expect(state.wakeAcceptedAt).toBe(acceptedAt)
+      }
+      expect(now - Date.parse(completedAt)).toBeGreaterThan(config.cycleStallThresholdMs)
+      expect(pendingReads).toBe(120)
+      expect(projects).toBe(0)
+      expect(projectionAttempts).toBe(fault === 'completion projection' ? 120 : 0)
+      expect(state.nextSequence).toBe(command.sequence)
+      expect((await readiness()).status).toBe(503)
+      healthy = true
+      const delivery = queued.shift()
+      if (delivery === undefined) throw new Error('recovery delivery disappeared')
+      now += delivery.delay
+      await object.tick(context, delivery.parameter)
+      expect(projects).toBe(1)
+      expect(state.nextSequence).toBe(command.sequence + 1)
+      expect(state.wakeAcceptedAt).toBeUndefined()
+      expect(state.wakeScheduledSequence).toBeUndefined()
+      now += config.cycleStallThresholdMs * 2
+      expect((await readiness()).status).toBe(200)
+    },
+  )
 
   test('an uncertain SQL projection and its later replay rediscover committed work without another financial pass', async () => {
     const job = pendingJob('2026-08-13T18:00:07.000Z')

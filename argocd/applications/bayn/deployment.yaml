@@ -71,6 +71,8 @@ spec:
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:

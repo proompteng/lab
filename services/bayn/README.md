@@ -1085,6 +1085,11 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority. Its Kubernetes readiness checks fresh PostgreSQL, ledger and cycle-projection reads. Broker reconciliation
   and the bound execution controller retain their own operational readiness in `/readyz` and `/v1/status`.
+  The API requires `RESTATE_INGRESS_ORIGIN` to read the controller's sanitized shared `health` view before its SQL
+  completion projection. This read remains available while an exclusive financial turn is running. Pending work
+  retains its first accepted wake time across retries and coalesced notifications; an overdue obligation makes
+  execution unavailable even when the last SQL completion was idle. A controller with no pending obligation can
+  remain idle indefinitely. This operational view does not change financial completion receipts or business deadlines.
   It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
   `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
   live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.

@@ -255,7 +255,7 @@ const collectHealthProbeResults = (
                 executionController.read(executionController.controllerKey).pipe(
                   Effect.mapError((cause) =>
                     operationalError({
-                      component: 'database',
+                      component: cause._tag === 'OperationalError' ? cause.component : 'database',
                       operation: 'execution-controller-status',
                       message: 'execution controller status read failed',
                       cause,

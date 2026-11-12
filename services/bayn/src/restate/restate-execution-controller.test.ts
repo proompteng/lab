@@ -94,6 +94,10 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
     const values = retained
     return {
       ...context,
+      date: {
+        ...context.date,
+        now: async () => (context.date?.now ? context.date.now() : fixtureTransportClock.currentTimeMillisUnsafe()),
+      },
       get: async (key: string) => (key === 'controller' ? context.get('controller') : (values.get(key) ?? null)),
       set: (key: string, value: ExecutionControllerState | string) => {
         if (key === 'controller') context.set('controller', Result.getOrThrow(decodeExecutionControllerState(value)))
@@ -116,6 +120,7 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
         readonly rotate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly tick: (ctx: TestContext, candidate: unknown) => Promise<void>
         readonly wake: (ctx: TestContext, candidate: unknown) => Promise<void>
+        readonly health: (ctx: ObjectSharedContext, candidate: unknown) => Promise<unknown>
         readonly marketChanged: (ctx: ObjectSharedContext, candidate: unknown) => Promise<void>
         readonly deactivate: (ctx: TestContext, candidate: unknown) => Promise<ExecutionControllerState>
         readonly prepareActivation: (
@@ -129,6 +134,7 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
   return {
     ...object,
     tick: (context: TestContext, candidate: unknown) => object.tick(contextWithPrivateState(context), candidate),
+    wake: (context: TestContext, candidate: unknown) => object.wake(contextWithPrivateState(context), candidate),
     rotate: (context: TestContext, candidate: unknown) => object.rotate(contextWithPrivateState(context), candidate),
     deactivate: (context: TestContext, candidate: unknown) =>
       object.deactivate(contextWithPrivateState(context), candidate),
@@ -348,6 +354,7 @@ test('independent market producers cannot suppress one another and share one que
     nextSequence: 4,
   }
   const deliveries: Delivery[] = []
+  let clockReads = 0
   const object = handlers(
     makeBaynExecutionController(config, {
       prepareActivation: async () => undefined,
@@ -367,7 +374,8 @@ test('independent market producers cannot suppress one another and share one que
     genericSend: (delivery: Delivery) => deliveries.push(delivery),
     date: {
       now: async () => {
-        throw new Error('producer ordering must not depend on wall clocks')
+        clockReads++
+        return fixtureTransportClock.currentTimeMillisUnsafe()
       },
     },
   } as unknown as TestContext
@@ -379,6 +387,8 @@ test('independent market producers cannot suppress one another and share one que
   expect(deliveries).toHaveLength(1)
   expect(new Set(deliveries.map((delivery) => delivery.idempotencyKey))).toEqual(new Set(['bayn-execution-wake-1-4']))
   expect(state.nextSequence).toBe(4)
+  expect(clockReads).toBe(1)
+  expect(state.wakeAcceptedAt).toBe('2026-08-13T18:00:00.000Z')
 })
 
 test('the authenticated market gateway awaits only its small private wake and rejects invalid source or identity', async () => {
@@ -2433,6 +2443,7 @@ describe('native Restate execution controller', () => {
     const deliveries: Delivery[] = []
     let invocation = 0
     let healthy = false
+    let transportNow = Date.parse('2026-08-13T18:00:00.000Z')
     const issuedAt: string[] = []
     const failure = new TransientExecutionFailure({
       operation: 'advance',
@@ -2447,36 +2458,39 @@ describe('native Restate execution controller', () => {
       },
       genericSend: (delivery: Delivery) => deliveries.push(delivery),
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+      date: { now: async () => transportNow, toJSON: async () => '2026-08-13T18:00:00.000Z' },
       request: () => ({
         id: `recovery-budget-${invocation}`,
         attemptCompletedSignal: new AbortController().signal,
       }),
     } as unknown as TestContext
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: (command) => {
-          issuedAt.push(command.issuedAt)
-          return healthy
-            ? Promise.resolve({
-                completedAt: '2026-08-13T18:10:00.000Z',
-                outcome: {
-                  _tag: ExecutionControllerOutcome.Completed,
-                  receiptHash: 'e'.repeat(64),
-                  nextDelayMs: 30_000,
-                  nextWakeAt: '2026-08-13T18:00:31.000Z',
-                },
-              })
-            : Promise.reject(failure)
-        },
-        log: () => Promise.resolve(),
-        prepareActivation: () => Promise.resolve(),
-        projectState: () => Promise.resolve(),
-      }),
-    )
+    const restart = () =>
+      handlers(
+        makeBaynExecutionController(config, {
+          advance: (command) => {
+            issuedAt.push(command.issuedAt)
+            return healthy
+              ? Promise.resolve({
+                  completedAt: '2026-08-13T18:10:00.000Z',
+                  outcome: {
+                    _tag: ExecutionControllerOutcome.Completed,
+                    receiptHash: 'e'.repeat(64),
+                    nextDelayMs: 30_000,
+                    nextWakeAt: '2026-08-13T18:00:31.000Z',
+                  },
+                })
+              : Promise.reject(failure)
+          },
+          log: () => Promise.resolve(),
+          prepareActivation: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        }),
+      )
+    let object = restart()
     await object.wake(context, marketChange(1))
     expect(deliveries.shift()?.idempotencyKey).toBe('bayn-execution-wake-7-12')
     expect(state.wakeScheduledSequence).toBe(12)
+    expect(state.wakeAcceptedAt).toBe('2026-08-13T18:00:00.000Z')
     let tick: unknown = {
       schemaVersion: 'bayn.execution-controller-tick.v1',
       epoch: 7,
@@ -2504,9 +2518,12 @@ describe('native Restate execution controller', () => {
       expect(keys.has(recovery.idempotencyKey)).toBe(false)
       keys.add(recovery.idempotencyKey)
       expect(state.nextSequence).toBe(12)
+      transportNow += 120_000
+      object = restart()
       await object.wake(context, marketChange(recoveryWindow + 1))
       expect(deliveries).toHaveLength(0)
       expect(state.wakeScheduledSequence).toBe(12)
+      expect(state.wakeAcceptedAt).toBe('2026-08-13T18:00:00.000Z')
       tick = {
         ...(recovery.parameter as object),
         attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
@@ -2519,7 +2536,8 @@ describe('native Restate execution controller', () => {
     expect(state.nextSequence).toBe(13)
     expect(state.epoch).toBe(7)
     expect(state.sourceRevision).toBe(sourceRevision)
-    expect(state.wakeScheduledSequence).toBe(12)
+    expect(state.wakeScheduledSequence).toBeUndefined()
+    expect(state.wakeAcceptedAt).toBeUndefined()
     expect(new Set(issuedAt)).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
     const successor = deliveries.shift()
     expect(successor?.parameter).toMatchObject({ epoch: 7, sequence: 13, attempt: 0 })
@@ -2539,6 +2557,8 @@ describe('native Restate execution controller', () => {
       sourceRevision: establishedSourceRevision,
       initialSequence: 12,
       nextSequence: 12,
+      wakeScheduledSequence: 12,
+      wakeAcceptedAt: '2026-08-13T17:59:31.000Z',
       lastCompletion: {
         sequence: 11,
         outcome: ExecutionControllerOutcome.Blocked,
@@ -2606,6 +2626,8 @@ describe('native Restate execution controller', () => {
     await replacement.tick(context, catchUp)
     expect(replacementAdvances).toBe(0)
     expect(state.nextSequence).toBe(12)
+    expect(state.wakeAcceptedAt).toBe('2026-08-13T17:59:31.000Z')
+    expect(state.wakeScheduledSequence).toBe(12)
     expect(deliveries).toHaveLength(0)
 
     await established.tick(context, {
@@ -2620,6 +2642,8 @@ describe('native Restate execution controller', () => {
       nextSequence: 13,
       lastCompletion: { sequence: 12, receiptHash: 'f'.repeat(64) },
     })
+    expect(state.wakeAcceptedAt).toBeUndefined()
+    expect(state.wakeScheduledSequence).toBeUndefined()
     expect(deliveries).toEqual([
       expect.objectContaining({
         delay: 31_000,

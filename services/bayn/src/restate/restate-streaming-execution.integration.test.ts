@@ -8,6 +8,8 @@ import { decodeExecutionControllerState } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { sha256 } from '../hash'
 import { MarketChangeReason, marketChangedEventId, type MarketChangedWakeup } from '../execution/events'
+import { ExecutionControllerHealthSchema } from '../execution/controller-health'
+import { strictParseOptions } from '../schemas'
 import { makeMarketHints } from '../market-data/streaming/readiness'
 import { makeBaynEntryInference } from './restate-entry-inference'
 import { acquireRestateHttp2Server } from './restate-http2-server'
@@ -209,6 +211,125 @@ const queueFixture = () => {
 }
 
 describeRestate('Real always-replay streaming execution', () => {
+  test('shared operational health retains an accepted wake while the exclusive owner is blocked', async () => {
+    const targets = localRestateTargets()
+    const controllerKey = sha256(randomUUID())
+    const sourceRevision = 'c'.repeat(40)
+    const planHash = 'b'.repeat(64)
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let blocked = false
+    let completed = false
+    const controller = alwaysReplay(
+      makeBaynExecutionController(
+        {
+          controllerKey,
+          planHash,
+          sourceRevision,
+          operationTimeoutMs: 5_000,
+          activationAuthorizationHash: Result.getOrThrow(executionActivationAuthorizationHash(token)),
+        },
+        {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: async (command) => {
+            if (command.sequence === 1) {
+              blocked = true
+              await gate
+              completed = true
+            }
+            return {
+              completedAt: new Date().toISOString(),
+              outcome: {
+                _tag: ExecutionControllerOutcome.Waiting,
+                receiptHash: sha256(`${controllerKey}:${command.sequence}`),
+                nextDelayMs: 1,
+              },
+            }
+          },
+        },
+      ),
+    )
+    const observedAt = new Date().toISOString()
+    const bridge = alwaysReplay(
+      restate.service({
+        name: 'OperationalHealthTestBridge',
+        handlers: {
+          activate: (ctx: restate.Context) =>
+            ctx.objectClient(controller, controllerKey).activate({
+              schemaVersion: 'bayn.execution-controller-activation.v1',
+              controllerKey,
+              planHash,
+              sourceRevision,
+              epoch: 1,
+              firstSequence: 0,
+            }),
+          wake: async (ctx: restate.Context) => {
+            await ctx.objectClient(controller, controllerKey).wake({
+              schemaVersion: 'bayn.execution-wakeup.v1',
+              _tag: 'BrokerObservation',
+              sourceRevision,
+              eventId: 'e'.repeat(64),
+              snapshotHash: 'e'.repeat(64),
+              observedAt,
+            })
+            return { accepted: true }
+          },
+        },
+      }),
+    )
+    const health = json(`${targets.ingress}/BaynExecutionController/${controllerKey}/health`, {}).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.NullOr(ExecutionControllerHealthSchema), strictParseOptions)),
+    )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() => Effect.sync(release))
+          yield* register([controller, bridge])
+          yield* json(`${targets.ingress}/OperationalHealthTestBridge/activate`, {})
+          yield* waitFor(() => health.pipe(Effect.map((state) => state?.nextSequence === 1)))
+          expect((yield* health)?.pendingWake).toBeUndefined()
+          for (const method of ['status', 'wake', 'tick']) {
+            const denied = yield* Effect.tryPromise({
+              try: (signal) =>
+                fetch(`${targets.ingress}/BaynExecutionController/${controllerKey}/${method}`, {
+                  method: 'POST',
+                  body: '{}',
+                  headers: { 'content-type': 'application/json' },
+                  signal,
+                }),
+              catch: (cause) => cause,
+            })
+            expect(denied.status).toBe(400)
+            yield* Effect.promise(() => denied.body?.cancel() ?? Promise.resolve())
+          }
+          yield* json(`${targets.ingress}/OperationalHealthTestBridge/wake`, {})
+          yield* waitFor(() => Effect.sync(() => blocked))
+          let acceptedAt: string | undefined
+          for (let read = 0; read < 5; read++) {
+            const observed = yield* health
+            expect(completed).toBe(false)
+            expect(observed).toMatchObject({ controllerKey, planHash, sourceRevision, epoch: 1, nextSequence: 1 })
+            expect(observed?.pendingWake?.sequence).toBe(1)
+            expect(observed?.pendingWake?.acceptedAt).toBeDefined()
+            if (read === 0) acceptedAt = observed?.pendingWake?.acceptedAt
+            else expect(observed?.pendingWake?.acceptedAt).toBe(acceptedAt)
+            expect(observed).not.toHaveProperty('lastCompletion')
+            expect(observed).not.toHaveProperty('lastReceiptHash')
+          }
+          release()
+          yield* waitFor(() => health.pipe(Effect.map((state) => state?.nextSequence === 2)))
+          expect(completed).toBe(true)
+          expect((yield* health)?.pendingWake).toBeUndefined()
+        }),
+      ),
+    )
+  }, 30_000)
+
   test('successful event turns replace one original deadline while failed probes retain its owner', async () => {
     const targets = localRestateTargets()
     const controllerKey = sha256(randomUUID())

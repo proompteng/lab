@@ -33,6 +33,7 @@ import { sha256 } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 import { decodeExecutionWakeup, MarketChangedSchema, marketChangedEventId } from '../execution/events'
+import { projectExecutionControllerHealth } from '../execution/controller-health'
 
 const stateKey = 'controller'
 const deadlineTickStateKey = 'deadlineTick'
@@ -774,24 +775,28 @@ export const makeBaynExecutionController = (
             nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
           }
           if (nextState !== state) ctx.set(stateKey, nextState)
-          if (
-            event._tag === 'MarketChanged' &&
-            state.marketEligibleAt !== undefined &&
-            (await ctx.date.now()) < Date.parse(state.marketEligibleAt)
-          ) {
-            await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
-              controllerKey: ctx.key,
-              eventId: event.eventId,
-              producerId: event.producerId,
-              hintSequence: event.sequence,
-              marketEligibleAt: state.marketEligibleAt,
-            })
-            return
+          let eligibilityCheckedAt: number | undefined
+          if (event._tag === 'MarketChanged' && state.marketEligibleAt !== undefined) {
+            eligibilityCheckedAt = await ctx.date.now()
+            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) {
+              await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
+                controllerKey: ctx.key,
+                eventId: event.eventId,
+                producerId: event.producerId,
+                hintSequence: event.sequence,
+                marketEligibleAt: state.marketEligibleAt,
+              })
+              return
+            }
           }
           if (state.wakeScheduledSequence === state.nextSequence) return
           // The event only accelerates the serialized owner. Every account, quote, authority and deadline check
           // remains inside the native financial pass; a market or broker hint never grants mutation authority.
-          ctx.set(stateKey, { ...nextState, wakeScheduledSequence: state.nextSequence })
+          ctx.set(stateKey, {
+            ...nextState,
+            wakeScheduledSequence: state.nextSequence,
+            wakeAcceptedAt: new Date(eligibilityCheckedAt ?? (await ctx.date.now())).toISOString(),
+          })
           ctx.genericSend({
             service: 'BaynExecutionController',
             method: 'tick',
@@ -915,6 +920,17 @@ export const makeBaynExecutionController = (
       status: restate.handlers.object.shared(
         { ingressPrivate: true },
         async (ctx: restate.ObjectSharedContext<ControllerObjectState>, _candidate: unknown) => readState(ctx),
+      ),
+
+      health: restate.handlers.object.shared(
+        { ingressPrivate: false, idempotencyRetention: 0, journalRetention: 0 },
+        async (ctx: restate.ObjectSharedContext<ControllerObjectState>, _candidate: unknown) => {
+          verifyTickKey(config, ctx.key)
+          return decodeOrTerminal(
+            projectExecutionControllerHealth(ctx.key, await readState(ctx)),
+            'execution controller operational health is unavailable',
+          )
+        },
       ),
 
       activateDeployment: restate.handlers.object.shared(

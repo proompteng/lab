@@ -4,9 +4,11 @@ import { Effect, Ref } from 'effect'
 import { readinessResponseDecision, statusFacts } from '../http'
 import {
   ExecutionControllerOutcome,
+  executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
   type ExecutionControllerStatusWithCompletion,
 } from '../execution/controller-status'
+import type { ExecutionControllerHealth } from '../execution/controller-health'
 import { config, provenance, readyState } from '../testing/runtime-fixtures'
 import { deriveHealthTransition } from './decisions'
 import type { HealthProbeResults } from './model'
@@ -65,7 +67,27 @@ const completedController: ExecutionControllerStatusWithCompletion = {
   lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: checkedAt },
 }
 
-const controllerTransition = (status: ExecutionControllerStatus | null, nowMs = Date.parse(checkedAt)) => {
+const operationalFor = (status: ExecutionControllerStatus | null): ExecutionControllerHealth | null =>
+  status === null
+    ? null
+    : {
+        schemaVersion: 'bayn.execution-controller-health.v1',
+        controllerKey: status.controllerKey,
+        planHash: status.planHash,
+        sourceRevision: config.build.sourceRevision,
+        active: status.active,
+        epoch: status.epoch,
+        nextSequence: status.nextSequence,
+        ...(executionControllerStatusHasCompletion(status) && status.nextDueAt !== undefined
+          ? { nextDueAt: status.nextDueAt }
+          : {}),
+      }
+
+const controllerTransition = (
+  status: ExecutionControllerStatus | null,
+  nowMs = Date.parse(checkedAt),
+  operational = operationalFor(status),
+) => {
   const current = readyState()
   return deriveHealthTransition(
     {
@@ -82,7 +104,7 @@ const controllerTransition = (status: ExecutionControllerStatus | null, nowMs = 
     },
     {
       config,
-      results: { ...results, executionController: { _tag: 'Available', value: status } },
+      results: { ...results, executionController: { _tag: 'Available', value: { status, operational } } },
       broker: undefined,
       cycleFiber: { _tag: 'NotProvided' },
       clock: { _tag: 'Available', checkedAt: new Date(nowMs).toISOString(), checkedAtMs: nowMs },
@@ -102,6 +124,110 @@ test('a completed streaming controller stays ready while idle without a domain d
     operational: { ready: true },
   })
 })
+
+const completedOperational: ExecutionControllerHealth = {
+  schemaVersion: 'bayn.execution-controller-health.v1',
+  controllerKey: completedController.controllerKey,
+  planHash: completedController.planHash,
+  sourceRevision: config.build.sourceRevision,
+  active: true,
+  epoch: completedController.epoch,
+  nextSequence: completedController.nextSequence,
+}
+
+test('an accepted wake ages from its original acceptance while an idle SQL completion remains unchanged', () => {
+  const acceptedAtMs = Date.parse(checkedAt) + 1
+  const operational = {
+    ...completedOperational,
+    pendingWake: { sequence: completedController.nextSequence, acceptedAt: new Date(acceptedAtMs).toISOString() },
+  }
+  const deadline = acceptedAtMs + config.cycleStallThresholdMs
+  expect(
+    readinessResponseDecision(controllerTransition(completedController, deadline - 1, operational).next).status,
+  ).toBe(200)
+  const stalled = controllerTransition(completedController, deadline, operational)
+  expect(stalled.health.dependencies.cycleRunner).toMatchObject({
+    status: 'UNAVAILABLE',
+    error: `Restate execution controller is overdue by ${config.cycleStallThresholdMs}ms`,
+  })
+  expect(readinessResponseDecision(stalled.next).status).toBe(503)
+  const recoveredAt = deadline + 1
+  const recovered = {
+    ...completedController,
+    lastSequence: 1,
+    nextSequence: 2,
+    completedAt: new Date(recoveredAt).toISOString(),
+  }
+  expect(
+    readinessResponseDecision(
+      controllerTransition(recovered, recoveredAt + config.cycleStallThresholdMs * 2, {
+        ...completedOperational,
+        nextSequence: 2,
+      }).next,
+    ).status,
+  ).toBe(200)
+})
+
+test('a newer SQL completion cannot hide outstanding canonical owner work', () => {
+  const nowMs = Date.parse(checkedAt) + config.cycleStallThresholdMs
+  const status = {
+    ...completedController,
+    lastSequence: 1,
+    nextSequence: 2,
+    completedAt: new Date(nowMs).toISOString(),
+  }
+  const current = controllerTransition(status, nowMs, {
+    ...completedOperational,
+    pendingWake: { sequence: 1, acceptedAt: checkedAt },
+  })
+  expect(readinessResponseDecision(current.next).status).toBe(503)
+})
+
+test('a canonical domain deadline survives SQL completion while the owner is still finalizing', () => {
+  const nowMs = Date.parse(checkedAt) + config.cycleStallThresholdMs
+  const status = {
+    ...completedController,
+    lastSequence: 1,
+    nextSequence: 2,
+    completedAt: new Date(nowMs).toISOString(),
+  }
+  expect(
+    readinessResponseDecision(
+      controllerTransition(status, nowMs, { ...completedOperational, nextDueAt: checkedAt }).next,
+    ).status,
+  ).toBe(503)
+})
+
+test.each([
+  { name: 'missing operational state', operational: null },
+  { name: 'different operational identity', operational: { ...completedOperational, controllerKey: 'd'.repeat(64) } },
+  { name: 'different operational plan', operational: { ...completedOperational, planHash: 'd'.repeat(64) } },
+  { name: 'different operational source', operational: { ...completedOperational, sourceRevision: 'd'.repeat(40) } },
+  { name: 'different operational epoch', operational: { ...completedOperational, epoch: 2 } },
+  { name: 'SQL behind operational progress', operational: { ...completedOperational, nextSequence: 2 } },
+  { name: 'durably inactive operational state', operational: { ...completedOperational, active: false } },
+  {
+    name: 'invalid wake acceptance',
+    operational: { ...completedOperational, pendingWake: { sequence: 1, acceptedAt: 'invalid' } },
+  },
+  {
+    name: 'future wake acceptance',
+    operational: {
+      ...completedOperational,
+      pendingWake: { sequence: 1, acceptedAt: new Date(Date.parse(checkedAt) + 1).toISOString() },
+    },
+  },
+] satisfies readonly { name: string; operational: ExecutionControllerHealth | null }[])(
+  '$name cannot reuse a prior idle success',
+  ({ operational }) => {
+    expect(
+      readinessResponseDecision(controllerTransition(completedController, Date.parse(checkedAt), operational).next),
+    ).toMatchObject({
+      status: 503,
+      body: { ready: false },
+    })
+  },
+)
 
 test.each([
   {
