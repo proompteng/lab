@@ -328,3 +328,35 @@ test('final reporting does not repeat a command that already completed at the te
   expect(result.passCount).toBe(0)
   expect(result.nextPollAtMs).toBe(1265)
 })
+
+test('a forced terminal pass reports its actual start when the pending command lies beyond the reporting window', async () => {
+  const polls: number[] = []
+  const schedule = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      return yield* driveReplaySession(
+        {
+          nextDelayMs: 1000,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              polls.push(at)
+              return {
+                observation: {
+                  result: 'SUCCESS' as const,
+                  outcome: 'WINDOW_CLOSED' as const,
+                  observedAt: utcInstantFromEpochMillis(at),
+                },
+              }
+            }),
+          ),
+        },
+        (at) => TestClock.setTime(at),
+        1000,
+        10,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(polls).toEqual([10])
+  expect(schedule).toMatchObject({ firstPollAtMs: 10, lastPollAtMs: 10, completedAtMs: 10, passCount: 1 })
+})

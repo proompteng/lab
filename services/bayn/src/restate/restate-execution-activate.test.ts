@@ -222,19 +222,21 @@ describe('native Restate execution activation', () => {
     expect(JSON.stringify(logs)).not.toContain(token)
   })
 
-  test('verifies the active controller plan after the current worker completed a successor pass', () => {
+  test('verifies the active controller plan after its first completed streaming pass', () => {
     expect(Result.getOrThrow(verifyRestateExecutionActivation(config, activeState))).toEqual(activeState)
+    const { nextDueAt: _nextDueAt, ...idleState } = activeState
+    const firstCompletion = {
+      ...idleState,
+      nextSequence: 1,
+      lastCompletion: { ...activeState.lastCompletion, sequence: activeState.initialSequence },
+    }
+    expect(Result.getOrThrow(verifyRestateExecutionActivation(config, firstCompletion))).toEqual(firstCompletion)
     for (const invalid of [
       { ...activeState, active: false },
       { ...activeState, planHash: 'd'.repeat(64) },
       { ...activeState, sourceRevision: 'e'.repeat(40) },
       { ...activeState, lastCompletion: undefined },
       { ...activeState, nextSequence: 1 },
-      {
-        ...activeState,
-        nextSequence: 1,
-        lastCompletion: { ...activeState.lastCompletion, sequence: activeState.initialSequence },
-      },
       { active: true },
     ]) {
       expect(Result.isFailure(verifyRestateExecutionActivation(config, invalid))).toBe(true)

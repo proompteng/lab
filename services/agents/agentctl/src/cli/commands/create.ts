@@ -1,4 +1,4 @@
-import { Command, Options } from '@effect/cli'
+import { Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
@@ -21,9 +21,9 @@ const transportErrorTag = (error: unknown) => {
 }
 
 const makeCreateImplCommand = () => {
-  const text = Options.text('text')
-  const summary = Options.optional(Options.text('summary'))
-  const source = Options.optional(Options.text('source'))
+  const text = Flag.String('text')
+  const summary = Flag.optional(Flag.String('summary'))
+  const source = Flag.optional(Flag.String('source'))
   return Command.make('impl', { text, summary, source }, ({ text, summary, source }) =>
     Effect.gen(function* () {
       const { resolved } = yield* AgentctlContext

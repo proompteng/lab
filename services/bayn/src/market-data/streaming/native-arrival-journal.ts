@@ -31,6 +31,7 @@ export interface NativeArrivalStore {
 
 export interface NativeArrivalCapture {
   readonly observe: (input: NativeArrivalObservation) => Effect.Effect<void>
+  readonly flush: Effect.Effect<void>
   readonly status: () => {
     readonly captureId: string
     readonly status: 'RECORDING' | 'INCOMPLETE' | 'STOPPED'
@@ -190,6 +191,7 @@ export const makeNativeArrivalJournal = (
       ),
     )
     return {
+      flush: buffer.withPermit(flush),
       observe: (input) =>
         Effect.suspend(() => {
           const previousObservedSequence = observedSequence

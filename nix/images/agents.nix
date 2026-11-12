@@ -280,8 +280,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-jkdKdmU2rDhHmEyjR05JMYYYeGdt4OHrccxXbnEgsHA=";
-    aarch64-linux = "sha256-VZzr7AWwIGHMHLI1Qvh7N71C7TIGsFyEktZqfNCvY+Y=";
+    x86_64-linux = "sha256-MEqPQ4y+d6bR1yyjLzMEdaMs1H5sVx+gkmrZ3J82v3g=";
+    aarch64-linux = "sha256-7HG4VP/rO4TgaxtDqO64Ip9BSdYvBeYiM6xZzwjL88c=";
   };
 
   installFilters = [

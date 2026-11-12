@@ -24,7 +24,10 @@ kubectl -n pelican get secret pelican-bootstrap -o jsonpath='{.data.ADMIN_PASSWO
 
 Change the administrator password and set a real email in the Panel after login. Mail delivery is intentionally unconfigured. The generated password remains a bootstrap record rather than resetting the live account on restart.
 
-The forest/caves allocations are reserved for the discussed Don't Starve Together setup. This installs the management platform, not a game world. Starting DST additionally requires its Egg, a Klei cluster token, a world configuration and optional game password. Public internet exposure requires a separate explicit networking change.
+The forest/caves allocations are used by the [Don't Starve Together installation](dst/README.md).
+Its one-time provisioning helper creates the game through Pelican's native services and
+preserves subsequent user changes. Online activation requires the owner's Klei server token.
+Public internet exposure requires a separate explicit networking change.
 
 ## Validation and operations
 
@@ -37,9 +40,21 @@ kubectl -n pelican get externalsecret,pvc,datavolume,deploy,vm,vmi,ingress,servi
 kubectl -n pelican logs deployment/pelican -c initialize
 ```
 
+The first installation runs 255 upstream migrations. A one-hour Deployment progress window accommodates cold-start storage latency without restarting the initializer or relaxing readiness. Investigate stalled migration logs or storage warnings rather than assuming a healthy rollout from elapsed time.
+
 Validate actual login/installer closure and an authenticated Panel-to-Wings `/api/system` request after rollout. An Argo health indicator alone does not prove game execution. KubeVirt's guest-agent condition confirms that cloud-init installed the agent; inspect Wings independently.
 
 Cloud-init installs Docker CE from its signed upstream Ubuntu repository and verifies the pinned Wings binary before enabling its service. Bootstrap is first-boot initialization: future guest software/configuration changes require an explicit in-guest update or a planned replacement preserving game data. Never recreate a used root disk as an update mechanism.
+
+Wings uses `docker.network.network_mtu: 1400`, matching the observed pod and guest interface MTU.
+The default 1500-byte Docker bridge stalled TLS handshakes to Steam while the same endpoint
+worked from the guest. A disposable 1400-byte bridge verified HTTP 200 with certificate
+verification enabled. For an existing guest, stop active game/install containers before
+stopping Wings, changing only this configuration field, and recreating the empty
+`pelican_nw` bridge. Preserve all volumes, credentials and Docker's other networks;
+Wings recreates its bridge with the configured MTU when restarted. This is an in-guest
+repair, not a Talos change or VM replacement. Validate an HTTPS request from a container,
+not just from the guest, after the repair.
 
 ## Persistence and recovery
 

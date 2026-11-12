@@ -22,7 +22,21 @@ import { nativeActivationPreflight, NativeActivationPreflightError } from './nat
 
 import type { ApplicationPlan } from '../app'
 import type { NativeExecutionRuntime } from '../restate/restate-execution-controller'
-import { config, fixtureRuntime } from '../testing/runtime-fixtures'
+import { config, fixtureRuntime, readyState } from '../testing/runtime-fixtures'
+import { Logger } from 'effect'
+import { InvocationIdParser, type ObjectContext, type ObjectSharedContext } from '@restatedev/restate-sdk'
+import { readinessResponseDecision } from '../http'
+import { deriveHealthTransition } from '../health/decisions'
+import type { ExecutionControllerHealth } from '../execution/controller-health'
+import {
+  decodeExecutionControllerTick,
+  type ExecutionControllerState,
+  type ExecutionControllerTick,
+} from '../execution/controller'
+import {
+  executionActivationAuthorizationHash,
+  makeBaynExecutionController,
+} from '../restate/restate-execution-controller'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import {
@@ -34,16 +48,22 @@ import {
   ExecutionControllerStatusStoreError,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
-import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
+import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition/model'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
-import { operationalError } from '../errors'
+import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
+import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { Authority, KillState, type AuthorityState } from '../execution/contracts'
+import { operationalError, type OperationalError } from '../errors'
+import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeRebindingCycleDriver } from './generation-cycle'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
-import { completeExecutionControllerTick, executionControllerPlanHash } from '../execution/controller'
+import { completeExecutionControllerTick } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import {
   bindRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
@@ -73,7 +93,6 @@ type PlanOverrides = {
   readonly brokerAccess?: 'mutation' | 'read-only'
   readonly capitalAuthorityKind?: 'granted-capital' | 'none'
   readonly imageDigest?: string
-  readonly cyclePollIntervalMs?: number
   readonly reconciliationStaleThresholdMs?: number
   readonly persistedGrantHash?: string
   readonly tigerBeetleClusterId?: bigint
@@ -145,6 +164,50 @@ const statusStore = (
   project: (candidate) => Effect.succeed(project(candidate)),
   read: () => Effect.succeed(null),
 })
+
+const pendingJob = (expiresAt: string): JevInferenceJob => ({
+  schemaVersion: 'bayn.jev-inference-job.v1',
+  jobId: hash('1'),
+  batchId: hash('1'),
+  cycleId: hash('2'),
+  authorityGenerationHash: hash('4'),
+  expiresAt,
+  status: 'Prepared',
+})
+
+const bindPendingDriver = (
+  source: Parameters<typeof bindRecoveryFirstCycleDriver>[0],
+  pending: Effect.Effect<readonly JevInferenceJob[], OperationalError>,
+) => {
+  const forbidden = () => Effect.die('financial advance must not dispatch or settle provider work')
+  const captured = Context.make(AuthorityGenerationStore, {
+    readAuthorityState: Effect.succeed({
+      schemaVersion: 'bayn.paper-authority.v1' as const,
+      generationHash: hash('4'),
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: completedAt,
+    }),
+    ensureAuthorityGeneration: forbidden,
+    readOrInitializeObserveAuthority: forbidden,
+    readResearchAuthorityGeneration: forbidden,
+    readAuthorityGenerationLineage: forbidden,
+  }).pipe(
+    Context.add(JevInferenceWorkStore, {
+      pending: (generation) => {
+        expect(generation).toBe(hash('4'))
+        return pending
+      },
+      settleExpired: forbidden,
+      resume: forbidden,
+      read: forbidden,
+      claim: forbidden,
+    }),
+  ) as Context.Context<RecoveryFirstRuntime>
+  return bindRecoveryFirstCycleDriver(source, executionBuild).pipe(Effect.provideContext(captured))
+}
 
 const withExecutionRuntime = (
   prepare: Effect.Effect<BoundRecoveryFirstCycleDriver, never, Scope.Scope>,
@@ -226,7 +289,6 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
         ledger: overrides.tigerBeetleLedger ?? 7_001,
       },
       capitalActivationRequestJson: '{"schemaVersion":"test"}',
-      cyclePollIntervalMs: overrides.cyclePollIntervalMs ?? 30_000,
       reconciliationStaleThresholdMs: overrides.reconciliationStaleThresholdMs ?? config.reconciliationStaleThresholdMs,
       operationTimeoutMs: 30_000,
     },
@@ -237,6 +299,605 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
 }
 
 describe('native execution runtime', () => {
+  test.each([
+    { protectionAt: undefined, expiresAt: '2026-08-13T18:00:07.000Z', dueAt: '2026-08-13T18:00:07.000Z' },
+    {
+      protectionAt: '2026-08-13T18:00:05.000Z',
+      expiresAt: '2026-08-13T18:00:20.000Z',
+      dueAt: '2026-08-13T18:00:05.000Z',
+    },
+    {
+      protectionAt: '2026-08-13T18:00:30.000Z',
+      expiresAt: '2026-08-13T18:00:07.000Z',
+      dueAt: '2026-08-13T18:00:07.000Z',
+    },
+  ])(
+    'one pending query supplies fresh dispatch jobs and the original expiry/protection timer: $dueAt',
+    async ({ protectionAt, expiresAt, dueAt }) => {
+      let reads = 0
+      let advances = 0
+      let projected: ExecutionControllerStatus | undefined
+      const job = pendingJob(expiresAt)
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(completedAt))
+          const bound = yield* bindPendingDriver(
+            {
+              nextDelayMs: 30_000,
+              advance: Effect.sync(() => {
+                advances++
+                return {
+                  observation: windowClosedObservation,
+                  ...(protectionAt === undefined ? {} : { nextWakeAt: protectionAt }),
+                }
+              }),
+            },
+            Effect.suspend(() =>
+              ++reads === 1 ? Effect.succeed([job]) : Effect.die('fresh completion repeated its pending query'),
+            ),
+          )
+          return yield* executeNativeExecutionAdvance(
+            command,
+            bound,
+            statusStore((candidate) => {
+              projected = candidate
+              return { _tag: 'Applied', status: candidate }
+            }),
+            controllerPlanHash,
+          )
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+      expect(reads).toBe(1)
+      expect(advances).toBe(1)
+      expect(result.inferenceJobs).toEqual([job])
+      expect(result.outcome.nextWakeAt).toBe(dueAt)
+      expect(projected).toMatchObject({ nextDueAt: dueAt })
+    },
+  )
+
+  test('pending lookup failure cannot publish a successful financial completion', async () => {
+    let projects = 0
+    const failure = operationalError({ component: 'database', operation: 'jev-batch', message: 'pending query failed' })
+    const bound = await Effect.runPromise(bindPendingDriver(windowClosedDriver, Effect.fail(failure)))
+    const result = await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        bound,
+        statusStore((candidate) => {
+          projects++
+          return { _tag: 'Applied', status: candidate }
+        }),
+        controllerPlanHash,
+      ).pipe(Effect.result),
+    )
+    expect(projects).toBe(0)
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { _tag: 'TransientExecutionFailure', cause: failure } })
+  })
+
+  test.each(['pending lookup', 'completion projection'] as const)(
+    'accepted work exposes 120 %s failures, then recovers to genuinely idle health',
+    async (fault) => {
+      let now = Date.parse(completedAt)
+      let invocation = 0
+      let projects = 0
+      let projectionAttempts = 0
+      let pendingReads = 0
+      let healthy = false
+      let projected = status({
+        lastSequence: command.sequence - 1,
+        nextSequence: command.sequence,
+        nextDueAt: undefined,
+      })
+      let state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: command.epoch,
+        planHash: controllerPlanHash,
+        sourceRevision,
+        initialSequence: 0,
+        nextSequence: command.sequence,
+        lastCompletion: {
+          sequence: command.sequence - 1,
+          outcome: ExecutionControllerOutcome.Blocked,
+          receiptHash: hash('2'),
+          completedAt,
+        },
+      }
+      const failure = operationalError({
+        component: 'database',
+        operation: 'jev-batch',
+        message: 'pending query failed',
+      })
+      const bound = await Effect.runPromise(
+        bindPendingDriver(
+          windowClosedDriver,
+          Effect.suspend(() => {
+            pendingReads++
+            return healthy || fault === 'completion projection' ? Effect.succeed([]) : Effect.fail(failure)
+          }),
+        ),
+      )
+      const store: ExecutionControllerStatusStoreShape = {
+        read: () => Effect.succeed(projected),
+        project: (candidate) =>
+          Effect.suspend(() => {
+            projectionAttempts++
+            if (!healthy && fault === 'completion projection')
+              return Effect.fail(
+                new ExecutionControllerStatusStoreError({
+                  operation: 'project',
+                  failure: 'query',
+                  message: 'completion write failed',
+                }),
+              )
+            projects++
+            projected = candidate
+            return Effect.succeed({ _tag: 'Applied' as const, status: candidate })
+          }),
+      }
+      const controller = makeBaynExecutionController(
+        {
+          controllerKey: command.controllerKey,
+          operationTimeoutMs: 30_000,
+          planHash: controllerPlanHash,
+          sourceRevision,
+          activationAuthorizationHash: Result.getOrThrow(
+            executionActivationAuthorizationHash(Buffer.alloc(32, 7).toString('base64url')),
+          ),
+        },
+        {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: (advanceCommand, signal) =>
+            Effect.runPromise(
+              Effect.gen(function* () {
+                yield* TestClock.setTime(now)
+                return yield* executeNativeExecutionAdvance(advanceCommand, bound, store, controllerPlanHash)
+              }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([]))),
+              { signal },
+            ),
+        },
+        undefined,
+        { currentTimeMillisUnsafe: () => now },
+      )
+      type ControllerContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
+      const object = (
+        controller as unknown as {
+          readonly object: {
+            readonly wake: (ctx: ControllerContext, candidate: unknown) => Promise<void>
+            readonly tick: (ctx: ControllerContext, candidate: unknown) => Promise<void>
+            readonly health: (ctx: ObjectSharedContext, candidate: unknown) => Promise<ExecutionControllerHealth | null>
+          }
+        }
+      ).object
+      const queued: Array<{ readonly parameter: ExecutionControllerTick; readonly delay: number }> = []
+      const privateState = new Map<string, unknown>()
+      const context = {
+        key: command.controllerKey,
+        get: async (key: string) => (key === 'controller' ? state : (privateState.get(key) ?? null)),
+        set: (key: string, value: ExecutionControllerState) => {
+          if (key === 'controller') state = value
+          else privateState.set(key, value)
+        },
+        clear: (key: string) => privateState.delete(key),
+        run: async <A>(_name: string, work: () => Promise<A>) => work(),
+        date: { now: async () => now },
+        request: () => ({ id: `inv_idlefailure${invocation}`, attemptCompletedSignal: new AbortController().signal }),
+        genericSend: (delivery: { readonly parameter: unknown; readonly delay?: number }) => {
+          queued.push({
+            parameter: Result.getOrThrow(decodeExecutionControllerTick(delivery.parameter)),
+            delay: delivery.delay ?? 0,
+          })
+          return { invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_idlehealth${queued.length}`)) }
+        },
+        invocation: () => ({ cancel: () => undefined }),
+      } as unknown as ControllerContext
+      const readiness = async () => {
+        const current = readyState()
+        const operational = await object.health(context as unknown as ObjectSharedContext, {})
+        const transition = deriveHealthTransition(
+          {
+            ...current,
+            executionController: {
+              configured: true,
+              controllerKey: command.controllerKey,
+              planHash: controllerPlanHash,
+              status: null,
+              readAvailable: true,
+              checkedAt: new Date(now).toISOString(),
+              error: null,
+            },
+          },
+          {
+            config,
+            results: {
+              postgresql: { _tag: 'Available', value: undefined },
+              tigerBeetle: { _tag: 'Available', value: undefined },
+              broker: null,
+              executionController: { _tag: 'Available', value: { operational, status: projected } },
+              cycle: {
+                _tag: 'Available',
+                value: {
+                  current: null,
+                  last: null,
+                  unfinishedCycleCount: 0,
+                  authority: null,
+                  reconciliation: null,
+                  mutations: {
+                    eventCount: 0,
+                    recoveryFoundCount: 0,
+                    approvedIntentCount: 0,
+                    acknowledgedIntentCount: 0,
+                    unresolvedCount: 0,
+                    oldestUnresolvedAt: null,
+                    latestOccurredAt: null,
+                  },
+                },
+              },
+            },
+            broker: undefined,
+            cycleFiber: { _tag: 'NotProvided' },
+            clock: { _tag: 'Available', checkedAt: new Date(now).toISOString(), checkedAtMs: now },
+          },
+        )
+        return readinessResponseDecision(transition.next, { nowMs: now, leaseMs: 1_000 })
+      }
+      expect((await readiness()).status).toBe(200)
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'BrokerObservation',
+        sourceRevision,
+        eventId: hash('e'),
+        snapshotHash: hash('e'),
+        observedAt: completedAt,
+      })
+      const acceptedAt = state.wakeAcceptedAt
+      expect(acceptedAt).toBe(completedAt)
+      for (invocation = 1; invocation <= 120; invocation++) {
+        const delivery = queued.shift()
+        if (delivery === undefined) throw new Error('failed execution did not retain its recovery delivery')
+        now += delivery.delay
+        await object.tick(context, delivery.parameter)
+        expect(state.wakeAcceptedAt).toBe(acceptedAt)
+      }
+      expect(now - Date.parse(completedAt)).toBeGreaterThan(config.cycleStallThresholdMs)
+      expect(pendingReads).toBe(120)
+      expect(projects).toBe(0)
+      expect(projectionAttempts).toBe(fault === 'completion projection' ? 120 : 0)
+      expect(state.nextSequence).toBe(command.sequence)
+      expect((await readiness()).status).toBe(503)
+      healthy = true
+      const delivery = queued.shift()
+      if (delivery === undefined) throw new Error('recovery delivery disappeared')
+      now += delivery.delay
+      await object.tick(context, delivery.parameter)
+      expect(projects).toBe(1)
+      expect(state.nextSequence).toBe(command.sequence + 1)
+      expect(state.wakeAcceptedAt).toBeUndefined()
+      expect(state.wakeScheduledSequence).toBeUndefined()
+      now += config.cycleStallThresholdMs * 2
+      expect((await readiness()).status).toBe(200)
+    },
+  )
+
+  test('an uncertain SQL projection and its later replay rediscover committed work without another financial pass', async () => {
+    const job = pendingJob('2026-08-13T18:00:07.000Z')
+    const recoveredJob: JevInferenceJob = { ...job, status: 'Claimed' }
+    let reads = 0
+    let advances = 0
+    let projects = 0
+    let persisted: ExecutionControllerStatus | null = null
+    const makeBound = bindPendingDriver(
+      {
+        ...windowClosedDriver,
+        advance: Effect.sync(() => {
+          advances++
+          return { observation: windowClosedObservation }
+        }),
+      },
+      Effect.sync(() => {
+        reads++
+        return reads === 1 ? [job] : [recoveredJob]
+      }),
+    )
+    const store: ExecutionControllerStatusStoreShape = {
+      read: () => Effect.sync(() => persisted),
+      project: (candidate) =>
+        Effect.sync(() => {
+          projects++
+          persisted = candidate
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ExecutionControllerStatusStoreError({
+                operation: 'project',
+                failure: 'query',
+                message: 'commit acknowledgement lost',
+              }),
+            ),
+          ),
+        ),
+    }
+    const [first, replay] = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(completedAt))
+        const bound = yield* makeBound
+        const first = yield* executeNativeExecutionAdvance(command, bound, store, controllerPlanHash)
+        expect(reads).toBe(2)
+        const replay = yield* executeNativeExecutionAdvance(command, bound, store, controllerPlanHash)
+        return [first, replay] as const
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(reads).toBe(3)
+    expect(advances).toBe(1)
+    expect(projects).toBe(1)
+    expect(first.inferenceJobs).toEqual([recoveredJob])
+    expect(replay.inferenceJobs).toEqual([recoveredJob])
+    expect(replay.outcome).toEqual(first.outcome)
+  })
+
+  test('a replay cannot acknowledge committed work when durable pending recovery fails', async () => {
+    let reads = 0
+    const failure = operationalError({
+      component: 'database',
+      operation: 'jev-batch',
+      message: 'recovery query failed',
+    })
+    const bound = await Effect.runPromise(
+      bindPendingDriver(
+        {
+          ...windowClosedDriver,
+          advance: Effect.die('replayed receipt cannot repeat financial work'),
+        },
+        Effect.sync(() => {
+          reads++
+        }).pipe(Effect.andThen(Effect.fail(failure))),
+      ),
+    )
+    const result = await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        bound,
+        {
+          read: () => Effect.succeed(status({ lastPass: windowClosedObservation })),
+          project: () => Effect.die('replayed receipt cannot be rewritten'),
+        },
+        controllerPlanHash,
+      ).pipe(Effect.result),
+    )
+    expect(reads).toBe(1)
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { _tag: 'TransientExecutionFailure', cause: failure } })
+  })
+
+  test('pending dispatch continuation can change without changing its canonical financial receipt', async () => {
+    const job = pendingJob('2026-08-13T18:00:07.000Z')
+    const pass = { observation: windowClosedObservation, nextWakeAt: job.expiresAt }
+    const [prepared, claimed] = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(completedAt))
+        return [
+          yield* advanceExecutionOnce(command, {
+            ...windowClosedDriver,
+            advance: Effect.succeed({ ...pass, inferenceJobs: [job] }),
+          }),
+          yield* advanceExecutionOnce(command, {
+            ...windowClosedDriver,
+            advance: Effect.succeed({ ...pass, inferenceJobs: [{ ...job, status: 'Claimed' as const }] }),
+          }),
+        ] as const
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(prepared.receiptHash).toBe(claimed.receiptHash)
+    expect(prepared.nextWakeAt).toBe(job.expiresAt)
+    expect(claimed.nextWakeAt).toBe(job.expiresAt)
+    expect(prepared.inferenceJobs?.[0]?.status).toBe('Prepared')
+    expect(claimed.inferenceJobs?.[0]?.status).toBe('Claimed')
+  })
+
+  test('blocked historical expense cleanup cannot delay serialized protection advances', async () => {
+    let cleanupStarts = 0
+    let cleanupFinalizers = 0
+    let advances = 0
+    const nextWakeAt = '2026-08-13T18:00:05.000Z'
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const cleanup = Effect.gen(function* () {
+            cleanupStarts += 1
+            yield* Deferred.succeed(entered, undefined)
+            return yield* Effect.never
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                cleanupFinalizers += 1
+              }),
+            ),
+          )
+          const forbidden = () => Effect.die('blocked cleanup must not reach other expense or provider work')
+          const work = {
+            pending: () => Effect.succeed([]),
+            settleExpired: (_accountId: string) => cleanup,
+            resume: forbidden,
+            read: forbidden,
+            claim: forbidden,
+          } satisfies typeof JevInferenceWorkStore.Service
+          const expense = yield* runInferenceExpensePass(
+            {
+              newSources: forbidden(),
+              freeze: forbidden,
+              pending: forbidden(),
+              acknowledge: forbidden,
+              settleExpiredTerminalBatches: forbidden(),
+              settleExpiredInferenceWork: work.settleExpired(brokerAccountId),
+            },
+            { request: forbidden },
+          ).pipe(Effect.forkScoped)
+          yield* Deferred.await(entered)
+          const captured = Context.make(AuthorityGenerationStore, {
+            readAuthorityState: Effect.succeed({
+              schemaVersion: 'bayn.paper-authority.v1' as const,
+              generationHash: hash('1'),
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
+              kill: KillState.Clear,
+              version: 1,
+              updatedAt: completedAt,
+            }),
+            ensureAuthorityGeneration: forbidden,
+            readOrInitializeObserveAuthority: forbidden,
+            readResearchAuthorityGeneration: forbidden,
+            readAuthorityGenerationLineage: forbidden,
+          }).pipe(Context.add(JevInferenceWorkStore, work)) as Context.Context<RecoveryFirstRuntime>
+          const bound = yield* bindRecoveryFirstCycleDriver(
+            {
+              nextDelayMs: 30_000,
+              advance: Effect.sync(() => {
+                advances += 1
+                return {
+                  nextWakeAt,
+                  observation: {
+                    result: 'SUCCESS' as const,
+                    outcome: 'RECOVERED' as const,
+                    recoveryAction: 'WAITING' as const,
+                    waitReason: 'JEV_POSITION_HELD' as const,
+                    observedAt: completedAt,
+                  },
+                }
+              }),
+            },
+            executionBuild,
+          ).pipe(Effect.provideContext(captured))
+          const protection = yield* Effect.all([bound.advance, bound.advance], { concurrency: 1 }).pipe(
+            Effect.timeout('1 second'),
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* TestClock.adjust('1 second')
+          const results = yield* Fiber.join(protection)
+          expect(results.map((result) => result.nextWakeAt)).toEqual([nextWakeAt, nextWakeAt])
+          expect(advances).toBe(2)
+          expect(cleanupStarts).toBe(1)
+          expect(cleanupFinalizers).toBe(0)
+          yield* Fiber.interrupt(expense)
+          expect(cleanupFinalizers).toBe(1)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
+
+  test.each([
+    {
+      name: 'execution allowed',
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      rotated: false,
+      claims: 1,
+    },
+    {
+      name: 'observe allowed',
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      rotated: false,
+      claims: 1,
+    },
+    {
+      name: 'operator kill',
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      rotated: false,
+      claims: 0,
+    },
+    {
+      name: 'safety restriction',
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      rotated: false,
+      claims: 0,
+    },
+    {
+      name: 'generation rotated',
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      rotated: true,
+      claims: 0,
+    },
+  ])('queued inference rereads authority before claiming provider expense: $name', async (scenario) => {
+    const evidence = nativeJevDecisionEvidence(nativeJevFixture())
+    const retained = { plan: evidence.batchPlan, result: evidence.batchResult }
+    const job: JevInferenceJob = {
+      schemaVersion: 'bayn.jev-inference-job.v1',
+      jobId: retained.plan.batchId,
+      batchId: retained.plan.batchId,
+      cycleId: retained.plan.cycleId,
+      authorityGenerationHash: retained.plan.authorityGenerationHash,
+      expiresAt: retained.plan.expiresAt,
+      status: 'Prepared',
+    }
+    let authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: job.authorityGenerationHash,
+      maximum: scenario.maximum,
+      effective: scenario.maximum,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: completedAt,
+    }
+    let claims = 0
+    let settlements = 0
+    const forbidden = () => Effect.die('queued dispatch must not mutate authority or financial state')
+    const captured = Context.make(AuthorityGenerationStore, {
+      readAuthorityState: Effect.sync(() => authority),
+      ensureAuthorityGeneration: forbidden,
+      readOrInitializeObserveAuthority: forbidden,
+      readResearchAuthorityGeneration: forbidden,
+      readAuthorityGenerationLineage: forbidden,
+    }).pipe(
+      Context.add(JevInferenceWorkStore, {
+        pending: forbidden,
+        settleExpired: forbidden,
+        resume: forbidden,
+        read: () => Effect.succeed(job),
+        claim: () =>
+          Effect.sync(() => {
+            claims += 1
+            return null
+          }),
+      }),
+      Context.add(JevBatchStore, {
+        read: forbidden,
+        pending: forbidden,
+        begin: forbidden,
+        complete: forbidden,
+        finish: () =>
+          Effect.sync(() => {
+            settlements += 1
+            return retained
+          }),
+      }),
+    ) as Context.Context<RecoveryFirstRuntime>
+    const bound = await Effect.runPromise(
+      bindRecoveryFirstCycleDriver(windowClosedDriver, executionBuild).pipe(Effect.provideContext(captured)),
+    )
+    authority = {
+      ...authority,
+      effective: scenario.effective,
+      kill: scenario.kill,
+      generationHash: scenario.rotated ? hash('f') : authority.generationHash,
+    }
+    if (bound.inference === undefined) throw new Error('admitted inference adapter was not bound')
+    const completed = await Effect.runPromise(bound.inference.execute(job.jobId))
+    expect(claims).toBe(scenario.claims)
+    expect(settlements).toBe(1)
+    expect(completed?.status).toBe('Completed')
+    expect(completed?.authorityGenerationHash).toBe(job.authorityGenerationHash)
+  })
+
   const observePreflight = <E>(read: Effect.Effect<readonly unknown[], E>) => {
     const original = plan({ brokerAccess: 'read-only' })
     const { capitalActivationRequestJson: _request, ...config } = original.config
@@ -653,7 +1314,6 @@ describe('native execution runtime', () => {
     const replay = executionControllerConfig(plan())
     const changedPlans = [
       plan({ imageDigest: `sha256:${hash('a')}` }),
-      plan({ cyclePollIntervalMs: 60_000 }),
       plan({ reconciliationStaleThresholdMs: 180_000 }),
       plan({ persistedGrantHash: hash('d') }),
       plan({ brokerAccess: 'read-only' }),
@@ -924,7 +1584,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.first).toBe(failure)
-    expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
+    expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 1 })
     expect(acquired).toBe(2)
     expect(released).toBe(2)
   })
@@ -967,7 +1627,7 @@ describe('native execution runtime', () => {
       ),
     )
 
-    expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
+    expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 1 })
     expect(result.observation).toEqual({ ...windowClosedObservation, executionIssuedAt: command.issuedAt })
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
@@ -982,9 +1642,8 @@ describe('native execution runtime', () => {
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
     }
-    expect(projected.nextDueAt).toBe(
-      new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
-    )
+    expect(projected.nextDueAt).toBeUndefined()
+    expect(result.outcome).not.toHaveProperty('nextWakeAt')
   })
 
   test.each([
@@ -993,6 +1652,7 @@ describe('native execution runtime', () => {
     [30_000, 2_000],
     [31_000, 2_000],
     [100_000, 2_000],
+    [259_200_000, 2_000],
   ])('preserves an absolute wake %dms ahead across %dms of work and projected replay', async (dueMs, elapsedMs) => {
     const start = Date.parse(completedAt)
     const nextWakeAt = new Date(start + dueMs).toISOString()
@@ -1043,17 +1703,18 @@ describe('native execution runtime', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
     expect(advances).toBe(1)
-    const expectedDelay = Math.min(delay, Math.max(1, dueMs - elapsedMs))
+    const expectedDelay = Math.min(86_400_000, Math.max(1, dueMs - elapsedMs))
     expect(result.outcome.nextDelayMs).toBe(expectedDelay)
     expect(result.outcome.nextWakeAt).toBe(nextWakeAt)
     expect(projected).toMatchObject({
-      nextDueAt: new Date(start + elapsedMs + expectedDelay).toISOString(),
+      nextDueAt: nextWakeAt,
       lastPass: { nextWakeAt },
     })
   })
 
-  test('old persisted completions do not opt into absolute-wake journal commands', async () => {
+  test('a retained completion replays its persisted absolute deadline without another pass', async () => {
     const retained = status({ lastPass: windowClosedObservation })
+    if (!executionControllerStatusHasCompletion(retained)) throw new Error('expected retained completion')
     const result = await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
@@ -1062,7 +1723,7 @@ describe('native execution runtime', () => {
         controllerPlanHash,
       ),
     )
-    expect(result.outcome).not.toHaveProperty('nextWakeAt')
+    expect(result.outcome.nextWakeAt).toBe(retained.nextDueAt)
     expect(result.outcome.nextDelayMs).toBe(30_000)
   })
 
@@ -1097,7 +1758,7 @@ describe('native execution runtime', () => {
     })
   })
 
-  test('keeps retained pass evidence in PostgreSQL while Restate state remains rollback-compatible', async () => {
+  test('keeps retained pass evidence in PostgreSQL while projecting its compact Restate state', async () => {
     const retained = status({ lastPass: windowClosedObservation })
     if (!executionControllerStatusHasCompletion(retained)) {
       throw new Error('retained projection fixture must contain completion evidence')
@@ -1305,7 +1966,7 @@ describe('native execution runtime', () => {
         outcome: {
           _tag: committed.lastOutcome,
           receiptHash: committed.lastReceiptHash,
-          nextDelayMs: 30_000,
+          nextDelayMs: 1,
         },
       })
       expect(first).toEqual(replay)
@@ -1323,6 +1984,7 @@ describe('native execution runtime', () => {
     if (!executionControllerStatusHasCompletion(authoritative)) {
       throw new Error('projection-race fixture requires completion evidence')
     }
+    if (authoritative.nextDueAt === undefined) throw new Error('projection-race fixture requires its retained deadline')
     const racingStore: ExecutionControllerStatusStoreShape = {
       read: () =>
         Effect.sync(() => {
@@ -1367,6 +2029,7 @@ describe('native execution runtime', () => {
         _tag: authoritative.lastOutcome,
         receiptHash: authoritative.lastReceiptHash,
         nextDelayMs: 30_000,
+        nextWakeAt: authoritative.nextDueAt,
       },
     })
   })

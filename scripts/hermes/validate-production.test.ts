@@ -901,9 +901,9 @@ test.each(['auto', 'manual'])('rejects %s Hermes reconciliation from an unpromot
 test.each(['auto', 'manual'])('rejects %s Hermes reconciliation without the authorized Stage', async (mode) => {
   const files = await loadProductionFiles()
   files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
-  files.platform = files.platform.replace('kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain', '')
+  files.platform = files.platform.replace('kargo.akuity.io/authorized-stage: hermes-release:hermes-toolchain', '')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: missing production invariant "kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain"`,
+    `${productionPaths.platform}: missing production invariant "kargo.akuity.io/authorized-stage: hermes-release:hermes-toolchain"`,
   )
 })
 
@@ -1534,11 +1534,11 @@ test('rejects rollback through an unpromoted main revision', async () => {
 test('rejects rollback without selecting verified Hermes Freight', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`.',
+    'Re-promote a previously verified Hermes Freight through Stage `hermes-release/hermes-toolchain`.',
     'Sync the prior source revision.',
   )
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "Re-promote a previously verified Hermes Freight through Stage \u0060lab-delivery/hermes-toolchain\u0060."`,
+    `${productionPaths.runbook}: missing production invariant "Re-promote a previously verified Hermes Freight through Stage \u0060hermes-release/hermes-toolchain\u0060."`,
   )
 })
 

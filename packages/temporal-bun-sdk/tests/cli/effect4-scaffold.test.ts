@@ -8,7 +8,7 @@ test('scaffolding pairs the installed SDK with Effect 4 and its Bun type environ
   const manifest = JSON.parse(templates.find((template) => template.path === 'package.json')!.contents)
   const config = JSON.parse(templates.find((template) => template.path === 'tsconfig.json')!.contents)
   expect(manifest.dependencies['@proompteng/temporal-bun-sdk']).toBe(`^${metadata.version}`)
-  expect(manifest.dependencies.effect).toBe('4.0.0')
+  expect(manifest.dependencies.effect).toBe(metadata.dependencies.effect)
   expect(config.compilerOptions.types).toEqual(['bun-types'])
   expect(config.compilerOptions.lib).toEqual(['esnext', 'dom'])
 })

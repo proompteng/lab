@@ -23,11 +23,11 @@ flushing queues or changing replicas:
 ```sh
 kubectl --context galactic-lan -n argocd get application forgejo -o json |
   jq -e '.spec.source.targetRevision == "kargo/forgejo" and
-    .metadata.annotations["kargo.akuity.io/authorized-stage"] == "lab-delivery:forgejo" and
+    .metadata.annotations["kargo.akuity.io/authorized-stage"] == "forgejo-release:forgejo" and
     (.spec.syncPolicy.automated == null or .spec.syncPolicy.automated.enabled == false) and
     .operation == null and .status.operationState.phase != "Running" and
     .status.operationState.phase != "Terminating"'
-kubectl --context galactic-lan -n lab-delivery get promotions -o json |
+kubectl --context galactic-lan -n forgejo-release get promotions -o json |
   jq -e '[.items[] | select(.spec.stage == "forgejo") |
     select(.status.phase != "Succeeded" and .status.phase != "Failed" and
       .status.phase != "Errored" and .status.phase != "Aborted")] | length == 0'
@@ -98,7 +98,7 @@ Kargo preparation takes fresh snapshots covering writes since that restoration. 
 not recreate a gate that requires the original server UID or zero replicas.
 
 Image delivery uses the main-only `forgejo-image-publish` workflow, Warehouse
-`forgejo`, and automatic Stage `lab-delivery:forgejo`. The Application tracks
+`forgejo`, and automatic Stage `forgejo-release:forgejo`. The Application tracks
 `kargo/forgejo`. The Stage copies the exact source commit, transforms every
 Forgejo image in the Helm/Kustomize render to the selected immutable image,
 and writes source, upstream, creation and digest annotations into the values.

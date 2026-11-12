@@ -1284,7 +1284,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
   requireTerms(failures, productionPaths.platform, hermesApplication, [
     'targetRevision: kargo/hermes-toolchain',
-    'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
+    'kargo.akuity.io/authorized-stage: hermes-release:hermes-toolchain',
   ])
   if (hermesAutomation !== 'auto' && hermesAutomation !== 'manual') {
     failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
@@ -1297,7 +1297,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
 
   requireTerms(failures, productionPaths.runbook, files.runbook, [
-    'Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`.',
+    'Re-promote a previously verified Hermes Freight through Stage `hermes-release/hermes-toolchain`.',
     'Never run OpenClaw and Hermes with the same Discord token at the same time.',
     'Never pass `--migrate-secrets`',
     'Never run `hermes claw cleanup`',

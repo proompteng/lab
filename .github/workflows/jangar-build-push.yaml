@@ -10,6 +10,10 @@ on:
     paths:
       - 'services/jangar/**'
       - 'services/bumba/**'
+      - 'packages/temporal-bun-sdk/src/**'
+      - 'packages/temporal-bun-sdk/package.json'
+      - 'packages/temporal-bun-sdk/tsconfig.json'
+      - 'patches/effect@4.1.4.patch'
       - 'nix/images/jangar.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'argocd/applications/jangar/**'

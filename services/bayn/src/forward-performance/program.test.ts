@@ -79,7 +79,6 @@ const config: ForwardPerformanceConfig & { readonly historicalSignal: Historical
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
   unknownMutationThresholdMs: 300_000,
-  cyclePollIntervalMs: 30_000,
   clickhouse: {
     url: 'http://clickhouse.invalid',
     username: 'bayn',
