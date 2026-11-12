@@ -6,9 +6,17 @@ import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
 
-const costDescription = (unpriced = 'unavailable', ambiguous = 'unavailable', lag = 'unavailable') =>
+const costMetrics = [
+  'bayn_research_unpriced_attempts',
+  'bayn_research_ambiguous_attempts',
+  'bayn_research_oldest_pending_expense_seconds',
+]
+
+const costDescription = (name: string, unpriced = 'unavailable', ambiguous = 'unavailable', lag = 'unavailable') =>
   `Unpriced retained attempts: ${unpriced}; ambiguous claims: ${ambiguous}; oldest pending priced expense: ${lag} seconds. ` +
-  'Unpriced evidence can be historical and is not an expense-projection backlog. Unknown costs prevent a fully costed comparison; inspect immutable run allocation and receipt evidence before any recovery.'
+  (name === 'BaynResearchCostCoverageIncomplete'
+    ? 'Unpriced evidence can be historical and is not an expense-projection backlog. Unknown costs prevent a fully costed comparison; inspect immutable run allocation and receipt evidence before any recovery.'
+    : 'Unpriced attempts increased within the last hour, claims are ambiguous, or priced expenses remain unposted. Inspect the worker and immutable allocation evidence; never substitute a zero price for an unknown cost.')
 
 const researchGroup = () => {
   const config = YAML.parse(
@@ -30,27 +38,26 @@ const researchGroup = () => {
     }[]
   }
   const group = document.groups.find(({ name }) => name === 'bayn-research.rules')
-  if (group?.rules.length !== 3) throw new Error('All three research alerts are required')
+  if (group?.rules.length !== 4) throw new Error('All four research alerts are required')
   return group
 }
 
-test('research cost diagnostics preserve the alert gate and identify each missing-evidence branch', () => {
-  const rule = researchGroup().rules.find(({ alert }) => alert === 'BaynResearchCostCoverageIncomplete')
-  if (rule === undefined) throw new Error('Missing cost coverage alert')
-  expect(rule.expr).toBe(
-    'max(bayn_research_unpriced_attempts) > 0 or max(bayn_research_ambiguous_attempts) > 0 or max(bayn_research_oldest_pending_expense_seconds) > 300',
-  )
-  expect(rule.for).toBe('10m')
-  expect(rule.labels).toEqual({ severity: 'warning', team: 'platform', namespace: 'bayn', service: 'bayn-research' })
-  expect(rule.annotations.runbook_url).toBe('docs/bayn/jev-optimization.md#research-cost-coverage-triage')
-  for (const metric of [
-    'bayn_research_unpriced_attempts',
-    'bayn_research_ambiguous_attempts',
-    'bayn_research_oldest_pending_expense_seconds',
+test('research cost diagnostics distinguish retained debt from current degradation', () => {
+  const group = researchGroup()
+  for (const [name, severity] of [
+    ['BaynResearchCostCoverageIncomplete', 'info'],
+    ['BaynResearchCostCoverageDegraded', 'warning'],
   ]) {
-    expect(rule.annotations.description).toContain(`with query "max(${metric})"`)
+    const rule = group.rules.find(({ alert }) => alert === name)
+    if (rule === undefined) throw new Error(`Missing ${name}`)
+    expect(rule.for).toBe('10m')
+    expect(rule.labels).toEqual({ severity, team: 'platform', namespace: 'bayn', service: 'bayn-research' })
+    expect(rule.annotations.runbook_url).toBe('docs/bayn/jev-optimization.md#research-cost-coverage-triage')
+    for (const metric of costMetrics) {
+      expect(rule.annotations.description).toContain(`with query "max(${metric})"`)
+    }
+    expect(rule.annotations.description.match(/else }}unavailable/g)).toHaveLength(3)
   }
-  expect(rule.annotations.description.match(/else }}unavailable/g)).toHaveLength(3)
 })
 
 test('research alerts distinguish paused workers, lost telemetry, failed attempts and unknown costs', () => {
@@ -61,8 +68,8 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
     return {
       exp_labels: rule.labels,
       exp_annotations:
-        name === 'BaynResearchCostCoverageIncomplete'
-          ? { ...rule.annotations, description: costDescription(diagnostics[0], diagnostics[1], diagnostics[2]) }
+        name === 'BaynResearchCostCoverageIncomplete' || name === 'BaynResearchCostCoverageDegraded'
+          ? { ...rule.annotations, description: costDescription(name, diagnostics[0], diagnostics[1], diagnostics[2]) }
           : rule.annotations,
     }
   }
@@ -73,6 +80,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   const stale = 'BaynResearchWorkerStale'
   const failing = 'BaynResearchAttemptsFailing'
   const costs = 'BaynResearchCostCoverageIncomplete'
+  const degraded = 'BaynResearchCostCoverageDegraded'
   const cases: Record<string, unknown>[] = []
   const check = (
     name: string,
@@ -85,7 +93,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
       name,
       interval: '1m',
       input_series: input,
-      alert_rule_test: [stale, failing, costs].map((alertname) => ({
+      alert_rule_test: [stale, failing, costs, degraded].map((alertname) => ({
         alertname,
         eval_time: at,
         exp_alerts: fires.includes(alertname) ? [expected(alertname, diagnostics)] : [],
@@ -126,7 +134,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
     check(
       `${metric} blocks cost qualification while other coverage telemetry is unavailable`,
       [desired(), heartbeat, series(metric, '1+0x30')],
-      [costs],
+      [metric === 'bayn_research_unpriced_attempts' ? costs : degraded],
       '20m',
       metric === 'bayn_research_unpriced_attempts' ? ['1'] : ['unavailable', '1'],
     )
@@ -135,7 +143,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   check(
     'expense projection beyond five minutes',
     [desired(), heartbeat, series('bayn_research_oldest_pending_expense_seconds', '301+0x30')],
-    [costs],
+    [degraded],
     '20m',
     ['unavailable', 'unavailable', '301'],
   )
@@ -162,7 +170,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
       series('bayn_research_ambiguous_attempts', '3+0x30'),
       series('bayn_research_oldest_pending_expense_seconds', '600+0x30'),
     ],
-    [costs],
+    [costs, degraded],
     '20m',
     ['2', '3', '600'],
   )
@@ -185,6 +193,58 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
       'bayn_research_oldest_pending_expense_seconds',
     ].map((metric) => series(metric, '0+0x30')),
   ])
+  const increasingUnknown = [desired(), heartbeat, series('bayn_research_unpriced_attempts', '69+0x14 70+0x15')]
+  check('new unknown cost stays pending for ten minutes', increasingUnknown, [costs], '24m', ['70'])
+  check('new unknown cost warns after ten minutes', increasingUnknown, [costs, degraded], '25m', ['70'])
+  check(
+    'new unknown cost warns with duplicate worker views',
+    [
+      desired(),
+      heartbeat,
+      series('bayn_research_unpriced_attempts{instance="a"}', '69+0x14 70+0x15'),
+      series('bayn_research_unpriced_attempts{instance="b"}', '69+0x14 70+0x15'),
+    ],
+    [costs, degraded],
+    '25m',
+    ['70'],
+  )
+  check(
+    'replacing a worker preserves the shared store baseline',
+    [
+      desired(),
+      heartbeat,
+      series('bayn_research_unpriced_attempts{instance="old"}', '69+0x10 stale _x19'),
+      series('bayn_research_unpriced_attempts{instance="new"}', '_x10 69+0x20'),
+    ],
+    [costs],
+    '25m',
+    ['69'],
+  )
+  check(
+    'a decreasing retained count does not create a recent-cost warning',
+    [desired(), heartbeat, series('bayn_research_unpriced_attempts', '69+0x5 68+0x24')],
+    [costs],
+    '25m',
+    ['68'],
+  )
+  check(
+    'a stale worker does not hide retained cost debt',
+    [desired(), series('bayn_research_unpriced_attempts', '69+0x30')],
+    [stale, costs],
+    '20m',
+    ['69'],
+  )
+  check(
+    'recent-cost warning clears after the one-hour detection window but retained debt remains',
+    [
+      desired('1+0x100'),
+      series('bayn_research_worker_heartbeat_seconds', '0+60x100'),
+      series('bayn_research_unpriced_attempts', '69+0x5 70+0x95'),
+    ],
+    [costs],
+    '90m',
+    ['70'],
+  )
   const directory = mkdtempSync(join(tmpdir(), 'bayn-research-promql-'))
   try {
     writeFileSync(join(directory, 'rules.yaml'), YAML.stringify({ groups: [group] }))

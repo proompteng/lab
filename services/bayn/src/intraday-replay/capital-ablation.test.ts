@@ -3,6 +3,8 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { BrokerMode, executionRiskPolicySchemaVersion } from '../risk'
+import { BrokerEnvironment } from '../broker/identity'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { OrderType, TimeInForce } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -295,7 +297,14 @@ test('late or missing native commitment retains and charges the opportunity', ()
 })
 
 test('turnover reserve and loss gates bind both arms without dropping opportunities or blocking exits', () => {
-  const config = { ...terms, policy: { ...terms.policy, maxDailyTradedNotionalMicros: '40000000000' } }
+  const config = {
+    ...terms,
+    policy: {
+      ...terms.policy,
+      schemaVersion: executionRiskPolicySchemaVersion,
+      maxDailyTradedNotionalMicros: '40000000000',
+    },
+  }
   const [report] = evaluate([opportunity(), opportunity(16 * 60_000)], scenario, config)
   expect(report?.metrics.opportunities).toBe(2)
   expect(BigInt(report?.metrics.turnoverMicros ?? '0')).toBeLessThanOrEqual(40_000_000_000n)
@@ -310,6 +319,20 @@ test('turnover reserve and loss gates bind both arms without dropping opportunit
   )
   expect(loss?.opportunities[1]?.status).toBe(CapitalAdmission.LossOrDrawdownBlocked)
   expect(loss?.metrics.maximumDrawdownAfterAllCostsMicros).not.toBe('0')
+}, 30_000)
+
+test('capital study decodes and evaluates the current uncapped sandbox policy', () => {
+  const policy = Result.getOrThrow(
+    makeExecutionRiskPolicy(terms.policy.accountId, terms.policy.allowedSymbols, BrokerEnvironment.Sandbox),
+  )
+  const config = Schema.decodeUnknownSync(CapitalTermsSchema)({ ...terms, policy })
+  expect(config.policy.maxDailyTradedNotionalMicros).toBeNull()
+  const reports = evaluate([opportunity()], scenario, config)
+  for (const report of reports) {
+    expect(report.metrics.filledEntries).toBe(1)
+    expect(report.metrics.closedEpisodes).toBe(1)
+    expect(report.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
+  }
 }, 30_000)
 
 test('retired or changed protocols, duplicate ids and foreign accounts cannot compare', () => {

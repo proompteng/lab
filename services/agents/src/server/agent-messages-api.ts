@@ -26,19 +26,18 @@ export type AgentMessagesStoreFactoryService = {
   create: Effect.Effect<AgentMessagesStore, AgentMessagesStorageError>
 }
 
-export class AgentMessagesStoreFactory extends Context.Tag('AgentMessagesStoreFactory')<
+export class AgentMessagesStoreFactory extends Context.Service<
   AgentMessagesStoreFactory,
   AgentMessagesStoreFactoryService
->() {}
+>()('AgentMessagesStoreFactory') {}
 
 export type AgentMessagesPublisherService = {
   publish: (records: AgentMessageRecord[]) => Effect.Effect<void>
 }
 
-export class AgentMessagesPublisher extends Context.Tag('AgentMessagesPublisher')<
-  AgentMessagesPublisher,
-  AgentMessagesPublisherService
->() {}
+export class AgentMessagesPublisher extends Context.Service<AgentMessagesPublisher, AgentMessagesPublisherService>()(
+  'AgentMessagesPublisher',
+) {}
 
 export type AgentMessagesSkipIfExisting = {
   runId?: string | null
@@ -161,7 +160,7 @@ export const ingestAgentMessagesEffect = (input: IngestAgentMessagesInput) =>
         }),
       (activeStore) =>
         Effect.promise(() => activeStore.close()).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.sync(() => {
               console.warn('[agents] failed to close agent messages store', error)
             }),
