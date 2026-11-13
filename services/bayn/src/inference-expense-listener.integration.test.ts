@@ -222,28 +222,28 @@ describePostgres('inference expense LISTEN lifecycle', () => {
 
   test('cleanup observation fails within its deadline while the session is still open', async () => {
     await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const applicationName = `expense-held-session-${crypto.randomUUID()}`
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const connection = yield* PgConnection.make({
-              ...sql.config,
-              applicationName,
-              connectTimeout: '10 seconds',
-            })
-            const pinned = yield* connection.pin
-            yield* pinned.query('SELECT 1')
-            const before = yield* idleListener(sql, applicationName)
-            const failure = yield* awaitListenerClosed(sql, applicationName).pipe(
-              Effect.match({ onFailure: (cause) => cause._tag, onSuccess: () => null }),
-            )
-            expect(failure).toBe('TimeoutError')
-            expect(yield* idleListener(sql, applicationName)).toEqual(before)
-          }),
-        )
-        expect(yield* awaitListenerClosed(sql, applicationName)).toEqual([])
-      }),
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const applicationName = `expense-held-listener-${crypto.randomUUID()}`
+          const entered = yield* Deferred.make<void>()
+          // Use the real heartbeat: changing connectTimeout cannot extend the inherited socket inactivity budget.
+          const fiber = yield* listenInferenceExpenses(
+            { ...sql.config, applicationName },
+            'bayn_expense_held_test',
+            Deferred.succeed(entered, undefined).pipe(Effect.as(idle)),
+          ).pipe(Effect.forkScoped)
+          yield* Deferred.await(entered)
+          const before = yield* idleListener(sql, applicationName)
+          const failure = yield* awaitListenerClosed(sql, applicationName).pipe(
+            Effect.match({ onFailure: (cause) => cause._tag, onSuccess: () => null }),
+          )
+          expect(failure).toBe('TimeoutError')
+          expect(yield* idleListener(sql, applicationName)).toEqual(before)
+          yield* Fiber.interrupt(fiber)
+          expect(yield* awaitListenerClosed(sql, applicationName)).toEqual([])
+        }),
+      ),
     )
   })
 
