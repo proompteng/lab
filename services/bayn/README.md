@@ -1663,11 +1663,26 @@ after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start dela
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
-configured runtime:
+configured reporting or API runtime, **never an execution-controller pod**:
 
 ```sh
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
+
+Execution-controller workloads set `BAYN_REPORTING_ALLOWED=false`. The forward-performance and system-assessment
+commands reject work there before configuration/evidence reads or launching a supervised worker; `--help` remains
+available. This is an operational guard, not a credential or capital-authority boundary. Reporting stays in a separate
+pod memory budget; increasing a controller limit is not a reporting fix. Do not override this guard for diagnostics.
+
+Both commands emit a JSON **stderr** resource observation on completion, failure or cooperative interruption.
+`peakResidentSetKiB` is native Node's process-lifetime resident-set high-water mark, including startup, not current
+heap usage or an inferred memory bound. `elapsedMs` covers the measured report operation through output publication;
+the separate supervisor budget retains its documented scope below. Financial stdout and receipt hashes do not contain
+resource measurements. A SIGKILL/OOM can prevent the final observation: absent peak evidence stays unmeasured, never
+zero. The supervisor's small streaming-capture process is separate from the measured report worker. Size reporting
+resources from repeated, source-bound full-report runs with representative retained generations and controller
+restart/readiness readback before and after the load. A single successful report in a 4 GiB API pod proves neither
+a general memory bound nor profitable operation.
 
 For an explicit aggregate deadline on the read-only report, append `--deadline-ms <milliseconds>` after the generation
 and optional assessment arguments:

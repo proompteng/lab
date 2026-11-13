@@ -31,6 +31,7 @@ import { SystemAssessmentInputSchema } from './system-assessment/assessment'
 import { verifyLatencyStressImages } from './system-assessment/latency-report'
 import { CaptureReplayExecutionSchema, captureReplayExecution } from './system-assessment/replay-execution'
 import { readSystemSourceCut } from './system-assessment/source-cut'
+import { reportingLogger, requireReportingRuntime, withReportResourceMeasurement } from './reporting-runtime'
 
 export const SYSTEM_ASSESSMENT_COMMAND_USAGE =
   'Usage: bayn-system-assessment --system-history <packet.json> | --system-register <packet.json> | --system-capture <registration-sha256> | --system-capture-replay <packet.json> | --system-assess <packet.json> | --help'
@@ -178,13 +179,18 @@ const runSystem = (command: Exclude<SystemAssessmentCommand, { readonly _tag: 'H
 
 const program = Effect.gen(function* () {
   const command = yield* Effect.fromResult(parseSystemAssessmentCommandArgs(process.argv.slice(2)))
-  if (command._tag !== 'Help') return yield* runSystem(command)
+  if (command._tag !== 'Help') {
+    yield* requireReportingRuntime
+    return yield* withReportResourceMeasurement('system-assessment', runSystem(command))
+  }
   const stdio = yield* Stdio.Stdio
   yield* Stream.run(Stream.make(`${SYSTEM_ASSESSMENT_COMMAND_USAGE}\n`), stdio.stdout())
 }).pipe(
   Effect.annotateLogs({ service: 'bayn-system-assessment' }),
   // @effect-diagnostics-next-line strictEffectProvide:off -- command owns its scoped runtime
-  Effect.provide(Layer.mergeAll(makeConfiguredTelemetryRuntimeLayer('bayn-system-assessment'), NodeServices.layer)),
+  Effect.provide(
+    Layer.mergeAll(makeConfiguredTelemetryRuntimeLayer('bayn-system-assessment'), NodeServices.layer, reportingLogger),
+  ),
 )
 
 if (import.meta.main) NodeRuntime.runMain(program)
