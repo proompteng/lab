@@ -7,7 +7,6 @@ import { JevBatchPlanVersion, JevBatchResultSchema, JevCandidatePlanStatus } fro
 import { JevContractError } from './contract'
 import { ChartEntryTargetFields, makeChartEntryTargetMaterial, selectJevEntryCandidates } from './decision'
 import { deriveJevExitTargetMaterial, JevExitEvidenceSchema, JevExitTargetSchema } from './exit'
-import { reproduceRetainedJevCandidateObservation } from './observation'
 import { RetainedJevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import { RetainedVisualJevProtocolSchema } from './protocol'
@@ -29,8 +28,10 @@ const invalid = (message: string) => Result.fail(new JevContractError({ message 
 export const reproduceRetainedJevDecisionSource = (input: unknown, version: JevBatchPlanVersion) =>
   Result.gen(function* () {
     const evidence = yield* Schema.decodeUnknownResult(RetainedJevDecisionEvidenceSchema, strictParseOptions)(input)
-    const observation = yield* reproduceRetainedJevCandidateObservation(evidence.observation)
-    const plan = yield* reproduceRetainedJevTradingSignalBatchEvidence(evidence.observation, evidence.batchPlan)
+    const { observation, plan } = yield* reproduceRetainedJevTradingSignalBatchEvidence(
+      evidence.observation,
+      evidence.batchPlan,
+    )
     if (observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* invalid('Retained v38 entry requires its original flat entry observation')
     const inferences = yield* retainedJevV38BatchInferencesAt(

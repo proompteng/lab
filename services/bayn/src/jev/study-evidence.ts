@@ -11,7 +11,6 @@ import {
 } from './batch'
 import { JevContractError } from './contract'
 import { selectJevEntryCandidates } from './decision'
-import { reproduceRetainedJevCandidateObservation } from './observation'
 import { JevObservationSchema, RetainedJevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import {
@@ -29,8 +28,7 @@ export const JevStudyBatchPlanSchema = Schema.Union([JevBatchPlanSchema, Retaine
 export const reproduceJevStudyBatchEvidence = (inputObservation: unknown, inputPlan: unknown) =>
   Result.gen(function* () {
     if (Schema.is(RetainedJevObservationSchema)(inputObservation)) {
-      const observation = yield* reproduceRetainedJevCandidateObservation(inputObservation)
-      const plan = yield* reproduceRetainedJevTradingSignalBatchEvidence(inputObservation, inputPlan)
+      const { observation, plan } = yield* reproduceRetainedJevTradingSignalBatchEvidence(inputObservation, inputPlan)
       return { _tag: 'RETAINED_V38' as const, observation, plan }
     }
     const current = yield* reproduceJevTradingSignalBatchEvidence(inputObservation, inputPlan)
