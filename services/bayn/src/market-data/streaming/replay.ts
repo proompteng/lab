@@ -42,6 +42,24 @@ const fail = (message: string, cause?: unknown) =>
 const coordinate = (topic: string, partition: number, offset: string) =>
   `${topicPartitionKey(topic, partition)}:${offset}`
 
+const matchesReproducedManifest = (
+  manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
+  reproduced: StreamingSnapshotManifest | SimulatedSnapshotManifest,
+) =>
+  Result.gen(function* () {
+    const { contentHash, snapshotId, ...material } = manifest
+    // Construction already commits every reproduced field. Bind all supplied material once,
+    // including the complete input cut, rather than hashing both large manifests and subtrees again.
+    const supplied = yield* canonicalHashV1Result(material).pipe(
+      Result.mapError((cause) => fail('Snapshot manifest is not canonical', cause)),
+    )
+    return (
+      supplied === reproduced.contentHash &&
+      contentHash === reproduced.contentHash &&
+      snapshotId === reproduced.snapshotId
+    )
+  })
+
 export const reproduceStrategySnapshot = (
   input: unknown,
   rows: PersistedIntradaySnapshotRows,
@@ -51,18 +69,9 @@ export const reproduceStrategySnapshot = (
       StrategySnapshotManifestSchema,
       strictParseOptions,
     )(input).pipe(Result.mapError((cause) => fail('Recorded market snapshot manifest is invalid', cause)))
-    const snapshot = yield* manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+    return yield* manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
       ? reproduceStreamingSnapshot(manifest, rows)
       : reproduceSimulatedSnapshot(manifest, rows)
-    const supplied = yield* canonicalHashV1Result(manifest).pipe(
-      Result.mapError((cause) => fail('Snapshot manifest is not canonical', cause)),
-    )
-    const reproduced = yield* canonicalHashV1Result(snapshot.manifest).pipe(
-      Result.mapError((cause) => fail('Reproduced snapshot manifest is not canonical', cause)),
-    )
-    if (supplied !== reproduced)
-      return yield* Result.fail(fail('Recorded snapshot metadata differs from its reproduced source'))
-    return snapshot
   })
 
 /** Reproduces a saved cut; this does not grant a replay document live source authority. */
@@ -156,16 +165,7 @@ export const reproduceStreamingSnapshot = (
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
       query,
     )
-    if (
-      (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
-        Result.mapError((cause) => fail('Invalid reproduced cut hash', cause)),
-      )) !==
-        (yield* canonicalHashV1Result(evidence).pipe(
-          Result.mapError((cause) => fail('Invalid supplied cut hash', cause)),
-        )) ||
-      reproduced.manifest.contentHash !== manifest.contentHash ||
-      reproduced.manifest.snapshotId !== manifest.snapshotId
-    )
+    if (!(yield* matchesReproducedManifest(manifest, reproduced.manifest)))
       return yield* Result.fail(fail('Recorded inputs do not reproduce the bound streaming snapshot'))
     return reproduced
   })
@@ -394,16 +394,7 @@ export const reproduceSimulatedSnapshot = (
       source,
       query,
     )
-    if (
-      (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
-        Result.mapError((cause) => fail('Invalid reproduced cut hash', cause)),
-      )) !==
-        (yield* canonicalHashV1Result(evidence).pipe(
-          Result.mapError((cause) => fail('Invalid supplied cut hash', cause)),
-        )) ||
-      reproduced.manifest.contentHash !== manifest.contentHash ||
-      reproduced.manifest.snapshotId !== manifest.snapshotId
-    )
+    if (!(yield* matchesReproducedManifest(manifest, reproduced.manifest)))
       return yield* Result.fail(fail('Recorded inputs do not reproduce the simulated snapshot'))
     return reproduced
   })
