@@ -6,6 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { sha256 } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
+import { LatencyCliAcceptance, retainLatencyAcceptanceEvidence } from './latency-cli-evidence.test-support'
 import { withLatencyCliPhase } from './latency-cli-progress.test-support'
 import { writeCompiledReplayCommand } from './replay-cli.test-support'
 
@@ -42,26 +43,9 @@ export const latencyCliAcceptance = (policy: JevResearchPolicy, trading: boolean
             Effect.tap((code) => Effect.sync(() => expect(Number(code)).toBe(0))),
             withLatencyCliPhase('worker'),
           )
-          const result = yield* fs.readFileString(`${directory}/acceptance.json`).pipe(
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.fromJsonString(
-                  Schema.Struct({
-                    policy: Schema.String,
-                    trading: Schema.Boolean,
-                    sessionCount: Schema.Number,
-                    filledSessions: Schema.Number,
-                    executionProfitMicros: Schema.String,
-                    qualificationProfitMicros: Schema.String,
-                    complete: Schema.Boolean,
-                    providerDispatchCount: Schema.Number,
-                    receiptEconomicsComplete: Schema.Boolean,
-                    executableHash: Schema.String,
-                  }),
-                ),
-              ),
-            ),
-          )
+          const result = yield* fs
+            .readFileString(`${directory}/acceptance.json`)
+            .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(LatencyCliAcceptance))))
           expect(result).toMatchObject({
             policy,
             trading,
@@ -73,6 +57,11 @@ export const latencyCliAcceptance = (policy: JevResearchPolicy, trading: boolean
             executableHash: sha256(yield* fs.readFile(executablePath)),
           })
           expect(BigInt(result.qualificationProfitMicros)).toBe(BigInt(result.executionProfitMicros) - 20_000_000n)
+          // Retain the validated summary outside the scoped directory, beside CI's existing replay logs.
+          yield* retainLatencyAcceptanceEvidence(
+            `${directory}/../.cache/bayn-latency/${policy}-${trading ? 'trading' : 'missing'}-${sha256(directory)}.acceptance.json`,
+            result,
+          )
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       )
     },
