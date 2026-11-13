@@ -134,7 +134,7 @@ jobs:
 
   publish-cohort:
     needs: [image, research-image, broker-feed-image]
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     timeout-minutes: 15
     env:
       BAYN_DIGEST: ${{ needs.image.outputs.digest }}

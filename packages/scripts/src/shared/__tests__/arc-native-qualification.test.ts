@@ -41,7 +41,9 @@ describe('ARC native image qualification', () => {
   it('keeps native work opt-in and preserves bounded jobs and failure artifacts', () => {
     expect(workflow.on.workflow_dispatch.inputs.native_qualification).toMatchObject({ type: 'boolean', default: false })
     const job = workflow.jobs['ceph-build']
-    expect(job['timeout-minutes']).toBe('${{ inputs.native_qualification && 110 || 20 }}')
+    expect(job['timeout-minutes']).toBe(
+      "${{ inputs.native_qualification && matrix.architecture == 'amd64' && 110 || 20 }}",
+    )
     const nativeSteps = job.steps.filter((step: { name?: string }) => /native/i.test(step.name ?? ''))
     expect(nativeSteps.length).toBe(7)
     for (const step of nativeSteps) expect(step.if).toContain('inputs.native_qualification')
