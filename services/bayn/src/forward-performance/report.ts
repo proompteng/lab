@@ -1,7 +1,8 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } from './domain'
+import { makeForwardPerformanceReceiptEvidence, type ForwardPerformanceDomainFailure } from './domain'
+import type { ForwardPerformanceExecutionDiagnostics } from './execution-quality'
 import type { ForwardPerformanceEvidenceInput, ForwardPerformanceReceipt } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
@@ -21,13 +22,14 @@ export type ForwardPerformanceReportScope =
     }
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v7'
+  readonly schemaVersion: 'bayn.forward-performance-report.v8'
   /** Requested query scope; this does not supply missing financial source or strategy evidence. */
   readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
   /** A read-only report does not inspect persistence or certify that its generation has ended. */
   readonly receiptPersistence: 'NOT_CHECKED' | 'PERSISTED_TERMINAL'
   readonly costDiagnostics: ReturnType<typeof forwardCostDiagnostics>
+  readonly executionDiagnostics: ForwardPerformanceExecutionDiagnostics
   readonly positionEpisodes: PositionEpisodeEvidence
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
   readonly operatingCostCoverage: 'COMPLETE' | 'INCOMPLETE'
@@ -47,7 +49,7 @@ export const makeForwardPerformanceReport = (
   systemAssessment: SystemAssessment | null = null,
 ): Result.Result<ForwardPerformanceReport, ForwardPerformanceDomainFailure> =>
   Result.gen(function* () {
-    const receipt = yield* makeForwardPerformanceReceipt(input)
+    const { receipt, executionDiagnostics } = yield* makeForwardPerformanceReceiptEvidence(input)
     const positionEpisodes = yield* measurePositionEpisodes(input).pipe(
       Result.mapError(
         (cause): ForwardPerformanceDomainFailure => ({
@@ -63,11 +65,12 @@ export const makeForwardPerformanceReport = (
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
     const costDiagnostics = forwardCostDiagnostics(receipt, inferenceExpenses, systemAssessment)
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v7' as const,
+      schemaVersion: 'bayn.forward-performance-report.v8' as const,
       scope,
       receipt,
       receiptPersistence: 'NOT_CHECKED' as const,
       costDiagnostics,
+      executionDiagnostics,
       positionEpisodes,
       inferenceExpenses,
       operatingCostCoverage:

@@ -141,6 +141,9 @@ could have read historically and cannot serve as a qualified backtest or live de
 
 ## Profitability goal
 
+**Produce repeatable positive profit after all costs, within the registered risk limits, using the smallest
+understandable system that meets its original deadlines and reliability requirements.**
+
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
 The [November 7 paper-edge campaign](../../docs/bayn/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
@@ -158,6 +161,22 @@ realistic evidence. An assessment grants no capital authority.
 See [current and retained acceptance rules](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
 Historical contracts and assessment receipts retain their original terms and hashes; prospective attempt numbering
 continues across the policy change.
+
+Profit is the outcome; correctness and reliability are acceptance requirements. Engineering work serves that goal:
+
+- **Performance:** measure quote receipt through decision and broker acknowledgement, including p50, p95 and p99
+  latency, original-deadline misses, CPU, memory and database work under representative load. Count scheduled work
+  that never starts. Retain the original freshness, admission, inference, submission and recovery deadlines.
+- **Simplicity:** keep one owner for each mutable fact and one authoritative representation at each trust boundary.
+  Remove redundant work and replaced paths while preserving required validation, durable evidence and authority
+  rechecks. Add abstractions, dependencies or configuration only for a demonstrated current requirement.
+- **Functional code:** keep deterministic domain decisions pure and immutable, with plain values for total code and
+  explicit validation failures. Use Effect for typed I/O, bounded concurrency, cancellation and scoped resources,
+  following the [service guide](AGENTS.md). Make state transitions and failure behavior directly traceable.
+- **Change acceptance:** state the concrete problem, establish a representative baseline, make the smallest coherent
+  change and verify its effect and relevant failure paths. Preserve bytes, hashes and accounting contracts when
+  optimizing. Report microbenchmark gains separately from end-to-end and economic results; retain inconclusive work
+  as inconclusive. Freeze strategy changes before their untouched prospective comparison.
 
 The immediate priorities are reliable recovery and complete cost accounting, then the existing
 [`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
@@ -1178,7 +1197,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v7`. Its hashed `scope` records the requested
+The forward-performance command emits `bayn.forward-performance-report.v8`. Its hashed `scope` records the requested
 `AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
 account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
 bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
@@ -1682,13 +1701,23 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v7`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v8`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation. Each session retains the exact current
 `matchedQuoteHashes` and `requestsWithCoverageIssues`, including the provider stage, receipt/resolution identities,
 and missing quote, unverified ledger, unknown usage, or unpriced usage reason. Earlier quote versions remain verified
 for integrity but do not enter the selected subtotal. The subtotal and coverage use the same complete source matcher.
 These private diagnostics contain no account ID or provider request/response payload.
+
+`executionDiagnostics` counts occurrences of the existing execution-quality failure predicates in the same
+measurement pass. Its fixed 14-category vocabulary contains no identifiers, symbols, timestamps, prices or raw
+evidence. Counts are predicate failures, not unique affected trades or independent root causes: a missing accounting
+binding can also trigger quantity and terminal-price gaps. Existing short-circuit and continuation behavior is
+unchanged, so a zero count is not proof that every downstream predicate was evaluated. `NOT_EVALUATED` retains null
+transaction/fill counts when unverified decisions short-circuit measurement; `NO_EXECUTION_EVIDENCE` distinguishes
+absent executions from `EVALUATED` evidence. The report hash binds these diagnostics, but the immutable v4 financial
+receipt and hash do not change. No additional query, accounting write, admission decision or profitability assertion
+is made.
 
 `receiptPersistence: NOT_CHECKED` means the read-only evidence is provisional: the command has not checked whether
 the generation is terminal or whether a receipt was previously saved. An active generation may legitimately have
