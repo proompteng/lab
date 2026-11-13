@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
@@ -1301,6 +1303,10 @@ durableTest.each(
           const readAuthority = store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
           const resources = Context.make(BrokerRead, broker.read).pipe(
+            Context.add(DecisionConstruction, {
+              observe: constructObserveShadowDecision,
+              execution: constructExecutionDecision,
+            }),
             Context.add(CycleStore, runtime.cycleStore),
             Context.add(BrokerEventStore, store.events),
             Context.add(FillAccountingStore, store.accounting),
@@ -2437,6 +2443,10 @@ durableTest.each(
           ),
         ),
         Effect.provide(stores),
+        Effect.provideService(DecisionConstruction, {
+          observe: constructObserveShadowDecision,
+          execution: constructExecutionDecision,
+        }),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
         Effect.timeout('60 seconds'),
