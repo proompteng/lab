@@ -235,7 +235,13 @@ const unusedAuthorityStore: AuthorityGenerationStoreShape = {
   readAuthorityGenerationLineage: () => unusedAuthority,
 }
 
-type JevTestServices = JevBatchStore | JevEvaluationStore | JevClient | JevPositionStore | EntryInferenceJournal
+type JevTestServices =
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | JevPositionStore
+  | EntryInferenceJournal
+  | DecisionConstruction
 
 const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
   const unexpected = Effect.die('Composition fixture uses already committed Jev entry evidence')
@@ -6378,6 +6384,7 @@ describe('OBSERVE runtime composition', () => {
         })).document
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        provideJevTestServices,
         Effect.provide(TestClock.layer()),
       ),
     )

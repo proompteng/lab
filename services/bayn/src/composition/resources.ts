@@ -1,3 +1,4 @@
+import { DecisionConstructionLive } from '../decision-construction'
 import { equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
 
 import type { MarketSources } from '../market-data/streaming/raw-events'
@@ -174,6 +175,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
+    DecisionConstructionLive,
     plan.config.jevKey === undefined
       ? Layer.succeed(JevClient, {
           evaluate: () =>

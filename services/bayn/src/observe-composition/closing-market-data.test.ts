@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
@@ -6,6 +8,16 @@ import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
+
+const runWithConstruction = <A, E>(program: Effect.Effect<A, E, DecisionConstruction>) =>
+  Effect.runPromise(
+    program.pipe(
+      Effect.provideService(DecisionConstruction, {
+        observe: constructObserveShadowDecision,
+        execution: constructExecutionDecision,
+      }),
+    ),
+  )
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
@@ -199,7 +211,7 @@ const fixture = async (source = native) => {
     intradayMarketData: freshMarket,
   }
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
-  const policy = await Effect.runPromise(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
+  const policy = await runWithConstruction(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
   const unused = Effect.die(new Error('Unexpected fixture I/O'))
   const broker: BrokerReadShape = {
     account: unused,
@@ -222,7 +234,7 @@ const fixture = async (source = native) => {
         },
       }),
   }
-  const document = await Effect.runPromise(
+  const document = await runWithConstruction(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(at))
       return yield* buildMutationShadowCycleDecision({
@@ -430,7 +442,7 @@ describe('closing market-data fallback boundaries', () => {
         ? new Date(Date.parse(at) + native.protocol.maximumHoldingMinutes * 60_000).toISOString()
         : observedAt
     const bid = scenario === 'stop' || scenario === 'pending-stop-nonprofit' ? stopBid : floor - 0.01
-    const result = await Effect.runPromise(
+    const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(buildAt))
         return yield* prepareClosingExecutionCycleDecision({
@@ -471,7 +483,7 @@ describe('closing market-data fallback boundaries', () => {
     if (!pending) return
     const authority = heldFacts.riskContext.authority
     if (authority === null) throw new Error('Expected close authority')
-    const intent = await Effect.runPromise(
+    const intent = await runWithConstruction(
       planExecutionIntent(
         {
           schemaVersion: 'bayn.intent-plan.v3',
@@ -572,7 +584,7 @@ describe('closing market-data fallback boundaries', () => {
             )
           }),
       }
-      const outcome = await Effect.runPromise(
+      const outcome = await runWithConstruction(
         prepareMutationIntent(
           {
             ...request.input,
@@ -710,7 +722,7 @@ describe('closing market-data fallback boundaries', () => {
         }),
       containsIntent: () => Effect.succeed(true),
     }
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(reboundAt))
         const reconcile = Effect.suspend(() => Effect.succeed(settled ? recovered : reconciliation))
@@ -793,7 +805,7 @@ describe('closing market-data fallback boundaries', () => {
     }
     const stateHash = Result.getOrThrow(reconciledStateHash(state))
     const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
-    const result = await Effect.runPromise(
+    const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* prepareClosingExecutionCycleDecision({
@@ -844,7 +856,7 @@ describe('closing market-data fallback boundaries', () => {
     const observedAt = new Date(Date.parse(request.cycle.window.executionCloseAt) + 60_000).toISOString()
     const expiry = executionCloseRecoveryExpiry(calendar, observedAt)
     if (expiry === null) throw new Error('Expected broker extended hours')
-    const closed = await Effect.runPromise(
+    const closed = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* prepareClosingExecutionCycleDecision({
@@ -912,7 +924,7 @@ describe('closing market-data fallback boundaries', () => {
             }).pipe(Effect.andThen(freshMarket.loadSnapshot(query))),
         },
       }
-      await Effect.runPromise(
+      await runWithConstruction(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
           const at = yield* currentUtcInstant
@@ -1059,7 +1071,7 @@ describe('closing market-data fallback boundaries', () => {
         }),
       containsIntent: () => Effect.succeed(true),
     }
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
         const before = yield* currentUtcInstant
@@ -1323,7 +1335,7 @@ describe('closing market-data fallback boundaries', () => {
           [...(closure?.document.orderedIntentIds ?? []), ...(replan?.document.orderedIntentIds ?? [])].includes(id),
         ),
     }
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
         const reconcile = Effect.gen(function* () {
@@ -1616,7 +1628,7 @@ describe('closing market-data fallback boundaries', () => {
           })
         },
       )
-      const outcome = await Effect.runPromise(
+      const outcome = await runWithConstruction(
         advanceExecutionOnce(
           {
             controllerKey: 'a'.repeat(64),
@@ -1650,7 +1662,7 @@ describe('closing market-data fallback boundaries', () => {
       nextDelayMs: 1_000,
     }
     expect(
-      await Effect.runPromise(
+      await runWithConstruction(
         checkAdvancedMarketProjection(advanced, Effect.void, () =>
           Effect.die(new Error('successful health check cannot report a failure')),
         ),
@@ -1681,7 +1693,7 @@ describe('closing market-data fallback boundaries', () => {
         at,
       ),
     ).toBeUndefined()
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(close - 1)
         yield* checkAdvancedMarketProjection(
@@ -1737,7 +1749,7 @@ describe('closing market-data fallback boundaries', () => {
       yield* TestClock.adjust(3_000)
       return factsAt(yield* currentUtcInstant, true)
     })
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(start)
         const close = prepareClosingExecutionCycleDecision({
@@ -1896,7 +1908,7 @@ describe('closing market-data fallback boundaries', () => {
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
     const request = await fixture()
     let reads = 0
-    const failure = await Effect.runPromise(
+    const failure = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(at) + 60_000)
         return yield* Effect.flip(
@@ -1933,7 +1945,7 @@ describe('closing market-data fallback boundaries', () => {
 
   test('an absent executable quote never receives the stale-quote continuation', async () => {
     const request = await fixture()
-    const failure = await Effect.runPromise(
+    const failure = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(at) + 60_000)
         return yield* Effect.flip(
@@ -1966,7 +1978,7 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     let reads = 0
     const start = Date.parse(request.cycle.window.executionCloseAt) - native.protocol.flattenBeforeCloseMinutes * 60_000
-    const result = await Effect.runPromise(
+    const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(start + offset)
         return yield* prepareClosingExecutionCycleDecision({
@@ -2002,7 +2014,7 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     let reads = 0
     const close = Date.parse(request.closeExpiresAt)
-    const failure = await Effect.runPromise(
+    const failure = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(close - 1)
         return yield* Effect.flip(
