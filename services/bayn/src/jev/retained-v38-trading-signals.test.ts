@@ -84,7 +84,8 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         requests: [...golden.requests],
       })
       expect(
-        Result.getOrThrow(reproduceRetainedJevTradingSignalBatchEvidence(input.observation, structuredClone(plan))),
+        Result.getOrThrow(reproduceRetainedJevTradingSignalBatchEvidence(input.observation, structuredClone(plan)))
+          .plan,
       ).toEqual(plan)
       expect(Result.isFailure(makeJevTradingSignalBatch({ ...input, planVersion: plan.schemaVersion }))).toBe(true)
       expect(Result.isFailure(decodeJevBatchPlan(plan))).toBe(true)

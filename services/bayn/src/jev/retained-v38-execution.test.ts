@@ -58,6 +58,25 @@ test('retains the original wide-spread protective-stop target and its exact liqu
   expect(target.evidence.protocol.maximumEntryLimitSlippageBps).toBe(10)
 })
 
+test('retained quote projection never reuses verification across mutable caller graphs', () => {
+  const { document: original } = retainedV38ExecutionFixture()
+  const document = structuredClone(original)
+  expect(Result.isSuccess(decodeRetainedJevExecutionDecisionDocument(document))).toBe(true)
+  const target = document.strategyDecision
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected retained entry')
+  const quote = target.evidence.observation.rows.quotes[0]
+  if (typeof quote !== 'object' || quote === null || !('ask_price' in quote)) throw new Error('Expected retained quote')
+  const originalAsk = quote['ask_price']
+  Object.assign(quote, { ask_price: '999999.123456' })
+  const { contentHash: _hash, ...material } = document
+  Object.assign(document, { contentHash: Result.getOrThrow(canonicalHashV1Result(material)) })
+  expect(Result.isFailure(decodeRetainedJevExecutionDecisionDocument(document))).toBe(true)
+  Object.assign(quote, { ask_price: originalAsk })
+  Object.assign(document, { contentHash: original.contentHash })
+  const restored = Result.getOrThrow(decodeRetainedJevExecutionDecisionDocument(document))
+  expect(Result.getOrThrow(canonicalJsonV1Result(restored))).toBe(Result.getOrThrow(canonicalJsonV1Result(original)))
+})
+
 test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
   'retained v38 execution rejects mixed versions and tampering after outer rehash: %i',
   (index) => {
