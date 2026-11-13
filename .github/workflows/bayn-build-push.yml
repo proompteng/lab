@@ -5,6 +5,12 @@ permissions:
   contents: read
 
 on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: 'Exact current main commit to validate and publish after a blocked release'
+        required: true
+        type: string
   push:
     branches:
       - main
@@ -67,9 +73,15 @@ jobs:
     outputs:
       image: ${{ fromJSON(steps.filter.outputs.affected).image }}
     steps:
+      - name: Require main publication ref
+        run: test "$GITHUB_REF" = 'refs/heads/main'
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Verify publication source
+        env:
+          BAYN_EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: bash packages/scripts/src/bayn/verify-publication-source.sh
       - uses: ./.github/actions/affected-inputs
         id: filter
         with:
@@ -177,6 +189,10 @@ jobs:
           path: bayn-image-cohort.json
           if-no-files-found: error
           retention-days: 3
+      - name: Verify publication source before discovery
+        env:
+          BAYN_EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: bash packages/scripts/src/bayn/verify-publication-source.sh
       - name: Publish the verified cohort for Kargo
         run: |
           set -euo pipefail
