@@ -3316,6 +3316,24 @@ data:
             annotations:
               summary: Restate Operator is waiting for a required CRD
               description: At least one operator controller has been unable to discover its required CRD for five minutes.
+      - name: bayn-database-backup.rules
+        interval: 1m
+        rules:
+          - alert: BaynDatabaseBackupStale
+            expr: |
+              time() - max(kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}) > 129600
+              or max(absent(kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}))
+            for: 5m
+            labels:
+              severity: critical
+              team: trading
+              namespace: bayn
+              service: bayn-db
+              notify: email
+            annotations:
+              summary: Bayn has no recent completed database backup
+              description: No completed bayn-db backup observation is newer than thirty-six hours, or completion telemetry is missing. Check the daily ScheduledBackup, Barman plugin, object store, WAL archive and metric collection. A running or failed backup does not establish completion; a completed backup still requires an independent restore proof.
+              runbook_url: docs/bayn/cnpg-backup-restore.md
       - name: bayn-cycle-operations.rules
         interval: 15s
         rules:
