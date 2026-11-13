@@ -1,11 +1,12 @@
 import { Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import { OrderSide, type AccountingReceipt } from '../execution/contracts'
 import { Sha256Schema as Sha256, StrictNonEmptyStringSchema as NonEmptyString } from '../schemas'
 
 export const AccountingTransactionRowSchema = Schema.Struct({
-  schema_version: Schema.Literal('bayn.accounting-transaction.v2'),
+  schema_version: Schema.Literals(['bayn.accounting-transaction.v2', equityShortAccountingSchemaVersion]),
   transaction_id: Sha256,
   broker_event_id: Sha256,
   intent_id: Schema.NullOr(Sha256),

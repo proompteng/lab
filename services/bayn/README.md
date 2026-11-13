@@ -8,6 +8,9 @@ Current entry scope is **equity-only**. Retained crypto positions keep protectio
 reconciliation and accounting. The scope is enforced by
 [`currentEntryMarkets`](src/execution/trading-scope.ts), independently of the broader retained mandate.
 
+The active strategy remains long-only. [Stock-short research and accounting](../../docs/bayn/stock-short-research-2026-11-13.md)
+adds offline short controls and explicit signed inventory evidence; it does not authorize short orders.
+
 ## Start here
 
 | Task                                          | Reference                                                                                                                                       |
