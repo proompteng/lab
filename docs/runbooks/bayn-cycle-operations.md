@@ -331,6 +331,14 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,
   and the broker read/account-binding facts in `GET /v1/status`. Restore the failed dependency or the existing scoped
   loop; do not bypass OBSERVE or create a replacement scheduler.
+- `BaynRepeatedEntryExpiry`: inspect the last ten minutes of durable cycle outcomes and their original deadlines.
+  This alert observes at least five changes to a replica's latest terminal timestamp while all sampled terminal
+  reasons remain `BLOCKED_UNUSED_ENTRY_EXPIRED`, within its current submission window and with fresh projection
+  telemetry. It does not depend on instantaneous readiness, so a newly armed cycle cannot hide repeated expiration.
+  The sampled transitions are not an exact cycle count or evidence of missed profitable trades. Check market-input
+  eligibility, admission work, provider completion and owner-resume latency separately, by source revision. A sampled
+  completed or no-trade result breaks the streak; missing or stale telemetry remains unknown. Preserve all freshness,
+  authority and risk gates rather than extending deadlines to silence the alert.
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` remains a hard deadline for an
   ACTIVE cycle until its immutable decision is bound. A decision-bound ACTIVE cycle may continue broker recovery and
   reconciliation through `executionCloseAt`; an unbound ACTIVE cycle at the cutoff is a missed-submission incident.
