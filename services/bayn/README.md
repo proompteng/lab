@@ -1729,7 +1729,7 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v8`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v9`. Its `receipt` uses the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation. Each session retains the exact current
 `matchedQuoteHashes` and `requestsWithCoverageIssues`, including the provider stage, receipt/resolution identities,
@@ -1738,14 +1738,29 @@ for integrity but do not enter the selected subtotal. The subtotal and coverage 
 These private diagnostics contain no account ID or provider request/response payload.
 
 `executionDiagnostics` counts occurrences of the existing execution-quality failure predicates in the same
-measurement pass. Its fixed 14-category vocabulary contains no identifiers, symbols, timestamps, prices or raw
+measurement pass. Its fixed 15-category vocabulary contains no identifiers, symbols, timestamps, prices or raw
 evidence. Counts are predicate failures, not unique affected trades or independent root causes: a missing accounting
 binding can also trigger quantity and terminal-price gaps. Existing short-circuit and continuation behavior is
-unchanged, so a zero count is not proof that every downstream predicate was evaluated. `NOT_EVALUATED` retains null
+fail-closed, so a zero count is not proof that every downstream predicate was evaluated. `NOT_EVALUATED` retains null
 transaction/fill counts when unverified decisions short-circuit measurement; `NO_EXECUTION_EVIDENCE` distinguishes
-absent executions from `EVALUATED` evidence. The report hash binds these diagnostics, but the immutable v4 financial
-receipt and hash do not change. No additional query, accounting write, admission decision or profitability assertion
-is made.
+absent executions from `EVALUATED` evidence. Diagnostics v2 also counts input and bound native protection groups,
+child orders and evaluated child fills. `PROTECTION_EVIDENCE_GAP` withholds execution quality when the native group
+cannot be proven. The report hash binds these diagnostics. Previously stored financial receipts and hashes stay
+immutable; a newly computed report can differ when it includes previously unsupported execution evidence.
+
+Bracket executions retain the sealed BUY intent and distinct parent and SELL child orders, including source-bound
+stop/profit prices, quantities, terminal receipts, fill sequence and exact accounting-event bindings. Reads select
+the latest receipt **per broker order** at the same generation/account/reconciliation cut, not the latest child as
+the parent. Native terms use the same verifier as system assessment. Combined protective fills cannot exceed
+chronological parent inventory, including partial entry fills and sibling cancellation races. Missing siblings,
+substituted identities, future observations, mismatched accounting and executions outside sealed limits remain gaps.
+All protective notional, fill fees and other explicit costs remain included. Conditional SELL shortfall uses the
+sealed stop trigger or profit limit, never the BUY decision price. The reference-notional and quantity denominators
+include executed conditional volume; `plannedOrderCount` still counts original intent targets. A canceled unfilled
+sibling is not a second unconditional sell and adds no hypothetical opportunity cost. An unfilled parent still needs
+its original terminal-price evidence. Observed capacity separately requires volume covering all actual executions;
+missing exit-window volume does not become zero volume or evidence of capacity. These reader changes make no
+accounting write, admission decision, capital grant or profitability assertion.
 
 `receiptPersistence: NOT_CHECKED` means the read-only evidence is provisional: the command has not checked whether
 the generation is terminal or whether a receipt was previously saved. An active generation may legitimately have

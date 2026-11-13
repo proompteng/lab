@@ -6,6 +6,7 @@ import {
   executionCycleDecisionSchemaVersion,
 } from '../../shadow-decision-contract'
 import { strictParseOptions } from '../../schemas'
+import { OrderSchema } from '../../execution/contracts'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import {
   CycleDecisionRow,
@@ -100,7 +101,16 @@ export const indexExecutionEvidence = (
       createdAt: row.created_at.toISOString(),
     }),
   )
-  const orders = uniqueRows(orderRows, (row) => row.intent_id)
+  const orders = uniqueRows(
+    orderRows.filter((row) => row.parent_broker_order_id === null),
+    (row) => row.intent_id,
+  )
+  const groups = new Map<string, (typeof OrderExecutionRow.Type)[]>()
+  for (const row of orderRows) {
+    const group = groups.get(row.intent_id)
+    if (group === undefined) groups.set(row.intent_id, [row])
+    else group.push(row)
+  }
   const fills = new Map<string, (typeof FillExecutionRow.Type)[]>()
   for (const row of fillRows) {
     const found = fills.get(row.intent_id)
@@ -108,12 +118,36 @@ export const indexExecutionEvidence = (
     else found.push(row)
   }
 
-  return { intents, orders, fills }
+  return { intents, orders, groups, fills }
 }
+
+const nativeOrderFromRow = (row: typeof OrderExecutionRow.Type) =>
+  Schema.decodeUnknownResult(
+    OrderSchema,
+    strictParseOptions,
+  )({
+    schemaVersion: 'bayn.order.v3',
+    brokerOrderId: row.broker_order_id,
+    ...(row.parent_broker_order_id === null ? {} : { parentBrokerOrderId: row.parent_broker_order_id }),
+    clientOrderId: row.client_order_id,
+    intentId: row.intent_id,
+    accountId: row.account_id,
+    symbol: row.symbol,
+    side: row.side,
+    orderType: row.order_type,
+    timeInForce: row.time_in_force,
+    ...(row.quantity_atoms === null ? {} : { quantityAtoms: row.quantity_atoms }),
+    ...(row.notional_micros === null ? {} : { notionalMicros: row.notional_micros }),
+    ...(row.limit_price_micros === null ? {} : { limitPriceMicros: row.limit_price_micros }),
+    ...(row.stop_price_micros === null ? {} : { stopPriceMicros: row.stop_price_micros }),
+    filledQuantityAtoms: row.filled_quantity_atoms,
+    status: row.status,
+    observedAt: row.observed_at.toISOString(),
+  }).pipe(Result.map((order) => ({ eventId: row.event_id, occurredAt: row.occurred_at.toISOString(), order })))
 
 export const executionEvidenceFromRows = (
   decisionRows: readonly VerifiedCycleDecisionRow[],
-  { intents, orders, fills }: ReturnType<typeof indexExecutionEvidence>,
+  { intents, orders, groups, fills }: ReturnType<typeof indexExecutionEvidence>,
 ): readonly ForwardPerformanceExecutionEvidence[] => {
   const evidence: ForwardPerformanceExecutionEvidence[] = []
   for (const row of decisionRows) {
@@ -121,7 +155,7 @@ export const executionEvidenceFromRows = (
     if (document.targetPlan.status !== 'PLANNED') continue
     const replanGenerationHash =
       document.mode === legacyExecutionAuthorityToken ? document.replanGenerationHash : undefined
-    for (const target of document.targetPlan.intentTargets) {
+    for (const [targetIndex, target] of document.targetPlan.intentTargets.entries()) {
       const matchingReferences = document.targetPlan.targets.filter((candidate) => candidate.symbol === target.symbol)
       const reference = matchingReferences.length === 1 ? matchingReferences[0] : undefined
       const intentRow = intents.get(
@@ -138,6 +172,9 @@ export const executionEvidenceFromRows = (
       )
       const intentId = intentRow === undefined || intentRow === null ? '' : intentRow.intent_id
       const orderRow = orders.get(intentId)
+      const risk = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[targetIndex] : undefined
+      const sealedIntentId =
+        document.mode === legacyExecutionAuthorityToken ? document.orderedIntentIds[targetIndex] : undefined
       const fillEvidence = (fills.get(intentId) ?? []).map((fill) => ({
         brokerEventId: fill.event_id,
         fillId: fill.fill_id,
@@ -151,6 +188,7 @@ export const executionEvidenceFromRows = (
         priceAtoms: fill.price_atoms,
         feeMicros: fill.fee_micros,
         sourceTimestamp: fill.source_timestamp,
+        ...(risk?.protection?._tag === 'Bracket' ? { sourceSequence: fill.source_sequence } : {}),
         occurredAt: fill.occurred_at.toISOString(),
         observedAt: fill.observed_at.toISOString(),
       }))
@@ -170,6 +208,18 @@ export const executionEvidenceFromRows = (
         side: target.side,
         plannedQuantityAtoms: target.quantityAtoms,
         ...(reference === undefined ? {} : { referencePriceMicros: reference.referencePriceMicros }),
+        ...(risk?.protection?._tag !== 'Bracket' || sealedIntentId === undefined
+          ? {}
+          : {
+              nativeProtection: {
+                intentId: sealedIntentId,
+                limitPriceMicros: risk.limitPriceMicros,
+                protection: risk.protection,
+                orders: Result.all((groups.get(intentId) ?? []).map(nativeOrderFromRow)).pipe(
+                  Result.getOrElse(() => []),
+                ),
+              },
+            }),
         ...(intentRow === undefined || intentRow === null || intentRow.terminal_outcome === null
           ? {}
           : {

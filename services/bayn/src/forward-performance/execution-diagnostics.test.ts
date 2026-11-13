@@ -193,7 +193,7 @@ test('keeps diagnostic output fixed-size and private as failure occurrences grow
     }),
   ).diagnostics
   assert.equal(diagnostics.reasonOccurrences.FILL_IDENTITY_DRIFT, 2_000)
-  assert.equal(Object.keys(diagnostics.reasonOccurrences).length, 14)
+  assert.equal(Object.keys(diagnostics.reasonOccurrences).length, 15)
   assert(Object.values(diagnostics.reasonOccurrences).every((value) => Number.isSafeInteger(value) && value >= 0))
   const encoded = JSON.stringify(diagnostics)
   assert(encoded.length < 1_024)
@@ -221,7 +221,7 @@ test('hashes the report sidecar from one measurement pass without changing recei
     ),
   )
   assert.equal(reads, 1)
-  assert.equal(report.schemaVersion, 'bayn.forward-performance-report.v8')
+  assert.equal(report.schemaVersion, 'bayn.forward-performance-report.v9')
   assert.equal(report.receipt.receiptHash, cases[0]?.receiptHash)
   const { reportHash, ...material } = report
   assert.equal(Result.getOrThrow(canonicalHashV1Result(material)), reportHash)

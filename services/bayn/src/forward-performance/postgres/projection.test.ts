@@ -393,6 +393,11 @@ test('streams planned decisions without rebuilding history indexes or changing a
     ...common,
     event_id: '1'.repeat(64),
     broker_order_id: 'synthetic-projection-broker-order',
+    parent_broker_order_id: null,
+    order_type: target.orderType,
+    time_in_force: target.timeInForce,
+    limit_price_micros: document.deltaRisk[0]?.limitPriceMicros ?? null,
+    stop_price_micros: null,
     notional_micros: null,
     filled_quantity_atoms: target.quantityAtoms,
     status: 'FILLED',
@@ -406,6 +411,7 @@ test('streams planned decisions without rebuilding history indexes or changing a
     price_atoms: '100000000000',
     fee_micros: '0',
     source_timestamp: document.createdAt,
+    source_sequence: '1',
   })
   const row = verifyPerformanceDecisions([
     { cycle_id: document.bindings.cycleId, decision_hash: document.contentHash, created_at: at, document },

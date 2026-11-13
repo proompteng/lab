@@ -10,7 +10,7 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceUnclosedCycleCount } from './read'
 import { completedIntradayCycles, makeStreamingPerformanceFixture } from '../intraday-cycle.test-support'
-import { readForwardPerformancePostgres } from './read'
+import { readForwardPerformancePostgres, readForwardPerformanceExecutionOrders } from './read'
 import { runForwardPerformanceReport, type ForwardPerformanceReaders } from '../program'
 import type { ForwardPerformanceConfig } from '../config'
 import { coinRoundTrip } from '../coin-fee-episodes.test-support'
@@ -38,6 +38,64 @@ const config = {
 const hash = (character: string): string => character.repeat(64)
 
 describePostgres('Forward-performance PostgreSQL read boundary', () => {
+  test('retains each protective child at the original generation/account/reconciliation cut', async () => {
+    const runtime = ManagedRuntime.make(
+      PostgresClientLive(config, { maxConnections: 1, applicationName: 'bayn-protective-report-test' }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    )
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, previous_generation_hash text, maximum text, account_id text, activated_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycles (cycle_id text, account_id text, state text, terminal_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE intents (intent_id text, cycle_id text, account_id text, authority_generation_hash text) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE reconciliations (reconciliation_id text, account_id text, reconciled_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE broker_events (event_id text, source_sequence numeric, occurred_at timestamptz, observed_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE orders (event_id text, broker_order_id text, parent_broker_order_id text,
+            client_order_id text, intent_id text, account_id text, symbol text, side text, order_type text, time_in_force text,
+            limit_price_micros numeric, stop_price_micros numeric, quantity_atoms numeric, notional_micros numeric,
+            filled_quantity_atoms numeric, status text) ON COMMIT DROP`
+              yield* sql`INSERT INTO authority_generations VALUES (${hash('a')}, null, 'PAPER', 'report-test', '2026-11-13T13:00:00Z'),
+            (${hash('b')}, ${hash('a')}, 'PAPER', 'report-test', '2026-11-13T16:00:00Z')`
+              yield* sql`INSERT INTO autonomous_cycles VALUES (${hash('c')}, 'report-test', 'COMPLETED', '2026-11-13T14:59:00Z')`
+              yield* sql`INSERT INTO intents VALUES (${hash('d')}, ${hash('c')}, 'report-test', ${hash('a')}),
+            (${hash('e')}, ${hash('c')}, 'report-test', ${hash('b')})`
+              yield* sql`INSERT INTO reconciliations VALUES (${hash('1')}, 'report-test', '2026-11-13T15:00:00Z'),
+            (${hash('2')}, 'report-test', '2026-11-13T16:30:00Z')`
+              for (const [index, broker, parent, side, at, intent, account] of [
+                [1, 'parent', null, 'BUY', '14:10:00', hash('d'), 'report-test'],
+                [2, 'profit', 'parent', 'SELL', '14:20:00', hash('d'), 'report-test'],
+                [3, 'stop', 'parent', 'SELL', '14:30:00', hash('d'), 'report-test'],
+                [4, 'stop', 'parent', 'SELL', '15:00:01', hash('d'), 'report-test'],
+                [5, 'foreign-generation', null, 'BUY', '14:40:00', hash('e'), 'report-test'],
+                [6, 'foreign-account', 'parent', 'SELL', '14:40:00', hash('d'), 'foreign-account'],
+              ] as const) {
+                const eventId = hash(String(index))
+                const observedAt = `2026-11-13T${at}Z`
+                yield* sql`INSERT INTO broker_events VALUES (${eventId}, ${index}, ${observedAt}, ${observedAt})`
+                yield* sql`INSERT INTO orders VALUES (${eventId}, ${broker}, ${parent}, ${`client-${broker}`}, ${intent},
+              ${account}, 'NVDA', ${side}, 'LIMIT', 'DAY', 100000000, null, 1000000000, null, 1000000000, 'FILLED')`
+              }
+              const rows = yield* readForwardPerformanceExecutionOrders(sql, 'report-test', hash('a'))
+              expect(rows.map((row) => [row.broker_order_id, row.parent_broker_order_id, row.event_id])).toEqual([
+                ['parent', null, hash('1')],
+                ['profit', 'parent', hash('2')],
+                ['stop', 'parent', hash('3')],
+              ])
+              expect(yield* readForwardPerformanceExecutionOrders(sql, 'report-test', hash('f'))).toEqual([])
+            }),
+          )
+        }),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   test('the shared decision source retains entry, closure and residual-close instructions without admitting an unbound entry', async () => {
     const runtime = ManagedRuntime.make(
       PostgresClientLive(config, { maxConnections: 1, applicationName: 'bayn-decision-query-test' }).pipe(

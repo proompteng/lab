@@ -1,3 +1,4 @@
+import { protectiveExecutionOrders } from './protective-executions'
 import { validIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import { DateTime, Option, Result } from 'effect'
 
@@ -30,18 +31,25 @@ export enum ExecutionDiagnosticEvaluation {
 }
 
 const newExecutionDiagnostics = (): {
-  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1'
+  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v2'
   evaluation: ExecutionDiagnosticEvaluation
   inputExecutionCount: number
   inputTransactionCount: number | null
   evaluatedFillCount: number | null
+  nativeProtection: {
+    inputGroupCount: number
+    boundGroupCount: number
+    childOrderCount: number
+    evaluatedChildFillCount: number
+  }
   reasonOccurrences: Record<ForwardPerformanceExecutionQualityReasonCode, number>
 } => ({
-  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1',
+  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v2',
   evaluation: ExecutionDiagnosticEvaluation.NotEvaluated,
   inputExecutionCount: 0,
   inputTransactionCount: null,
   evaluatedFillCount: null,
+  nativeProtection: { inputGroupCount: 0, boundGroupCount: 0, childOrderCount: 0, evaluatedChildFillCount: 0 },
   reasonOccurrences: {
     ACCOUNT_LEDGER_RECONCILIATION_GAP: 0,
     ACCOUNTING_FILL_BINDING_GAP: 0,
@@ -53,6 +61,7 @@ const newExecutionDiagnostics = (): {
     FILL_TIMESTAMP_GAP: 0,
     INVALID_EXECUTION_MICROS: 0,
     PLANNED_DECISION_EVIDENCE_GAP: 0,
+    PROTECTION_EVIDENCE_GAP: 0,
     REFERENCE_PRICE_EVIDENCE_GAP: 0,
     TERMINAL_ORDER_EVIDENCE_GAP: 0,
     TERMINAL_PRICE_EVIDENCE_GAP: 0,
@@ -259,7 +268,7 @@ const transactionMatchesFill = (
   transaction.intentId === evidence.intentId &&
   transaction.cycleId === evidence.cycleId &&
   transaction.symbol === evidence.symbol &&
-  transaction.side === evidence.side &&
+  transaction.side === fill.side &&
   transaction.quantityAtoms === fill.quantityAtoms &&
   transaction.priceAtoms === fill.priceAtoms &&
   transaction.feeMicros === fill.feeMicros &&
@@ -396,6 +405,17 @@ const measureExecutionQuality = (
   )
   const orderedExecutions = executions.map((evidence) => ({
     ...evidence,
+    ...(evidence.nativeProtection === undefined
+      ? {}
+      : {
+          nativeProtection: {
+            ...evidence.nativeProtection,
+            orders: [...evidence.nativeProtection.orders].sort(
+              (a, b) =>
+                compareStrings(a.order.brokerOrderId, b.order.brokerOrderId) || compareStrings(a.eventId, b.eventId),
+            ),
+          },
+        }),
     fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
   }))
   const evidenceHash = sourceEvidenceHash(input, orderedExecutions, transactions)
@@ -458,229 +478,270 @@ const measureExecutionQuality = (
     if (seenIntents.has(evidence.intentId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
-    const planned = parseUnsigned(evidence.plannedQuantityAtoms, true)
-    const referencePrice = parseUnsigned(evidence.referencePriceMicros, true)
-    if (planned === undefined) recordReason('PLANNED_DECISION_EVIDENCE_GAP')
-    if (referencePrice === undefined) recordReason('REFERENCE_PRICE_EVIDENCE_GAP')
     if (!identityMatches(input, evidence, completedCycleIds)) recordReason('FILL_IDENTITY_DRIFT')
-
-    const order = evidence.terminalOrder
-    const blocked = blockedIntentMatches(evidence)
-    if (!blocked && (order === undefined || !orderMatches(evidence))) recordReason('TERMINAL_ORDER_EVIDENCE_GAP')
-    const terminalOccurredAt = blocked ? evidence.intent?.updatedAt : order?.occurredAt
-    const terminalObservedAt = blocked ? evidence.intent?.updatedAt : order?.observedAt
-    if (
-      !validInstant(evidence.decisionCreatedAt) ||
-      terminalOccurredAt === undefined ||
-      terminalObservedAt === undefined ||
-      !validInstant(terminalOccurredAt) ||
-      !validInstant(terminalObservedAt) ||
-      terminalObservedAt < terminalOccurredAt ||
-      terminalObservedAt < evidence.decisionCreatedAt
-    ) {
-      recordReason('FILL_TIMESTAMP_GAP')
-    }
-
-    const fills = evidence.fills
-    const reportedFilledQuantity = parseUnsigned(order?.filledQuantityAtoms, false)
-    if (reportedFilledQuantity !== undefined && reportedFilledQuantity > 0n && fills.length === 0) {
-      recordReason('FILL_EVIDENCE_GAP')
-    }
-
-    let executionFilledQuantity = 0n
-    let executionFilledReferenceNotional = 0n
-    let executionActualNotional = 0n
-    let executionFirstFillAt: string | undefined
-    let executionLastFillAt: string | undefined
-
-    for (const fill of fills) {
-      fillCount += 1
-      diagnostics.evaluatedFillCount = fillCount
-      if (seenFillEvents.has(fill.brokerEventId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
-      seenFillEvents.add(fill.brokerEventId)
-
-      const quantity = parseUnsigned(fill.quantityAtoms, true)
-      const price = parseUnsigned(fill.priceAtoms, true)
-      const fee = parseUnsigned(fill.feeMicros, false)
-      if (quantity === undefined || price === undefined || fee === undefined) {
-        recordReason('INVALID_EXECUTION_MICROS')
-        continue
+    const protective = protectiveExecutionOrders(evidence, input.reconciliation?.reconciledAt)
+    if (Result.isFailure(protective)) recordReason('PROTECTION_EVIDENCE_GAP')
+    const children = Result.isSuccess(protective) ? protective.success : []
+    const native = evidence.nativeProtection
+    if (native !== undefined) {
+      diagnostics.nativeProtection.inputGroupCount++
+      if (Result.isSuccess(protective)) {
+        diagnostics.nativeProtection.boundGroupCount++
+        diagnostics.nativeProtection.childOrderCount += children.length
       }
+    }
+    const groups = [
+      { order: evidence.terminalOrder, side: evidence.side, reference: evidence.referencePriceMicros, child: false },
+      ...children.map((receipt) => ({
+        order: { ...receipt.order, eventId: receipt.eventId, occurredAt: receipt.occurredAt },
+        side: receipt.order.side,
+        reference:
+          native?.protection._tag === 'Bracket' || native?.protection._tag === 'Oco'
+            ? receipt.order.orderType === 'STOP_LIMIT'
+              ? native.protection.stopPriceMicros
+              : native.protection.profitLimitPriceMicros
+            : undefined,
+        child: true,
+      })),
+    ]
+    const groupOrderIds = new Set(groups.map((group) => group.order?.brokerOrderId))
+    if (native !== undefined && evidence.fills.some((fill) => !groupOrderIds.has(fill.brokerOrderId)))
+      recordReason('FILL_IDENTITY_DRIFT')
+    for (const group of groups) {
+      const { order, side, child } = group
+      const fills =
+        native === undefined
+          ? evidence.fills
+          : evidence.fills.filter((fill) => fill.brokerOrderId === order?.brokerOrderId)
+      // Dormant/canceled conditional exits are not missed unconditional sell decisions. Their full
+      // quantity and terminal status are still checked below; only executed conditional volume enters shortfall.
+      const planned = parseUnsigned(child ? order?.filledQuantityAtoms : evidence.plannedQuantityAtoms, !child)
+      const referencePrice = parseUnsigned(group.reference, true)
+      if (planned === undefined) recordReason('PLANNED_DECISION_EVIDENCE_GAP')
+      if (referencePrice === undefined) recordReason('REFERENCE_PRICE_EVIDENCE_GAP')
+      const blocked = !child && blockedIntentMatches(evidence)
+      if (!child && !blocked && (order === undefined || !orderMatches(evidence)))
+        recordReason('TERMINAL_ORDER_EVIDENCE_GAP')
+      const terminalOccurredAt = blocked ? evidence.intent?.updatedAt : order?.occurredAt
+      const terminalObservedAt = blocked ? evidence.intent?.updatedAt : order?.observedAt
       if (
-        !SHA256_PATTERN.test(fill.brokerEventId) ||
-        !SHA256_PATTERN.test(fill.intentId) ||
-        fill.intentId !== evidence.intentId ||
-        fill.accountId !== evidence.accountId ||
-        fill.symbol !== evidence.symbol ||
-        fill.side !== evidence.side ||
-        fill.clientOrderId !== evidence.intent?.clientOrderId ||
-        fill.brokerOrderId !== order?.brokerOrderId
-      ) {
-        recordReason('FILL_IDENTITY_DRIFT')
-      }
-      if (
-        !SOURCE_TIMESTAMP_PATTERN.test(fill.sourceTimestamp) ||
-        !validInstant(fill.occurredAt) ||
-        !validInstant(fill.observedAt) ||
-        fill.observedAt < fill.occurredAt ||
-        fill.occurredAt < evidence.decisionCreatedAt ||
-        (order !== undefined && fill.occurredAt > order.occurredAt)
+        !validInstant(evidence.decisionCreatedAt) ||
+        terminalOccurredAt === undefined ||
+        terminalObservedAt === undefined ||
+        !validInstant(terminalOccurredAt) ||
+        !validInstant(terminalObservedAt) ||
+        terminalObservedAt < terminalOccurredAt ||
+        terminalObservedAt < evidence.decisionCreatedAt
       ) {
         recordReason('FILL_TIMESTAMP_GAP')
       }
 
-      const transaction = transactionByBrokerEvent.get(fill.brokerEventId)
-      const transactionNotional = parseUnsigned(transaction?.notionalMicros, true)
-      const expectedNotional = roundHalfUp(quantity, price, 1_000_000_000_000n)
-      if (
-        transaction === undefined ||
-        transactionNotional === undefined ||
-        expectedNotional === undefined ||
-        transactionNotional !== expectedNotional ||
-        !transactionMatchesFill(transaction, evidence, fill)
-      ) {
-        recordReason('ACCOUNTING_FILL_BINDING_GAP')
-        continue
-      }
-      const referenceNotional = referencePrice === undefined ? undefined : roundHalfUp(quantity, referencePrice)
-      if (referenceNotional === undefined) {
-        recordReason('INVALID_EXECUTION_MICROS')
-        continue
+      const reportedFilledQuantity = parseUnsigned(order?.filledQuantityAtoms, false)
+      if (reportedFilledQuantity !== undefined && reportedFilledQuantity > 0n && fills.length === 0) {
+        recordReason('FILL_EVIDENCE_GAP')
       }
 
-      // Perold shortfall is positive when execution is worse than the immutable decision price.
-      const priceShortfall =
-        evidence.side === 'BUY' ? transactionNotional - referenceNotional : referenceNotional - transactionNotional
-      const nextExecutionFilled = checkedAdd(executionFilledQuantity, quantity)
-      const nextFilled = checkedAdd(filledQuantity, quantity)
-      const nextReference = checkedAdd(executionFilledReferenceNotional, referenceNotional)
-      const nextActual = checkedAdd(executionActualNotional, transactionNotional)
-      const nextObservedFees = checkedAdd(observedFillFees, fee)
-      const nextPriceShortfall = checkedAdd(executionPriceShortfall, priceShortfall)
-      if (
-        nextExecutionFilled === undefined ||
-        nextFilled === undefined ||
-        nextReference === undefined ||
-        nextActual === undefined ||
-        nextObservedFees === undefined ||
-        nextPriceShortfall === undefined
-      ) {
-        recordReason('INVALID_EXECUTION_MICROS')
-        continue
-      }
-      executionFilledQuantity = nextExecutionFilled
-      filledQuantity = nextFilled
-      executionFilledReferenceNotional = nextReference
-      executionActualNotional = nextActual
-      observedFillFees = nextObservedFees
-      executionPriceShortfall = nextPriceShortfall
-      executionFirstFillAt =
-        executionFirstFillAt === undefined || fill.occurredAt < executionFirstFillAt
-          ? fill.occurredAt
-          : executionFirstFillAt
-      executionLastFillAt =
-        executionLastFillAt === undefined || fill.occurredAt > executionLastFillAt
-          ? fill.occurredAt
-          : executionLastFillAt
-    }
+      let executionFilledQuantity = 0n
+      let executionFilledReferenceNotional = 0n
+      let executionActualNotional = 0n
+      let executionFirstFillAt: string | undefined
+      let executionLastFillAt: string | undefined
 
-    if (planned !== undefined && referencePrice !== undefined) {
-      const planNotional = roundHalfUp(planned, referencePrice)
-      const nextPlannedQuantity = checkedAdd(plannedQuantity, planned)
-      const nextPlanNotional =
-        planNotional === undefined ? undefined : checkedAdd(plannedReferenceNotional, planNotional)
-      if (planNotional === undefined || nextPlannedQuantity === undefined || nextPlanNotional === undefined) {
-        recordReason('INVALID_EXECUTION_MICROS')
-      } else {
-        plannedQuantity = nextPlannedQuantity
-        plannedReferenceNotional = nextPlanNotional
+      for (const fill of fills) {
+        if (child) diagnostics.nativeProtection.evaluatedChildFillCount++
+        fillCount += 1
+        diagnostics.evaluatedFillCount = fillCount
+        if (seenFillEvents.has(fill.brokerEventId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
+        seenFillEvents.add(fill.brokerEventId)
+
+        const quantity = parseUnsigned(fill.quantityAtoms, true)
+        const price = parseUnsigned(fill.priceAtoms, true)
+        const fee = parseUnsigned(fill.feeMicros, false)
+        if (quantity === undefined || price === undefined || fee === undefined) {
+          recordReason('INVALID_EXECUTION_MICROS')
+          continue
+        }
+        if (
+          !SHA256_PATTERN.test(fill.brokerEventId) ||
+          !SHA256_PATTERN.test(fill.intentId) ||
+          fill.intentId !== evidence.intentId ||
+          fill.accountId !== evidence.accountId ||
+          fill.symbol !== evidence.symbol ||
+          fill.side !== side ||
+          fill.clientOrderId !== (child ? order?.clientOrderId : evidence.intent?.clientOrderId) ||
+          fill.brokerOrderId !== order?.brokerOrderId
+        ) {
+          recordReason('FILL_IDENTITY_DRIFT')
+        }
+        if (
+          !SOURCE_TIMESTAMP_PATTERN.test(fill.sourceTimestamp) ||
+          !validInstant(fill.occurredAt) ||
+          !validInstant(fill.observedAt) ||
+          fill.observedAt < fill.occurredAt ||
+          fill.occurredAt < evidence.decisionCreatedAt ||
+          (order !== undefined && fill.occurredAt > order.occurredAt)
+        ) {
+          recordReason('FILL_TIMESTAMP_GAP')
+        }
+
+        const transaction = transactionByBrokerEvent.get(fill.brokerEventId)
+        const transactionNotional = parseUnsigned(transaction?.notionalMicros, true)
+        const expectedNotional = roundHalfUp(quantity, price, 1_000_000_000_000n)
+        if (
+          transaction === undefined ||
+          transactionNotional === undefined ||
+          expectedNotional === undefined ||
+          transactionNotional !== expectedNotional ||
+          !transactionMatchesFill(transaction, evidence, fill)
+        ) {
+          recordReason('ACCOUNTING_FILL_BINDING_GAP')
+          continue
+        }
+        const referenceNotional = referencePrice === undefined ? undefined : roundHalfUp(quantity, referencePrice)
+        if (referenceNotional === undefined) {
+          recordReason('INVALID_EXECUTION_MICROS')
+          continue
+        }
+
+        // Perold shortfall is positive when execution is worse than the immutable decision price.
+        const priceShortfall =
+          side === 'BUY' ? transactionNotional - referenceNotional : referenceNotional - transactionNotional
+        const nextExecutionFilled = checkedAdd(executionFilledQuantity, quantity)
+        const nextFilled = checkedAdd(filledQuantity, quantity)
+        const nextReference = checkedAdd(executionFilledReferenceNotional, referenceNotional)
+        const nextActual = checkedAdd(executionActualNotional, transactionNotional)
+        const nextObservedFees = checkedAdd(observedFillFees, fee)
+        const nextPriceShortfall = checkedAdd(executionPriceShortfall, priceShortfall)
+        if (
+          nextExecutionFilled === undefined ||
+          nextFilled === undefined ||
+          nextReference === undefined ||
+          nextActual === undefined ||
+          nextObservedFees === undefined ||
+          nextPriceShortfall === undefined
+        ) {
+          recordReason('INVALID_EXECUTION_MICROS')
+          continue
+        }
+        executionFilledQuantity = nextExecutionFilled
+        filledQuantity = nextFilled
+        executionFilledReferenceNotional = nextReference
+        executionActualNotional = nextActual
+        observedFillFees = nextObservedFees
+        executionPriceShortfall = nextPriceShortfall
+        executionFirstFillAt =
+          executionFirstFillAt === undefined || fill.occurredAt < executionFirstFillAt
+            ? fill.occurredAt
+            : executionFirstFillAt
+        executionLastFillAt =
+          executionLastFillAt === undefined || fill.occurredAt > executionLastFillAt
+            ? fill.occurredAt
+            : executionLastFillAt
       }
 
-      const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityAtoms, false)
-      const orderQuantity = blocked
-        ? planned
-        : order?.quantityAtoms === undefined
-          ? undefined
-          : parseUnsigned(order.quantityAtoms, true)
-      const orderNotional = order?.notionalMicros === undefined ? undefined : parseUnsigned(order.notionalMicros, true)
-      const representationMatches = blocked || (orderQuantity === planned && orderNotional === undefined)
-      if (
-        orderFilled === undefined ||
-        !representationMatches ||
-        orderFilled !== executionFilledQuantity ||
-        (orderQuantity !== undefined && executionFilledQuantity > planned) ||
-        (orderQuantity !== undefined && order?.status === 'FILLED' && executionFilledQuantity !== planned)
-      ) {
-        recordReason('FILL_QUANTITY_MISMATCH')
-      }
-
-      const unfilled = planned >= executionFilledQuantity ? planned - executionFilledQuantity : 0n
-      if (unfilled > 0n) {
-        const terminalPriceResult =
-          terminalOccurredAt === undefined || terminalObservedAt === undefined
-            ? Result.succeed<bigint | undefined>(undefined)
-            : validTerminalReferencePrice(
-                volumeGroups.get(JSON.stringify([evidence.cycleId, evidence.symbol])),
-                evidence,
-                terminalOccurredAt,
-                terminalObservedAt,
-                blocked,
-              )
-        if (Result.isFailure(terminalPriceResult)) return Result.fail(terminalPriceResult.failure)
-        const terminalPrice = terminalPriceResult.success
-        if (terminalPrice === undefined) {
-          recordReason('TERMINAL_PRICE_EVIDENCE_GAP')
+      if (planned !== undefined && referencePrice !== undefined) {
+        const planNotional = roundHalfUp(planned, referencePrice)
+        const nextPlannedQuantity = checkedAdd(plannedQuantity, planned)
+        const nextPlanNotional =
+          planNotional === undefined ? undefined : checkedAdd(plannedReferenceNotional, planNotional)
+        if (planNotional === undefined || nextPlannedQuantity === undefined || nextPlanNotional === undefined) {
+          recordReason('INVALID_EXECUTION_MICROS')
         } else {
-          const terminalNotional = roundHalfUp(unfilled, terminalPrice)
-          const unfilledReference = roundHalfUp(unfilled, referencePrice)
-          if (terminalNotional === undefined || unfilledReference === undefined) {
-            recordReason('INVALID_EXECUTION_MICROS')
+          plannedQuantity = nextPlannedQuantity
+          plannedReferenceNotional = nextPlanNotional
+        }
+
+        const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityAtoms, false)
+        const orderQuantity = blocked
+          ? planned
+          : order?.quantityAtoms === undefined
+            ? undefined
+            : parseUnsigned(order.quantityAtoms, true)
+        const orderNotional =
+          order?.notionalMicros === undefined ? undefined : parseUnsigned(order.notionalMicros, true)
+        const representationMatches =
+          blocked ||
+          (orderQuantity !== undefined &&
+            (child ? orderQuantity >= planned : orderQuantity === planned) &&
+            orderNotional === undefined)
+        if (
+          orderFilled === undefined ||
+          !representationMatches ||
+          orderFilled !== executionFilledQuantity ||
+          (orderQuantity !== undefined && executionFilledQuantity > planned) ||
+          (orderQuantity !== undefined && order?.status === 'FILLED' && executionFilledQuantity !== orderQuantity)
+        ) {
+          recordReason('FILL_QUANTITY_MISMATCH')
+        }
+
+        const unfilled = planned >= executionFilledQuantity ? planned - executionFilledQuantity : 0n
+        if (unfilled > 0n) {
+          const terminalPriceResult =
+            terminalOccurredAt === undefined || terminalObservedAt === undefined
+              ? Result.succeed<bigint | undefined>(undefined)
+              : validTerminalReferencePrice(
+                  volumeGroups.get(JSON.stringify([evidence.cycleId, evidence.symbol])),
+                  evidence,
+                  terminalOccurredAt,
+                  terminalObservedAt,
+                  blocked,
+                )
+          if (Result.isFailure(terminalPriceResult)) return Result.fail(terminalPriceResult.failure)
+          const terminalPrice = terminalPriceResult.success
+          if (terminalPrice === undefined) {
+            recordReason('TERMINAL_PRICE_EVIDENCE_GAP')
           } else {
-            const opportunity =
-              evidence.side === 'BUY' ? terminalNotional - unfilledReference : unfilledReference - terminalNotional
-            const nextOpportunity = checkedAdd(opportunityShortfall, opportunity)
-            if (nextOpportunity === undefined) recordReason('INVALID_EXECUTION_MICROS')
-            else opportunityShortfall = nextOpportunity
+            const terminalNotional = roundHalfUp(unfilled, terminalPrice)
+            const unfilledReference = roundHalfUp(unfilled, referencePrice)
+            if (terminalNotional === undefined || unfilledReference === undefined) {
+              recordReason('INVALID_EXECUTION_MICROS')
+            } else {
+              const opportunity =
+                side === 'BUY' ? terminalNotional - unfilledReference : unfilledReference - terminalNotional
+              const nextOpportunity = checkedAdd(opportunityShortfall, opportunity)
+              if (nextOpportunity === undefined) recordReason('INVALID_EXECUTION_MICROS')
+              else opportunityShortfall = nextOpportunity
+            }
           }
         }
       }
-    }
 
-    const nextExecutedNotional = checkedAdd(executedNotional, executionActualNotional)
-    if (nextExecutedNotional === undefined) recordReason('INVALID_EXECUTION_MICROS')
-    else executedNotional = nextExecutedNotional
+      const nextExecutedNotional = checkedAdd(executedNotional, executionActualNotional)
+      if (nextExecutedNotional === undefined) recordReason('INVALID_EXECUTION_MICROS')
+      else executedNotional = nextExecutedNotional
 
-    if (
-      terminalOccurredAt !== undefined &&
-      terminalObservedAt !== undefined &&
-      planned !== undefined &&
-      referencePrice !== undefined
-    ) {
-      contributions.push({
-        cycleId: evidence.cycleId,
-        symbol: evidence.symbol,
-        coverageOpenedAt: executionFirstFillAt ?? terminalOccurredAt,
-        terminalOrderOccurredAt: terminalOccurredAt,
-        preBrokerBlocked: blocked,
-        filledQuantity: executionFilledQuantity,
-        filledReferenceNotional: executionFilledReferenceNotional,
-        executedNotional: executionActualNotional,
-      })
-      firstDecisionAt =
-        firstDecisionAt === undefined || evidence.decisionCreatedAt < firstDecisionAt
-          ? evidence.decisionCreatedAt
-          : firstDecisionAt
-      if (executionFirstFillAt !== undefined) {
-        firstFillAt =
-          firstFillAt === undefined || executionFirstFillAt < firstFillAt ? executionFirstFillAt : firstFillAt
+      if (
+        terminalOccurredAt !== undefined &&
+        terminalObservedAt !== undefined &&
+        planned !== undefined &&
+        referencePrice !== undefined
+      ) {
+        contributions.push({
+          cycleId: evidence.cycleId,
+          symbol: evidence.symbol,
+          coverageOpenedAt: executionFirstFillAt ?? terminalOccurredAt,
+          terminalOrderOccurredAt: terminalOccurredAt,
+          preBrokerBlocked: blocked,
+          filledQuantity: executionFilledQuantity,
+          filledReferenceNotional: executionFilledReferenceNotional,
+          executedNotional: executionActualNotional,
+        })
+        firstDecisionAt =
+          firstDecisionAt === undefined || evidence.decisionCreatedAt < firstDecisionAt
+            ? evidence.decisionCreatedAt
+            : firstDecisionAt
+        if (executionFirstFillAt !== undefined) {
+          firstFillAt =
+            firstFillAt === undefined || executionFirstFillAt < firstFillAt ? executionFirstFillAt : firstFillAt
+        }
+        if (executionLastFillAt !== undefined) {
+          lastFillAt = lastFillAt === undefined || executionLastFillAt > lastFillAt ? executionLastFillAt : lastFillAt
+        }
+        lastTerminalOrderObservedAt =
+          lastTerminalOrderObservedAt === undefined || terminalObservedAt > lastTerminalOrderObservedAt
+            ? terminalObservedAt
+            : lastTerminalOrderObservedAt
       }
-      if (executionLastFillAt !== undefined) {
-        lastFillAt = lastFillAt === undefined || executionLastFillAt > lastFillAt ? executionLastFillAt : lastFillAt
-      }
-      lastTerminalOrderObservedAt =
-        lastTerminalOrderObservedAt === undefined || terminalObservedAt > lastTerminalOrderObservedAt
-          ? terminalObservedAt
-          : lastTerminalOrderObservedAt
     }
   }
 

@@ -56,6 +56,57 @@ import {
   verifyPerformanceDecisions,
 } from './projection'
 
+export const readForwardPerformanceExecutionOrders = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) =>
+  sql<Record<string, unknown>>`
+  WITH latest_reconciliation AS (
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+    LIMIT 1
+  )
+  SELECT DISTINCT ON (observed_order.intent_id, observed_order.broker_order_id)
+    event.event_id,
+    observed_order.broker_order_id,
+    observed_order.parent_broker_order_id,
+    observed_order.client_order_id,
+    observed_order.intent_id,
+    observed_order.account_id,
+    observed_order.symbol,
+    observed_order.side,
+    observed_order.order_type,
+    observed_order.time_in_force,
+    observed_order.limit_price_micros::text AS limit_price_micros,
+    observed_order.stop_price_micros::text AS stop_price_micros,
+    observed_order.quantity_atoms::text AS quantity_atoms,
+    observed_order.notional_micros::text AS notional_micros,
+    observed_order.filled_quantity_atoms::text AS filled_quantity_atoms,
+    observed_order.status,
+    event.occurred_at,
+    event.observed_at
+  FROM orders AS observed_order
+  JOIN broker_events AS event ON event.event_id = observed_order.event_id
+  JOIN intents AS intent ON intent.intent_id = observed_order.intent_id
+  JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
+  CROSS JOIN latest_reconciliation
+  WHERE observed_order.account_id = ${accountId}
+    AND ${generationScope(sql, accountId, authorityGenerationHash, 'order')}
+    AND cycle.account_id = ${accountId}
+    AND cycle.state = 'COMPLETED'
+    AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+    AND event.observed_at <= latest_reconciliation.reconciled_at
+  ORDER BY
+    observed_order.intent_id,
+    observed_order.broker_order_id,
+    event.source_sequence DESC,
+    event.event_id COLLATE "C" DESC
+        `.pipe(Effect.flatMap(decodeExecutionOrders))
+
 export const readForwardPerformanceUnclosedCycleCount = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -486,45 +537,7 @@ export const readForwardPerformancePostgres = (
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
           ORDER BY intent.cycle_id COLLATE "C", intent.intent_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeExecutionIntents))
-        const executionOrderRows = yield* sql<Record<string, unknown>>`
-          WITH latest_reconciliation AS (
-            SELECT reconciliation.reconciled_at
-            FROM reconciliations AS reconciliation
-            WHERE reconciliation.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-            LIMIT 1
-          )
-          SELECT DISTINCT ON (observed_order.intent_id)
-            event.event_id,
-            observed_order.broker_order_id,
-            observed_order.client_order_id,
-            observed_order.intent_id,
-            observed_order.account_id,
-            observed_order.symbol,
-            observed_order.side,
-            observed_order.quantity_atoms::text AS quantity_atoms,
-            observed_order.notional_micros::text AS notional_micros,
-            observed_order.filled_quantity_atoms::text AS filled_quantity_atoms,
-            observed_order.status,
-            event.occurred_at,
-            event.observed_at
-          FROM orders AS observed_order
-          JOIN broker_events AS event ON event.event_id = observed_order.event_id
-          JOIN intents AS intent ON intent.intent_id = observed_order.intent_id
-          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
-          CROSS JOIN latest_reconciliation
-          WHERE observed_order.account_id = ${accountId}
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'order')}
-            AND cycle.account_id = ${accountId}
-            AND cycle.state = 'COMPLETED'
-            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
-            AND event.observed_at <= latest_reconciliation.reconciled_at
-          ORDER BY
-            observed_order.intent_id,
-            event.source_sequence DESC,
-            event.event_id COLLATE "C" DESC
-        `.pipe(Effect.flatMap(decodeExecutionOrders))
+        const executionOrderRows = yield* readForwardPerformanceExecutionOrders(sql, accountId, authorityGenerationHash)
         const executionFillRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
@@ -547,6 +560,7 @@ export const readForwardPerformancePostgres = (
             fill.price_atoms::text AS price_atoms,
             fill.fee_micros::text AS fee_micros,
             fill.source_timestamp,
+            event.source_sequence::text AS source_sequence,
             event.occurred_at,
             event.observed_at
           FROM fills AS fill

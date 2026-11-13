@@ -3,6 +3,7 @@ import type { IsoDate } from '../schemas'
 import type { IntradaySnapshotManifest, IntradaySnapshotRequest } from '../market-data/intraday/model'
 import type { StreamingSnapshotManifest } from '../market-data/streaming/snapshot'
 import type { AccountingTransaction } from '../accounting/schema'
+import type { NativeProtection, Order } from '../execution/contracts'
 
 export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v4' as const
 
@@ -39,6 +40,7 @@ export type ForwardPerformanceExecutionQualityReasonCode =
   | 'FILL_TIMESTAMP_GAP'
   | 'INVALID_EXECUTION_MICROS'
   | 'PLANNED_DECISION_EVIDENCE_GAP'
+  | 'PROTECTION_EVIDENCE_GAP'
   | 'REFERENCE_PRICE_EVIDENCE_GAP'
   | 'TERMINAL_ORDER_EVIDENCE_GAP'
   | 'TERMINAL_PRICE_EVIDENCE_GAP'
@@ -127,6 +129,7 @@ export interface ForwardPerformanceExecutionFillEvidence {
   readonly priceAtoms: string
   readonly feeMicros: string
   readonly sourceTimestamp: string
+  readonly sourceSequence?: string
   readonly occurredAt: string
   readonly observedAt: string
 }
@@ -142,6 +145,17 @@ export interface ForwardPerformanceExecutionEvidence {
   readonly side: 'BUY' | 'SELL'
   readonly plannedQuantityAtoms?: string
   readonly referencePriceMicros?: string
+  /** Sealed decision terms and all broker orders, not a synthetic SELL intent. */
+  readonly nativeProtection?: {
+    readonly intentId: string
+    readonly limitPriceMicros: string
+    readonly protection: NativeProtection
+    readonly orders: readonly {
+      readonly eventId: string
+      readonly occurredAt: string
+      readonly order: Order
+    }[]
+  }
   readonly intent?: {
     readonly intentId: string
     readonly accountId: string

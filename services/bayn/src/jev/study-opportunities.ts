@@ -41,6 +41,9 @@ export const JevStudyIntentSchema = Schema.Struct({
   protection: Schema.NullOr(NativeProtectionSchema),
 })
 
+// Retained study exports predate the report's native fill sequence. Preserve their hashed wire shape.
+const { source_sequence: _reportSourceSequence, ...studyFillFields } = FillExecutionRow.fields
+
 export const JevStudyCycleSourcesSchema = Schema.Struct({
   decisions: Schema.Array(CycleDecisionRow),
   protectionIntents: Schema.Array(ProtectionIntentEvidenceSchema),
@@ -62,7 +65,7 @@ export const JevStudyCycleSourcesSchema = Schema.Struct({
   ),
   fills: Schema.Array(
     Schema.Struct({
-      ...FillExecutionRow.fields,
+      ...studyFillFields,
       quantity_atoms: PositiveMicrosSchema,
       price_atoms: PositiveMicrosSchema,
       fee_micros: UnsignedMicrosSchema,

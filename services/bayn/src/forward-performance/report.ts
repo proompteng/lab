@@ -22,7 +22,7 @@ export type ForwardPerformanceReportScope =
     }
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v8'
+  readonly schemaVersion: 'bayn.forward-performance-report.v9'
   /** Requested query scope; this does not supply missing financial source or strategy evidence. */
   readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
@@ -65,7 +65,7 @@ export const makeForwardPerformanceReport = (
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
     const costDiagnostics = forwardCostDiagnostics(receipt, inferenceExpenses, systemAssessment)
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v8' as const,
+      schemaVersion: 'bayn.forward-performance-report.v9' as const,
       scope,
       receipt,
       receiptPersistence: 'NOT_CHECKED' as const,

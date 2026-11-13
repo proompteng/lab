@@ -2,7 +2,7 @@ import { CashReportingQuantumSchema } from '../../broker/alpaca/cash-reporting'
 import { Data, Schema } from 'effect'
 import type { AccountingTransaction } from '../../accounting/schema'
 import { FinalizedSnapshotProvenanceSchema } from '../../contracts'
-import { DiscrepancySchema, type AccountingReceipt } from '../../execution/contracts'
+import { DiscrepancySchema, OrderType, TimeInForce, type AccountingReceipt } from '../../execution/contracts'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../../db/accounting-rows'
 import {
   ImageDigestSchema,
@@ -131,11 +131,16 @@ export const IntentExecutionRow = Schema.Struct({
 export const OrderExecutionRow = Schema.Struct({
   event_id: Sha256,
   broker_order_id: NonEmptyString,
+  parent_broker_order_id: Schema.NullOr(NonEmptyString),
   client_order_id: NonEmptyString,
   intent_id: Sha256,
   account_id: NonEmptyString,
   symbol: NonEmptyString,
   side: Schema.Literals(['BUY', 'SELL']),
+  order_type: Schema.Enum(OrderType),
+  time_in_force: Schema.Enum(TimeInForce),
+  limit_price_micros: Schema.NullOr(Schema.String),
+  stop_price_micros: Schema.NullOr(Schema.String),
   quantity_atoms: Schema.NullOr(Schema.String),
   notional_micros: Schema.NullOr(Schema.String),
   filled_quantity_atoms: Schema.String,
@@ -156,6 +161,7 @@ export const FillExecutionRow = Schema.Struct({
   price_atoms: Schema.String,
   fee_micros: Schema.String,
   source_timestamp: Schema.String,
+  source_sequence: Schema.String,
   occurred_at: Schema.Date,
   observed_at: Schema.Date,
 })
