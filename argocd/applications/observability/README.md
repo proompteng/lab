@@ -180,8 +180,15 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   its existing scrape and workers use native Effect OTLP metrics. See the
   [cache observability runbook](../../../docs/runbooks/bayn-cache-observability.md) for collection, alerts and acceptance.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
-  health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
+  health, stale Buzz and Bayn backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+
+`BaynDatabaseBackupStale` uses the existing cluster-labelled CNPG completion metric and email route. It fires after
+five minutes without an observed completed `bayn-db` backup from the last thirty-six hours, including missing
+completion telemetry. The newest completed backup wins; running or failed backups and the retired native-arrival
+cluster cannot clear it. A daily full backup can take hours, so this is not a short running-job timeout. A completed
+backup does not establish a successful restore. [Native scenarios](tests/bayn-backup-alerts.yaml) cover the age and
+hold boundaries, recovery, missing telemetry, excluded clusters and stable alert identity.
 
 The TA and market-data archive scrapes retain separate pipeline identities. Their critical email alerts detect a
 missing scrape, no running Flink job, and stalled or missing checkpoints, with mutually exclusive failure conditions
