@@ -141,6 +141,9 @@ could have read historically and cannot serve as a qualified backtest or live de
 
 ## Profitability goal
 
+**Produce repeatable positive profit after all costs, within the registered risk limits, using the smallest
+understandable system that meets its original deadlines and reliability requirements.**
+
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
 The [November 7 paper-edge campaign](../../docs/bayn/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
@@ -158,6 +161,22 @@ realistic evidence. An assessment grants no capital authority.
 See [current and retained acceptance rules](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
 Historical contracts and assessment receipts retain their original terms and hashes; prospective attempt numbering
 continues across the policy change.
+
+Profit is the outcome; correctness and reliability are acceptance requirements. Engineering work serves that goal:
+
+- **Performance:** measure quote receipt through decision and broker acknowledgement, including p50, p95 and p99
+  latency, original-deadline misses, CPU, memory and database work under representative load. Count scheduled work
+  that never starts. Retain the original freshness, admission, inference, submission and recovery deadlines.
+- **Simplicity:** keep one owner for each mutable fact and one authoritative representation at each trust boundary.
+  Remove redundant work and replaced paths while preserving required validation, durable evidence and authority
+  rechecks. Add abstractions, dependencies or configuration only for a demonstrated current requirement.
+- **Functional code:** keep deterministic domain decisions pure and immutable, with plain values for total code and
+  explicit validation failures. Use Effect for typed I/O, bounded concurrency, cancellation and scoped resources,
+  following the [service guide](AGENTS.md). Make state transitions and failure behavior directly traceable.
+- **Change acceptance:** state the concrete problem, establish a representative baseline, make the smallest coherent
+  change and verify its effect and relevant failure paths. Preserve bytes, hashes and accounting contracts when
+  optimizing. Report microbenchmark gains separately from end-to-end and economic results; retain inconclusive work
+  as inconclusive. Freeze strategy changes before their untouched prospective comparison.
 
 The immediate priorities are reliable recovery and complete cost accounting, then the existing
 [`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
