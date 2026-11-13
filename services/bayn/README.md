@@ -976,12 +976,21 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
-Live decision construction runs in a single-use Node worker thread so synchronous validation and canonical hashing
+Live decision construction runs in a scoped reusable Node worker thread so synchronous validation and canonical hashing
 cannot block broker-cache replies or controller timers. OBSERVE and PAPER share one construction permit per process.
-The caller owns worker termination on success, failure, deadline or interruption; queued work cannot start until the
-previous thread has terminated. The worker uses the same constructors and hashes, and the controller owns the returned
+Successful requests retain the thread. Failure, deadline, interruption or scope closure terminates it; queued work
+cannot start until any required termination finishes. An idle exited worker is replaced before reuse.
+The worker uses the same constructors and hashes, and the controller owns the returned
 frozen document. Broker mutations and authority checks remain in the controller. Native replay provides the same
 constructor in its virtual-clock runtime, preserving its sealed executable and deterministic timing.
+
+The existing `bayn.execution.decision-build` span records `bayn.decision.worker.lifecycle` as `cold` when that
+serialized acquisition requires a new thread (including replacement or a failed spawn), or `reused` when it selects
+an existing healthy thread. Closed-scope rejection has no lifecycle classification. The span duration includes
+acquisition and construction, not time waiting for the shared permit. Compare natural cold and reused samples on
+the same deployed revision and with comparable inputs; the label alone proves neither a latency improvement nor
+profitable execution. This diagnostic exports no request, account, symbol, payload or thread identifiers and cannot
+change the decision result if its annotation sink fails.
 
 Replacement execution workers start their read-only Kafka projection before exposing the Restate endpoint.
 Their `/startup-ready` probe latches only after the initial history rebuild; the activation hook requires both
