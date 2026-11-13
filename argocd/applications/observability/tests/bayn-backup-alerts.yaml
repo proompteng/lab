@@ -1,0 +1,96 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: a recent completed backup stays quiet while the next daily backup runs
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed",backup="latest"}
+        values: 0+0x60
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed",backup="old"}
+        values: -172800+0x60
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="started",backup="running"}
+        values: 0+60x60
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 60m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: missing completion evidence fires only after the five minute hold
+    interval: 1m
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing",namespace="bayn",service="bayn-db",severity="critical",team="trading",notify="email",phase="",backup="",cluster="",pod=""}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: exactly thirty six hours is not stale and age breach starts a new five minute hold
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}
+        values: -129600+0x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale"}) or vector(0)
+        eval_time: 0m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: fresh failed running foreign and retired cluster backups cannot hide overdue completion
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed",backup="old"}
+        values: -129601+0x10
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="failed"}
+        values: 0+0x10
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="started"}
+        values: 0+0x10
+      - series: kube_cnpg_backup_stopped_at{namespace="other",cluster="bayn-db",phase="completed"}
+        values: 0+0x10
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-native-arrival-db",phase="completed"}
+        values: 0+0x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing",namespace="bayn",service="bayn-db",severity="critical",team="trading",notify="email",phase="",backup="",cluster="",pod=""}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: a newly completed backup clears the incident despite retained old backups
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed",backup="old"}
+        values: -129601+0x20
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed",backup="new"}
+        values: _x8 480+0x12
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 8m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: stale evidence disappearing does not reset the alert hold or change its identity
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed",backup="old"}
+        values: -129601+0x2 stale
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing",phase="",backup="",cluster="",pod=""}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: fresh completion telemetry disappearing does not silently remain healthy
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}
+        values: 0+0x2 stale
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 7m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="BaynDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 8m
+        exp_samples: [{labels: '{}', value: 1}]
