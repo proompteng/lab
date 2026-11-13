@@ -6,7 +6,7 @@ import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
 import { missingMinuteBars } from '../market-data/streaming/inputs'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
-import { BigDecimal, Result } from 'effect'
+import { BigDecimal, Result, Schema } from 'effect'
 
 import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -19,17 +19,18 @@ import {
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
+import { strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { instrumentMarket, MarketKind } from '../instruments'
 import {
-  decodeJevBatchPlan,
+  JevBatchPlanSchema,
   JevBatchPlanVersion,
   JevCandidatePlanStatus,
   JevEntryExclusion,
   makeJevBatchPlan,
 } from './batch'
-import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
+import { JevEvidenceError, makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
@@ -542,8 +543,19 @@ export const makeJevTradingSignalBatch = (input: {
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {
-    const plan = yield* decodeJevBatchPlan(input)
+    const plan = yield* Schema.decodeUnknownResult(
+      JevBatchPlanSchema,
+      strictParseOptions,
+    )(input).pipe(Result.mapError(() => new JevEvidenceError({ message: 'Stored Jev batch plan is malformed' })))
+    const { batchId, ...material } = plan
+    const suppliedHash = yield* canonicalHashV1Result(material).pipe(
+      Result.mapError(() => new JevEvidenceError({ message: 'Jev batch evidence cannot be hashed' })),
+    )
+    if (batchId !== suppliedHash)
+      return yield* Result.fail(new JevEvidenceError({ message: 'Stored Jev batch identity differs' }))
     const observation = yield* reproduceJevCandidateObservation(inputObservation)
+    // The reconstructed plan independently validates every request and candidate. Comparing its
+    // identity with the actual supplied material avoids verifying that same request graph twice.
     const reproduced = yield* batchFromObservation(observation, plan.expiresAt, plan.schemaVersion)
     if (reproduced.batchId !== plan.batchId)
       return yield* unavailable('Jev batch requests or candidate universe differ from the reproduced source')

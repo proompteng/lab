@@ -218,6 +218,13 @@ verification, and funding, pricing, authority and deadline checks remain unchang
 [native quote-projection benchmark](tools/benchmark-decision-quote-projection.md) records fixture measurements,
 exact-output comparisons and their limits; it does not establish live latency or a complete report's runtime.
 
+Source-bound batch replay strictly parses and hashes the supplied plan, then independently reconstructs the complete
+plan from verified market evidence. The reconstructed identity must match the actual supplied material, including
+every candidate, request, exclusion and original deadline. This replaces a redundant semantic verification of the
+supplied request graph before reconstructing that same graph. Standalone batch decoding remains unchanged. See the
+[cold decision-verification benchmark](tools/benchmark-cold-decision-verification.md) for bounded production-evidence
+measurements and the still-open full-report deadline boundary.
+
 ## Runtime and research images
 
 `bayn` contains status, execution, activation, projection and operating diagnostics. It retains the private

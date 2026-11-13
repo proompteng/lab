@@ -4,7 +4,7 @@ import { equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import {
   constructSimulatedSnapshot,
   constructStreamingSnapshot,
@@ -23,6 +23,7 @@ import {
   makeJevTradingSignalBatch,
   reproduceJevRequestFromObservation,
   reproduceJevTradingSignalBatch,
+  reproduceJevTradingSignalBatchEvidence,
 } from './trading-signals'
 
 const fixture = nativeJevFixture()
@@ -293,6 +294,44 @@ describe('Jev trading batch source reproduction', () => {
       const altered = Result.getOrThrow(makeJevBatchPlan({ ...material, [field]: 'f'.repeat(64) }))
       expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, altered))).toBe(true)
     }
+  })
+
+  test('reconstruction authenticates actual supplied plan bytes before trusting its identity', () => {
+    const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))
+    const first = plan.candidates[0]
+    if (first?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected a source-bound request')
+    const changedCandidates = [
+      { ...first, request: { ...first.request, requestHash: 'f'.repeat(64) } },
+      { ...first, request: { ...first.request, requestId: 'f'.repeat(64) } },
+      { ...first, request: { ...first.request, expiresAt: first.request.observedAt } },
+      {
+        ...first,
+        request: {
+          ...first.request,
+          request: { ...first.request.request, funding: { ...first.request.request.funding, capitalMicros: '1' } },
+        },
+      },
+    ]
+    for (const candidate of changedCandidates) {
+      const changed = { ...plan, candidates: [candidate, ...plan.candidates.slice(1)] }
+      expect(Result.isFailure(reproduceJevTradingSignalBatchEvidence(input.observation, changed))).toBe(true)
+      const { batchId: _id, ...material } = changed
+      const rehashed = { ...material, batchId: Result.getOrThrow(canonicalHashV1Result(material)) }
+      expect(Result.isFailure(reproduceJevTradingSignalBatchEvidence(input.observation, rehashed))).toBe(true)
+    }
+    const { batchId: _id, ...material } = plan
+    for (const changed of [
+      { ...material, candidates: [...plan.candidates].reverse() },
+      { ...material, candidates: [first, ...plan.candidates] },
+      { ...material, unexpected: true },
+      { ...material, questionSetHash: 'f'.repeat(64) },
+    ]) {
+      const rehashed = { ...changed, batchId: Result.getOrThrow(canonicalHashV1Result(changed)) }
+      expect(Result.isFailure(reproduceJevTradingSignalBatchEvidence(input.observation, rehashed))).toBe(true)
+    }
+    const restored = Result.getOrThrow(reproduceJevTradingSignalBatchEvidence(input.observation, plan))
+    expect(Result.getOrThrow(canonicalJsonV1Result(restored.plan))).toBe(Result.getOrThrow(canonicalJsonV1Result(plan)))
+    expect(restored.observation.contentHash).toBe(plan.observationHash)
   })
 
   test('retains the exact source exclusion rather than dropping an unavailable candidate', () => {
