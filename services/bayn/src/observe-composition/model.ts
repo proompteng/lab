@@ -1,4 +1,5 @@
 import type { Effect } from 'effect'
+import type { DecisionConstruction } from '../decision-construction'
 import type { BrokerEnvironment } from '../broker/identity'
 import { BrokerRead } from '../broker/alpaca/model'
 import type { CycleExecutionPolicy } from '../cycle/model'
@@ -44,6 +45,7 @@ export type ReconciliationRuntime =
 
 export type ObserveDecisionRuntime =
   | ReconciliationRuntime
+  | DecisionConstruction
   | JevBatchStore
   | JevEvaluationStore
   | JevClient

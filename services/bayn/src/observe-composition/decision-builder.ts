@@ -1,4 +1,4 @@
-import { buildExecutionDecision, buildObserveShadowDecision } from '../decision-construction'
+import { buildExecutionDecision, buildObserveShadowDecision, type DecisionConstruction } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
   isProtectedEntryTarget,
@@ -1290,7 +1290,11 @@ const reduceObserveRiskInputs = <R>(
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
+): Effect.Effect<
+  ObserveShadowDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+> =>
   buildStrategyCycleDecision(input, {
     authorityRequirement: Authority.Observe,
     documentMode: Authority.Observe,
@@ -1309,7 +1313,11 @@ export function buildStrategyCycleDecision<R>(
     readonly authorityRequirement: Authority.Observe
     readonly documentMode: Authority.Observe
   },
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
+): Effect.Effect<
+  ObserveShadowDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+>
 export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: {
@@ -1317,11 +1325,19 @@ export function buildStrategyCycleDecision<R>(
     readonly authorityRequirement: Authority.Execution
     readonly documentMode: Authority.Execution
   },
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
+): Effect.Effect<
+  ExecutionDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+>
 export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: CycleDecisionRequirements,
-): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> {
+): Effect.Effect<
+  CycleDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
     const { facts: initialFacts, portfolio } = yield* readObserveDecisionFacts(
@@ -1487,7 +1503,11 @@ export function buildStrategyCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
+): Effect.Effect<
+  ExecutionDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+> =>
   buildStrategyCycleDecision(input, {
     authorityRequirement: Authority.Execution,
     documentMode: Authority.Execution,
@@ -1586,7 +1606,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
 ): Effect.Effect<
   { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
   CycleRunnerError | ExecutionCloseAwaitingMarketData | ExecutionCloseAwaitingReconciliation,
-  R
+  R | DecisionConstruction
 > => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
