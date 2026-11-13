@@ -11,7 +11,9 @@ import {
   type RecordedRuntimeStrategyDecision,
 } from './strategy/runtime-decision'
 import { MarketKind, instrumentMarket } from './instruments'
-import { reproduceJevCandidateObservation, reproduceRetainedJevCandidateObservation } from './jev/observation'
+import { reproduceJevCandidateObservation } from './jev/observation'
+import { compareRecords, normalizeQuote } from './market-data/intraday/verification'
+import { decodeIntradayQuoteRows } from './market-data/intraday/rows'
 import { RetainedJevEntryTargetSchema, RetainedJevExitTargetSchema } from './jev/retained-jev-targets'
 import { RetainedJevAblationTargetSchema, RetainedJevMomentumTargetSchema } from './jev/retained-jev-control-targets'
 import { JevContractError } from './jev/contract'
@@ -1350,12 +1352,21 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
         issue:
           'Jev entry quantity limits must reproduce the recorded capital, selected weights, funded strategy ceiling and instrument precision',
       })
+    // The retained target schema already reproduced the complete observation. Only project its
+    // original quote rows here; never admit an observation from a claimed hash or a reusable cache.
+    const retainedQuotes =
+      observation.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+        ? undefined
+        : decodeIntradayQuoteRows(observation.rows.quotes).pipe(
+            Result.flatMap((rows) => Result.all(rows.map(normalizeQuote))),
+            Result.map((quotes) => quotes.toSorted(compareRecords)),
+          )
     for (const symbol of target.selectedSymbols) {
       const originalAsk = Result.gen(function* () {
-        const source = yield* observation.protocol.schemaVersion !== 'bayn.jev.protocol.v40'
-          ? reproduceRetainedJevCandidateObservation(observation)
-          : reproduceJevCandidateObservation(observation)
-        const quote = source.snapshot.latestQuotes[symbol]
+        const quote =
+          retainedQuotes === undefined
+            ? (yield* reproduceJevCandidateObservation(observation)).snapshot.latestQuotes[symbol]
+            : (yield* retainedQuotes).findLast((candidate) => candidate.symbol === symbol)
         if (quote === undefined)
           return yield* Result.fail(
             new JevContractError({ message: 'Selected entry lacks its original verified quote' }),
