@@ -142,6 +142,15 @@ authorized break-glass direct deployment is an incident action, not a normal rel
 Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
 image from `main`. This avoids execution-controller reactivation when production code is unchanged.
 
+If a test-only correction fixes a failed Bayn publication, `bayn-build-push.yml` supports explicit recovery on `main`:
+`gh workflow run bayn-build-push.yml --ref main -f expected_main_sha=<full-reviewed-main-commit>`.
+The checked-out event commit must equal that expected commit and current remote `main`, both before validation and
+before cohort discovery. A wrong ref, moved main, missing revision, or failed source read fails closed; it does not
+switch revisions or reuse the earlier run's validation. Recovery runs the same complete Bayn and broker validation,
+three immutable multi-architecture builds, receipt checks and artifact retention before making the cohort discoverable.
+The existing main-only publishing permissions and Kargo/Argo promotion path are unchanged. This publisher recovery
+does not make diagnostic post-deploy or qualification workflows a promotion fallback.
+
 Bayn follows this same path through `bayn-release/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
 main-published cohort with matching source and run receipts. The trading image owns the exact source revision used
 for checkout, runtime bindings and activation lineage, so a newer unpublished main commit cannot hold a completed release.
