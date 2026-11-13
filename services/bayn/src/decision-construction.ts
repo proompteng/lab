@@ -80,6 +80,12 @@ export const makeDecisionConstruction = (
     const acquire = Effect.gen(function* () {
       if (closed) return yield* failed('Decision construction scope is closed')
       if (unhealthy || worker?.threadId === -1) yield* dispose()
+      // Classify this serialized acquisition, not its result or the age of the process.
+      // A replacement (or failed spawn) is cold too; never export request or worker identity.
+      yield* Effect.annotateCurrentSpan(
+        'bayn.decision.worker.lifecycle',
+        worker === undefined ? 'cold' : 'reused',
+      ).pipe(Effect.catchDefect(() => Effect.void))
       if (worker === undefined) {
         worker = yield* Effect.try({
           try: spawn,

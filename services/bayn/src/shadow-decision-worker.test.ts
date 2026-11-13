@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
-import { Cause, Effect, Exit, Fiber, Result, Schedule } from 'effect'
+import { Cause, Effect, Exit, Fiber, Result, Schedule, Tracer } from 'effect'
 
 import { constructObserveShadowDecision as constructObservation, type ExecutionDecisionInput } from './shadow-decision'
 import { decisionConstructionFixture } from './shadow-decision-worker.test-support'
@@ -36,6 +36,35 @@ afterAll(async () => {
 })
 
 const spawn = () => new Worker(join(directory, 'decision-construction-worker.js'))
+const constructionTrace = (rejectLifecycle = false) => {
+  const spans: Tracer.NativeSpan[] = []
+  let annotations = 0
+  const tracer = Tracer.make({
+    span(options) {
+      const span = new (class extends Tracer.NativeSpan {
+        override attribute(key: string, value: unknown) {
+          if (key === 'bayn.decision.worker.lifecycle') {
+            annotations++
+            if (rejectLifecycle) throw new Error('Synthetic diagnostic sink failure')
+          }
+          super.attribute(key, value)
+        }
+      })(options)
+      if (span.name === 'bayn.execution.decision-build') spans.push(span)
+      return span
+    },
+  })
+  return {
+    tracer,
+    spans,
+    annotations: () => annotations,
+    lifecycle: () =>
+      spans.map((span) =>
+        Object.fromEntries([...span.attributes].filter(([key]) => key.startsWith('bayn.decision.worker.'))),
+      ),
+  }
+}
+const lifecycle = (value: 'cold' | 'reused') => ({ 'bayn.decision.worker.lifecycle': value })
 const usingBuilder = <A, E>(use: (builder: DecisionConstructionShape) => Effect.Effect<A, E>, makeWorker = spawn) =>
   Effect.scoped(makeDecisionConstruction(makeWorker).pipe(Effect.flatMap(use)))
 const waitForStart = (signals: Int32Array) =>
@@ -55,6 +84,7 @@ const blockedWorker = (signals: Int32Array) =>
   )
 
 test('scoped worker reuse preserves independent documents, hashes and owned validation receipts', async () => {
+  const trace = constructionTrace()
   let worker: Worker | undefined
   let spawns = 0
   const makeWorker = () => {
@@ -77,14 +107,22 @@ test('scoped worker reuse preserves independent documents, hashes and owned vali
           expect(spawns).toBe(1)
         }),
       makeWorker,
-    ),
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
   )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('reused'), lifecycle('reused')])
   expect(worker?.threadId).toBe(-1)
 }, 10_000)
 
 test('observation construction preserves its risk rejection across the thread boundary', async () => {
+  const trace = constructionTrace()
   const { authorityGenerationHash: _generation, riskContext: _risk, executionSession: _session, ...observation } = input
-  const actual = await Effect.runPromise(usingBuilder((builder) => builder.observe(observation)).pipe(Effect.result))
+  const actual = await Effect.runPromise(
+    usingBuilder((builder) => builder.observe(observation)).pipe(
+      Effect.result,
+      Effect.provideService(Tracer.Tracer, trace.tracer),
+    ),
+  )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold')])
   const expected = await Effect.runPromise(constructObservation(observation).pipe(Effect.result))
   expect(Result.isFailure(actual)).toBe(true)
   expect(Result.isFailure(expected)).toBe(true)
@@ -174,6 +212,7 @@ test('controller timers advance during synchronous worker work and cancellation 
 }, 10_000)
 
 test('only one construction runs and interruption releases the permit after termination', async () => {
+  const trace = constructionTrace()
   const signals = new Int32Array(new SharedArrayBuffer(8))
   const workers: Worker[] = []
   const makeWorker = () => {
@@ -197,8 +236,9 @@ test('only one construction runs and interruption releases the permit after term
           expect(workers[1]?.threadId).not.toBe(-1)
         }),
       makeWorker,
-    ),
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
   )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('cold')])
   expect(workers[1]?.threadId).toBe(-1)
 }, 10_000)
 
@@ -222,9 +262,14 @@ test('spawn and premature-exit failures fail closed', async () => {
   }
   const exited = () => new Worker('', { eval: true })
   for (const makeWorker of [startup, exited]) {
+    const trace = constructionTrace()
     const result = await Effect.runPromise(
-      usingBuilder((builder) => builder.execution(input), makeWorker).pipe(Effect.result),
+      usingBuilder((builder) => builder.execution(input), makeWorker).pipe(
+        Effect.result,
+        Effect.provideService(Tracer.Tracer, trace.tracer),
+      ),
     )
+    expect(trace.lifecycle()).toEqual([lifecycle('cold')])
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure.failure).toBe('contract')
   }
@@ -245,6 +290,7 @@ test('worker defects remain defects rather than ordinary decision rejections', a
 }, 10_000)
 
 test('a rejected request is terminated before a fresh valid request is constructed', async () => {
+  const trace = constructionTrace()
   const workers: Worker[] = []
   await Effect.runPromise(
     usingBuilder(
@@ -263,12 +309,14 @@ test('a rejected request is terminated before a fresh valid request is construct
         workers.push(worker)
         return worker
       },
-    ),
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
   )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('cold')])
   expect(workers.every((worker) => worker.threadId === -1)).toBe(true)
 }, 10_000)
 
 test('an idle worker exit is detected and replaced without hanging the next request', async () => {
+  const trace = constructionTrace()
   const workers: Worker[] = []
   await Effect.runPromise(
     usingBuilder(
@@ -284,12 +332,14 @@ test('an idle worker exit is detected and replaced without hanging the next requ
         workers.push(worker)
         return worker
       },
-    ),
+    ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
   )
+  expect(trace.lifecycle()).toEqual([lifecycle('cold'), lifecycle('cold')])
   expect(workers.every((worker) => worker.threadId === -1)).toBe(true)
 }, 10_000)
 
 test('scope closure rejects reuse without starting a worker', async () => {
+  const trace = constructionTrace()
   let spawns = 0
   const builder = await Effect.runPromise(
     Effect.scoped(
@@ -299,10 +349,75 @@ test('scope closure rejects reuse without starting a worker', async () => {
       }),
     ),
   )
-  const rejected = await Effect.runPromise(builder.execution(input).pipe(Effect.result))
+  const rejected = await Effect.runPromise(
+    builder.execution(input).pipe(Effect.result, Effect.provideService(Tracer.Tracer, trace.tracer)),
+  )
+  expect(trace.lifecycle()).toEqual([{}])
   expect(Result.isFailure(rejected)).toBe(true)
   expect(spawns).toBe(0)
 })
+
+test.each(['success', 'failure', 'defect', 'interruption'] as const)(
+  'a throwing lifecycle annotation preserves %s and scoped worker cleanup',
+  async (outcome) => {
+    const trace = constructionTrace(true)
+    const signals = new Int32Array(new SharedArrayBuffer(8))
+    let worker: Worker | undefined
+    const makeWorker = () => {
+      worker =
+        outcome === 'interruption'
+          ? blockedWorker(signals)
+          : outcome === 'defect'
+            ? new Worker(
+                `const {parentPort} = require('node:worker_threads');
+                 parentPort.once('message', ({id}) => parentPort.postMessage({id, response: {_tag: 'Defect', cause: 'original defect'}}));`,
+                { eval: true },
+              )
+            : spawn()
+      return worker
+    }
+    const exit = await Effect.runPromiseExit(
+      usingBuilder(
+        (builder) =>
+          Effect.gen(function* () {
+            if (outcome === 'interruption') {
+              const running = yield* builder.execution(input).pipe(Effect.forkChild)
+              yield* waitForStart(signals)
+              yield* Fiber.interrupt(running)
+              return yield* Fiber.join(running)
+            }
+            return yield* builder.execution(
+              outcome === 'failure'
+                ? { ...input, snapshot: { ...input.snapshot, contentHash: '0'.repeat(64) } }
+                : input,
+            )
+          }),
+        makeWorker,
+      ).pipe(Effect.provideService(Tracer.Tracer, trace.tracer)),
+    )
+    expect(trace.annotations()).toBe(1)
+    expect(trace.lifecycle()).toEqual([{}])
+    expect(worker?.threadId).toBe(-1)
+    if (outcome === 'success') {
+      expect(Exit.isSuccess(exit)).toBe(true)
+      if (Exit.isSuccess(exit)) expect(exit.value).toEqual(expected)
+    } else {
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons).toHaveLength(1)
+        const reason = exit.cause.reasons[0]
+        if (outcome === 'failure') {
+          expect(reason?._tag).toBe('Fail')
+          if (reason?._tag === 'Fail') expect(reason.error).toMatchObject({ failure: 'binding' })
+        } else if (outcome === 'defect') {
+          expect(reason?._tag).toBe('Die')
+          if (reason?._tag === 'Die') expect(reason.defect).toBe('original defect')
+        } else expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      }
+    }
+  },
+  10_000,
+)
 
 test('wrong request and mode replies fail closed and terminate the worker', async () => {
   for (const response of ['null', '{id: id + 1, response: {_tag: "Executed"}}', '{id, response: {_tag: "Observed"}}']) {
