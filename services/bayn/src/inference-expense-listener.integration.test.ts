@@ -49,6 +49,14 @@ const idleListener = (sql: PgClient.PgClient, applicationName: string) =>
     }),
   )
 
+const awaitListenerClosed = (sql: PgClient.PgClient, applicationName: string) =>
+  sql`SELECT pid FROM pg_stat_activity WHERE application_name=${applicationName}`.pipe(
+    // PgConnection release flushes Terminate locally; it does not await the peer's backend exit.
+    // Observe that exit within a hard bound without retrying SQL failures or accepting a leaked session.
+    Effect.repeat({ while: (rows) => rows.length > 0, schedule: Schedule.spaced('10 millis') }),
+    Effect.timeout('2 seconds'),
+  )
+
 describePostgres('inference expense LISTEN lifecycle', () => {
   let runtime: ReturnType<typeof makeRuntime>
   beforeAll(() => {
@@ -176,7 +184,7 @@ describePostgres('inference expense LISTEN lifecycle', () => {
           expect(values).toEqual([0, 7])
           expect((yield* listener(sql, applicationName)).pid).not.toBe(before.pid)
           yield* Fiber.interrupt(fiber)
-          expect(yield* sql`SELECT pid FROM pg_stat_activity WHERE application_name=${applicationName}`).toEqual([])
+          expect(yield* awaitListenerClosed(sql, applicationName)).toEqual([])
         }),
       ),
     )
@@ -206,7 +214,34 @@ describePostgres('inference expense LISTEN lifecycle', () => {
           expect(before.autocommit).toBe(true)
           expect(starts).toBe(1)
           yield* Fiber.interrupt(fiber)
-          expect(yield* sql`SELECT pid FROM pg_stat_activity WHERE application_name=${applicationName}`).toEqual([])
+          expect(yield* awaitListenerClosed(sql, applicationName)).toEqual([])
+        }),
+      ),
+    )
+  })
+
+  test('cleanup observation fails within its deadline while the session is still open', async () => {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const applicationName = `expense-held-listener-${crypto.randomUUID()}`
+          const entered = yield* Deferred.make<void>()
+          // Use the real heartbeat: changing connectTimeout cannot extend the inherited socket inactivity budget.
+          const fiber = yield* listenInferenceExpenses(
+            { ...sql.config, applicationName },
+            'bayn_expense_held_test',
+            Deferred.succeed(entered, undefined).pipe(Effect.as(idle)),
+          ).pipe(Effect.forkScoped)
+          yield* Deferred.await(entered)
+          const before = yield* idleListener(sql, applicationName)
+          const failure = yield* awaitListenerClosed(sql, applicationName).pipe(
+            Effect.match({ onFailure: (cause) => cause._tag, onSuccess: () => null }),
+          )
+          expect(failure).toBe('TimeoutError')
+          expect(yield* idleListener(sql, applicationName)).toEqual(before)
+          yield* Fiber.interrupt(fiber)
+          expect(yield* awaitListenerClosed(sql, applicationName)).toEqual([])
         }),
       ),
     )

@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import {
   persistVisualClaimFixture,
@@ -161,6 +163,10 @@ const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const makeRuntime = () =>
   ManagedRuntime.make(
     Layer.mergeAll(
+      Layer.succeed(DecisionConstruction, {
+        observe: constructObserveShadowDecision,
+        execution: constructExecutionDecision,
+      }),
       EntryInferenceJournalLive,
 
       CycleStoreLive,
