@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalJsonEqualV1 } from '../hash'
 import { strictParseOptions } from '../schemas'
 import {
   deriveMomentumTargetMaterial,
@@ -80,11 +80,7 @@ export const reproduceRetainedJevAblationTarget = (input: unknown) =>
     }
   })
 
-const same = (left: unknown, right: unknown) => {
-  const a = canonicalHashV1Result(left)
-  const b = canonicalHashV1Result(right)
-  return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
-}
+const same = canonicalJsonEqualV1
 
 export const RetainedJevAblationTargetSchema = Schema.Struct({
   ...EntryAblationTargetSchema.fields,
