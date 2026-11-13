@@ -72,6 +72,8 @@ spec:
             - configMapRef:
                 name: bayn-valkey-connection
           env:
+            - name: BAYN_REPORTING_ALLOWED
+              value: "false"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_GLITCHTIP_DSN
