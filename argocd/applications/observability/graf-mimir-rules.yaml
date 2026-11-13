@@ -3772,6 +3772,50 @@ data:
                 Bayn readiness is blocked by a required dependency, autonomous-loop,
                 or broker-read/account-binding failure.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynRepeatedEntryExpiry
+            expr: |
+              max by (job, namespace, service) (
+                (
+                  min_over_time(bayn_cycle_terminal_reason{
+                    job="bayn", namespace="bayn", service="bayn",
+                    reason="blocked_unused_entry_expired"
+                  }[10m]) == 1
+                )
+                and on(job, namespace, service, instance)
+                (
+                  changes(bayn_cycle_last_terminal_timestamp_seconds{
+                    job="bayn", namespace="bayn", service="bayn"
+                  }[10m]) >= 5
+                )
+                and on(job, namespace, service, instance)
+                (bayn_cycle_observation_available{job="bayn", namespace="bayn", service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (up{job="bayn", namespace="bayn", service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (bayn_cycle_submission_open_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} <= time())
+                and on(job, namespace, service, instance)
+                (bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} > time())
+                and on(job, namespace, service, instance)
+                (time() - bayn_runtime_projection_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} < 90)
+                and on(job, namespace, service, instance)
+                (time() - bayn_runtime_projection_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} >= -5)
+              )
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn entry attempts repeatedly expire without a sampled successful outcome
+              description: |
+                During the current submission window, one freshly observed replica has at least five changes
+                to its latest terminal-cycle timestamp in ten minutes while every sampled terminal reason
+                remains BLOCKED_UNUSED_ENTRY_EXPIRED. Instantaneous readiness or a newly ACTIVE cycle does
+                not clear this signal. These are sampled transitions, not exact missed-trade counts or proof
+                of profitable opportunities. Inspect original input, inference, admission and submission
+                deadlines and source revisions. Missing telemetry is unknown, not a successful outcome.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleStalled
             expr: |
               max by (job, namespace, service) (

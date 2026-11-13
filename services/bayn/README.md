@@ -474,6 +474,11 @@ existing expense classification; a retry cannot invent a fresh validity window.
 While a committed entry batch awaits its result, ordinary market hints wait until the earliest original batch or admission
 expiry. Broker observations and inference completion still wake the owner immediately. The expiry timer survives replay;
 market bursts cannot run redundant financial passes or move that deadline forward.
+After a closed-window pass with no pending domain deadline, ordinary data hints retain their producer frontier
+without scheduling another financial pass. Canonical broker publications still recheck authority, reconciliation
+and the calendar through the existing financial-completeness timer. Inference completion, source startup, readiness
+and recovery hints remain immediate. Any subsequent non-closed pass clears this suppression; established entry,
+protection, close and recovery deadlines retain their existing scheduling.
 Expired admitted work, including earlier authority generations, settles under the existing independent account
 inference-expense owner. Its SQL page scan and persisted retry backoff never run in the account's protection turn.
 
