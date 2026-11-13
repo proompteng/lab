@@ -1652,6 +1652,11 @@ canonical millisecond UTC instants; source event precision does not change fresh
 confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within `order_acknowledgement`,
 after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
+Run forward-performance reports outside execution-controller pods, in a separately budgeted reporting process. A November 13 diagnostic
+report exhausted a controller's 1 GiB memory limit and restarted it; the report subsequently completed in a 4 GiB
+API pod. That single success is not a memory bound. See the [investigation](../../docs/bayn/system-investigation-2026-11-13.md)
+for the measured result and remaining evidence gaps.
+
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
 configured runtime:
