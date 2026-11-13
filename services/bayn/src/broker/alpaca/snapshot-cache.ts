@@ -55,34 +55,32 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
           )
             previous = undefined
           // The existing latest-fill read starts a fresh bracket immediately after a newly reported fill.
-          const recentFills =
+          const latestFill =
             previous === undefined
               ? undefined
               : yield* fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
-          if (recentFills !== undefined && previous?.latestFillId !== (recentFills.value.items[0]?.activityId ?? null))
+          if (latestFill !== undefined && previous?.latestFillId !== (latestFill.value.items[0]?.activityId ?? null))
             previous = undefined
           yield* Effect.annotateCurrentSpan('broker.history.reused', previous !== undefined)
           const value = yield* Effect.all(
             {
               // Restart unstable cuts through the owner, with a new durable ticket and the existing quota wait.
               // Retrying under a ticket invalidated by that mutation only adds unusable history reads and debt.
-              snapshot: readBrokerSnapshotOnce(fresh, currentUtcInstant, previous?.history),
+              capture: readBrokerSnapshotOnce(fresh, currentUtcInstant, previous?.history),
               configuration: fresh.accountConfiguration,
               openOrders: fresh.orders({ status: OrderCollection.Open, limit: 1 }),
-              recentOrders: fresh.orders({
-                status: OrderCollection.All,
-                limit: 1,
-                direction: SortDirection.Descending,
-              }),
-              recentFills:
-                recentFills === undefined
-                  ? fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
-                  : Effect.succeed(recentFills),
             },
             { concurrency: 2 },
           )
           const completedAt = yield* currentUtcInstant
-          const candidate = { ...value, startedAt, completedAt, observedAt: startedAt }
+          const candidate = {
+            ...value.capture,
+            configuration: value.configuration,
+            openOrders: value.openOrders,
+            startedAt,
+            completedAt,
+            observedAt: startedAt,
+          }
           const observedAt = DateTime.formatIso(
             DateTime.makeUnsafe(
               Math.min(
