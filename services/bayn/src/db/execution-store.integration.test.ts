@@ -1734,6 +1734,9 @@ describePostgres('PostgreSQL execution persistence', () => {
             DROP CONSTRAINT account_snapshots_schema_version_check`
           yield* sql`ALTER TABLE account_snapshots ADD CONSTRAINT account_snapshots_schema_version_check
             CHECK (schema_version = 'bayn.paper-account-snapshot.v2') NOT VALID`
+          // These legacy orders predate brackets. Supply the current report's nullable parent field
+          // without applying later migrations that would replace the retained fee schema under test.
+          yield* sql`ALTER TABLE orders ADD COLUMN parent_broker_order_id text`
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
