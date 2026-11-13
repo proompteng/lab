@@ -155,7 +155,7 @@ describe('Alpaca broker session acquisition retry', () => {
     expect(Exit.isSuccess(exit)).toBeTrue()
     expect(requests).toBe(0)
   })
-  test('publishes complete history with 52 cold requests and 29 retained-history requests', async () => {
+  test('publishes complete history with 50 cold requests and 28 retained-history requests', async () => {
     const fills = Array.from({ length: 2_002 }, (_, index) => ({
       activity_type: 'FILL',
       id: `fill-${index}::62e69015-8549-4bfd-b9c3-01e75843f47d`,
@@ -218,10 +218,9 @@ describe('Alpaca broker session acquisition retry', () => {
         expect(Result.isSuccess(result)).toBe(true)
         if (Result.isFailure(result)) throw result.failure
         expect(result.success.snapshot.history.fills).toHaveLength(2_002)
-        expect(requests).toBe(52)
+        expect(requests).toBe(50)
         expect(Date.parse(result.success.completedAt)).toBeLessThan(30_000)
-        expect(yield* budget.nextPollNotBeforeMs).toBe(31_200)
-        yield* TestClock.adjust(1_200)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(30_000)
         yield* budget.beginCapture
         const second = yield* captureBrokerObservation(
           read,
@@ -230,8 +229,8 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(30_000)
         expect((yield* Fiber.join(second)).snapshot.history.fills).toHaveLength(2_002)
-        expect(requests).toBe(81)
-        expect(yield* budget.nextPollNotBeforeMs).toBe(48_600)
+        expect(requests).toBe(78)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(46_800)
         const last = fills.at(-1)
         if (last === undefined) throw new Error('Expected a complete fill fixture')
         fills.push({
@@ -247,7 +246,9 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(30_000)
         expect((yield* Fiber.join(changed)).snapshot.history.fills).toHaveLength(2_003)
-        expect(requests).toBe(133)
+        // The invalidation probe is still charged before the new fill forces a full cold bracket.
+        expect(requests).toBe(129)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(90_600)
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })

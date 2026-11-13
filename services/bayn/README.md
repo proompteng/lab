@@ -396,7 +396,32 @@ successful tickets with an unchanged latest fill can reuse the prior full after-
 The after-history is always read in full, including old fill and fee corrections. A new fill, generation gap,
 backward clock, failure or interruption discards that reuse. History endpoints run concurrently within each scan;
 pagination, exact fill coverage, original timestamps and hashes remain required.
+The compact recent-order and recent-fill projections come from that verified after-history and retain the actual
+response page's evidence, including empty histories. They are bounded by the same source cut instead of separate
+overlapping recent-history requests. The independent latest-fill probe remains before any retained-history reuse;
+open-order eligibility still uses its own fresh broker query. No polling cadence, request cost or backoff changes.
 See [capture ownership](src/broker/alpaca/snapshot-cache.ts) and [history verification](src/simulation-reconciliation/broker-history.ts).
+
+For a bounded, read-only fill cohort, run `psql -X -At` against the owning account database with
+`-v source_revision=<verified-deployed-SHA> -v start_at=<UTC> -v end_at=<UTC>` and
+`-f services/bayn/tools/canonical-fill-latency.sql` from the repository root. The half-open window must be
+completed and at most one hour; the report refuses to qualify more than 1,000 rows. It retains canonical event,
+fill, order, accounting transaction, receipt and transfer identities, source/first-observation clocks, median,
+p95 and accounting receipt delay. No fills, a missing account scope or truncation are **unmeasured**, not success.
+Verify that the deployed revision covered the whole window: account scope is not per-event revision provenance.
+Use equal-duration baseline and candidate windows with comparable fill/cancellation activity; retain counts and
+missing receipts. Do not substitute old order submission/update times, HTTP duration or notification receipt
+for canonical fill latency. Separate protection and close recovery from fresh-entry eligibility.
+
+The report explicitly lists segments it cannot join. Notification receipt IDs hash native frames, not canonical
+fill identities; matching timestamps alone cannot join them. Join retained native frame/order/execution identity
+to the verified receipt before attributing notification or exclusive-owner delay. Capture traces retain the
+native Restate invocation and `broker.history.reused`; count their actual HTTP `GET` spans, including retries,
+and separate `bayn.broker.observation.capture`, publication/materialization and financial persistence. Request
+debt, server reset/backoff and completeness scheduling are separate clocks. Missing source events and independent
+ledger readback remain unmeasured unless independently verified; a receipt or zero repeated source IDs alone does
+not prove zero duplicate ledger mutations.
+
 Reconciliation reads one complete cut. Routine account, position and health reads use the same
 projection. Each continuous health pass reads and validates one complete projected cut for all six broker components,
 rather than fetching and decoding the full history six times. The next pass revalidates a new read; no successful or
