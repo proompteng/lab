@@ -16,10 +16,10 @@ import { selectStreamingInputs } from './inputs'
 import { cryptoMarketProfile } from '../../jev/markets'
 import { nativeArrival, nativeArrivalCaptureId } from './native-arrival'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
-import { emptyStreamingProjection, incorporateMarketRecord } from './projection'
+import { emptyStreamingProjection, incorporateLiveMarketRecord, incorporateMarketRecord } from './projection'
 import { kafkaCaptureDisposition } from './kafka'
 import { sha256 } from '../../hash'
-import { CaptureDisposition } from './transport-evidence'
+import { CaptureDisposition, CaptureReason } from './transport-evidence'
 
 const fixture = () => {
   const { cut, query, snapshot, protocol } = streamingFixture()
@@ -140,6 +140,55 @@ test('one original cursor reproduces interleaved equity and crypto deliveries wi
       advanceHistoricalMarketCursor(empty, {
         ...deliveries[0],
         receipt: { ...deliveries[0]?.receipt, projectionSequence: 2 },
+      }),
+    ),
+  ).toBe(true)
+})
+
+test('new retired-source receipts reproduce their exclusion while earlier sampled receipts keep their original meaning', () => {
+  const { empty, deliveries, equity } = interleavedOriginalFixture([0])
+  const original = deliveries[0]
+  if (original === undefined) throw new Error('Missing original delivery')
+  const envelope = JSON.parse(original.record.value)
+  const rawValue = Buffer.from(JSON.stringify({ ...envelope, source: 'rest_latest' }))
+  const record = { ...original.record, value: rawValue.toString('utf8') }
+  const sampled = {
+    ...original,
+    record,
+    rawValueBase64: rawValue.toString('base64'),
+    receipt: { ...original.receipt, rawValueSha256: sha256(rawValue), rawByteLength: rawValue.byteLength },
+  }
+  const earlier = Result.getOrThrow(advanceHistoricalMarketCursor(empty, sampled))
+  expect(earlier.projection.quotes.has(equity.symbol)).toBe(true)
+
+  const incorporated = incorporateLiveMarketRecord(empty.projection, record, equity.universe, original.availableAtMs)
+  expect(incorporated.ignoredReason).toBe(CaptureReason.RetiredLatestRest)
+  const retired = {
+    ...sampled,
+    receipt: { ...sampled.receipt, disposition: CaptureDisposition.Ignored, reason: incorporated.ignoredReason },
+  }
+  const current = Result.getOrThrow(advanceHistoricalMarketCursor(empty, retired))
+  expect(current.projection.quotes.has(equity.symbol)).toBe(false)
+  expect(current.projection.sequence).toBe(incorporated.projection.sequence)
+  const { reason, ...withoutReason } = retired.receipt
+  expect(reason).toBe(CaptureReason.RetiredLatestRest)
+  expect(
+    Result.isFailure(
+      advanceHistoricalMarketCursor(empty, {
+        ...retired,
+        receipt: withoutReason,
+      }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isFailure(
+      advanceHistoricalMarketCursor(empty, {
+        ...original,
+        receipt: {
+          ...original.receipt,
+          disposition: CaptureDisposition.Ignored,
+          reason: CaptureReason.RetiredLatestRest,
+        },
       }),
     ),
   ).toBe(true)

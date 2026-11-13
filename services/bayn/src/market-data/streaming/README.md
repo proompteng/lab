@@ -9,6 +9,16 @@ Trading has one market-data capability: load a verified feature and raw-data sna
 The production adapter consumes Kafka; backtesting supplies recorded events on its simulated clock. An unavailable
 adapter blocks observations. ClickHouse remains the historical archive and does not supply an execution fallback.
 
+Live equity admission excludes the retired `source=rest_latest` acquisition, including records retained in Kafka
+before the producer cutover. Those records cannot update current quotes or trades or emit accepted-data wakeups.
+Native arrival capture preserves their bytes, coordinates, timestamps and `IGNORED` disposition with reason
+`retired-latest-rest`. Named `source=rest` gap repair retains its separate contract.
+
+Raw decoding requires an explicit live or recorded admission scope. Earlier captures reproduce accepted samples under
+their original interpretation. Current excluded samples reproduce their live disposition and must prove the recorded
+retired-source reason; removing or mislabeling that reason fails original-arrival verification. Valuation and original
+quote coverage continue to use only accepted receipts.
+
 The isolated worker sends account-scoped advisory `MarketChanged` hints immediately after accepted incorporation,
 without waiting for native audit persistence. Each physical worker owns a producer UUID and increasing hint sequence.
 Its scoped publisher retains one immutable outstanding hint and one conflated latest change. A lost acknowledgement

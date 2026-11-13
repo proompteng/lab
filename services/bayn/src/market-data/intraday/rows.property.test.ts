@@ -196,15 +196,19 @@ describe('market boundary properties', () => {
           offset: String(input.offset),
           value: JSON.stringify(envelope),
         }
-        const accepted = Result.getOrThrow(decodeRawMarketRecord(record, universe))
+        const accepted = Result.getOrThrow(decodeRawMarketRecord(record, universe, 'recorded'))
         expect(accepted.kind).toBe(RawMarketEventKind.Quote)
         const truncated = record.value.slice(0, selector % record.value.length)
-        expect(Result.isFailure(decodeRawMarketRecord({ ...record, value: truncated }, universe))).toBe(true)
+        expect(Result.isFailure(decodeRawMarketRecord({ ...record, value: truncated }, universe, 'recorded'))).toBe(
+          true,
+        )
         for (const value of [null, 'NaN', -1, [], {}]) {
           const corrupt = JSON.stringify({ ...envelope, payload: { ...payload, ap: value } })
-          expect(Result.isFailure(decodeRawMarketRecord({ ...record, value: corrupt }, universe))).toBe(true)
+          expect(Result.isFailure(decodeRawMarketRecord({ ...record, value: corrupt }, universe, 'recorded'))).toBe(
+            true,
+          )
         }
-        expect(Result.getOrThrow(decodeRawMarketRecord(record, universe))).toEqual(accepted)
+        expect(Result.getOrThrow(decodeRawMarketRecord(record, universe, 'recorded'))).toEqual(accepted)
       }),
     )
   })

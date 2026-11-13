@@ -10,74 +10,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class ForwarderConfigTest {
-  @Test
-  fun `IEX qualification keeps the admitted baseline and requires its exact REST-only candidates`() {
-    val all = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
-    val admitted = "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
-    val candidates = "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC"
-    val base =
-      mapOf(
-        "ALPACA_KEY_ID" to "key",
-        "ALPACA_SECRET_KEY" to "secret",
-        "SYMBOLS" to all,
-        "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
-        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to admitted,
-        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to admitted,
-        "ALPACA_LATEST_SYMBOLS" to candidates,
-        "ALPACA_IEX_SUBSCRIPTION_QUALIFICATION" to "true",
-      )
-    val config = ForwarderConfig.fromEnv(base)
-    assertEquals(true, config.qualifyIexSubscriptions)
-    assertEquals(candidates.split(","), requireNotNull(config.latestMarketData).symbols)
-    assertEquals(
-      mapOf("trades" to admitted.split(","), "quotes" to admitted.split(","), "bars" to all.split(",")),
-      config.marketDataFeedConfigs().single().desiredSymbolsByChannel(config.staticSymbols),
-    )
-    for (invalid in listOf(
-      mapOf("ALPACA_IEX_SUBSCRIPTION_QUALIFICATION" to "yes"),
-      mapOf("ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars,updatedBars"),
-      mapOf("SUBSCRIBE_BATCH_SIZE" to "8"),
-      mapOf("SUBSCRIBE_BATCH_SIZE" to "15"),
-      mapOf("ALPACA_MARKET_DATA_BARS_SYMBOLS" to all.split(",").reversed().joinToString(",")),
-      mapOf("ALPACA_MARKET_DATA_TRADES_SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH"),
-      mapOf("ALPACA_LATEST_SYMBOLS" to "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK"),
-    )) {
-      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + invalid) }
-    }
-    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base - "ALPACA_LATEST_SYMBOLS") }
-  }
-
-  @Test
-  fun `latest observations require explicit missing symbols and a bounded single IEX producer`() {
-    val base =
-      mapOf(
-        "ALPACA_KEY_ID" to "key",
-        "ALPACA_SECRET_KEY" to "secret",
-        "SYMBOLS" to "AMD,SPY",
-        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to "SPY",
-        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to "SPY",
-      )
-    assertEquals(null, ForwarderConfig.fromEnv(base).latestMarketData)
-    val enabled = base + ("ALPACA_LATEST_SYMBOLS" to "AMD")
-    assertEquals(LatestMarketDataConfig(listOf("AMD"), 2000, 10_000), ForwarderConfig.fromEnv(enabled).latestMarketData)
-    for (invalid in listOf(
-      mapOf("ALPACA_LATEST_SYMBOLS" to ""),
-      mapOf("ALPACA_LATEST_SYMBOLS" to "AMD,AMD"),
-      mapOf("ALPACA_LATEST_SYMBOLS" to "MSFT"),
-      mapOf("ALPACA_LATEST_SYMBOLS" to "SPY"),
-      mapOf("ALPACA_FEED" to "sip"),
-      mapOf("SHARD_COUNT" to "2"),
-      mapOf("JANGAR_SYMBOLS_URL" to "https://example.test"),
-      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "100"),
-      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "bad"),
-      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "10001"),
-      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "0"),
-    )) {
-      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(enabled + invalid) }
-    }
-    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_MAX_AGE_MS" to "1000")) }
-  }
-
   private val authoritativeUniverse =
     mapOf(
       "SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY",
@@ -445,7 +377,6 @@ class ForwarderConfigTest {
         "SPY",
         "WDC",
       )
-    val decisionSymbols = listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")
     val observationSymbols = listOf("DBC", "EFA", "IEF", "SPY", "VNQ")
     val cfg =
       ForwarderConfig.fromEnv(
@@ -455,8 +386,6 @@ class ForwarderConfigTest {
           "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
           "ALPACA_OBSERVATION_SYMBOLS" to observationSymbols.joinToString(","),
           "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
-          "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to decisionSymbols.joinToString(","),
-          "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to decisionSymbols.joinToString(","),
           "SYMBOLS" to coreSymbols.joinToString(","),
           "SYMBOLS_ALLOWLIST" to coreSymbols.joinToString(","),
           "MARKET_DATA_UNIVERSE_ID" to "cross-asset-taa-v2",
@@ -467,15 +396,39 @@ class ForwarderConfigTest {
     assertEquals(coreSymbols, cfg.staticSymbols)
     assertEquals(coreSymbols.toSet(), cfg.symbolAllowlist)
     assertEquals(
-      mapOf("trades" to decisionSymbols, "quotes" to decisionSymbols),
+      emptyMap(),
       cfg.alpacaMarketDataSymbolOverrides,
     )
     assertEquals(observationSymbols, cfg.observationSymbols)
     assertEquals(listOf(coreSymbols, observationSymbols), cfg.marketDataFeedConfigs().map { it.symbols })
     assertEquals(
-      mapOf("trades" to decisionSymbols, "quotes" to decisionSymbols, "bars" to coreSymbols),
+      mapOf("trades" to coreSymbols, "quotes" to coreSymbols, "bars" to coreSymbols),
       cfg.marketDataFeedConfigs().first().desiredSymbolsByChannel(coreSymbols),
     )
+  }
+
+  @Test
+  fun `forty-eight membership allowance does not relax other feed shapes`() {
+    val symbols = (1..16).map { "S$it" }
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
+        "SYMBOLS" to symbols.joinToString(","),
+        "SYMBOLS_ALLOWLIST" to symbols.joinToString(","),
+      )
+    val invalidCases =
+      listOf(
+        mapOf("ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars,updatedBars"),
+        mapOf("SHARD_COUNT" to "2"),
+        mapOf("JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols"),
+        mapOf("ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to symbols.joinToString(",")),
+        mapOf("SYMBOLS" to (symbols + "S17").joinToString(","), "SYMBOLS_ALLOWLIST" to (symbols + "S17").joinToString(",")),
+      )
+    for (invalid in invalidCases) {
+      assertFailsWith<IllegalStateException> { ForwarderConfig.fromEnv(base + invalid) }
+    }
   }
 
   @Test

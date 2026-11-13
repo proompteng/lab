@@ -89,10 +89,9 @@ values and Kafka coordinates, but omit the `source` discriminator and complete p
 Kafka envelopes for experiments that need to distinguish REST samples from streaming observations. The minute-bar
 feature branches remain bar-derived.
 
-Deploy this exclusion before enabling the producer's `ALPACA_LATEST_SYMBOLS` setting. No operator IDs or checkpoint
-state schemas change for this exclusion. Disabling polling does not remove retained `rest_latest` records. A rollback
-must retain compatible volume exclusions or verify that restored offsets cannot replay sampled records into an older
-volume consumer. See the [producer contract](../README.md#latest-quote-and-trade-observations).
+Ordinary latest polling is removed. Keep the volume exclusions for retained sampled records: restoring checkpoints
+or replaying old offsets must not reinterpret those samples as a complete trade stream. Operator IDs and state
+schemas remain unchanged. See the [streaming source contract](../README.md#streaming-equity-source).
 
 ## ClickHouse sink batching
 

@@ -23,28 +23,22 @@ rollout order, and recovery constraints. The post-deploy workflow verifies absen
 then verifies both retained Flink jobs, checkpoints, websocket/Kafka flow, and TA freshness. It observes the
 Kargo-owned rollout and does not contact the retired API endpoints.
 
-## Latest IEX observations for Bayn
+## IEX streaming inputs for Bayn
 
-The websocket producer also polls IEX latest quotes and trades for
-`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`. The configured interval is two seconds after each pass, with a ten-second
-maximum provider event age. The admitted WebSocket baseline remains 16 bars, seven quotes and seven trades.
+The single IEX socket subscribes to bars, quotes and trades for all sixteen configured symbols. The static,
+single-shard configuration admits 48 channel memberships after authenticated, complete subscription acknowledgement.
+Provider events outside that acknowledged map cannot allocate sequences, update deduplication or enter Kafka.
+The producer has no ordinary latest-data REST acquisition or temporary subscription qualifier. Named historical
+gap repair preserves its separate source and availability contract.
 
-The reviewed configuration arms a [same-session diagnostic qualification](../../../services/dorvud/README.md#same-session-iex-subscription-qualification)
-of the nine missing quote/trade memberships. Extra WebSocket frames never enter Kafka or ordinary freshness tracking;
-REST remains their sole admitted source. A complete acknowledgement and a usable regular-session observation window,
-followed by verified baseline restoration, are required evidence. Neither an existing single-connection limit nor
-after-hours silence establishes whether the full 48-membership target is entitled. The normal single-replica Recreate
-rollout has a restart gap; no additional provider connection or credential is introduced.
+The cutover requires retained evidence from the prior deployment's actual regular-session qualification, including
+the full acknowledgement, 130 seconds of usable channel coverage and exact baseline restoration. After rollout,
+verify the deployed source, full subscription map, fresh Kafka records, matching Flink features and usable Bayn
+snapshots. After-hours HTTP success or readiness does not establish this evidence or strategy profitability.
 
-Verify that the deployed TA consumer contains the `source=rest_latest` trade exclusion before activating this
-configuration. The exclusion was introduced in source `0f48bef14941942e4bf67f05f15777916db79d76`. Check the actual
-consumer image, restored Flink state and a completed checkpoint. Keep compatible exclusions during rollback because
-disabling polling does not remove retained samples.
-
-During a regular session, verify acknowledged provider timestamps for all nine symbols, their Kafka records and
-usable Bayn snapshots. After-hours HTTP success or readiness does not prove regular-session coverage or profitability.
-See the [producer contract](../../../services/dorvud/README.md#latest-quote-and-trade-observations) for sample semantics,
-failure handling and archive provenance limits.
+Retained `source=rest_latest` samples remain excluded from current Bayn and TA decisions. Historical captures preserve
+their original admission meaning. The normal single-replica Recreate rollout has a restart gap; it introduces no
+additional provider connection or credential. See the [producer contract](../../../services/dorvud/README.md).
 
 ## Recovering a failed stateful TA upgrade
 

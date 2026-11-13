@@ -361,18 +361,6 @@ class ForwarderApp(
   private val coreMarketDataFeed = marketDataFeeds.single { it.config.core }
   private val barRecovery = BarRecovery(Duration.ofHours(config.barsBackfillLookbackHours))
   private val rest = AlpacaRestClient(config, this.httpClient)
-  private val latestMarketData = config.latestMarketData?.let { LatestMarketDataPoller(it, config.alpacaBaseUrl, rest, nowMs) }
-  private val subscriptionQualification =
-    if (config.qualifyIexSubscriptions) {
-      val latest = requireNotNull(config.latestMarketData)
-      SubscriptionQualification(
-        coreMarketDataFeed.config.desiredSymbolsByChannel(config.staticSymbols),
-        latest.symbols,
-        maximumProviderAgeMs = latest.maximumAgeMs,
-      )
-    } else {
-      null
-    }
   private val tradeUpdatesReconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
@@ -409,43 +397,9 @@ class ForwarderApp(
                       }
                     },
                   )
-                if (feed.config.core && config.enableBarsBackfill) {
-                  launch {
-                    while (isActive) {
-                      try {
-                        val completed =
-                          withTimeoutOrNull(60_000) {
-                            val symbols =
-                              normalizeSymbols(
-                                feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
-                                feed.config.symbolAllowlist,
-                              )
-                            reconcileBars(producer, feed.sequence, symbols)
-                            true
-                          }
-                        if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending" }
-                      } catch (error: CancellationException) {
-                        throw error
-                      } catch (error: Exception) {
-                        logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending" }
-                      }
-                      delay(60_000)
-                    }
-                  }
-                }
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
-
-        config.latestMarketData?.let { latest ->
-          jobs +=
-            launch {
-              while (isActive) {
-                pollLatestMarketData(producer)
-                delay(latest.pollIntervalMs)
-              }
-            }
-        }
 
         if (tradeUpdatesEnabled) {
           val tradeStreamUrl = config.alpacaTradeStreamUrl
@@ -520,8 +474,6 @@ class ForwarderApp(
       alpacaMarketDataWs = coreMarketDataFeed.websocketStatus.get(),
       marketDataChannels = channelSnapshot,
       marketDataFeeds = feedSnapshot,
-      latestRestObservations = latestMarketData?.coverage(),
-      subscriptionQualification = subscriptionQualification?.snapshot(),
       marketDataUniverse =
         config.universeContract?.let { contract ->
           MarketDataUniverseInfo(
@@ -552,40 +504,63 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     feed: MarketDataFeedRuntimeState,
     symbolsTracker: SymbolsTracker,
-  ) {
-    var attempt = 0
-    while (scope.isActive) {
+  ): Unit =
+    coroutineScope {
+      var attempt = 0
+      var recovery: Job? = null
       try {
-        ensureKafkaReady(producer, feed)
-        streamMarketDataSession(producer, feed, symbolsTracker) {
-          attempt = 0
-        }
-      } catch (e: Exception) {
-        currentCoroutineContext().ensureActive()
-        ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
-          metrics.recordWsConnectError(errorClass)
-          metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
-          recordFeedError(feed, errorClass)
-        }
-        logger.warn(e) { "alpaca ws session ended feed=${feed.config.feed}" }
-      } finally {
-        setFeedWsReady(feed, false)
-        if (feed.config.core) {
-          subscriptionQualification?.let { qualification ->
-            qualification.sessionClosed(qualification.snapshot().generation, nowMs())
+        while (isActive) {
+          if (feed.config.core && config.enableBarsBackfill && recovery?.isCompleted != false) {
+            recovery =
+              launch {
+                try {
+                  val completed =
+                    withTimeoutOrNull(60_000) {
+                      val symbols =
+                        normalizeSymbols(
+                          feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
+                          feed.config.symbolAllowlist,
+                        )
+                      reconcileBars(producer, feed.sequence, symbols)
+                      true
+                    }
+                  if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending until reconnect" }
+                } catch (error: CancellationException) {
+                  throw error
+                } catch (error: Exception) {
+                  logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending until reconnect" }
+                }
+              }
           }
-        }
-      }
+          try {
+            ensureKafkaReady(producer, feed)
+            streamMarketDataSession(producer, feed, symbolsTracker) {
+              attempt = 0
+            }
+          } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
+            ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
+              metrics.recordWsConnectError(errorClass)
+              metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
+              recordFeedError(feed, errorClass)
+            }
+            logger.warn(e) { "alpaca ws session ended feed=${feed.config.feed}" }
+          } finally {
+            setFeedWsReady(feed, false)
+          }
 
-      if (!scope.isActive) break
-      attempt += 1
-      metrics.reconnects.increment()
-      metrics.recordMarketDataReconnect(feed.config.feed)
-      val delayMs = feed.reconnectBackoff.nextDelay(attempt)
-      logger.warn { "alpaca ws reconnecting feed=${feed.config.feed} in ${delayMs}ms (attempt=$attempt)" }
-      delay(delayMs)
+          if (!isActive) break
+          attempt += 1
+          metrics.reconnects.increment()
+          metrics.recordMarketDataReconnect(feed.config.feed)
+          val delayMs = feed.reconnectBackoff.nextDelay(attempt)
+          logger.warn { "alpaca ws reconnecting feed=${feed.config.feed} in ${delayMs}ms (attempt=$attempt)" }
+          delay(delayMs)
+        }
+      } finally {
+        recovery?.cancel()
+      }
     }
-  }
 
   private suspend fun streamTradeUpdatesLoop(
     producer: KafkaProducer<String, String>,
@@ -669,17 +644,10 @@ class ForwarderApp(
         header("Content-Type", "application/msgpack")
       }
     }) {
-      val qualification = subscriptionQualification?.takeIf { feed.config.core }
-      val qualificationGeneration = qualification?.sessionOpened(nowMs())
-      if (qualification != null) maxFrameSize = 1_048_576
-      var decodedFrameReceivedAtMs = nowMs()
-
-      fun regularSession(): Boolean =
-        marketSessionState(Instant.ofEpochMilli(nowMs()), AlpacaMarketType.EQUITY, config.optionsMarketHolidays) == "regular"
-
+      if (feed.config.core && feed.config.equityFeed == EquityFeed.Iex) maxFrameSize = 1_048_576
       var authOk = false
       var subscribedOk = false
-      var admittedCryptoSymbolsByChannel = emptyMap<String, Set<String>>()
+      var admittedSymbolsByChannel = emptyMap<String, Set<String>>()
       val subscribedSince = AtomicReference<Instant?>(null)
       var lastProviderMarketDataAt: Instant? = null
       val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
@@ -714,14 +682,11 @@ class ForwarderApp(
 
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
         while (true) {
-          val qualificationWake = qualification?.nextWakeDelayMs(requireNotNull(qualificationGeneration), nowMs())
-          val receiveDeadlineMs = minOf(config.marketDataReadIdleTimeoutMs, qualificationWake ?: Long.MAX_VALUE).coerceAtLeast(1)
           val frame =
-            withTimeoutOrNull(receiveDeadlineMs) {
+            withTimeoutOrNull(config.marketDataReadIdleTimeoutMs) {
               incoming.receive()
             }
           if (frame == null) {
-            if (qualificationWake != null && qualificationWake <= config.marketDataReadIdleTimeoutMs) return emptyList()
             updateWsReady()
             val reconnect =
               marketDataIdleRequiresReconnect(
@@ -737,7 +702,6 @@ class ForwarderApp(
             continue
           }
 
-          decodedFrameReceivedAtMs = nowMs()
           val elements = decodeMarketDataFrame(frame) ?: return emptyList()
           val messages: List<JsonElement> =
             if (elements is JsonArray) elements.toList() else listOf(elements)
@@ -840,15 +804,6 @@ class ForwarderApp(
               }
             }
           sendSerialized(request)
-        }
-      }
-
-      suspend fun applyQualificationCommand(command: SubscriptionQualificationCommand?) {
-        when (command) {
-          is SubscriptionQualificationCommand.Add -> applySubscription("subscribe", command.symbolsByChannel)
-          is SubscriptionQualificationCommand.Remove -> applySubscription("unsubscribe", command.symbolsByChannel)
-          is SubscriptionQualificationCommand.Close -> error("IEX qualification requires baseline reconnect: ${command.reason}")
-          null -> Unit
         }
       }
 
@@ -982,9 +937,7 @@ class ForwarderApp(
 
       try {
         while (isActive) {
-          applyQualificationCommand(qualification?.tick(requireNotNull(qualificationGeneration), nowMs(), regularSession()))
           decodeNextMessages().forEach { msg ->
-            applyQualificationCommand(qualification?.tick(requireNotNull(qualificationGeneration), nowMs(), regularSession()))
             when (msg) {
               is AlpacaSuccess -> {
                 if (msg.msg.contains("auth", ignoreCase = true)) {
@@ -997,59 +950,31 @@ class ForwarderApp(
               is AlpacaSubscription -> {
                 val channels = feed.config.channels
                 val providerSubscribedByChannel = msg.subscribedSymbolsByChannel(channels)
-                val qualificationCommand =
-                  qualification?.onAcknowledgement(
-                    requireNotNull(qualificationGeneration),
-                    providerSubscribedByChannel.mapValues { it.value.sorted() },
-                    nowMs(),
-                    regularSession(),
-                  )
                 val desiredSymbolsByChannel = feed.config.desiredSymbolsByChannel(symbolsTracker.current())
                 val actualSubscribedByChannel =
-                  if (qualification == null) {
-                    providerSubscribedByChannel
-                  } else {
-                    providerSubscribedByChannel.mapValues { (channel, symbols) ->
-                      symbols.filter { it in desiredSymbolsByChannel[channel].orEmpty() }.toSet()
-                    }
+                  providerSubscribedByChannel.mapValues { (channel, symbols) ->
+                    symbols.intersect(desiredSymbolsByChannel[channel].orEmpty().toSet())
                   }
+                admittedSymbolsByChannel = actualSubscribedByChannel
                 val actualSubscribed = actualSubscribedByChannel.values.flatten().toSet()
-                val admittedSubscription =
-                  if (qualification == null) {
-                    msg
-                  } else {
-                    msg.copy(
-                      trades = actualSubscribedByChannel["trades"].orEmpty().toList(),
-                      quotes = actualSubscribedByChannel["quotes"].orEmpty().toList(),
-                      bars1m = actualSubscribedByChannel["bars"].orEmpty().toList(),
-                    )
-                  }
-                val admittedSubscriptionChanged =
-                  feed.websocketStatus
-                    .get()
-                    .subscribedSymbolsByChannel
-                    .mapValues { it.value.toSet() } != actualSubscribedByChannel
                 val missingByChannel =
                   missingDesiredSymbolsByChannel(desiredSymbolsByChannel, actualSubscribedByChannel)
                 val missing = missingByChannel.values.flatten().distinct()
                 val wsStatus =
-                  admittedSubscription.toMarketDataWebsocketStatus(
+                  msg.toMarketDataWebsocketStatus(
                     previous = feed.websocketStatus.get(),
                     desiredSymbolsByChannel = desiredSymbolsByChannel,
                     authOk = authOk,
                     nowMs = nowMs(),
                   )
                 feed.websocketStatus.set(wsStatus)
-                if (feed.config.marketType == AlpacaMarketType.CRYPTO) admittedCryptoSymbolsByChannel = actualSubscribedByChannel
                 subscribedLock.withLock {
                   subscribedSymbols.clear()
                   subscribedSymbols.addAll(actualSubscribed)
                 }
                 if (actualSubscribed.isNotEmpty()) {
                   subscribedSince.compareAndSet(null, Instant.ofEpochMilli(nowMs()))
-                  if (qualification == null || admittedSubscriptionChanged) {
-                    feed.channelFreshness.recordSubscriptionByChannel(actualSubscribedByChannel)
-                  }
+                  feed.channelFreshness.recordSubscriptionByChannel(actualSubscribedByChannel)
                 } else {
                   subscribedSince.set(null)
                   lastOptionsMarketDataEventAt.set(null)
@@ -1064,9 +989,7 @@ class ForwarderApp(
                   if (subscribedOk) null else ReadinessErrorClass.Unknown,
                   if (subscribedOk) null else "subscription acknowledgement is incomplete",
                 )
-                applyQualificationCommand(qualificationCommand)
                 if (missingByChannel.isNotEmpty()) {
-                  check(qualification == null) { "IEX qualification baseline acknowledgement is incomplete; reconnecting" }
                   logger.warn {
                     val missingSummary = missingByChannel.mapValues { (_, symbols) -> symbols.size }
                     val subscribedSummary = actualSubscribedByChannel.mapValues { (_, symbols) -> symbols.size }
@@ -1091,9 +1014,6 @@ class ForwarderApp(
                 return@forEach
               }
               is AlpacaError -> {
-                if (qualification?.onProviderError(requireNotNull(qualificationGeneration), msg.code, nowMs()) == true) {
-                  return@forEach
-                }
                 authOk = false
                 subscribedOk = false
                 val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
@@ -1123,46 +1043,17 @@ class ForwarderApp(
               }
               else -> {
                 val observed = observedMarketDataMessage(msg)
-                if (observed != null && feed.config.marketType == AlpacaMarketType.CRYPTO &&
+                if (observed != null &&
+                  (
+                    feed.config.core && feed.config.marketType == AlpacaMarketType.EQUITY ||
+                      feed.config.marketType == AlpacaMarketType.CRYPTO
+                  ) &&
                   (
                     !authOk || !subscribedOk ||
-                      observed.symbol !in admittedCryptoSymbolsByChannel[canonicalMarketDataChannel(observed.channel)].orEmpty()
+                      observed.symbol !in admittedSymbolsByChannel[canonicalMarketDataChannel(observed.channel)].orEmpty()
                   )
                 ) {
                   return@forEach
-                }
-                if (observed != null && qualification != null) {
-                  val qualificationChannel = canonicalMarketDataChannel(observed.channel) ?: observed.channel
-                  val providerAt =
-                    when (msg) {
-                      is AlpacaTrade -> msg.timestamp
-                      is AlpacaQuote -> msg.timestamp
-                      is AlpacaBar -> msg.timestamp
-                      else -> null
-                    }?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-                  val usable =
-                    when (msg) {
-                      is AlpacaTrade -> msg.price.isFinite() && msg.price > 0 && msg.size.isFinite() && msg.size > 0
-                      is AlpacaQuote ->
-                        listOf(msg.bidPrice, msg.askPrice, msg.bidSize, msg.askSize).all { it.isFinite() && it >= 0 } &&
-                          msg.bidPrice > 0 && msg.askPrice > 0 && msg.bidPrice <= msg.askPrice
-                      is AlpacaBar ->
-                        listOf(msg.open, msg.high, msg.low, msg.close, msg.volume).all { it.isFinite() && it >= 0 } &&
-                          msg.open > 0 && msg.close > 0 && msg.low > 0 && msg.low <= minOf(msg.open, msg.close) &&
-                          msg.high >= maxOf(msg.open, msg.close) && msg.volume >= 0
-                      else -> false
-                    }
-                  qualification.observe(
-                    requireNotNull(qualificationGeneration),
-                    qualificationChannel,
-                    observed.symbol,
-                    providerAt,
-                    decodedFrameReceivedAtMs,
-                    nowMs(),
-                    usable,
-                    regularSession(),
-                  )
-                  if (!qualification.isAdmitted(qualificationChannel, observed.symbol)) return@forEach
                 }
                 if (observed != null) {
                   lastProviderMarketDataAt = Instant.ofEpochMilli(nowMs())
@@ -1334,20 +1225,6 @@ class ForwarderApp(
           version = 2,
         )
       sendKafka(producer, topicV2, envV2)
-    }
-  }
-
-  internal suspend fun pollLatestMarketData(producer: KafkaProducer<String, String>) {
-    latestMarketData?.poll(coreMarketDataFeed.sequence::next) { envelope ->
-      val topic = requireNotNull(coreMarketDataFeed.config.topicFor(envelope.channel))
-      recordLag(envelope, coreMarketDataFeed)
-      val delivered = CompletableDeferred<Unit>()
-      runInterruptible(Dispatchers.IO) {
-        sendKafka(producer, topic, envelope, onCompletion = { error ->
-          if (error == null) delivered.complete(Unit) else delivered.completeExceptionally(error)
-        })
-      }
-      delivered.await()
     }
   }
 
@@ -1646,14 +1523,6 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     feed: MarketDataFeedRuntimeState,
   ): String? {
-    if (feed.config.core && subscriptionQualification != null) {
-      val observed = observedMarketDataMessage(msg)
-      if (observed != null &&
-        !subscriptionQualification.isAdmitted(canonicalMarketDataChannel(observed.channel) ?: observed.channel, observed.symbol)
-      ) {
-        return null
-      }
-    }
     if (msg is AlpacaCryptoMessage) {
       val event = msg.event
       require(event.symbol in feed.config.symbols) { "unsubscribed crypto pair" }

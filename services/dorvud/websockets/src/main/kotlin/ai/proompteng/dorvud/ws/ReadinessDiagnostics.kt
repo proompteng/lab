@@ -54,8 +54,6 @@ data class ReadinessInfo(
   @SerialName("market_data_channels") val marketDataChannels: List<MarketDataChannelReadiness> = emptyList(),
   @SerialName("market_data_feeds") val marketDataFeeds: List<MarketDataFeedReadiness> = emptyList(),
   @SerialName("market_data_universe") val marketDataUniverse: MarketDataUniverseInfo? = null,
-  @SerialName("latest_rest_observations") val latestRestObservations: LatestMarketDataCoverage? = null,
-  @SerialName("iex_subscription_qualification") val subscriptionQualification: SubscriptionQualificationStatus? = null,
 )
 
 @Serializable

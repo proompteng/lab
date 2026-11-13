@@ -1,3 +1,4 @@
+import { CaptureReason } from './transport-evidence'
 import { equityClockSession } from '../../equity-hours'
 import { Result, Schema } from 'effect'
 
@@ -19,7 +20,7 @@ export type RawMarketEvent =
   | { readonly kind: RawMarketEventKind.Bar; readonly value: IntradayBar }
   | { readonly kind: RawMarketEventKind.Quote; readonly value: IntradayQuote }
   | { readonly kind: RawMarketEventKind.Trade; readonly value: IntradayTrade }
-  | { readonly kind: RawMarketEventKind.Ignored }
+  | { readonly kind: RawMarketEventKind.Ignored; readonly reason?: CaptureReason.RetiredLatestRest }
 
 export const kafkaProducerClockSkewAllowanceMs = 5_000
 
@@ -131,6 +132,7 @@ export const canonicalRawTimestamp = (value: string): Result.Result<string, Mark
 export const decodeRawMarketRecord = (
   record: KafkaMarketRecord,
   universe: StreamingUniverse,
+  admission: 'live' | 'recorded',
 ): Result.Result<RawMarketEvent, MarketFeatureFailure> =>
   Result.gen(function* () {
     const json: unknown = yield* Result.try({
@@ -173,6 +175,8 @@ export const decodeRawMarketRecord = (
         Math.abs(record.timestampMs - Date.parse(ingestedAt)) > kafkaProducerClockSkewAllowanceMs)
     )
       return yield* Result.fail(fail('Kafka timestamp violates the producer clock contract'))
+    if (!crypto && admission === 'live' && envelope.source === 'rest_latest')
+      return { kind: RawMarketEventKind.Ignored, reason: CaptureReason.RetiredLatestRest }
     if (crypto) {
       const payload = yield* Schema.decodeUnknownResult(
         Schema.Struct({ S: Schema.String, T: Schema.String, t: Schema.String }),

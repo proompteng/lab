@@ -22,7 +22,7 @@ import { TestClock } from 'effect/testing'
 import { provideTestLayer } from '../../effect-test-support'
 import { historicalRawArrivals } from '../../testing/historical-streaming-fixture'
 import { streamingFixture, streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
-import { CaptureDisposition } from './transport-evidence'
+import { CaptureDisposition, CaptureReason } from './transport-evidence'
 import { nativeArrivalCaptureId, type NativeArrivalChunk, type NativeArrivalObservation } from './native-arrival'
 import { makeNativeArrivalJournal, type NativeArrivalCapture, type NativeArrivalEnd } from './native-arrival-journal'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
@@ -199,10 +199,14 @@ class RetainedLogTransport extends FakeTransport {
   }
 }
 
-const readyLogProjection = (transport: RetainedLogTransport, source: StreamingUniverse) =>
+const readyLogProjection = (
+  transport: RetainedLogTransport,
+  source: StreamingUniverse,
+  captureFactory?: Parameters<typeof makeKafkaMarketProjection>[4],
+) =>
   Effect.gen(function* () {
     const ready = yield* Deferred.make<void>()
-    const projection = yield* makeKafkaMarketProjection(config, [source], () => transport, undefined, undefined, {
+    const projection = yield* makeKafkaMarketProjection(config, [source], () => transport, undefined, captureFactory, {
       changed: (reason) =>
         reason === MarketChangeReason.Ready ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid) : Effect.void,
     })
@@ -240,6 +244,62 @@ const clockEdges = [
 
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe((self) => provideTestLayer(self, TestClock.layer())))
+
+test.each(['rest_latest', 'ws', 'rest'])(
+  'live market admission handles %s acquisition without losing retained arrival evidence',
+  async (acquisition) => {
+    await program(
+      Effect.gen(function* () {
+        const fixture = streamingFixture()
+        const source = fixture.cut.projection.sources.get(fixture.query.universeId)
+        if (source === undefined) throw new Error('Missing fixture source')
+        const log = snapshotLog(fixture).map((record) => {
+          const envelope = JSON.parse(record.value)
+          if (envelope.symbol !== 'AAPL' || !['quotes', 'trades'].includes(envelope.channel)) return record
+          const value = JSON.stringify({ ...envelope, source: acquisition })
+          return { ...record, value, rawByteLength: Buffer.byteLength(value) }
+        })
+        yield* TestClock.setTime(Date.parse(fixture.query.observedAt))
+        const transport = new RetainedLogTransport(log, Object.values(source.topics))
+        const captured: NativeArrivalObservation[] = []
+        const projection = yield* readyLogProjection(transport, source, () =>
+          Effect.succeed({
+            flush: Effect.void,
+            observe: (input) =>
+              Effect.sync(() => {
+                captured.push(input)
+              }),
+            status: () => ({
+              captureId: '0'.repeat(64),
+              status: 'RECORDING',
+              observedConsumerSequence: captured.length,
+              durableConsumerSequence: 0,
+              queuedCompressedBytes: 0,
+              failure: null,
+            }),
+          }),
+        )
+        const cut = yield* projection.read
+        expect(cut.projection.quotes.has('AAPL')).toBe(acquisition !== 'rest_latest')
+        expect(cut.projection.trades.has('AAPL')).toBe(acquisition !== 'rest_latest')
+        expect(cut.projection.rejections.size).toBe(0)
+        expect(transport.deliveredRecords).toBeGreaterThan(0)
+        const sampled = captured.filter((input) => {
+          const envelope = JSON.parse(input.record.value)
+          return envelope.symbol === 'AAPL' && ['quotes', 'trades'].includes(envelope.channel)
+        })
+        expect(sampled.length).toBeGreaterThan(0)
+        expect(
+          sampled.every((input) =>
+            acquisition === 'rest_latest'
+              ? input.reason === CaptureReason.RetiredLatestRest && input.disposition === CaptureDisposition.Ignored
+              : input.reason === undefined && input.disposition === CaptureDisposition.Accepted,
+          ),
+        ).toBe(true)
+      }),
+    )
+  },
+)
 
 test.each(clockEdges)(
   'quote seek includes the valid age boundary with ingestion skew $ingestionSkewMs and Kafka skew $kafkaSkewMs',

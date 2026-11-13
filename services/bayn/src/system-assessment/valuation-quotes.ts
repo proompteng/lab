@@ -109,6 +109,7 @@ export const readValuationQuotes = (
                   decodeRawMarketRecord(
                     { ...arrival.record, ...(timestampMs === undefined ? {} : { timestampMs }) },
                     source,
+                    'recorded',
                   ),
                 )
                 if (event.kind !== RawMarketEventKind.Quote) continue

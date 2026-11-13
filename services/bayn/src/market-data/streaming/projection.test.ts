@@ -216,7 +216,7 @@ describe('streaming raw and rolling feature projection', () => {
                 bs: 100,
                 as: 100,
               })
-              const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe))
+              const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe, 'recorded'))
               if (decoded.kind !== RawMarketEventKind.Quote) throw new Error('expected quote fixture')
               const availableAtMs = end + 3000 + delay
               accepted.push({
@@ -455,7 +455,7 @@ describe('streaming raw and rolling feature projection', () => {
   test('correction invalidates the old feature until its replacement arrives, and retries cannot reverse it', () => {
     const initial = incorporate([...raw(), featureRecord])
     const correctedRecord = rawRecord('bars', 30, start, { o: 100.5, h: 102, l: 99, c: 101, v: 10.25, vw: 100.5, n: 2 })
-    const decoded = Result.getOrThrow(decodeRawMarketRecord(correctedRecord, universe))
+    const decoded = Result.getOrThrow(decodeRawMarketRecord(correctedRecord, universe, 'recorded'))
     expect(decoded.kind).toBe(RawMarketEventKind.Bar)
     if (decoded.kind !== RawMarketEventKind.Bar) throw new Error('expected bar')
     const inputs = feature.material.inputs.map((input, index) =>
@@ -515,7 +515,7 @@ describe('streaming raw and rolling feature projection', () => {
   })
 
   test('mixed recorded timestamp precision shares one bounded minute revision history', () => {
-    const parsed = Result.getOrThrow(decodeRawMarketRecord(barRecord(0), universe))
+    const parsed = Result.getOrThrow(decodeRawMarketRecord(barRecord(0), universe, 'recorded'))
     if (parsed.kind !== RawMarketEventKind.Bar) throw new Error('Expected a bar fixture')
     let state = emptyStreamingProjection('mixed-precision')
     for (let index = 0; index < 8; index++)
@@ -575,11 +575,13 @@ describe('streaming raw and rolling feature projection', () => {
   test('raw channels preserve timestamp equality across precision and reject invalid matching timestamps', () => {
     for (const record of [barRecord(0), quote, trade]) {
       const envelope = JSON.parse(record.value)
-      const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe))
+      const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe, 'recorded'))
       for (const t of [envelope.eventTs, envelope.eventTs.replace('.000Z', '.000000000Z')]) {
         const sameInstant = { ...envelope, payload: { ...envelope.payload, t } }
         expect(
-          Result.getOrThrow(decodeRawMarketRecord({ ...record, value: JSON.stringify(sameInstant) }, universe)),
+          Result.getOrThrow(
+            decodeRawMarketRecord({ ...record, value: JSON.stringify(sameInstant) }, universe, 'recorded'),
+          ),
         ).toEqual(decoded)
       }
       for (const invalid of [
@@ -590,7 +592,9 @@ describe('streaming raw and rolling feature projection', () => {
         for (const eventTs of [envelope.eventTs, invalid]) {
           const changed = { ...envelope, eventTs, payload: { ...envelope.payload, t: invalid } }
           expect(
-            Result.isFailure(decodeRawMarketRecord({ ...record, value: JSON.stringify(changed) }, universe)),
+            Result.isFailure(
+              decodeRawMarketRecord({ ...record, value: JSON.stringify(changed) }, universe, 'recorded'),
+            ),
           ).toBeTrue()
         }
       }
@@ -599,7 +603,9 @@ describe('streaming raw and rolling feature projection', () => {
         payload: { ...envelope.payload, t: new Date(Date.parse(envelope.eventTs) + 1).toISOString() },
       }
       expect(
-        Result.isFailure(decodeRawMarketRecord({ ...record, value: JSON.stringify(differentInstant) }, universe)),
+        Result.isFailure(
+          decodeRawMarketRecord({ ...record, value: JSON.stringify(differentInstant) }, universe, 'recorded'),
+        ),
       ).toBeTrue()
     }
   })
@@ -611,12 +617,14 @@ describe('streaming raw and rolling feature projection', () => {
           ...record,
           value: record.value.replace('"marketSession":"regular"', `"marketSession":"${session}"`),
         }
-        expect(Result.getOrThrow(decodeRawMarketRecord(outsideSession, universe)).kind).toBe(RawMarketEventKind.Ignored)
+        expect(Result.getOrThrow(decodeRawMarketRecord(outsideSession, universe, 'recorded')).kind).toBe(
+          RawMarketEventKind.Ignored,
+        )
         const malformed = {
           ...outsideSession,
           value: JSON.stringify({ ...JSON.parse(outsideSession.value), payload: null }),
         }
-        expect(Result.isFailure(decodeRawMarketRecord(malformed, universe))).toBe(true)
+        expect(Result.isFailure(decodeRawMarketRecord(malformed, universe, 'recorded'))).toBe(true)
       }
     }
     const state = incorporate([...raw(), featureRecord])
@@ -635,7 +643,7 @@ describe('streaming raw and rolling feature projection', () => {
   test('rejects unknown raw-envelope versions before interpreting their payloads', () => {
     for (const version of [1, 3]) {
       const future = { ...quote, value: quote.value.replace('"version":2', `"version":${version}`) }
-      expect(Result.isFailure(decodeRawMarketRecord(future, universe))).toBe(true)
+      expect(Result.isFailure(decodeRawMarketRecord(future, universe, 'recorded'))).toBe(true)
       const state = incorporate([...raw().filter((record) => record !== quote), future, featureRecord])
       expect(Result.isFailure(select(state))).toBe(true)
     }
