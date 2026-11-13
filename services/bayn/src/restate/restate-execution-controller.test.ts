@@ -518,6 +518,98 @@ test.each(['broker', 'market-boundary'] as const)(
   },
 )
 
+test.each(['broker', 'inference', 'Startup', 'Ready', 'Recovery'] as const)(
+  'a closed owner without a deadline ignores quote bursts until %s supplies relevant work',
+  async (wake) => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const deliveries: unknown[] = []
+    let advances = 0
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        prepareActivation: async () => undefined,
+        projectState: async () => undefined,
+        log: async () => undefined,
+        advance: async () => {
+          advances++
+          return {
+            completedAt: '2026-08-13T18:00:00.000Z',
+            ...(advances === 1
+              ? {
+                  observation: {
+                    result: 'SUCCESS' as const,
+                    outcome: 'WINDOW_CLOSED' as const,
+                    observedAt: '2026-08-13T18:00:00.000Z',
+                  },
+                }
+              : {}),
+            outcome: {
+              _tag: ExecutionControllerOutcome.Waiting,
+              receiptHash: 'd'.repeat(64),
+              nextDelayMs: 30_000,
+            },
+          }
+        },
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      genericSend: (delivery: unknown) => deliveries.push(delivery),
+      request: () => ({ id: 'closed-owner', attemptCompletedSignal: new AbortController().signal }),
+      date: { now: async () => Date.parse('2026-08-13T18:00:01.000Z') },
+    } as unknown as TestContext
+    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+    state = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    for (let sequence = 1; sequence <= 100; sequence++) await object.wake(context, marketChange(sequence))
+    expect(deliveries).toHaveLength(0)
+    expect(advances).toBe(1)
+    expect(state.marketFrontier?.sequence).toBe(100)
+    expect(state.nextDueAt).toBeUndefined()
+    if (wake === 'broker')
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'BrokerObservation',
+        sourceRevision,
+        eventId: 'a'.repeat(64),
+        snapshotHash: 'e'.repeat(64),
+        observedAt: '2026-08-13T18:00:01.000Z',
+      })
+    else if (wake === 'inference')
+      await object.wake(context, {
+        schemaVersion: 'bayn.execution-wakeup.v1',
+        _tag: 'InferenceCompleted',
+        sourceRevision,
+        eventId: 'a'.repeat(64),
+        epoch: 1,
+        jobId: '1'.repeat(64),
+        batchId: '2'.repeat(64),
+        cycleId: '3'.repeat(64),
+        authorityGenerationHash: '4'.repeat(64),
+        expiresAt: '2026-08-13T18:00:10.000Z',
+        completedAt: '2026-08-13T18:00:01.000Z',
+      })
+    else await object.wake(context, { ...marketChange(101), reason: MarketChangeReason[wake] })
+    expect(deliveries).toHaveLength(1)
+    expect(state.wakeScheduledSequence).toBe(5)
+    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 5 })
+    await object.wake(context, marketChange(102))
+    expect(deliveries).toHaveLength(2)
+    expect(state.wakeScheduledSequence).toBe(6)
+  },
+)
+
 test('closed-session completion retains the next eligibility boundary against unrelated market bursts', async () => {
   let state: ExecutionControllerState = {
     schemaVersion: 1,
