@@ -70,7 +70,8 @@ test('offline command validates pins, preserves zero-activity sessions and never
         .map((row) => JSON.stringify(row))
         .join('\n') + '\n'
     const input = JSON.stringify({
-      schemaVersion: 'bayn.equity-edge-screen-input.v2',
+      schemaVersion: 'bayn.equity-edge-screen-input.v3',
+      executionFeeDate: '2026-08-17',
       sourceSha256: sha256(source),
       calendar: {
         start: '2026-08-03',
@@ -92,7 +93,7 @@ test('offline command validates pins, preserves zero-activity sessions and never
     expect(receipt.decision).toBe('REJECT_FOR_PROMOTION')
     expect(receipt.qualified).toBe(false)
     expect(receipt.selection.policy).toBeNull()
-    expect(receipt.selection.trialCount).toBe(13)
+    expect(receipt.selection.trialCount).toBe(16)
     const before = readFileSync(outputPath, 'utf8')
     const report = JSON.parse(before)
     expect(report.developmentStress).toHaveLength(report.development.length)
