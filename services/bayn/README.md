@@ -203,6 +203,14 @@ adapter, and its tests exercise that same adapter. The current execution model i
 `src/strategy/intraday-market.ts`. Historical wire decoders and the daily snapshot readers remain available for
 retained financial evidence; they do not select a live strategy or create current execution authority.
 
+Streaming and simulated snapshot replay strictly parses the supplied manifest and fully reconstructs its source
+rows and original cut. It hashes all supplied non-identity fields once against the reconstructed content commitment,
+then checks both supplied identities against the reconstructed content hash and snapshot ID. The reconstructed
+commitment already covers every nested cut field; repeated subtree and whole-manifest hashes are unnecessary.
+Direct replay also binds the complete supplied metadata. Nothing is cached across calls or accepted merely because
+its self-reported hashes are internally consistent. This reduces verification work without establishing a complete
+generation report's latency budget or economic qualification.
+
 ## Runtime and research images
 
 `bayn` contains status, execution, activation, projection and operating diagnostics. It retains the private
