@@ -420,9 +420,15 @@ const makeMaterial = (
   }
 }
 
-export const makeForwardPerformanceReceipt = (
+export const makeForwardPerformanceReceiptEvidence = (
   input: ForwardPerformanceEvidenceInput,
-): Result.Result<ForwardPerformanceReceipt, ForwardPerformanceDomainFailure> =>
+): Result.Result<
+  {
+    readonly receipt: ForwardPerformanceReceipt
+    readonly executionDiagnostics: ForwardPerformanceExecutionMeasurements['diagnostics']
+  },
+  ForwardPerformanceDomainFailure
+> =>
   Result.flatMap(
     Result.mapError(
       makeForwardPerformanceExecutionMeasurements(input),
@@ -435,7 +441,10 @@ export const makeForwardPerformanceReceipt = (
     (measurements) => {
       const material = makeMaterial(input, measurements)
       return Result.mapError(
-        Result.map(canonicalHashV1Result(material), (receiptHash) => ({ ...material, receiptHash })),
+        Result.map(canonicalHashV1Result(material), (receiptHash) => ({
+          receipt: { ...material, receiptHash },
+          executionDiagnostics: measurements.diagnostics,
+        })),
         (cause): ForwardPerformanceDomainFailure => ({
           _tag: 'ForwardPerformanceDomainFailure',
           operation: 'hash-receipt',
@@ -444,3 +453,8 @@ export const makeForwardPerformanceReceipt = (
       )
     },
   )
+
+export const makeForwardPerformanceReceipt = (
+  input: ForwardPerformanceEvidenceInput,
+): Result.Result<ForwardPerformanceReceipt, ForwardPerformanceDomainFailure> =>
+  Result.map(makeForwardPerformanceReceiptEvidence(input), ({ receipt }) => receipt)
