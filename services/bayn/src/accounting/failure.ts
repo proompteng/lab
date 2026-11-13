@@ -14,6 +14,10 @@ export type AccountingHashOperation = 'ledger-plan' | 'transaction-content' | 't
 
 export type AccountingFailure =
   | {
+      readonly _tag: 'AccountingInvalidShortPosition'
+      readonly reason: 'EQUITY_REQUIRED' | 'INCOHERENT_POSITION' | 'COVER_EXCEEDS_POSITION'
+    }
+  | {
       readonly _tag: 'AccountingMicrosParseFailed'
       readonly field: AccountingMicrosField
       readonly value: string
@@ -72,6 +76,8 @@ export type AccountingFailure =
 
 export const renderAccountingFailure = (failure: AccountingFailure): string => {
   switch (failure._tag) {
+    case 'AccountingInvalidShortPosition':
+      return `equity short accounting rejected: ${failure.reason}`
     case 'AccountingMicrosParseFailed':
       return `${failure.field} is not an integer micros value: ${failure.value}`
     case 'AccountingUnsignedDivisionFailed':

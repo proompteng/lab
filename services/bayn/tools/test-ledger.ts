@@ -13,6 +13,7 @@ const groups = {
   'frozen-control': [],
   restart: ['src/intraday-replay/restart.integration.test.ts'],
   inference: [
+    'src/accounting/equity-short-tigerbeetle.integration.test.ts',
     'src/db/entry-inference-postgres.integration.test.ts',
     'src/inference-expense-postgres.integration.test.ts',
     'src/inference-expense-tigerbeetle.integration.test.ts',

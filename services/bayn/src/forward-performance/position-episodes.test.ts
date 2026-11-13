@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { AccountingInventorySide, coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
@@ -109,6 +109,70 @@ const evidence = (
 })
 
 const roundTrip = () => [transaction(1, OrderSide.Buy, 2), transaction(2, OrderSide.Sell, 2)]
+
+test('explicit short episodes report cover profits and losses without treating proceeds as profit or claiming costs', () => {
+  let prior = { quantityAtoms: '0', costMicros: '0' }
+  const history = (
+    [
+      [OrderSide.Sell, 3n, 100n],
+      [OrderSide.Buy, 1n, 90n],
+      [OrderSide.Buy, 2n, 350n],
+    ] as const
+  ).map(([side, quantity, price], i) => {
+    const prepared = success(
+      prepareAccounting(
+        `${i + 1}`.repeat(64),
+        {
+          schemaVersion: 'bayn.fill.v2',
+          accountId: 'episode-account',
+          fillId: `short-${i}`,
+          brokerOrderId: `short-${i}`,
+          clientOrderId: `short-${i}`,
+          symbol: 'AAPL',
+          side,
+          quantityAtoms: (quantity * 1_000_000_000n).toString(),
+          priceAtoms: (price * 1_000_000_000n).toString(),
+          feeMicros: '10000',
+          occurredAt: `2026-09-18T15:0${i}:00.000Z`,
+        },
+        prior,
+        7001,
+        AccountingInventorySide.Short,
+      ),
+    )
+    prior = {
+      quantityAtoms: (BigInt(prior.quantityAtoms) + BigInt(prepared.transaction.quantityDeltaAtoms)).toString(),
+      costMicros: (BigInt(prior.costMicros) + BigInt(prepared.transaction.costBasisDeltaMicros)).toString(),
+    }
+    return prepared.transaction
+  })
+  const result = success(measurePositionEpisodes(evidence(history)))
+  expect(result.status).toBe('MEASURED')
+  if (result.status !== 'MEASURED') throw new Error('Short episode missing')
+  expect(result.completedCount).toBe(1)
+  expect(result.openCount).toBe(0)
+  expect(result.completed[0]).toMatchObject({
+    grossRealizedPnlMicros: '-490000000',
+    buyFillCount: 2,
+    sellFillCount: 1,
+    costs: {
+      status: 'UNDETERMINED',
+      reason: EpisodeCostReason.NonCryptoAllocationUnavailable,
+      allInProfitMicros: null,
+    },
+  })
+  const opening = history[0]
+  if (opening === undefined) throw new Error('Short opening missing')
+  const open = success(measurePositionEpisodes(evidence([opening], [opening], { openPositionCount: 1 })))
+  expect(open).toMatchObject({ status: 'MEASURED', openCount: 1, completedCount: 0 })
+  const mixed = history.map((t, i) =>
+    i === 1 ? { ...t, schemaVersion: 'bayn.accounting-transaction.v2' as const } : t,
+  )
+  expect(success(measurePositionEpisodes(evidence(mixed)))).toMatchObject({
+    status: 'UNDETERMINED',
+    reason: PositionEpisodeReason.InvalidHistory,
+  })
+})
 
 const cashAccrual = (
   fills: readonly AccountingTransaction[],
