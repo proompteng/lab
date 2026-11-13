@@ -23,9 +23,49 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/
 type ExecutionQuality = ForwardPerformanceReceiptMaterial['executionQuality']
 type ObservedCapacity = ForwardPerformanceReceiptMaterial['observedCapacity']
 
+export enum ExecutionDiagnosticEvaluation {
+  NotEvaluated = 'NOT_EVALUATED',
+  NoExecutionEvidence = 'NO_EXECUTION_EVIDENCE',
+  Evaluated = 'EVALUATED',
+}
+
+const newExecutionDiagnostics = (): {
+  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1'
+  evaluation: ExecutionDiagnosticEvaluation
+  inputExecutionCount: number
+  inputTransactionCount: number | null
+  evaluatedFillCount: number | null
+  reasonOccurrences: Record<ForwardPerformanceExecutionQualityReasonCode, number>
+} => ({
+  schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1',
+  evaluation: ExecutionDiagnosticEvaluation.NotEvaluated,
+  inputExecutionCount: 0,
+  inputTransactionCount: null,
+  evaluatedFillCount: null,
+  reasonOccurrences: {
+    ACCOUNT_LEDGER_RECONCILIATION_GAP: 0,
+    ACCOUNTING_FILL_BINDING_GAP: 0,
+    DUPLICATE_EXECUTION_EVIDENCE: 0,
+    EXPLICIT_COST_EVIDENCE_GAP: 0,
+    FILL_EVIDENCE_GAP: 0,
+    FILL_IDENTITY_DRIFT: 0,
+    FILL_QUANTITY_MISMATCH: 0,
+    FILL_TIMESTAMP_GAP: 0,
+    INVALID_EXECUTION_MICROS: 0,
+    PLANNED_DECISION_EVIDENCE_GAP: 0,
+    REFERENCE_PRICE_EVIDENCE_GAP: 0,
+    TERMINAL_ORDER_EVIDENCE_GAP: 0,
+    TERMINAL_PRICE_EVIDENCE_GAP: 0,
+    ZERO_COMPLETED_EXECUTIONS: 0,
+  },
+})
+
+export type ForwardPerformanceExecutionDiagnostics = Readonly<ReturnType<typeof newExecutionDiagnostics>>
+
 export interface ForwardPerformanceExecutionMeasurements {
   readonly executionQuality: ExecutionQuality
   readonly observedCapacity: ObservedCapacity
+  readonly diagnostics: ForwardPerformanceExecutionDiagnostics
 }
 
 interface ExecutionContribution {
@@ -310,6 +350,7 @@ const validTerminalReferencePrice = (
 
 const measureExecutionQuality = (
   input: ForwardPerformanceEvidenceInput,
+  diagnostics: ReturnType<typeof newExecutionDiagnostics>,
 ): Result.Result<
   {
     readonly executionQuality: ExecutionQuality
@@ -320,7 +361,9 @@ const measureExecutionQuality = (
   const executions = [...(input.executionEvidence ?? [])].sort((left, right) =>
     compareStrings(executionSortKey(left), executionSortKey(right)),
   )
+  diagnostics.inputExecutionCount = executions.length
   if ((input.unverifiedDecisionHashes?.length ?? 0) > 0) {
+    diagnostics.reasonOccurrences.PLANNED_DECISION_EVIDENCE_GAP = 1
     const unverifiedDecisionHashes = [...new Set(input.unverifiedDecisionHashes)].sort()
     return Result.map(canonicalHashV1Result({ unverifiedDecisionHashes }), (evidenceHash) => ({
       executionQuality: {
@@ -332,9 +375,16 @@ const measureExecutionQuality = (
     }))
   }
   if (executions.length === 0) {
+    const transactionCount = input.transactions.length
+    diagnostics.evaluation = ExecutionDiagnosticEvaluation.NoExecutionEvidence
+    diagnostics.inputTransactionCount = transactionCount
+    diagnostics.evaluatedFillCount = 0
+    diagnostics.reasonOccurrences[
+      transactionCount === 0 ? 'ZERO_COMPLETED_EXECUTIONS' : 'PLANNED_DECISION_EVIDENCE_GAP'
+    ] = 1
     return Result.succeed({
       executionQuality:
-        input.transactions.length === 0
+        transactionCount === 0
           ? emptyExecutionQuality('NOT_ELIGIBLE', ['ZERO_COMPLETED_EXECUTIONS'])
           : emptyExecutionQuality('UNDETERMINED', ['PLANNED_DECISION_EVIDENCE_GAP']),
       contributions: [],
@@ -350,6 +400,9 @@ const measureExecutionQuality = (
   }))
   const evidenceHash = sourceEvidenceHash(input, orderedExecutions, transactions)
   if (Result.isFailure(evidenceHash)) return Result.fail(evidenceHash.failure)
+  diagnostics.evaluation = ExecutionDiagnosticEvaluation.Evaluated
+  diagnostics.inputTransactionCount = transactions.length
+  diagnostics.evaluatedFillCount = 0
 
   const volumeGroups = groupMarketVolumes(input.marketVolumeEvidence ?? [])
   const completedCycleIds = new Set<string>()
@@ -357,13 +410,18 @@ const measureExecutionQuality = (
     if (cycle.state === 'COMPLETED') completedCycleIds.add(cycle.cycleId)
   }
   const reasons = new Set<ForwardPerformanceExecutionQualityReasonCode>()
+  // Count the existing predicate failures, not unique rows or independent root causes.
+  const recordReason = (reason: ForwardPerformanceExecutionQualityReasonCode) => {
+    diagnostics.reasonOccurrences[reason] += 1
+    reasons.add(reason)
+  }
   const seenIntents = new Set<string>()
   const seenFillEvents = new Set<string>()
   const transactionByBrokerEvent = new Map<string, ForwardPerformanceTransactionEvidence>()
   for (const transaction of transactions) {
     const brokerEventId = transaction.brokerEventId
     if (brokerEventId === undefined || transactionByBrokerEvent.has(brokerEventId)) {
-      reasons.add('ACCOUNTING_FILL_BINDING_GAP')
+      recordReason('ACCOUNTING_FILL_BINDING_GAP')
       continue
     }
     transactionByBrokerEvent.set(brokerEventId, transaction)
@@ -375,12 +433,12 @@ const measureExecutionQuality = (
     !input.ledgerExact ||
     input.missingLedgerAccountCount > 0
   ) {
-    reasons.add('ACCOUNT_LEDGER_RECONCILIATION_GAP')
+    recordReason('ACCOUNT_LEDGER_RECONCILIATION_GAP')
   }
 
   const brokerFees = parseUnsigned(input.ledgerTotals?.brokerExecutionFeesMicros, false)
   const otherCosts = parseUnsigned(input.ledgerTotals?.otherChargedCostsMicros ?? undefined, false)
-  if (brokerFees === undefined || otherCosts === undefined) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+  if (brokerFees === undefined || otherCosts === undefined) recordReason('EXPLICIT_COST_EVIDENCE_GAP')
 
   let plannedQuantity = 0n
   let filledQuantity = 0n
@@ -397,18 +455,18 @@ const measureExecutionQuality = (
   const contributions: ExecutionContribution[] = []
 
   for (const evidence of orderedExecutions) {
-    if (seenIntents.has(evidence.intentId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
+    if (seenIntents.has(evidence.intentId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
     const planned = parseUnsigned(evidence.plannedQuantityAtoms, true)
     const referencePrice = parseUnsigned(evidence.referencePriceMicros, true)
-    if (planned === undefined) reasons.add('PLANNED_DECISION_EVIDENCE_GAP')
-    if (referencePrice === undefined) reasons.add('REFERENCE_PRICE_EVIDENCE_GAP')
-    if (!identityMatches(input, evidence, completedCycleIds)) reasons.add('FILL_IDENTITY_DRIFT')
+    if (planned === undefined) recordReason('PLANNED_DECISION_EVIDENCE_GAP')
+    if (referencePrice === undefined) recordReason('REFERENCE_PRICE_EVIDENCE_GAP')
+    if (!identityMatches(input, evidence, completedCycleIds)) recordReason('FILL_IDENTITY_DRIFT')
 
     const order = evidence.terminalOrder
     const blocked = blockedIntentMatches(evidence)
-    if (!blocked && (order === undefined || !orderMatches(evidence))) reasons.add('TERMINAL_ORDER_EVIDENCE_GAP')
+    if (!blocked && (order === undefined || !orderMatches(evidence))) recordReason('TERMINAL_ORDER_EVIDENCE_GAP')
     const terminalOccurredAt = blocked ? evidence.intent?.updatedAt : order?.occurredAt
     const terminalObservedAt = blocked ? evidence.intent?.updatedAt : order?.observedAt
     if (
@@ -420,13 +478,13 @@ const measureExecutionQuality = (
       terminalObservedAt < terminalOccurredAt ||
       terminalObservedAt < evidence.decisionCreatedAt
     ) {
-      reasons.add('FILL_TIMESTAMP_GAP')
+      recordReason('FILL_TIMESTAMP_GAP')
     }
 
     const fills = evidence.fills
     const reportedFilledQuantity = parseUnsigned(order?.filledQuantityAtoms, false)
     if (reportedFilledQuantity !== undefined && reportedFilledQuantity > 0n && fills.length === 0) {
-      reasons.add('FILL_EVIDENCE_GAP')
+      recordReason('FILL_EVIDENCE_GAP')
     }
 
     let executionFilledQuantity = 0n
@@ -437,14 +495,15 @@ const measureExecutionQuality = (
 
     for (const fill of fills) {
       fillCount += 1
-      if (seenFillEvents.has(fill.brokerEventId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
+      diagnostics.evaluatedFillCount = fillCount
+      if (seenFillEvents.has(fill.brokerEventId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
       seenFillEvents.add(fill.brokerEventId)
 
       const quantity = parseUnsigned(fill.quantityAtoms, true)
       const price = parseUnsigned(fill.priceAtoms, true)
       const fee = parseUnsigned(fill.feeMicros, false)
       if (quantity === undefined || price === undefined || fee === undefined) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
         continue
       }
       if (
@@ -457,7 +516,7 @@ const measureExecutionQuality = (
         fill.clientOrderId !== evidence.intent?.clientOrderId ||
         fill.brokerOrderId !== order?.brokerOrderId
       ) {
-        reasons.add('FILL_IDENTITY_DRIFT')
+        recordReason('FILL_IDENTITY_DRIFT')
       }
       if (
         !SOURCE_TIMESTAMP_PATTERN.test(fill.sourceTimestamp) ||
@@ -467,7 +526,7 @@ const measureExecutionQuality = (
         fill.occurredAt < evidence.decisionCreatedAt ||
         (order !== undefined && fill.occurredAt > order.occurredAt)
       ) {
-        reasons.add('FILL_TIMESTAMP_GAP')
+        recordReason('FILL_TIMESTAMP_GAP')
       }
 
       const transaction = transactionByBrokerEvent.get(fill.brokerEventId)
@@ -480,12 +539,12 @@ const measureExecutionQuality = (
         transactionNotional !== expectedNotional ||
         !transactionMatchesFill(transaction, evidence, fill)
       ) {
-        reasons.add('ACCOUNTING_FILL_BINDING_GAP')
+        recordReason('ACCOUNTING_FILL_BINDING_GAP')
         continue
       }
       const referenceNotional = referencePrice === undefined ? undefined : roundHalfUp(quantity, referencePrice)
       if (referenceNotional === undefined) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
         continue
       }
 
@@ -506,7 +565,7 @@ const measureExecutionQuality = (
         nextObservedFees === undefined ||
         nextPriceShortfall === undefined
       ) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
         continue
       }
       executionFilledQuantity = nextExecutionFilled
@@ -531,7 +590,7 @@ const measureExecutionQuality = (
       const nextPlanNotional =
         planNotional === undefined ? undefined : checkedAdd(plannedReferenceNotional, planNotional)
       if (planNotional === undefined || nextPlannedQuantity === undefined || nextPlanNotional === undefined) {
-        reasons.add('INVALID_EXECUTION_MICROS')
+        recordReason('INVALID_EXECUTION_MICROS')
       } else {
         plannedQuantity = nextPlannedQuantity
         plannedReferenceNotional = nextPlanNotional
@@ -552,7 +611,7 @@ const measureExecutionQuality = (
         (orderQuantity !== undefined && executionFilledQuantity > planned) ||
         (orderQuantity !== undefined && order?.status === 'FILLED' && executionFilledQuantity !== planned)
       ) {
-        reasons.add('FILL_QUANTITY_MISMATCH')
+        recordReason('FILL_QUANTITY_MISMATCH')
       }
 
       const unfilled = planned >= executionFilledQuantity ? planned - executionFilledQuantity : 0n
@@ -570,17 +629,17 @@ const measureExecutionQuality = (
         if (Result.isFailure(terminalPriceResult)) return Result.fail(terminalPriceResult.failure)
         const terminalPrice = terminalPriceResult.success
         if (terminalPrice === undefined) {
-          reasons.add('TERMINAL_PRICE_EVIDENCE_GAP')
+          recordReason('TERMINAL_PRICE_EVIDENCE_GAP')
         } else {
           const terminalNotional = roundHalfUp(unfilled, terminalPrice)
           const unfilledReference = roundHalfUp(unfilled, referencePrice)
           if (terminalNotional === undefined || unfilledReference === undefined) {
-            reasons.add('INVALID_EXECUTION_MICROS')
+            recordReason('INVALID_EXECUTION_MICROS')
           } else {
             const opportunity =
               evidence.side === 'BUY' ? terminalNotional - unfilledReference : unfilledReference - terminalNotional
             const nextOpportunity = checkedAdd(opportunityShortfall, opportunity)
-            if (nextOpportunity === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+            if (nextOpportunity === undefined) recordReason('INVALID_EXECUTION_MICROS')
             else opportunityShortfall = nextOpportunity
           }
         }
@@ -588,7 +647,7 @@ const measureExecutionQuality = (
     }
 
     const nextExecutedNotional = checkedAdd(executedNotional, executionActualNotional)
-    if (nextExecutedNotional === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+    if (nextExecutedNotional === undefined) recordReason('INVALID_EXECUTION_MICROS')
     else executedNotional = nextExecutedNotional
 
     if (
@@ -633,7 +692,7 @@ const measureExecutionQuality = (
       seenFees.has(fee.activityId) ||
       !validIsoDate(fee.date)
     ) {
-      reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+      recordReason('EXPLICIT_COST_EVIDENCE_GAP')
       continue
     }
     seenFees.add(fee.activityId)
@@ -646,7 +705,7 @@ const measureExecutionQuality = (
         : parseUnsigned(fee.inventoryCostMicros, false)
     const next =
       inSignedRange(net) && inventoryCost !== undefined ? checkedAdd(observedFillFees, -net + inventoryCost) : undefined
-    if (next === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+    if (next === undefined) recordReason('INVALID_EXECUTION_MICROS')
     else observedFillFees = next
   }
 
@@ -660,12 +719,12 @@ const measureExecutionQuality = (
       seenAccruals.has(accrual.accrualId) ||
       !accrual.settled
     )
-      reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+      recordReason('EXPLICIT_COST_EVIDENCE_GAP')
     if (next !== undefined) observedFillFees = next
     seenAccruals.add(accrual.accrualId)
   }
-  if (seenFillEvents.size !== transactions.length) reasons.add('ACCOUNTING_FILL_BINDING_GAP')
-  if (brokerFees === undefined || observedFillFees !== brokerFees) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+  if (seenFillEvents.size !== transactions.length) recordReason('ACCOUNTING_FILL_BINDING_GAP')
+  if (brokerFees === undefined || observedFillFees !== brokerFees) recordReason('EXPLICIT_COST_EVIDENCE_GAP')
 
   const reasonCodes = [...reasons].sort()
   if (
@@ -694,6 +753,7 @@ const measureExecutionQuality = (
       ? undefined
       : checkedAdd(priceAndOpportunity, explicitCosts)
   if (explicitCosts === undefined || total === undefined) {
+    recordReason('INVALID_EXECUTION_MICROS')
     return Result.succeed({
       executionQuality: {
         status: 'UNDETERMINED',
@@ -897,14 +957,16 @@ const measureObservedCapacity = (
 
 export const makeForwardPerformanceExecutionMeasurements = (
   input: ForwardPerformanceEvidenceInput,
-): Result.Result<ForwardPerformanceExecutionMeasurements, CanonicalHashFailure> =>
-  Result.flatMap(measureExecutionQuality(input), ({ executionQuality, contributions }) =>
+): Result.Result<ForwardPerformanceExecutionMeasurements, CanonicalHashFailure> => {
+  const diagnostics = newExecutionDiagnostics()
+  return Result.flatMap(measureExecutionQuality(input, diagnostics), ({ executionQuality, contributions }) =>
     Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => {
       const intradaySources = (input.marketVolumeEvidence ?? [])
         .filter((volume) => volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2')
         .filter(validIntradayPerformanceVolumeEvidence)
         .toSorted((left, right) => compareStrings(volumeSortKey(left), volumeSortKey(right)))
       return {
+        diagnostics,
         executionQuality,
         observedCapacity: {
           ...observedCapacity,
@@ -913,3 +975,4 @@ export const makeForwardPerformanceExecutionMeasurements = (
       }
     }),
   )
+}

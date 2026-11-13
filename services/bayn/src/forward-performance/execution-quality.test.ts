@@ -14,7 +14,7 @@ const measure = (input: ReturnType<typeof executionQualityFixture>) =>
 test('preserves the synthetic complete report and evidence hashes across input order', () => {
   const input = executionQualityFixture(10)
   const report = Result.getOrThrow(makeForwardPerformanceReport(input, []))
-  assert.equal(report.reportHash, 'e1a0745b65ecace9f1716e7e7c478486d65f46609cac0ca7619c4a2fa4d28003')
+  assert.equal(report.reportHash, '74f285a84e370480106d65ffa2ebe18d508b66206e9e78855c3d497057d44cd9')
   assert.equal(report.receipt.receiptHash, 'f4d8eead77745a0354ca0efdb6d6d3b737ac0013a1a1a83761f00a07300d0f26')
   assert.equal(
     Result.getOrThrow(canonicalHashV1Result(report.receipt)),
