@@ -211,6 +211,13 @@ Direct replay also binds the complete supplied metadata. Nothing is cached acros
 its self-reported hashes are internally consistent. This reduces verification work without establishing a complete
 generation report's latency budget or economic qualification.
 
+After a complete entry target has passed source verification, execution-document validation projects its original
+quotes in canonical event/topic/partition/offset order rather than replaying the entire observation again for each
+selected symbol. Current and retained protocols use the same projection. Changed source rows still fail full target
+verification, and funding, pricing, authority and deadline checks remain unchanged. The
+[native quote-projection benchmark](tools/benchmark-decision-quote-projection.md) records fixture measurements,
+exact-output comparisons and their limits; it does not establish live latency or a complete report's runtime.
+
 ## Runtime and research images
 
 `bayn` contains status, execution, activation, projection and operating diagnostics. It retains the private
