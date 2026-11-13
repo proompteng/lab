@@ -35,7 +35,7 @@ export const withReportResourceMeasurement = <A, E, R>(command: string, report: 
               peakScope: 'PROCESS_LIFETIME',
             }),
           )
-        }),
+        }).pipe(Effect.catchDefect(() => Effect.void)),
       ),
     )
   })

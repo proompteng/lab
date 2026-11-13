@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, References, Result } from 'effect'
+import { Cause, ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { requireReportingRuntime, withReportResourceMeasurement } from './reporting-runtime'
@@ -73,7 +73,35 @@ test.each(['success', 'failure', 'defect'] as const)(
   },
 )
 
-test('interruption retains scoped cleanup and reports measured elapsed time and peak memory once', async () => {
+test.each(['success', 'failure', 'defect'] as const)(
+  'a throwing diagnostic sink preserves the report %s',
+  async (outcome) => {
+    let attempts = 0
+    const report =
+      outcome === 'success'
+        ? Effect.succeed('report')
+        : outcome === 'failure'
+          ? Effect.fail('source failure')
+          : Effect.die('source defect')
+    const expected = await Effect.runPromiseExit(report)
+    const exit = await Effect.runPromiseExit(
+      withReportResourceMeasurement('throwing-sink', report).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              attempts++
+              throw new Error('diagnostic sink failed')
+            }),
+          ]),
+        ),
+      ),
+    )
+    expect(attempts).toBe(1)
+    expect(exit).toEqual(expected)
+  },
+)
+
+test.each([false, true])('interruption retains scoped cleanup with a throwing sink: %s', async (throwingSink) => {
   const logs: Readonly<Record<string, unknown>>[] = []
   let finalized = 0
   await Effect.runPromise(
@@ -93,11 +121,19 @@ test('interruption retains scoped cleanup and reports measured elapsed time and 
       yield* Deferred.await(entered)
       yield* TestClock.adjust('2 seconds')
       yield* Fiber.interrupt(fiber)
+      const exit = yield* Fiber.await(fiber)
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
     }).pipe(
       Effect.scoped,
       Effect.provide(TestClock.layer()),
       Effect.provide(
-        Logger.layer([Logger.make(({ fiber }) => logs.push(fiber.getRef(References.CurrentLogAnnotations)))]),
+        Logger.layer([
+          Logger.make(({ fiber }) => {
+            logs.push(fiber.getRef(References.CurrentLogAnnotations))
+            if (throwingSink) throw new Error('diagnostic sink failed')
+          }),
+        ]),
       ),
     ),
   )
