@@ -54,7 +54,8 @@ const fixture = () => {
   ]
   const text = material.map((row) => JSON.stringify(row)).join('\n') + '\n'
   const input = {
-    schemaVersion: 'bayn.equity-edge-screen-input.v2',
+    schemaVersion: 'bayn.equity-edge-screen-input.v3',
+    executionFeeDate: '2026-08-17',
     sourceSha256: sha256(text),
     calendar: {
       start: '2026-08-03',
@@ -89,6 +90,16 @@ test('source preserves regular exchange hours, byte identity, explicit holes and
 test('changed source bytes fail even when JSON meaning is unchanged', () => {
   const { text, input } = fixture()
   expect(Result.isFailure(decode(text + '\n', input))).toBe(true)
+})
+
+test('fee scenario date is required, valid and bound to the new input version', () => {
+  const { input } = fixture()
+  const { executionFeeDate: _, ...missing } = input
+  expect(Result.isFailure(decodeEquityEdgeInput(missing))).toBe(true)
+  expect(Result.isFailure(decodeEquityEdgeInput({ ...input, executionFeeDate: '2026-02-30' }))).toBe(true)
+  expect(Result.isFailure(decodeEquityEdgeInput({ ...input, schemaVersion: 'bayn.equity-edge-screen-input.v2' }))).toBe(
+    true,
+  )
 })
 
 test('an omitted interior trading session cannot remain a complete calendar', () => {

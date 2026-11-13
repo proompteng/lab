@@ -1,6 +1,6 @@
 # Retrospective equity edge screen
 
-`services/bayn/tools/equity-edge-screen.ts` is an offline development command. It compares thirteen fixed long-only
+`services/bayn/tools/equity-edge-screen.ts` is an offline development command. It compares thirteen fixed long and three short
 bar-based policies without constructing a broker client, using a model, changing a mandate, or touching the live
 controller. It does not replace the original-arrival and execution witnesses required by the
 [matched-entry experiment](matched-entry-study.md) or [portfolio controls](control-portfolios.md).
@@ -22,7 +22,11 @@ opening-high breakout with above-average opening volume, a bullish opening candl
 Opening volume is compared only with the fourteen prior calendar sessions. Missing required minutes exclude that
 candidate; they are not imputed from later bars or another feed.
 
-The complete definitions and thirteen policy identities are included in the report. Development selects a policy
+The three short controls use relative weakness, an opening-range low breakdown and a VWAP rejection, each with a
+15-minute hold. They use native unreflected prices, SELL entries and BUY covers. They are numerical controls rather
+than native JeV short chart judgments. Current availability of stock borrow is not historical eligibility evidence.
+
+The complete definitions and sixteen policy identities are included in the report. Development selects a policy
 only when its modeled execution P&L is positive. Validation and holdout never change that choice. Every candidate,
 not only the selected one, is retained under base and stressed costs. Zero-activity sessions remain in the denominator.
 These mechanisms do not prove that a caller preserved an untouched holdout or registered a candidate prospectively.
@@ -52,7 +56,7 @@ Missing tokens, spliced chains, repeated tokens, and impossible calendar timesta
 Earlier captures without request-token evidence remain superseded diagnostics; do not infer those tokens from
 responses or retrofit them into old captures. Acquire and pin new source bytes instead.
 
-The strict input is `bayn.equity-edge-screen-input.v2` with `sourceSha256`, `symbols` including benchmark-only SPY,
+The strict input is `bayn.equity-edge-screen-input.v3` with `sourceSha256`, `executionFeeDate`, `symbols` including benchmark-only SPY,
 and `development`, `validation`, and `holdout` objects, each containing ISO `start` and `end` dates. Partition
 endpoints must be retained exchange sessions, periods must be chronological and disjoint, and at least fourteen
 earlier calendar sessions must be available. Keep input, raw data, reports, and registrations on private research
@@ -65,8 +69,8 @@ The header must retain its actual calendar request URL with those exact bounds. 
 hours, or a narrower request is rejected against the independent inventory. The page's actual request URL must
 bind the same range, symbols, feed, `1Min`, raw adjustment, ascending order, page size 10000, end-date symbol mapping,
 and actual continuation token. Unknown or duplicate query parameters and out-of-range bars fail. The current
-request origins are the existing PAPER calendar API and market-data API. Version 1 inputs without these bindings
-are rejected. This pin still requires independent source review; it is not cryptographic proof of provider authenticity.
+request origins are the existing PAPER calendar API and market-data API. Earlier input versions are rejected.
+This pin still requires independent source review; it is not cryptographic proof of provider authenticity.
 
 The optional `feed` is `iex` by default or explicitly `sip` for historical consolidated-data research. The completion
 receipt must match that pinned feed. Historical SIP access does not establish real-time entitlement, the native live
@@ -83,7 +87,7 @@ The source limit is 128 MiB and the input limit is 1 MiB. The command uses a sep
 or execution-worker pod. It refuses an existing output path and writes reports with mode 0600. Preserve source
 receipts and every rejected or superseded trial. Hashes bind bytes, not source authenticity or observed arrival time.
 
-Each partition starts with $100,000 and carries capital between its sessions. Positions are serial, long-only,
+Each partition starts with $100,000 and carries capital between its sessions. Positions are serial, single-direction,
 whole-share, and limited to 20% of current equity. Fixed risk uses a 50 bp stop. Volatility risk uses twice the
 completed-window minute-return volatility scaled to the holding horizon, bounded to 50–200 bp, and limits modeled
 stop exposure to 0.1% of equity by reducing size. It does not guarantee that gap or execution losses fit that budget.
@@ -92,13 +96,21 @@ Signals use completed bars only; quantity is fixed from the signal close with an
 next-minute arrival. A cheaper arrival cannot increase order size. An arrival exceeding its reserved allocation is
 rejected rather than resized with future prices. Base/stress prices apply 10/20 bp adverse execution on each side
 plus the native current fee model. Price rounding and fees use integer micro-USD accounting after scenario pricing.
-The report includes the fee-model hash. This is a cost scenario, not a reconstruction of historical broker tariffs.
+The report includes the fee-model hash and the required `executionFeeDate` in every path. That ISO date selects the
+native fee schedule for the entire scenario, independently of the market-price dates. Unsupported fee dates fail
+before evaluation, including cash-only paths. This is a cost scenario, not a reconstruction of historical broker tariffs.
 Fee charges are the delta of the native cumulative session-by-fee-type total. Rejected hypothetical entries do not
 consume the fee state; every accepted simulated order contributes one fill, retaining per-order TAF caps. Independent
 per-fill cent rounding is not substituted for the native session aggregation. VWAP must also lie inside each bar's
 reported low/high before evaluation, and missing opening/history evidence is recorded before return-based filters.
-Definition v6 searches the maximum affordable whole-share order including its cumulative session fee delta;
+Definition v8 retains the maximum affordable whole-share order including its cumulative session fee delta;
 low-priced instruments are not omitted just because fees exceed one share's value.
+
+Short proceeds remain restricted against their liability; opening a short cannot create reusable entry capital.
+Short stops test upward price moves and covers pay the adverse BUY price. Losses can exceed the initial notional;
+they are never clipped to a stop or collateral. Each short trade retains synthetic unposted opening and cover
+accounting transactions that reproduce the native ledger plans. The model assumes ETB and zero borrow/locate fees;
+historical ETB status, house margin, Rule 201 execution, recalls and buy-ins remain unverified. Crypto shorts are excluded.
 
 Protective stops react to a completed bar, then use the next available opening price within three minutes. Losses
 through a stop are not clipped to the stop. A missing exit leaves an incomplete path, never a fabricated flat mark.
@@ -107,10 +119,14 @@ turnover boundaries, but is not the live strategy or a reproduction of every nat
 
 ## Interpretation
 
-Report v3 retains base development paths in `development` and the corresponding 20 bp-per-side paths in
+Report v5 retains base development paths in `development` and the corresponding 20 bp-per-side paths in
 `developmentStress`, in the same policy order. Selection and `developmentReportHash` continue to use only the base
 development paths. Later results retain their existing paired base/stress structure. Stress diagnostics do not
 retune or replace the frozen base-cost selector.
+Direction is part of policy identity, so selected short results cannot be replaced with the corresponding long arm.
+
+The [November 13 stock-short study](stock-short-research-2026-11-13.md) records the initial results and development
+requirements. Its retrospectively selected crash and selloff windows are stress diagnostics, not untouched holdouts.
 
 `executionNetPnlMicros` is scenario P&L, not actual fills or all-in profit. The command always returns `qualified=false`
 and `allInProfit=null`. An apparently positive candidate earns only native execution and prospective validation.

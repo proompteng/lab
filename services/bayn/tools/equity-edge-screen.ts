@@ -8,6 +8,7 @@ import {
   equityEarlyScreenPolicies,
   equityRiskScreenPolicies,
   equityScreenPolicies,
+  equityShortScreenPolicies,
   runEquityEdgeScreen,
   type EquityScreenPolicy,
 } from '../src/intraday-replay/equity-edge-screen'
@@ -16,7 +17,7 @@ const maximumSourceBytes = 128 * 1024 * 1024
 export const equityEdgeScreenUsage =
   'Usage: bayn-equity-edge-screen --input input.json --input-sha256 <sha256> --source pages.ndjson --output new-report.json | --help'
 const policyIdentity = (policy: EquityScreenPolicy) =>
-  `${policy.signal}:${policy.holdingMinutes}:${policy.volatilityRisk === true ? 'volatility' : 'fixed'}`
+  `${policy.direction}:${policy.signal}:${policy.holdingMinutes}:${policy.volatilityRisk === true ? 'volatility' : 'fixed'}`
 
 export const equityEdgeScreenProgram = (args: readonly string[]) =>
   Effect.scoped(
@@ -62,10 +63,23 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
         return yield* new EquityScreenError({ message: 'Report destination already exists' })
       const sourceText = yield* fs.readFileString(sourcePath)
       const source = yield* Effect.fromResult(decodeEquityEdgeSource(sourceText, input))
-      const policies = [...equityScreenPolicies, ...equityRiskScreenPolicies, ...equityEarlyScreenPolicies]
+      const policies = [
+        ...equityScreenPolicies,
+        ...equityRiskScreenPolicies,
+        ...equityEarlyScreenPolicies,
+        ...equityShortScreenPolicies,
+      ]
       const evaluate = (policy: EquityScreenPolicy, period: { start: string; end: string }) =>
         Effect.fromResult(
-          runEquityEdgeScreen(source.index, input.symbols, source.days, period.start, period.end, policy),
+          runEquityEdgeScreen(
+            source.index,
+            input.symbols,
+            source.days,
+            period.start,
+            period.end,
+            policy,
+            input.executionFeeDate,
+          ),
         )
       const development = yield* Effect.forEach(policies, (policy) => evaluate(policy, input.development), {
         concurrency: 1,
@@ -130,7 +144,7 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
             ),
         )
       const report = {
-        schemaVersion: 'bayn.equity-edge-screen-report.v3',
+        schemaVersion: 'bayn.equity-edge-screen-report.v5',
         inputHash: expectedInputHash,
         input,
         source: source.source,
@@ -151,8 +165,11 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
           'Missing candidate windows exclude decisions; missing benchmark, entry-pricing or held-position bars invalidate the entire path',
           'Minute-completion stops can cross stops before the next observation; gap losses are not clipped',
           'Quotes, order book depth, live price limits, partial fills, market impact, and original arrival timing are not reproduced',
-          'Native current execution fees are scenario assumptions; historical fee tariffs are not reconstructed',
+          'Execution fees use the explicitly pinned input.executionFeeDate as a scenario valuation date; historical fee tariffs and future schedule changes are not reconstructed',
           'Infrastructure, inference, and market-data costs remain unknown',
+          'Short policies are numerical feasibility controls, not native Jev chart judgments or observed short executions',
+          'Short fills assume ETB availability and zero borrow/locate fees; historical borrow eligibility, recalls, house margin and Rule 201 price-test execution are not established',
+          'Short sale proceeds remain restricted against the liability; losses and cover gaps are not clipped to original capital or collateral',
           'Each temporal partition starts at the same capital; partition P&Ls are not one continuous portfolio',
           'Positive historical outputs never activate a strategy or grant capital authority',
         ],

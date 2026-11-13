@@ -19,7 +19,12 @@ import {
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
-import { decodeAccountingTransaction, type AccountingTransaction } from './schema'
+import { decodeAccountingTransaction, equityShortAccountingSchemaVersion, type AccountingTransaction } from './schema'
+
+export enum AccountingInventorySide {
+  Long = 'LONG',
+  Short = 'SHORT',
+}
 
 const NOTIONAL_DIVISOR = 1_000_000_000_000n
 type AccountCodeValue = (typeof AccountCode)[keyof typeof AccountCode]
@@ -174,6 +179,49 @@ const calculateAmounts = (fill: Fill, prior: PositionCost): Result.Result<Accoun
     ),
   )
 
+const calculateShortAmounts = (fill: Fill, prior: PositionCost): Result.Result<AccountingAmounts, AccountingFailure> =>
+  Result.gen(function* () {
+    if (fill.symbol.includes('/'))
+      return yield* failAccounting({ _tag: 'AccountingInvalidShortPosition', reason: 'EQUITY_REQUIRED' })
+    const input = yield* parseAccountingInput(fill, prior)
+    if (input.priorQuantity > 0n || input.priorCost > 0n || (input.priorQuantity === 0n && input.priorCost !== 0n))
+      return yield* failAccounting({ _tag: 'AccountingInvalidShortPosition', reason: 'INCOHERENT_POSITION' })
+    const notional = yield* roundDiv(input.quantity * input.price, NOTIONAL_DIVISOR)
+    if (notional <= 0n)
+      return yield* failAccounting({
+        _tag: 'AccountingFillNotionalRoundedToZero',
+        quantityAtoms: input.quantity,
+        priceAtoms: input.price,
+      })
+    if (fill.side === OrderSide.Sell)
+      return {
+        fee: input.fee,
+        notional,
+        costBasis: notional,
+        realizedPnl: 0n,
+        quantityDelta: -input.quantity,
+        costBasisDelta: -notional,
+        cashDelta: notional - input.fee,
+      }
+    const outstanding = -input.priorQuantity
+    if (input.quantity > outstanding || outstanding === 0n)
+      return yield* failAccounting({ _tag: 'AccountingInvalidShortPosition', reason: 'COVER_EXCEEDS_POSITION' })
+    // The final cover consumes the exact remaining liability, including prior rounding residuals.
+    const basis =
+      input.quantity === outstanding
+        ? -input.priorCost
+        : yield* roundDiv(-input.priorCost * input.quantity, outstanding)
+    return {
+      fee: input.fee,
+      notional,
+      costBasis: basis,
+      realizedPnl: basis - notional,
+      quantityDelta: input.quantity,
+      costBasisDelta: basis,
+      cashDelta: -(notional + input.fee),
+    }
+  })
+
 const makeAccount = (identity: AccountIdentity, spec: AccountSpec): LedgerAccountRecord => ({
   id: stableU128('bayn-paper-ledger-account-v1', identity.accountId, spec.name),
   debits_pending: 0n,
@@ -285,6 +333,42 @@ const losingSaleLegs = (symbol: string, amounts: AccountingAmounts): readonly Ac
   feeLeg(amounts.fee),
 ]
 
+const shortLedgerLegs = (fill: LedgerFill, amounts: AccountingAmounts): readonly AccountingLeg[] => {
+  if (fill.side === OrderSide.Sell) return profitableSaleLegs(fill.symbol, amounts)
+  const gain = amounts.realizedPnl >= 0n
+  return [
+    {
+      leg: 'short-cover',
+      debitName: `inventory:${fill.symbol}`,
+      debitCode: AccountCode.inventory,
+      creditName: 'cash',
+      creditCode: AccountCode.cash,
+      amount: gain ? amounts.notional : amounts.costBasis,
+      code: TransferCode.buy,
+    },
+    gain
+      ? {
+          leg: 'short-realized-gain',
+          debitName: `inventory:${fill.symbol}`,
+          debitCode: AccountCode.inventory,
+          creditName: 'realized-gain',
+          creditCode: AccountCode.realizedGain,
+          amount: amounts.realizedPnl,
+          code: TransferCode.realizedGain,
+        }
+      : {
+          leg: 'short-realized-loss',
+          debitName: 'realized-loss',
+          debitCode: AccountCode.realizedLoss,
+          creditName: 'cash',
+          creditCode: AccountCode.cash,
+          amount: -amounts.realizedPnl,
+          code: TransferCode.realizedLoss,
+        },
+    feeLeg(amounts.fee),
+  ]
+}
+
 const ledgerLegs = (fill: LedgerFill, amounts: AccountingAmounts): readonly AccountingLeg[] =>
   (fill.side === OrderSide.Buy
     ? buyLegs(fill.symbol, amounts)
@@ -334,7 +418,17 @@ const makeLedgerPlan = (
   fill: LedgerFill,
   amounts: AccountingAmounts,
   ledger: number,
-): LedgerPlan => makeLegPlan(transactionId, brokerEventId, fill.accountId, ledgerLegs(fill, amounts), ledger)
+  inventorySide = AccountingInventorySide.Long,
+): LedgerPlan =>
+  makeLegPlan(
+    transactionId,
+    brokerEventId,
+    fill.accountId,
+    inventorySide === AccountingInventorySide.Short
+      ? shortLedgerLegs(fill, amounts).filter(({ amount }) => amount !== 0n)
+      : ledgerLegs(fill, amounts),
+    ledger,
+  )
 
 const hashAccountingMaterial = (
   operation: AccountingHashOperation,
@@ -416,6 +510,9 @@ export const rebuildAccountingLedger = (input: unknown, ledger: number): Result.
             cashDelta: BigInt(transaction.cashDeltaMicros),
           },
           ledger,
+          transaction.schemaVersion === equityShortAccountingSchemaVersion
+            ? AccountingInventorySide.Short
+            : AccountingInventorySide.Long,
         ),
       ),
     ),
@@ -426,22 +523,31 @@ export const prepareAccounting = (
   fill: Fill,
   prior: PositionCost,
   ledger: number,
+  inventorySide = AccountingInventorySide.Long,
 ): Result.Result<PreparedAccounting, AccountingFailure> =>
   pipe(
-    calculateAmounts(fill, prior),
+    inventorySide === AccountingInventorySide.Short
+      ? calculateShortAmounts(fill, prior)
+      : calculateAmounts(fill, prior),
     Result.flatMap((amounts) =>
       pipe(
         hashAccountingMaterial('transaction-id', {
-          schemaVersion: legacyAccountingTransactionIdSchemaVersion,
+          schemaVersion:
+            inventorySide === AccountingInventorySide.Short
+              ? 'bayn.equity-short-accounting-transaction-id.v1'
+              : legacyAccountingTransactionIdSchemaVersion,
           brokerEventId,
         }),
         Result.flatMap((transactionId) => {
-          const ledgerPlan = makeLedgerPlan(transactionId, brokerEventId, fill, amounts, ledger)
+          const ledgerPlan = makeLedgerPlan(transactionId, brokerEventId, fill, amounts, ledger, inventorySide)
           return pipe(
             hashAccountingLedgerPlan(ledgerPlan),
             Result.flatMap((ledgerPlanHash) => {
               const material = {
-                schemaVersion: legacyAccountingTransactionSchemaVersion,
+                schemaVersion:
+                  inventorySide === AccountingInventorySide.Short
+                    ? equityShortAccountingSchemaVersion
+                    : legacyAccountingTransactionSchemaVersion,
                 transactionId,
                 brokerEventId,
                 ...(fill.intentId === undefined ? {} : { intentId: fill.intentId }),

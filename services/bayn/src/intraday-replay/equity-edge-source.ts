@@ -24,7 +24,8 @@ export enum EquityHistoricalFeed {
   Sip = 'sip',
 }
 export const EquityEdgeInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.equity-edge-screen-input.v2'),
+  schemaVersion: Schema.Literal('bayn.equity-edge-screen-input.v3'),
+  executionFeeDate: IsoDateSchema,
   sourceSha256: Sha256Schema,
   calendar: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema, expectedHash: Sha256Schema }),
   feed: Schema.optionalKey(Schema.Enum(EquityHistoricalFeed)),
