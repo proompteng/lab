@@ -59,7 +59,10 @@ test('the installed wrapper invokes image Node and forwards arguments without co
   ])
 })
 
-const archive = (role: 'research' | 'trading', options: { bundle?: boolean; wrapper?: boolean } = {}) => {
+const archive = (
+  role: 'research' | 'trading',
+  options: { bundle?: boolean; wrapper?: boolean; screenBundle?: boolean; screenWrapper?: boolean } = {},
+) => {
   const path = scratch()
   const fs = join(path, 'rootfs')
   const tarRoot = join(path, 'archive')
@@ -124,6 +127,8 @@ const archive = (role: 'research' | 'trading', options: { bundle?: boolean; wrap
   }
   if (options.bundle) put(fs, 'app/services/bayn/dist/jev-study-export-command.js')
   if (options.wrapper) put(fs, 'bin/bayn-jev-study-export', '#!/bin/sh\nexit 0\n', true)
+  if (options.screenBundle ?? role === 'research') put(fs, 'app/services/bayn/dist/equity-edge-screen.js')
+  if (options.screenWrapper ?? role === 'research') put(fs, 'bin/bayn-equity-edge-screen', '#!/bin/sh\nexit 0\n', true)
   expect(run(['tar', '-cf', join(tarRoot, 'layer.tar'), '-C', fs, '.']).code).toBe(0)
   put(tarRoot, 'manifest.json', JSON.stringify([{ Layers: ['layer.tar'] }]))
   const result = join(path, 'image.tar')
@@ -151,4 +156,42 @@ test('the trading archive rejects either exporter artifact', () => {
   const wrapper = archive('trading', { wrapper: true })
   expect(wrapper.code).not.toBe(0)
   expect(wrapper.stderr).toContain('research executable bayn-jev-study-export')
+})
+
+test('the research archive requires both equity-screen artifacts and trading rejects either one', () => {
+  const missingBundle = archive('research', { bundle: true, wrapper: true, screenBundle: false })
+  expect(missingBundle.code).not.toBe(0)
+  expect(missingBundle.stderr).toContain('equity-edge-screen.js')
+  const missingWrapper = archive('research', { bundle: true, wrapper: true, screenWrapper: false })
+  expect(missingWrapper.code).not.toBe(0)
+  expect(missingWrapper.stderr).toContain('bayn-equity-edge-screen')
+  const bundle = archive('trading', { screenBundle: true })
+  expect(bundle.code).not.toBe(0)
+  expect(bundle.stderr).toContain('research bundle equity-edge-screen')
+  const wrapper = archive('trading', { screenWrapper: true })
+  expect(wrapper.code).not.toBe(0)
+  expect(wrapper.stderr).toContain('research executable bayn-equity-edge-screen')
+})
+
+test('the equity-screen wrapper invokes image Node and preserves pinned input arguments', () => {
+  const body = image.match(
+    /equityEdgeScreenCommand = pkgs.writeShellScriptBin "bayn-equity-edge-screen" ''\n([\s\S]*?)\n  '';/,
+  )?.[1]
+  expect(body).toBeDefined()
+  const path = scratch()
+  put(path, 'bin/node', '#!/bin/sh\nprintf "%s\\n" "$@"\n', true)
+  put(path, 'wrapper', body!.replaceAll("''${", '${'))
+  const args = [
+    '--input',
+    '/private/with spaces/input.json',
+    '--input-sha256',
+    'a'.repeat(64),
+    '--source',
+    '/private/pages.ndjson',
+    '--output',
+    '/private/new report.json',
+  ]
+  const result = run(['bash', join(path, 'wrapper'), ...args], { BAYN_IMAGE_ROOT: path })
+  expect(result.code).toBe(0)
+  expect(result.stdout.trim().split('\n')).toEqual([`${path}/app/services/bayn/dist/equity-edge-screen.js`, ...args])
 })
