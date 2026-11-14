@@ -73,7 +73,7 @@ import {
   makeExecutionIntentFromDecodedPlan,
 } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
-import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1, canonicalJsonV1Result, sha256 } from './hash'
 import { intradayAgeNanos, millisecondsAsNanos } from './market-data/intraday/time'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
@@ -1399,11 +1399,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
         schemaVersion: snapshotSchemaVersion,
       }))(source)
     : undefined
-  const equal = (left: unknown, right: unknown) => {
-    const a = canonicalHashV1Result(left)
-    const b = canonicalHashV1Result(right)
-    return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
-  }
+  const equal = canonicalJsonEqualV1
   if (
     !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)

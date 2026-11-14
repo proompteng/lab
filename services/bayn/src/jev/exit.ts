@@ -3,7 +3,7 @@ import { jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalJsonEqualV1 } from '../hash'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import type { IntradayQuote } from '../market-data/intraday/model'
@@ -84,11 +84,7 @@ export const jevBrokerEvidenceFreshUntilMs = (state: {
     Date.parse(state.ordersObservedAt),
     Date.parse(state.reconciliation.reconciledAt),
   ) + maximumBrokerObservationAgeMs
-const equal = (left: unknown, right: unknown) => {
-  const a = canonicalHashV1Result(left)
-  const b = canonicalHashV1Result(right)
-  return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
-}
+const equal = canonicalJsonEqualV1
 
 type PriceExitSource = {
   readonly manifest: unknown

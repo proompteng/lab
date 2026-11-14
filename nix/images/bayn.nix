@@ -25,6 +25,7 @@ let
     "native-arrival-export-command"
     "jev-study-export-command"
     "webull-research-command"
+    "equity-edge-screen"
   ] else [
     "decision-construction-worker"
     "index"
@@ -110,6 +111,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/webull-research-command.js" "$@"
   '';
+  equityEdgeScreenCommand = pkgs.writeShellScriptBin "bayn-equity-edge-screen" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/equity-edge-screen.js" "$@"
+  '';
   gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
@@ -156,6 +162,7 @@ let
     "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun build services/bayn/src/jev-study-export-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
+    "bun build services/bayn/tools/equity-edge-screen.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
@@ -169,6 +176,7 @@ let
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/native-arrival-export-command.js --help"
     "node services/bayn/dist/jev-study-export-command.js --help"
+    "node services/bayn/dist/equity-edge-screen.js --help"
     "node services/bayn/dist/control-opening-command.js --help"
     "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
@@ -258,6 +266,7 @@ import ./bun-workspace-service.nix {
     nativeArrivalExportCommand
     studyExportCommand
     webullResearchCommand
+    equityEdgeScreenCommand
     gepaPython
     pkgs.go-containerregistry
   ];

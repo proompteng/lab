@@ -5,6 +5,7 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
 import { candleProjection } from './chart-projection'
+import { ChartImageCache } from './chart-image-cache'
 
 const Bar = Schema.Struct({
   minuteBeforeWindowEnd: Schema.Finite,
@@ -154,17 +155,13 @@ enum VolumeScale {
   RetainedWholeUnit = 'RETAINED_WHOLE_UNIT',
 }
 
-const chartImages = new Map<string, { readonly pngHash: string; readonly image: string }>()
+const chartImages = new ChartImageCache(1024, 16 * 1024 * 1024)
 const chartImage = (barsHash: string, bars: readonly VisualBar[], volumeScale: VolumeScale) => {
   const key = `${volumeScale}:${barsHash}`
   const existing = chartImages.get(key)
   if (existing !== undefined) return existing
   const png = renderCandlesPng(bars, volumeScale === VolumeScale.RetainedWholeUnit ? 1 : 0)
   const rendered = { pngHash: sha256(png), image: `data:image/png;base64,${png.toString('base64')}` }
-  if (chartImages.size >= 64) {
-    const oldest = chartImages.keys().next()
-    if (oldest.done === false) chartImages.delete(oldest.value)
-  }
   chartImages.set(key, rendered)
   return rendered
 }

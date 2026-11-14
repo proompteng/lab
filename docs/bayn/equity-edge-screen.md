@@ -9,6 +9,11 @@ Build the offline command with `bun run --filter @proompteng/bayn build:research
 `bun run --filter @proompteng/bayn equity:screen` with the arguments shown below. `--help` needs no configuration.
 Use an independent research process with bounded private storage. The command has no broker, database or model dependency.
 
+The immutable `bayn-research` image also installs `bayn-equity-edge-screen` (bundle `dist/equity-edge-screen.js`).
+It takes the same pinned input, source and new output arguments below. Image build smoke checks verify `--help`;
+archive verification requires both the bundle and wrapper and excludes them from the trading image. Run the
+released command in the independent research workload, keeping private source data outside image layers.
+
 ## Frozen hypotheses
 
 The source definition retains six late-session candidates: positive benchmark-relative momentum, opening-range
