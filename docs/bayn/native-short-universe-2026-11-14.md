@@ -180,6 +180,28 @@ The [cutover runbook](equity-short-cutover.md) governs successor admission and s
 V41 implementation release and activation evidence must be appended after verification; this settlement image
 does not contain or activate v41.
 
+## Review closure and regression evidence
+
+The native short review identified four additional execution gaps, all addressed in the owning paths:
+
+- Broker reporting now reproduces the rounded intraday short-sale average through partial covers from complete,
+  ordered native short transactions. A two-price sale followed by a partial cover retains the exact ledger basis
+  of -200,000,067 micros while proving the broker's -200,000,066-micro reported basis; unrelated quantity,
+  average, sign and cost changes still fail reconciliation. Missing fill ordering cannot establish this proof.
+- Execution assessments derive liability ownership from the sealed short entry and bound exit/liquidation evidence.
+  Opening SELLs establish inventory and BUY covers consume it. Native and independently admitted OCO/stop protection
+  retain the entry owner, prices and verified broker provenance. Premature covers, excess covers and model substitutions fail.
+- Expired-entry cancellation locks and reads the exact protection tag before admitting a SELL short bracket.
+  Plain SELL exits and unrelated protection tags remain excluded. All 24 PostgreSQL cancellation cases pass.
+- A negative allocation that rounds below one whole share persists a zero-share abstention. It creates no intent or
+  collateral reservation; actual short targets still require direction, eligibility and quantity checks.
+
+The three measured partial-entry/re-entry scenarios pass against isolated PostgreSQL and TigerBeetle (108 assertions).
+Their economic checks permit multiple legitimate broker fills while requiring one entry parent, a partial quantity,
+entry-before-exit ordering, equal aggregate opening/closing quantities, terminal cancellation, exact accounting and
+completed cycles. Both retained v38/v39 Box-cutover cases pass with the original source universe (18 assertions).
+These are synthetic execution and accounting proofs, not observed market profitability.
+
 ## Private evidence reproduction
 
 Raw membership responses, source pages, pagination receipts, calendars, account/asset observations and frozen

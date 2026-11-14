@@ -9,14 +9,14 @@ import { nativeSafetyFixture } from './operational-safety.test-support'
 import { testHash } from './fixtures.test-support'
 import { makeOperationalSafetyScan } from './operational-safety'
 import type { OperationalSafetySource } from './operational-safety-source'
+import { isBracketProtection } from '../execution/contracts'
 
-export const nativeOrderSafetyFixture = async () => {
+export const nativeOrderSafetyFixture = async (short = false) => {
   const f = nativeSafetyFixture()
-  const document = await Effect.runPromise(makePersistenceDocumentFixture(f.definition.riskPolicy.accountId))
-  const entry =
-    document.deltaRisk[0]?.protection?._tag === 'Bracket'
-      ? bracketEvidenceFixture(document)
-      : nativeEntryEvidenceFixture(document)
+  const document = await Effect.runPromise(makePersistenceDocumentFixture(f.definition.riskPolicy.accountId, 1, short))
+  const entry = isBracketProtection(document.deltaRisk[0]?.protection)
+    ? bracketEvidenceFixture(document)
+    : nativeEntryEvidenceFixture(document)
   const plans = Result.getOrThrow(executionOrderPlans(entry.cut.decisions, []))
   const id = document.orderedIntentIds[0]!
   const target = document.targetPlan.intentTargets[0]!

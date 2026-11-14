@@ -251,7 +251,12 @@ const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type
         result.executionTerms === undefined ||
         BigInt(target.currentQuantityAtoms) !== 0n ||
         target.targetWeight >= 0 ||
-        BigInt(target.targetQuantityAtoms) >= 0n ||
+        (BigInt(target.targetQuantityAtoms) >= 0n &&
+          !(
+            result.status === TargetPlanStatus.NoTrade &&
+            target.targetQuantityAtoms === '0' &&
+            intent === undefined
+          )) ||
         (result.status === TargetPlanStatus.Planned &&
           (intent === undefined ||
             !equityShortIsEligible(

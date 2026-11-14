@@ -267,6 +267,28 @@ test('native equity short planning allocates whole shares and reserves 150 perce
   ).toBe(TargetPlanStatus.Blocked)
 })
 
+test('a negative allocation below one whole share persists a zero-share abstention', () => {
+  const base = fixture({
+    positions: [],
+    targetWeights: { AMD: -0.2 },
+    allocationCapitalMicros: '100000000',
+    buyingPowerMicros: '3000000000',
+    priceMicros: { AMD: '50000000' },
+  })
+  const plan = planSuccess({
+    ...base,
+    executionTerms: {
+      ...base.executionTerms,
+      timeInForce: TimeInForce.Day,
+      equityShortEntries: { AMD: shortEligibilityFixture(base.accountId, 'AMD', base.observedAt) },
+    },
+  })
+  expect(plan.status).toBe(TargetPlanStatus.NoTrade)
+  expect(plan.targets[0]).toMatchObject({ targetWeight: -0.2, targetQuantityAtoms: '0', currentQuantityAtoms: '0' })
+  expect(plan.intentTargets).toEqual([])
+  expect(plan.requiredShortCollateralMicros ?? '0').toBe('0')
+})
+
 test('property: the shared equity and crypto planner obeys quantity precision, liquidity and available capital', () => {
   checkProperty(
     'target-planner-capital-and-precision',
