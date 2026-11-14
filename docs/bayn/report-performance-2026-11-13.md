@@ -62,7 +62,40 @@ This is development-provenance diagnostic output, not a deployed financial recei
 full output and profiles remain private, outside Git and CI artifacts. The earlier system report is a separate
 18:32 cut; its then-complete inference coverage must not be substituted for this later incomplete cut.
 
+A later read-only database trace binds those twenty gaps to ten v3 requests: five observed at 20:47:02.258 and
+five at 20:48:02.187 UTC. They expired after ten seconds and were durably ABANDONED at 20:47:12.674 and
+20:48:12.511 respectively. Each retains one staged dispatch claim and no staged terminal or evaluation receipt.
+Two missing stage-cost lines per request do not mean twenty distinct failed calls. A dispatch claim with no
+terminal evidence cannot establish zero provider consumption; these costs remain unknown.
+
 ## Remaining acceptance criteria
+
+The reviewed performance and packaging changes shipped through [#15943](https://github.com/proompteng/lab/pull/15943)
+as main `f0710f9ff4a59db53d283908117b141b72d9c77d`, publication run `43533283146`, native image
+`sha256:8ba81622e44bccf483dbab069b8e136c2e1686bf89eec0b4d3b8617d82fa5025`.
+Kargo promoted Freight `26a864a4cda90239bb4da010b180e0e83a0ab2f5` into generated commit
+`d46c6bbefca3578e09819f773d7312e64bc37f63`; Argo synced it successfully.
+
+A post-release API invocation with a 120-second diagnostic budget completed in 57,085 ms wall time, measured
+55,815 ms within the report worker and peaked at 754,792 KiB process-lifetime RSS. Its report hash is
+`544b4079153daa1033dceb0b1292c741ef3e89fecd914918d5615948dd1e2ba5`, with receipt hash
+`6c3a9cf224b78838634e39bd94546d1ec0635387f7b8ea186ca5e67fe1263906`.
+The source cut closes at November 14 00:45:37.166 UTC. Counts and financial values remain 174 execution
+transactions, 87 realized closes, 38 completed episodes, no open episodes and -$179.45 gross; inference remains
+854 claims with twenty coverage gaps. These later mutable source clocks differ from the profiled baseline, so
+the lower wall time is not a controlled end-to-end improvement estimate. No receipt was persisted.
+
+The separate 30-second check exited after 31,139 ms including cleanup, emitted zero stdout bytes and reported
+ForwardPerformanceDeadlineExceeded. Its worker peak was 678,468 KiB. The 30-second requirement is still unmet.
+Before and after both reports, authority remained PAPER, kill CLEAR, unresolved mutations zero and reconciliation
+EXACT. Both execution controllers retained zero restarts; no report ran in a controller. The shipped research
+wrapper independently reproduced all ten historical study report hashes.
+
+The post-report Mimir read still shows BaynResearchCostCoverageIncomplete firing. Research-wide coverage and the
+current generation's twenty stage-cost gaps remain distinct evidence scopes. Sampled ten-minute maximum container
+working sets were 332,759,040 and 437,399,552 bytes for the two new controllers, and 926,281,728 bytes for the API
+pod running the report. These container samples are different from the report worker's process-lifetime peak;
+they establish neither a general memory bound nor complete financial evidence.
 
 The full-report SLO remains [#15928](https://github.com/proompteng/lab/issues/15928). PostgreSQL retrieval plus
 pure decoding still consumed about 39–40 seconds in profiled runs; that phase is not solely database I/O. Further
