@@ -287,10 +287,11 @@ export const registrationFixture = (
   registeredAt?: string,
   sessionCount = 20,
   version = JevAcceptanceVersion.Current,
+  protocolDocument: unknown = defaultJevProtocolDocument,
 ): SystemRegistration => {
   const protocol =
     version === JevAcceptanceVersion.Current
-      ? Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
+      ? Result.getOrThrow(decodeJevProtocol(protocolDocument))
       : version === JevAcceptanceVersion.RetainedV5
         ? Result.getOrThrow(
             Schema.decodeUnknownResult(RetainedJevProtocolV38Schema)({
