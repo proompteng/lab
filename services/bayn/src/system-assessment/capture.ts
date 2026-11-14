@@ -34,7 +34,7 @@ import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { decisionMarketScopeSupported } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
-import { executableBid, readValuationQuotes } from './valuation-quotes'
+import { executableValuationQuote, readValuationQuotes } from './valuation-quotes'
 import { captureExecutionOrders, captureExecutionFills } from './execution-evidence'
 import { readSystemExecutionOrders, readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
 import { executionOrderPlans } from './execution-plans'
@@ -159,13 +159,17 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                 const holdings = holdingsByTime.get(cash.at)
                 const positions =
                   holdings?.map((position) => {
-                    const bid = executableBid(
+                    const quote = executableValuationQuote(
                       quotes.get(cash.at)?.get(position.symbol),
                       position.symbol,
                       cash.at,
                       registration.obligations.configuration.protocol.maximumQuoteAgeMs,
+                      registration.obligations.configuration.protocol.marketProfiles.find(
+                        (profile) => profile.market === instrumentMarket(position.symbol),
+                      ),
+                      position.quantityAtoms,
                     )
-                    return bid === null ? null : { ...position, ...bid }
+                    return quote === null ? null : { ...position, ...quote }
                   }) ?? null
                 const supported = positions?.filter((position) => position !== null) ?? []
                 const valuation =

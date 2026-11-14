@@ -7,6 +7,8 @@ import { JevExitTargetSchema } from '../jev/exit'
 import { RepeatedMomentumTargetSchema } from './repeated-momentum/decision'
 import type { RetainedJevEntryTarget, RetainedJevExitTarget } from '../jev/retained-jev-targets'
 import type { RetainedJevAblationTarget, RetainedJevMomentumTarget } from '../jev/retained-jev-control-targets'
+import { isShortExitPlan } from './funded-exit-plan'
+import type { EquityShortEligibility } from '../execution/equity-short'
 
 const FlatExecutionTargetBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-flat-target.v1'),
@@ -110,12 +112,39 @@ export const protectedEntryBuyPriceCeilings = (
 ): Readonly<Record<string, bigint>> =>
   isProtectedEntryTarget(decision)
     ? Object.fromEntries(
-        Object.entries(decision.exitPolicy.plans).map(([symbol, plan]) => [
-          symbol,
-          BigInt(plan.levels.maximumEntryPriceMicros),
-        ]),
+        Object.entries(decision.exitPolicy.plans)
+          .filter(([, plan]) => !isShortExitPlan(plan))
+          .map(([symbol, plan]) => [
+            symbol,
+            BigInt('maximumEntryPriceMicros' in plan.levels ? plan.levels.maximumEntryPriceMicros : '0'),
+          ]),
       )
     : {}
+
+export const protectedEntrySellPriceFloors = (
+  decision: RecordedRuntimeStrategyDecision | undefined,
+): Readonly<Record<string, bigint>> =>
+  isProtectedEntryTarget(decision)
+    ? Object.fromEntries(
+        Object.entries(decision.exitPolicy.plans).flatMap(([symbol, plan]) =>
+          isShortExitPlan(plan) ? [[symbol, BigInt(plan.levels.minimumEntryPriceMicros)]] : [],
+        ),
+      )
+    : {}
+
+export const protectedEntryShortEligibility = (
+  decision: RecordedRuntimeStrategyDecision | undefined,
+): Readonly<Record<string, EquityShortEligibility>> => {
+  if (!isChartEntryTarget(decision)) return {}
+  const observation = decision.evidence.observation
+  if (!('equityShortEligibility' in observation) || observation.equityShortEligibility === undefined) return {}
+  return Object.fromEntries(
+    Object.entries(decision.exitPolicy.plans).flatMap(([symbol, plan]) => {
+      const eligibility = observation.equityShortEligibility?.[symbol]
+      return isShortExitPlan(plan) && eligibility !== undefined ? [[symbol, eligibility]] : []
+    }),
+  )
+}
 
 export const protectedEntryExpiresAtMs = (target: RecordedProtectedEntryTarget): number =>
   isChartEntryTarget(target)

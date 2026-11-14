@@ -2,7 +2,7 @@ import { BrokerEnvironment } from '../broker/identity'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -142,7 +142,7 @@ const fixture = (
           bidSize: 25,
           askSize: 100,
         })
-    const captured = sixBarFixture(inputs, '10:10')
+    const captured = sixBarFixture(inputs, '10:10', undefined, equityMarketProfile)
     const body = gzipSync(captured.events.map((event) => JSON.stringify(event)).join('\n') + '\n')
     const nativeVisiblePartitions = Object.values(captured.universe.topics)
       .sort()

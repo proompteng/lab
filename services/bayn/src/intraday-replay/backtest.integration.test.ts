@@ -5,7 +5,7 @@ import { loadActiveStrategyProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
@@ -30,7 +30,7 @@ import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import {
-  retainedReplayFixture,
+  nativeReplayFixture as retainedReplayFixture,
   retainedReplayCaptureFixture,
   momentumTradeReplayFixture,
 } from '../testing/retained-replay-fixture'

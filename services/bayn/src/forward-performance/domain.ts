@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import {
   makeForwardPerformanceExecutionMeasurements,
   type ForwardPerformanceExecutionMeasurements,
@@ -326,7 +327,16 @@ const makeMaterial = (
     reasons.add('CASH_YIELD_EVIDENCE_GAP')
   }
 
-  const realizedCloseCount = input.transactions.filter((transaction) => transaction.side === 'SELL').length
+  const nativeTransactions = new Map(
+    input.accountTransactions?.map((transaction) => [transaction.transactionId, transaction]),
+  )
+  const realizedCloseCount = input.transactions.filter(
+    (transaction) =>
+      transaction.side ===
+      (nativeTransactions.get(transaction.transactionId)?.schemaVersion === equityShortAccountingSchemaVersion
+        ? 'BUY'
+        : 'SELL'),
+  ).length
   const reasonCodes = [...reasons].sort()
   const sufficient = reasonCodes.length === 0
   const strategyBinding =

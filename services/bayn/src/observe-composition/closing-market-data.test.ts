@@ -214,9 +214,7 @@ const fixture = async (source = native) => {
   const policy = await runWithConstruction(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
   const unused = Effect.die(new Error('Unexpected fixture I/O'))
   const broker: BrokerReadShape = {
-    account: unused,
-    accountConfiguration: unused,
-    assetBySymbol: () => unused,
+    ...longEntryBrokerReads(source.portfolio.brokerState.account, at),
     positions: unused,
     orders: () => unused,
     orderById: () => unused,
@@ -327,7 +325,8 @@ describe('closing market-data fallback boundaries', () => {
     const entry = request.entryDocument.strategyDecision
     if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
     const plan = entry.exitPolicy.plans['AAPL']
-    if (plan === undefined) throw new Error('Expected an entry-bound plan')
+    if (plan === undefined || plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4')
+      throw new Error('Expected an entry-bound long plan')
     const floor = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
     const pending = scenario.startsWith('pending-') || scenario.startsWith('partial-')
     const observedAt = new Date(
@@ -2038,3 +2037,4 @@ describe('closing market-data fallback boundaries', () => {
     expect(failure.message).toBe(marketFailure.message)
   })
 })
+import { longEntryBrokerReads } from '../testing/entry-broker-reads.test-support'

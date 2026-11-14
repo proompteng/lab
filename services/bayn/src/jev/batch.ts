@@ -3,6 +3,7 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import * as boxChartStages from './staged-chart-questions'
 import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
+import { shortEntryJudgmentPolicy } from './short-entry-questions'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -265,6 +266,7 @@ export const jevBatchQuestionSetHash = (
       if (candidate.request === undefined) continue
       const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
       const stages =
+        candidate.request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
         candidate.request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
           ? boxChartStages
           : retainedJevChartStages
@@ -283,7 +285,13 @@ export const jevBatchQuestionSetHash = (
         jev:
           candidate.request.request.schemaVersion === 'bayn.entry-ablation-input.v1'
             ? { status: 'OMITTED_BY_POLICY', selectionPolicy: candidate.request.request.selectionPolicy }
-            : { ...entryJudgmentPolicy, model: candidate.request.request.protocol.model },
+            : {
+                ...entryJudgmentPolicy,
+                model: candidate.request.request.protocol.model,
+                ...(candidate.request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+                  ? { short: shortEntryJudgmentPolicy }
+                  : {}),
+              },
       })
     }
     return yield* hash(specifications)

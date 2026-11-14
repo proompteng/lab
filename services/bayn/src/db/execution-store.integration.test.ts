@@ -1737,6 +1737,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           // These legacy orders predate brackets. Supply the current report's nullable parent field
           // without applying later migrations that would replace the retained fee schema under test.
           yield* sql`ALTER TABLE orders ADD COLUMN parent_broker_order_id text`
+          yield* sql`ALTER TABLE intents ADD COLUMN protection jsonb`
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
