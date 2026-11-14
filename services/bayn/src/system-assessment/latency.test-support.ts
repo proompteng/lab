@@ -25,7 +25,10 @@ import { registeredSchedule } from './schedule'
 import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { latencyReplayExecutionModelHash, latencyReplayPolicyMaterial } from './latency-replay'
 import { BacktestInputSchema, prepareBacktest } from '../intraday-replay/backtest'
-import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import {
+  nativeReplayFixture as retainedReplayFixture,
+  retainedReplayCaptureFixture,
+} from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { instrumentMarket, MarketKind } from '../instruments'

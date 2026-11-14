@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 import { gzipSync } from 'node:zlib'
 import { sha256 } from '../hash'
-import { simulationFixture } from './simulated-streaming-fixture'
+import { simulationFixture, nativeSimulationFixture } from './simulated-streaming-fixture'
 import { historicalRawArrivals } from './historical-streaming-fixture'
 import { nativeJevFixture } from '../jev/native.test-support'
 import {
@@ -76,8 +76,10 @@ export const retainReplayArrivals = (
   return { body, manifest: complete, capture: retainedReplayCaptureFixture(complete), events }
 }
 
-const retainedReplayFromSimulation = (
-  input: ReturnType<typeof simulationFixture>,
+const retainedReplayFromSimulation = <
+  A extends ReturnType<typeof simulationFixture> | ReturnType<typeof nativeSimulationFixture>,
+>(
+  input: A,
   arrivals = input.input.arrivals.events,
 ) => ({
   ...retainReplayArrivals(
@@ -93,6 +95,8 @@ const retainedReplayFromSimulation = (
 })
 
 export const retainedReplayFixture = () => retainedReplayFromSimulation(simulationFixture())
+
+export const nativeReplayFixture = () => retainedReplayFromSimulation(nativeSimulationFixture())
 
 /** Current native research uses its own versioned source; legacy transport fixtures remain unchanged. */
 export const currentJevReplayFixture = () => {
@@ -129,7 +133,7 @@ export const currentJevReplayFixture = () => {
 
 /** Synthetic executable quotes exercise a funded entry and target exit within one signal window. */
 export const momentumTradeReplayFixture = () => {
-  const input = simulationFixture(undefined, undefined, undefined, true)
+  const input = nativeSimulationFixture(undefined, undefined, undefined, true)
   const startMs = Date.parse(input.query.observedAt)
   const offsets = new Map<string, bigint>()
   for (const { record } of input.input.arrivals.events) {
