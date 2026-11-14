@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { isContinuousMarket } from '../market-hours'
 import { strictParseOptions, UtcInstantSchema } from '../schemas'
 import { JevBatchPlanVersion, JevBatchResultSchema, JevCandidatePlanStatus } from './batch'
@@ -74,11 +74,7 @@ export const reproduceRetainedJevEntryTarget = (input: unknown) =>
       ...(yield* makeChartEntryTargetMaterial(source, selection)),
     }
   })
-const same = (left: unknown, right: unknown) => {
-  const a = canonicalHashV1Result(left)
-  const b = canonicalHashV1Result(right)
-  return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
-}
+const same = canonicalJsonEqualV1
 
 export const RetainedJevEntryTargetSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-entry-target.v7'),
