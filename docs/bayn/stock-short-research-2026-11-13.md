@@ -14,14 +14,14 @@ native fee model valued explicitly at November 13, 2026. These are current-fee s
 not reconstructed historical charges. Infrastructure, market data, inference and historical borrow costs remain
 unknown. All-in profit stays null and qualification stays false.
 
-| SIP corpus / short control | Development | Validation | Later sample |
-| --- | ---: | ---: | ---: |
-| November 2026 / relative weakness | -419.81 | -138.67 | -818.08 |
-| November 2026 / opening-range breakdown | +479.97 | -80.37 | -501.08 |
-| November 2026 / VWAP rejection | +57.90 | -28.61 | -670.76 |
-| June 2022 / relative weakness | -750.02 | -1,053.59 | -1,403.40 |
-| June 2022 / opening-range breakdown | -363.27 | -620.99 | -363.10 |
-| June 2022 / VWAP rejection | -586.15 | -281.58 | -93.83 |
+| SIP corpus / short control              | Development | Validation | Later sample |
+| --------------------------------------- | ----------: | ---------: | -----------: |
+| November 2026 / relative weakness       |     -419.81 |    -138.67 |      -818.08 |
+| November 2026 / opening-range breakdown |     +479.97 |     -80.37 |      -501.08 |
+| November 2026 / VWAP rejection          |      +57.90 |     -28.61 |      -670.76 |
+| June 2022 / relative weakness           |     -750.02 |  -1,053.59 |    -1,403.40 |
+| June 2022 / opening-range breakdown     |     -363.27 |    -620.99 |      -363.10 |
+| June 2022 / VWAP rejection              |     -586.15 |    -281.58 |       -93.83 |
 
 The November selector chose the opening-range short from all sixteen controls using development only. Its later
 base/stress results were -$80.37/-$417.12 and -$501.08/-$1,122.04 on SIP; on IEX they were
@@ -36,11 +36,11 @@ untouched prospective test. The sixteen attempted policies and both cost scenari
 zero-activity sessions and incomplete paths. The short controls are numerical feasibility tests, not JeV replay.
 The three seven-session samples do not establish behavior across all bear markets or a calibrated significance level.
 
-| Corpus | Acquisition range | Development | Validation | Later sample | Raw IEX / SIP rows | Missing regular minutes IEX / SIP |
-| --- | --- | --- | --- | --- | ---: | ---: |
-| November 2026 | Oct 14–Nov 12 | Nov 4–5 | Nov 6–9 | Nov 10–12 | 53,171 / 117,384 | 245 / 0 |
-| COVID crash | Feb 18–Mar 20, 2020 | Mar 12–13 | Mar 16–17 | Mar 18–20 | 0 / 107,341 | 56,160 / 337 |
-| June selloff | May 18–Jun 17, 2022 | Jun 9–10 | Jun 13–14 | Jun 15–17 | 50,250 / 103,505 | 2,627 / 3 |
+| Corpus        | Acquisition range   | Development | Validation | Later sample | Raw IEX / SIP rows | Missing regular minutes IEX / SIP |
+| ------------- | ------------------- | ----------- | ---------- | ------------ | -----------------: | --------------------------------: |
+| November 2026 | Oct 14–Nov 12       | Nov 4–5     | Nov 6–9    | Nov 10–12    |   53,171 / 117,384 |                           245 / 0 |
+| COVID crash   | Feb 18–Mar 20, 2020 | Mar 12–13   | Mar 16–17  | Mar 18–20    |        0 / 107,341 |                      56,160 / 337 |
+| June selloff  | May 18–Jun 17, 2022 | Jun 9–10    | Jun 13–14  | Jun 15–17    |   50,250 / 103,505 |                         2,627 / 3 |
 
 Each corpus retains an independently acquired exchange calendar, complete request/response pagination tokens,
 raw-adjustment and feed identity, acquisition clocks and exact source bytes. IEX and SIP are distinct sources;
@@ -48,6 +48,10 @@ SIP historical access does not prove current real-time entitlement. The contempo
 and selection bias. Intraday liquidation removes modeled overnight dividends but does not prove actual timely fills.
 
 ## Broker feasibility
+
+The [full 2022 quarterly extension](stock-short-2022-quarter-study-2026-11-14.md) evaluates 251 sessions with
+unchanged controls. All 52 complete short paths lose under the stated scenarios; 20 others remain incomplete.
+It retains all sixteen policies and audits 18,443 simulated trades across the full long/short report inventory.
 
 A read-only sandbox probe at 22:22:19 UTC found an ACTIVE account with shorting enabled and no account/trading
 blocks. AAPL, AMZN, IWM, NVDA, QQQ, SMH and SPY were active, tradable, marginable, shortable and easy-to-borrow.
@@ -107,14 +111,14 @@ The private archive `bayn-stock-short-evidence-2026-11-13.tar.gz` has SHA-256
 `5ffd384eed4006e6a6a5d7c136225da5de7e9f2e9bf58e0b1d274276d022ad2d`.
 The retained source SHA-256 identities are:
 
-| Corpus / feed | Source SHA-256 |
-| --- | --- |
+| Corpus / feed  | Source SHA-256                                                     |
+| -------------- | ------------------------------------------------------------------ |
 | November / IEX | `3018062341b35af9820a6b497a09bc83b8d695d37e07fb0d078ad35b7af46462` |
 | November / SIP | `5b70ff6e79f66ae42a119dea7511e20e3c1404de140d6b8a4ba383a2ed1ef782` |
-| COVID / IEX | `e674d8bc20ce5daeaa07eabe80db3d2e5eff723e0530c1d4c82003f0d0d0123f` |
-| COVID / SIP | `cf4bdf755681b46e1f688ab18b0f53ea957a99a7d1404ca0b2432b9ce96dbe28` |
-| June / IEX | `17a69c94bcc65191f22cca7c82fddc21ee058b69e643496d5e9a6fa4da3a8c2e` |
-| June / SIP | `3aaee5752ce908f0107c129ba3b7908ed39c2721c426b6a8b5104f956425b822` |
+| COVID / IEX    | `e674d8bc20ce5daeaa07eabe80db3d2e5eff723e0530c1d4c82003f0d0d0123f` |
+| COVID / SIP    | `cf4bdf755681b46e1f688ab18b0f53ea957a99a7d1404ca0b2432b9ce96dbe28` |
+| June / IEX     | `17a69c94bcc65191f22cca7c82fddc21ee058b69e643496d5e9a6fa4da3a8c2e` |
+| June / SIP     | `3aaee5752ce908f0107c129ba3b7908ed39c2721c426b6a8b5104f956425b822` |
 
 Use [the equity screen command](equity-edge-screen.md) with input v3, `executionFeeDate: "2026-11-13"`, independently
 pinned input bytes and a new output path. Original attempts on 2020/2022 dates correctly failed with
@@ -125,4 +129,3 @@ The broader investigation remains in [the system report](system-investigation-20
 [#15936](https://github.com/proompteng/lab/issues/15936). A new deployed-source report at 23:00 UTC still exceeded the
 30-second deadline, discarded incomplete stdout, and measured 686,356 KiB process-lifetime peak RSS in the API
 process. Controllers remained at zero restarts. Isolation is shipped in #15940; full-report latency remains #15928.
-
