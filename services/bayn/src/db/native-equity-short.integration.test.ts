@@ -50,6 +50,7 @@ import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import { IntentStore } from '../execution/intents/domain'
 import { IntentStoreLive } from '../execution/intents/postgres'
+import { CycleObservability, CycleObservabilityLive } from '../cycle/store/observability'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://agent@127.0.0.1:55432/bayn_v41_test'
@@ -71,6 +72,7 @@ integration('native equity short PostgreSQL execution', () => {
         EntryInferenceJournalLive,
         CycleStoreLive,
         IntentStoreLive,
+        CycleObservabilityLive,
       ).pipe(
         Layer.provideMerge(JevEvaluationStoreLive),
         Layer.provideMerge(WriterFenceLive),
@@ -463,6 +465,8 @@ integration('native equity short PostgreSQL execution', () => {
               yield* sql`SELECT * FROM accounting_transactions WHERE account_id=${accountId} ORDER BY occurred_at`,
             )
             expect(rows).toHaveLength(3)
+            const observed = yield* (yield* CycleObservability).read(cycle.identity.qualificationRunId, accountId)
+            expect(observed.economics?.accounting.realizedCloseCount).toBe(2)
             expect(rows.map((row) => row.schema_version)).toEqual(
               Array(3).fill('bayn.equity-short-accounting-transaction.v1'),
             )

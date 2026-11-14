@@ -23,6 +23,7 @@ import { supportedAssessmentFixture } from '../system-assessment/fixtures.test-s
 import { evaluateSystemAssessment } from '../system-assessment/assessment'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { prepareValuationInventory } from '../system-assessment/valuation'
+import { makeForwardPerformanceReceipt } from './domain'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
@@ -148,6 +149,8 @@ test('explicit short episodes report cover profits and losses without treating p
     return prepared.transaction
   })
   const result = success(measurePositionEpisodes(evidence(history)))
+  expect(success(makeForwardPerformanceReceipt(evidence(history))).counts.realizedCloseCount).toBe(2)
+  expect(success(makeForwardPerformanceReceipt(evidence(history.slice(0, 1)))).counts.realizedCloseCount).toBe(0)
   const inventory = success(prepareValuationInventory(evidence(history)))
   expect(inventory.at('2026-09-18T14:59:59.000Z')).toEqual([])
   expect(inventory.at('2026-09-18T15:00:00.000Z')).toEqual([

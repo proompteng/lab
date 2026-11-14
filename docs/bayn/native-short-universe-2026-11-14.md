@@ -206,8 +206,11 @@ A later automatic review also exposed a retained SELL-only durable protection-ca
 assessment valuation. Cancellation now derives the admitted broker side from the immutable protection tag, including
 BUY short protection. Valuation takes the registered protocol's exact universe profile, reconstructs signed inventory,
 and subtracts ask-priced short liabilities with upward rounding. Retained long marks keep their bid-side shape and
-downward rounding. PostgreSQL/TigerBeetle native regressions pass 53 assertions, including cancellation direction and
+downward rounding. PostgreSQL/TigerBeetle native regressions pass 54 assertions, including cancellation direction and
 deduplication; signed inventory and endpoint valuation regressions preserve unqualified nonflat-session status.
+Reported closing-fill counts now use the posted accounting direction: BUY covers close shorts and SELLs close longs.
+The three-fill short episode reports two covers and one completed position episode in both the native database
+diagnostic and the financial receipt. Opening short-sale proceeds do not count as a realized close or trading profit.
 
 ## Private evidence reproduction
 
