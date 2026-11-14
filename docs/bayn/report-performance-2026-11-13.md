@@ -4,6 +4,10 @@ The report remains above its 30-second completion budget. This change removes re
 equality checks and retains more reproducible chart images within explicit bounds. It does not change canonical
 bytes, financial qualification, source validation, receipt identity or strategy authority.
 
+End-to-end verification also exposed that the Nix research image omitted the locally available equity-screen
+command. The image now compiles and installs that bundle plus its `bayn-equity-edge-screen` wrapper, checks help
+during the build, requires both artifacts in archive verification and rejects either in the trading image.
+
 ## Measured changes
 
 Four complete retained decision documents contain 14,583,415 bytes. They were the first four complete rows of a
