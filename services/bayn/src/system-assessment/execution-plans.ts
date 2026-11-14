@@ -1,3 +1,4 @@
+import { isBracketProtection, isOcoProtection } from '../execution/contracts'
 import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -35,7 +36,7 @@ export const protectionIntentsByDecision = (intents: readonly ProtectionIntentEv
   const byDecision = new Map<string, ProtectionIntentEvidence[]>()
   for (const intent of intents) {
     const terms = intent.plan.protection
-    if (terms === undefined || terms._tag === 'Bracket') continue
+    if (terms === undefined || isBracketProtection(terms)) continue
     const entries = byDecision.get(terms.entryDecisionHash)
     if (entries === undefined) byDecision.set(terms.entryDecisionHash, [intent])
     else entries.push(intent)
@@ -103,7 +104,7 @@ export const executionOrderPlans = (
       const { plan, riskDecision: risk, reconciliation } = evidence
       const terms = plan.protection
       const document =
-        terms !== undefined && terms._tag !== 'Bracket' ? documents.get(terms.entryDecisionHash) : undefined
+        terms !== undefined && !isBracketProtection(terms) ? documents.get(terms.entryDecisionHash) : undefined
       const entryPlan =
         document !== undefined && isProtectedEntryTarget(document.strategyDecision)
           ? document.strategyDecision.exitPolicy.plans[plan.symbol]
@@ -130,7 +131,7 @@ export const executionOrderPlans = (
         entryPlan === undefined ||
         !document.dispatchable ||
         terms === undefined ||
-        terms._tag === 'Bracket' ||
+        isBracketProtection(terms) ||
         sourceHash !== (yield* canonicalHashV1Result(material)) ||
         plans.has(evidence.intentId) ||
         intent.intentId !== evidence.intentId ||
@@ -162,7 +163,7 @@ export const executionOrderPlans = (
             reconciliationId: reconciliation.reconciliationId,
             protection: terms,
           })) ||
-        (terms._tag === 'Oco'
+        (isOcoProtection(terms)
           ? plan.orderType !== OrderType.Limit ||
             plan.timeInForce !== TimeInForce.Day ||
             BigInt(plan.quantityAtoms) % 1000000000n !== 0n ||

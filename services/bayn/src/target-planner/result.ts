@@ -7,6 +7,7 @@ import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire
 import { quantityScale } from '../quantity'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
+import { equityShortIsEligible } from '../execution/equity-short'
 import {
   canonicalizePlannerOutputFailure,
   decodePlannerOutputFailure,
@@ -17,6 +18,7 @@ import {
   TargetPlanStatus,
   blockedTargetPlanReasons,
   referenceTargetPlanSchemaVersion,
+  shortTargetCollateralMicros,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
   type TargetPlannerFailure,
@@ -241,6 +243,27 @@ const targetPlanStatusIssues = (
 }
 
 const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type): readonly Schema.FilterIssue[] => {
+  for (const target of result.targets) {
+    if (target.targetWeight < 0 || BigInt(target.targetQuantityAtoms) < 0n) {
+      const intent = result.intentTargets.find((value) => value.symbol === target.symbol)
+      if (
+        result.schemaVersion === legacyReferenceTargetPlanSchemaVersion ||
+        result.executionTerms === undefined ||
+        BigInt(target.currentQuantityAtoms) !== 0n ||
+        target.targetWeight >= 0 ||
+        BigInt(target.targetQuantityAtoms) >= 0n ||
+        (result.status === TargetPlanStatus.Planned &&
+          (intent === undefined ||
+            !equityShortIsEligible(
+              result.executionTerms.equityShortEntries?.[target.symbol],
+              intent.accountId,
+              target.symbol,
+              intent.createdAt,
+            )))
+      )
+        return [{ path: ['targets'], issue: 'a negative target must bind a fresh eligible flat-to-short equity entry' }]
+    }
+  }
   if (result.schemaVersion === legacyReferenceTargetPlanSchemaVersion) {
     return result.executionTerms === undefined
       ? []
@@ -266,23 +289,31 @@ const targetPlanBuyingPowerIssues = (
   const required = BigInt(result.requiredReferenceBuyNotionalMicros)
   const available = BigInt(result.availableBuyingPowerMicros)
   const residual = BigInt(result.residualBuyingPowerMicros)
+  const collateral = shortTargetCollateralMicros(result.targets)
+  if (BigInt(result.requiredShortCollateralMicros ?? '0') !== collateral)
+    issues.push({
+      path: ['requiredShortCollateralMicros'],
+      issue: 'must equal initial collateral for each new short, excluding its sale proceeds',
+    })
   if (required !== facts.requiredReferenceBuyNotional) {
     issues.push({
       path: ['requiredReferenceBuyNotionalMicros'],
       issue: 'must equal the exact aggregate reference notional of positive target deltas',
     })
   }
-  const expectedResidual = result.status === TargetPlanStatus.Blocked ? available : available - required
+  const expectedResidual = result.status === TargetPlanStatus.Blocked ? available : available - required - collateral
   if (residual !== expectedResidual) {
     issues.push({ path: ['residualBuyingPowerMicros'], issue: 'must agree with target-plan buying-power arithmetic' })
   }
-  if (result.status === TargetPlanStatus.Planned && required > 0n && required > available) {
+  if (result.status === TargetPlanStatus.Planned && required + collateral > 0n && required + collateral > available) {
     issues.push({ path: ['status'], issue: 'PLANNED requires sufficient current buying power' })
   }
   if (
     result.status === TargetPlanStatus.Blocked &&
     result.reason === TargetPlanReason.InsufficientBuyingPower &&
-    (facts.positiveDeltaCount === 0 || required === 0n || required <= available)
+    ((facts.positiveDeltaCount === 0 && collateral === 0n) ||
+      required + collateral === 0n ||
+      required + collateral <= available)
   ) {
     issues.push({
       path: ['reason'],

@@ -2283,6 +2283,108 @@ const bracketTerms = {
   stopLimitPriceMicros: '98900000',
   profitLimitPriceMicros: '103000000',
 } as const
+
+test.each(['target', 'stop'] as const)(
+  'native short replay covers at the ask through its %s and restores the exact liability checkpoint',
+  async (kind) => {
+    await run(
+      Effect.gen(function* () {
+        const quoteAt = startMs + 1000
+        const coverAsk = kind === 'target' ? 97 : 102.5
+        const cover = observedQuote(
+          {
+            ...quote,
+            eventAt: new Date(quoteAt).toISOString(),
+            ingestedAt: new Date(quoteAt).toISOString(),
+            bidPrice: coverAsk - 0.02,
+            askPrice: coverAsk,
+            sourceOffset: '1000',
+          },
+          quoteAt,
+        )
+        const shortConfig = {
+          ...config,
+          shortingEnabled: true,
+          quoteAt: (_symbol: string, at: number) => Effect.succeed(at >= quoteAt ? cover : observedQuote(quote)),
+          assets: [
+            Result.getOrThrow(
+              normalizeAssetResult(
+                {
+                  id: '12345678-1234-4234-8234-123456789abc',
+                  symbol: 'AAPL',
+                  class: AssetClass.UsEquity,
+                  exchange: AssetExchange.Nasdaq,
+                  status: AssetStatus.Active,
+                  tradable: true,
+                  fractionable: true,
+                  marginable: true,
+                  shortable: true,
+                  easy_to_borrow: true,
+                },
+                'AAPL',
+                observedAt,
+              ),
+            ),
+          ],
+        }
+        const broker = yield* setup(shortConfig)
+        const opening = intent({
+          side: OrderSide.Sell,
+          limitPriceMicros: '100000000',
+          notionalLimitMicros: '500000000',
+          protection: {
+            _tag: 'EquityShortBracket',
+            stopPriceMicros: '102000000',
+            stopLimitPriceMicros: '103000000',
+            profitLimitPriceMicros: '97000000',
+          },
+        })
+        const order = yield* submit(broker, opening)
+        expect(order.order.side).toBe(BrokerOrderSide.Sell)
+        const positions = (yield* broker.read.positions).value
+        expect(positions[0]).toMatchObject({
+          side: 'short',
+          quantityAtoms: '-5000000000',
+          costBasisMicros: '-500000000',
+          marketValueMicros: '-500000000',
+        })
+        expect(BigInt((yield* broker.read.account).value.buyingPowerMicros)).toBeLessThanOrEqual(9_250_000_000n)
+        const retained = yield* broker.checkpoint
+        const restored = yield* makeReplayBroker({
+          ...shortConfig,
+          restoreCheckpoint: { value: retained, expectedHash: retained.checkpointHash },
+        })
+        yield* restored.observeMarket(quoteAt, cover)
+        yield* TestClock.setTime(quoteAt)
+        const flat = yield* restored.checkpoint
+        expect(flat.state.ledger.positions).toEqual([])
+        expect(flat.state.ledger.fills.map((fill) => [fill.side, fill.priceMicros, fill.inventorySide])).toEqual([
+          ['sell', '100000000', 'SHORT'],
+          ['buy', String(Math.round(coverAsk * 1e6)), 'SHORT'],
+        ])
+        const net = BigInt(flat.state.ledger.netRealizedPnlAfterCostsMicros ?? '0')
+        expect(net).toBe(
+          (kind === 'target' ? 15_000_000n : -12_500_000n) - BigInt(flat.state.ledger.executionFeesMicros),
+        )
+        expect((yield* restored.read.orders({ status: OrderCollection.Open })).value).toEqual([])
+        yield* makeReplayBroker({
+          ...shortConfig,
+          restoreCheckpoint: { value: flat, expectedHash: flat.checkpointHash },
+        })
+        expect(
+          (yield* Effect.exit(
+            makeReplayBroker({
+              ...shortConfig,
+              shortingEnabled: false,
+              restoreCheckpoint: { value: retained, expectedHash: retained.checkpointHash },
+            }),
+          ))._tag,
+        ).toBe('Failure')
+      }),
+    )
+  },
+)
+
 const laterMarket = (delay: number, bid: number, size = 100) => {
   const at = startMs + delay
   return observedQuote(

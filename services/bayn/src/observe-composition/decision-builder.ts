@@ -4,9 +4,12 @@ import {
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
   protectedEntryBuyPriceCeilings,
+  protectedEntrySellPriceFloors,
+  protectedEntryShortEligibility,
   type ProtectedEntryTarget,
 } from '../strategy/runtime-decision'
 import { jevEntryPriceAllowances } from '../jev/entry-economics'
+import type { EquityShortEligibility } from '../execution/equity-short'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
@@ -17,7 +20,7 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
+import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings, type JevExitTarget } from '../jev/exit'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -831,6 +834,7 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
 }
 
 type JevDecisionServices =
+  | BrokerRead
   | CandidateObservationStore
   | JevBatchStore
   | JevEvaluationStore
@@ -1129,6 +1133,9 @@ export const prepareObservePlanner = <R>(
               snapshotContentHash: compiled.executionMarketData.contentHash,
               maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
               maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
+              ...(Object.keys(protectedEntryShortEligibility(compiled.decision)).length === 0
+                ? {}
+                : { equityShortEntries: protectedEntryShortEligibility(compiled.decision) }),
             },
           }
           return Result.succeed({
@@ -1152,6 +1159,7 @@ const executionRiskContext = (
 })
 
 type RiskInputPreparation = {
+  readonly equityShortEntries?: Readonly<Record<string, EquityShortEligibility>>
   readonly limitSlippageBps: number
   readonly maximumBuyPriceMicros?: Readonly<Record<string, bigint>>
   readonly minimumSellPriceMicros?: Readonly<Record<string, bigint>>
@@ -1237,6 +1245,9 @@ const reduceRiskInputs = (
               expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               marketDataObservedAt: input.executionMarketData?.observedAt ?? input.evaluatedAt,
               ...(entryQuote === undefined ? {} : { entryQuote }),
+              ...(input.equityShortEntries?.[target.symbol] === undefined
+                ? {}
+                : { equityShortEligibility: input.equityShortEntries[target.symbol] }),
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: input.evaluatedAt,
@@ -1272,11 +1283,15 @@ const reduceObserveRiskInputs = <R>(
   closeOnlyExpiresAt?: string,
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
   maximumBuyPriceMicros?: Readonly<Record<string, bigint>>,
+  minimumSellPriceMicros?: Readonly<Record<string, bigint>>,
+  equityShortEntries?: Readonly<Record<string, EquityShortEligibility>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
     limitSlippageBps: entryLimitSlippageBps,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
     ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
+    ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+    ...(equityShortEntries === undefined ? {} : { equityShortEntries }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1364,6 +1379,11 @@ export function buildStrategyCycleDecision<R>(
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const planningTargetWeights = compiled.planningTargetWeights ?? compiled.decision.targetWeights
+    // Capital and turnover caps bound absolute notionals. Direction and short eligibility remain
+    // bound to the signed native target in the planner and independent final broker checks.
+    const allocationTargetWeights = Object.fromEntries(
+      Object.entries(planningTargetWeights).map(([symbol, weight]) => [symbol, Math.abs(weight)]),
+    )
     const allowedSymbols = new Set(input.policy.allowedSymbols)
     const hasExternalPosition = facts.reconciliation.brokerState.positions.some(
       ({ symbol, quantityAtoms }) => BigInt(quantityAtoms) !== 0n && !allowedSymbols.has(symbol),
@@ -1384,7 +1404,7 @@ export function buildStrategyCycleDecision<R>(
                     ? null
                     : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
-                targetWeights: planningTargetWeights,
+                targetWeights: allocationTargetWeights,
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
@@ -1395,7 +1415,7 @@ export function buildStrategyCycleDecision<R>(
                       maxOrderNotionalMicros: BigInt(input.policy.maxOrderNotionalMicros),
                       maxSymbolExposureMicros: BigInt(input.policy.maxSymbolExposureMicros),
                       maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
-                      targetWeights: planningTargetWeights,
+                      targetWeights: allocationTargetWeights,
                     })
                   : Result.succeed(capitalMicros),
             ),
@@ -1452,6 +1472,8 @@ export function buildStrategyCycleDecision<R>(
         undefined,
         compiled.entryQuotes,
         protectedEntryBuyPriceCeilings(entryDecision),
+        protectedEntrySellPriceFloors(entryDecision),
+        protectedEntryShortEligibility(entryDecision),
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
@@ -1908,10 +1930,14 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const minimumSellPriceMicros = yield* Effect.fromResult(
       jevProfitTargetLimitFloors(request.exitTarget, evaluatedAt, targetPlan.targets),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const maximumBuyPriceMicros = yield* Effect.fromResult(
+      jevProfitTargetLimitCeilings(request.exitTarget, evaluatedAt, targetPlan.targets),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
         limitSlippageBps: closeLimitSlippageBps,
         minimumSellPriceMicros,
+        maximumBuyPriceMicros,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,

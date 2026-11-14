@@ -51,8 +51,8 @@ import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 
 export const testHash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 
-export const registeredRiskFixture = (accountId: string) => {
-  const riskPolicy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, defaultJevProtocolDocument.universe))
+export const registeredRiskFixture = (accountId: string, universe = defaultJevProtocolDocument.universe) => {
+  const riskPolicy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, universe))
   return {
     accountBindingHash: testHash({ schemaVersion: 'bayn.inference-cost-account.v1', accountId }),
     riskPolicyHash: testHash(riskPolicy),
@@ -135,7 +135,7 @@ const baseRegistrationFixture = (
     },
     policies: Object.values(JevResearchPolicy).map((policy) => ({
       policy,
-      ...registeredRiskFixture(`${policy}:account`),
+      ...registeredRiskFixture(`${policy}:account`, protocol.universe),
       authorityGenerationHash: sha256(`${policy}:generation`),
       sourceRevision: 'a'.repeat(40),
       imageDigest: sha256('image'),

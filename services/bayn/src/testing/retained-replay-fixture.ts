@@ -3,6 +3,7 @@ import { gzipSync } from 'node:zlib'
 import { sha256 } from '../hash'
 import { simulationFixture } from './simulated-streaming-fixture'
 import { historicalRawArrivals } from './historical-streaming-fixture'
+import { nativeJevFixture } from '../jev/native.test-support'
 import {
   arrivalPosition,
   compareArrivalPositions,
@@ -92,6 +93,39 @@ const retainedReplayFromSimulation = (
 })
 
 export const retainedReplayFixture = () => retainedReplayFromSimulation(simulationFixture())
+
+/** Current native research uses its own versioned source; legacy transport fixtures remain unchanged. */
+export const currentJevReplayFixture = () => {
+  const fixture = nativeJevFixture()
+  const observedAt = Date.parse(fixture.query.observedAt)
+  const market = fixture.protocol.marketProfiles.find((profile) => profile.feed === 'iex')
+  if (market === undefined) throw new Error('Missing native equity source')
+  const features = [...fixture.cut.projection.features.values()].flat().map((feature) => ({
+    availableAtMs: feature.availableAtMs,
+    record: { topic: feature.topic, partition: 0, offset: feature.offset, value: JSON.stringify(feature.value) },
+  }))
+  return {
+    ...retainReplayArrivals(
+      [...historicalRawArrivals(fixture.snapshot, observedAt), ...features],
+      [
+        {
+          universeId: market.universeId,
+          universeSymbolHash: market.universeSymbolHash,
+          symbols: market.universe,
+          topics: { ...market.sourceTopics, features: market.streamingInput.featureTopic },
+        },
+      ],
+      {
+        schemaVersion: 'bayn.supplied-arrival-times.v1',
+        description: 'All fixture records retained at their observed availability',
+        tieBreak: 'availability-topic-partition-offset',
+      },
+    ),
+    calendar: [
+      { session_open: '0930', session_close: '1600', date: fixture.query.sessionDate, open: '09:30', close: '16:00' },
+    ],
+  }
+}
 
 /** Synthetic executable quotes exercise a funded entry and target exit within one signal window. */
 export const momentumTradeReplayFixture = () => {
