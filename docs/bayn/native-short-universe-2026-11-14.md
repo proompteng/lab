@@ -202,6 +202,13 @@ entry-before-exit ordering, equal aggregate opening/closing quantities, terminal
 completed cycles. Both retained v38/v39 Box-cutover cases pass with the original source universe (18 assertions).
 These are synthetic execution and accounting proofs, not observed market profitability.
 
+A later automatic review also exposed a retained SELL-only durable protection-cancel predicate and long-only
+assessment valuation. Cancellation now derives the admitted broker side from the immutable protection tag, including
+BUY short protection. Valuation takes the registered protocol's exact universe profile, reconstructs signed inventory,
+and subtracts ask-priced short liabilities with upward rounding. Retained long marks keep their bid-side shape and
+downward rounding. PostgreSQL/TigerBeetle native regressions pass 53 assertions, including cancellation direction and
+deduplication; signed inventory and endpoint valuation regressions preserve unqualified nonflat-session status.
+
 ## Private evidence reproduction
 
 Raw membership responses, source pages, pagination receipts, calendars, account/asset observations and frozen

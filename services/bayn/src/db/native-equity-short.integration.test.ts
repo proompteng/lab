@@ -48,6 +48,8 @@ import { JevBatchStoreLive } from './jev-batch-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { IntentStore } from '../execution/intents/domain'
+import { IntentStoreLive } from '../execution/intents/postgres'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://agent@127.0.0.1:55432/bayn_v41_test'
@@ -68,6 +70,7 @@ integration('native equity short PostgreSQL execution', () => {
         JevBatchStoreLive,
         EntryInferenceJournalLive,
         CycleStoreLive,
+        IntentStoreLive,
       ).pipe(
         Layer.provideMerge(JevEvaluationStoreLive),
         Layer.provideMerge(WriterFenceLive),
@@ -233,6 +236,7 @@ integration('native equity short PostgreSQL execution', () => {
             ${document.createdAt},${document.createdAt},${cycle.identity.cycleId},'jev',${document.bindings.strategyDecisionHash},
             ${document.bindings.policyHash},${generation},${sql.json(protection)})`
           if (risk.protection._tag !== 'EquityShortBracket') throw new Error('Expected short protection')
+          const shortProtection = risk.protection
           for (const mutation of [
             { side: 'BUY', quantity: target.quantityAtoms, protection: risk.protection },
             { side: 'SELL', quantity: '1000000001', protection: risk.protection },
@@ -253,6 +257,31 @@ integration('native equity short PostgreSQL execution', () => {
               expect(Cause.pretty(changed.cause)).toContain('native short protection must bind')
           }
           yield* insert(target.side, target.quantityAtoms, risk.protection)
+          const cancellationAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+          for (const side of [OrderSide.Buy, OrderSide.Sell]) {
+            const brokerOrderId = `short-protective-${side}`
+            const eventId = yield* Effect.fromResult(canonicalHashV1Result({ intentId, brokerOrderId }))
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+                source_event_id,source_sequence,occurred_at,observed_at)
+                VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${accountId},
+                  ${brokerOrderId},${side === OrderSide.Buy ? 1 : 2},${cancellationAt},${cancellationAt})`
+                yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
+                symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status)
+                VALUES(${eventId},${accountId},'bayn.order.v3',${brokerOrderId},${brokerOrderId},${intentId},
+                  ${target.symbol},${side},'STOP_LIMIT','DAY',${target.quantityAtoms},0,
+                  ${shortProtection.stopLimitPriceMicros},${shortProtection.stopPriceMicros},'NEW')`
+              }),
+            )
+            const store = yield* IntentStore
+            const admission = yield* store.beginProtectionCancel(intentId, brokerOrderId, cancellationAt, undefined)
+            expect(admission._tag).toBe(side === OrderSide.Buy ? 'New' : 'NotEligible')
+            if (side === OrderSide.Buy)
+              expect(
+                (yield* store.beginProtectionCancel(intentId, brokerOrderId, cancellationAt, undefined))._tag,
+              ).toBe('PendingUnknown')
+          }
           expect(
             yield* sql`SELECT side,protection->>'_tag' AS protection FROM intents WHERE intent_id=${intentId}`,
           ).toEqual([{ side: 'SELL', protection: 'EquityShortBracket' }])

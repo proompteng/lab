@@ -22,6 +22,7 @@ import { EpisodeCostReason } from './position-outcomes'
 import { supportedAssessmentFixture } from '../system-assessment/fixtures.test-support'
 import { evaluateSystemAssessment } from '../system-assessment/assessment'
 import { JevResearchPolicy } from '../jev/acceptance'
+import { prepareValuationInventory } from '../system-assessment/valuation'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
@@ -147,6 +148,16 @@ test('explicit short episodes report cover profits and losses without treating p
     return prepared.transaction
   })
   const result = success(measurePositionEpisodes(evidence(history)))
+  const inventory = success(prepareValuationInventory(evidence(history)))
+  expect(inventory.at('2026-09-18T14:59:59.000Z')).toEqual([])
+  expect(inventory.at('2026-09-18T15:00:00.000Z')).toEqual([
+    { symbol: 'AAPL', quantityAtoms: '-3000000000', costBasisMicros: '-300000000' },
+  ])
+  expect(inventory.at('2026-09-18T15:01:00.000Z')).toEqual([
+    { symbol: 'AAPL', quantityAtoms: '-2000000000', costBasisMicros: '-200000000' },
+  ])
+  expect(inventory.at('2026-09-18T15:02:00.000Z')).toEqual([])
+  expect(inventory.at('2026-09-18T15:00:00.000Z')?.[0]?.quantityAtoms).toBe('-3000000000')
   expect(result.status).toBe('MEASURED')
   if (result.status !== 'MEASURED') throw new Error('Short episode missing')
   expect(result.completedCount).toBe(1)
