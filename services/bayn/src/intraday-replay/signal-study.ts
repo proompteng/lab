@@ -537,7 +537,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
           const snapshot = yield* Effect.fromResult(
             constructSimulatedSnapshot(yield* source.cursor, source.source, {
               ...manifest,
-              universe: jevMarketForFeed(manifest.feed).universe,
+              universe: jevMarketForFeed(manifest.feed, manifest.universeId).universe,
             }),
           )
           if (

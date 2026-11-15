@@ -34,10 +34,11 @@ import {
   jevBrokerEvidenceFreshUntilMs,
   jevProfitTargetHoldingDeadlineAt,
   jevProfitTargetLimitFloors,
+  jevProfitTargetLimitCeilings,
   jevProfitTargetStopCrossed,
 } from '../jev/exit'
 import { jevPricingQuery } from '../jev/runtime'
-import { protectedEntryBuyPriceCeilings } from '../strategy/runtime-decision'
+import { protectedEntryBuyPriceCeilings, protectedEntrySellPriceFloors } from '../strategy/runtime-decision'
 import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -275,6 +276,7 @@ type ExecutionIntentRecoveryLookup = Omit<PreparedExecutionIntent, 'intent'> & {
 
 const hasBoundSellExposure = (prepared: PreparedExecutionIntent, positions: readonly Position[]): boolean =>
   prepared.intent.side === OrderSide.Sell &&
+  prepared.intent.protection?._tag !== 'EquityShortBracket' &&
   positions.some(
     (position) =>
       position.accountId === prepared.intent.accountId &&
@@ -287,7 +289,12 @@ const entryCloseObligationIsUnresolved = (
   facts: MutationPreparationFacts,
   policy: Policy,
 ): boolean => {
-  if (!preparedIntents.some(({ intent }) => intent.side === OrderSide.Sell)) return false
+  if (
+    !preparedIntents.some(
+      ({ intent }) => intent.side === OrderSide.Sell && intent.protection?._tag !== 'EquityShortBracket',
+    )
+  )
+    return false
   const { brokerState, report, riskContext } = facts.reconciliation
   if (preparedIntents.some((prepared) => hasBoundSellExposure(prepared, brokerState.positions))) return true
   const now = Date.parse(facts.evaluatedAt)
@@ -471,7 +478,7 @@ export const prepareExpiredEntryCancellation = (
       const stored = prepared.stored
       if (
         stored === undefined ||
-        stored.intent.side !== OrderSide.Buy ||
+        (stored.intent.side !== OrderSide.Buy && stored.intent.protection?._tag !== 'EquityShortBracket') ||
         stored.intent.state === IntentState.Terminal ||
         observedAt < executionSubmitExpiresAt(cutoff, prepared.riskBinding.evaluation.decision.expiresAt)
       )
@@ -765,7 +772,10 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     if (allowSubmit) {
-      const buyCeilings = protectedEntryBuyPriceCeilings(document.strategyDecision)
+      const coverCeilings = yield* Effect.fromResult(
+        jevProfitTargetLimitCeilings(profitTarget, document.createdAt, document.targetPlan.targets),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+      const buyCeilings = { ...protectedEntryBuyPriceCeilings(document.strategyDecision), ...coverCeilings }
       const profitFloors = yield* Effect.fromResult(
         jevProfitTargetLimitFloors(profitTarget, document.createdAt, document.targetPlan.targets),
       ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -780,7 +790,8 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
-            profitFloors[prepared.targetIntent.symbol],
+            profitFloors[prepared.targetIntent.symbol] ??
+              protectedEntrySellPriceFloors(document.strategyDecision)[prepared.targetIntent.symbol],
             buyCeilings[prepared.targetIntent.symbol],
           ),
         )
@@ -941,7 +952,9 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             if (
               drainOpenOrders ||
               (profitHoldingDeadlineAt !== undefined && facts.evaluatedAt >= profitHoldingDeadlineAt) ||
-              (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
+              (mutationPhase === 'ENTRY' &&
+                (record.intent.side === OrderSide.Buy || record.intent.protection?._tag === 'EquityShortBracket') &&
+                hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
                   executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
@@ -959,7 +972,6 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             const state = facts.reconciliation.brokerState
             if (
               mutationPhase === 'CLOSE' &&
-              record.intent.side === OrderSide.Sell &&
               profitTarget !== undefined &&
               profitHoldingDeadlineAt !== undefined &&
               profitTarget.symbols[0] === record.intent.symbol &&
@@ -972,7 +984,11 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               state.unknownOrderCount === 0 &&
               facts.reconciliation.riskContext.unknownMutationCount === 0 &&
               state.positions.some(
-                (position) => position.symbol === record.intent.symbol && BigInt(position.quantityAtoms) > 0n,
+                (position) =>
+                  position.symbol === record.intent.symbol &&
+                  (record.intent.side === OrderSide.Buy
+                    ? BigInt(position.quantityAtoms) < 0n
+                    : BigInt(position.quantityAtoms) > 0n),
               )
             ) {
               const observedAt = yield* dependencies.now

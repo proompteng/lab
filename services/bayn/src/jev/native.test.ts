@@ -1,4 +1,4 @@
-import { equityMarketProfile } from './markets'
+import { currentEquityMarketProfile as equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -308,7 +308,7 @@ describe('native Jev entry and position observations', () => {
 
   test('the development protocol covers all available non-benchmark symbols without changing broker execution terms', () => {
     const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    expect(protocol.candidateSymbols).toHaveLength(18)
+    expect(protocol.candidateSymbols).toHaveLength(13)
     expect(protocol.maximumPositions).toBe(1)
     expect(protocol.executionModel.order.timeInForce).toBe('asset-session')
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, candidateSymbols: ['AAPL', 'AAPL'] }))).toBe(true)

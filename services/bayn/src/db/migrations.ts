@@ -1,3 +1,6 @@
+import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
+import equityShortObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
+import equityShortAccounting from '../../migrations/0198_equity_short_accounting'
 import inferenceExpenseWakeups from '../../migrations/0197_inference_expense_wakeups'
 import streamingOperationalController from '../../migrations/0196_streaming_operational_controller'
 import jevInferenceWork from '../../migrations/0195_jev_inference_work'
@@ -199,6 +202,9 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '197_inference_expense_wakeups': inferenceExpenseWakeups,
+  '198_equity_short_accounting': equityShortAccounting,
+  '199_equity_short_observe_cutover': equityShortObserveCutover,
+  '200_native_equity_shorts': nativeEquityShorts,
   '196_streaming_operational_controller': streamingOperationalController,
   '195_jev_inference_work': jevInferenceWork,
   '194_broker_notification_receipts': brokerNotificationReceipts,

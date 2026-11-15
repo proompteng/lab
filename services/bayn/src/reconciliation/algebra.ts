@@ -3,10 +3,11 @@ import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
 import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
-import { prepareAccounting } from '../accounting/domain'
+import { AccountingInventorySide, prepareAccounting } from '../accounting/domain'
 import type { PositionCost, PreparedAccounting } from '../accounting/model'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { MutationEventType } from '../execution/mutations/model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
@@ -383,7 +384,15 @@ export const verifyAccountingHistory = (
     const prepared: PreparedAccounting[] = []
     for (const { transaction, fill, prior } of history) {
       const expected = yield* Result.mapError(
-        prepareAccounting(transaction.brokerEventId, fill, prior, ledger),
+        prepareAccounting(
+          transaction.brokerEventId,
+          fill,
+          prior,
+          ledger,
+          transaction.schemaVersion === equityShortAccountingSchemaVersion
+            ? AccountingInventorySide.Short
+            : AccountingInventorySide.Long,
+        ),
         (cause): ReconciliationAlgebraFailure => ({
           _tag: 'AccountingPlanFailed',
           transactionId: transaction.transactionId,

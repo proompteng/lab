@@ -92,16 +92,17 @@ const comparePosition = (
         // Both broker fields must reproduce from that basis; ledger and cash amounts remain exact.
         const reportedAverageMatches =
           expectedQuantity === observedQuantity &&
-          observedQuantity > 0n &&
-          expectedCost > 0n &&
+          observedQuantity !== 0n &&
+          expectedCost * observedQuantity > 0n &&
+          (observedCost === 0n || observedCost * observedQuantity > 0n) &&
           basisDenominator > 0n &&
           basisNumerator > 0n &&
           matchesReportedBasis({
             priceAtomsDenominator: basisDenominator,
             priceAtomsNumerator: basisNumerator,
-            quantity: observedQuantity,
+            quantity: absolute(observedQuantity),
             averagePriceMicros: averagePrice,
-            costMicros: observedCost,
+            costMicros: absolute(observedCost),
           })
         return pipe(
           Result.all({

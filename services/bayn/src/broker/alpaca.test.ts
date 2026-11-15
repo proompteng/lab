@@ -391,6 +391,7 @@ describe('Alpaca paper reads', () => {
       source: 'alpaca-v2-account-configurations',
       requestHash,
       fractionalTrading: true,
+      noShorting: true,
     } as const
     expect(result.value).toEqual({
       ...normalized,

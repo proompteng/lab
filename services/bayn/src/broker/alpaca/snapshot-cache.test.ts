@@ -5,6 +5,7 @@ import type { PgClient } from '@effect/sql-pg'
 import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
 import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
 import { TestClock } from 'effect/testing'
+import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
 
 import { canonicalHashV1Result } from '../../hash'
 import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
@@ -19,6 +20,7 @@ import {
   AccountStatus,
   OrderCollection,
   OrderStatus,
+  SortDirection,
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
   type Account,
@@ -703,6 +705,160 @@ describe('durable broker observations', () => {
 })
 
 describe('complete history reuse between broker captures', () => {
+  test('projects recent history from the verified cut without redundant requests at production page counts', async () => {
+    const at = '2026-11-13T18:00:00.000Z'
+    const template = observedBrokerSnapshotFixture(accountId, at, '2026-11-12T18:00:00.000Z')
+    const order = template.snapshot.history.orders.rows[0]?.value
+    const fill = template.snapshot.history.fills[0]?.value
+    if (order === undefined || fill === undefined) throw new Error('missing history fixture')
+    // Match the traced capture: four order pages, nineteen fill pages and five fee pages.
+    const orders = Array.from({ length: 1500 }, (_, i) => ({
+      ...order,
+      brokerOrderId: `order-${i}`,
+      clientOrderId: `client-${i}`,
+      submittedAt: new Date(Date.parse('2026-11-12T18:00:00.000Z') - i * 1000).toISOString(),
+      filledQuantityAtoms: i === 0 ? '1811000000000' : '0',
+      quantityAtoms: i === 0 ? '1811000000000' : '1000000000',
+      status: i === 0 ? OrderStatus.Filled : OrderStatus.Canceled,
+    }))
+    const fills = Array.from({ length: 1811 }, (_, i) => ({
+      ...fill,
+      activityId: `fill-${i}`,
+      brokerOrderId: 'order-0',
+      transactionTime: new Date(Date.parse(at) - (2000 - i) * 1000).toISOString(),
+    }))
+    const fees = Array.from({ length: 401 }, (_, i) => ({
+      accountId,
+      activityId: `fee-${i}`,
+      date: '2026-11-12',
+      netAmountMicros: '-1',
+    }))
+    const source = fixture({ orders, fills, fees })
+    const pageEvidence = <A>(result: ReadResult<unknown>, value: A): ReadResult<A> => ({
+      value,
+      evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(value)) },
+    })
+    const read: BrokerReadShape = {
+      ...source.read,
+      orders: (query) =>
+        source.read.orders(query).pipe(
+          Effect.map((result) =>
+            pageEvidence(
+              result,
+              result.value
+                .filter((row) => query?.until === undefined || (row.submittedAt ?? '') < query.until)
+                .slice(0, query?.limit)
+                .map((row) => ({ ...row, observedAt: result.evidence.observedAt })),
+            ),
+          ),
+        ),
+      fillActivities: (query) =>
+        source.read.fillActivities(query).pipe(
+          Effect.map((result) => {
+            const ordered = query?.direction === SortDirection.Descending ? [...fills].reverse() : fills
+            const start =
+              query?.pageToken === undefined ? 0 : ordered.findIndex((row) => row.activityId === query.pageToken) + 1
+            const items = ordered.slice(start, start + (query?.pageSize ?? 100))
+            const last = items.at(-1)
+            return pageEvidence(result, {
+              items,
+              ...(items.length === query?.pageSize && last !== undefined ? { nextPageToken: last.activityId } : {}),
+            })
+          }),
+        ),
+      feeActivities: (query) =>
+        source.read.feeActivities(query).pipe(
+          Effect.map((result) => {
+            const start =
+              query?.pageToken === undefined ? 0 : fees.findIndex((row) => row.activityId === query.pageToken) + 1
+            const items = fees.slice(start, start + (query?.pageSize ?? 100))
+            const last = items.at(-1)
+            return pageEvidence(result, {
+              items,
+              ...(items.length === query?.pageSize && last !== undefined ? { nextPageToken: last.activityId } : {}),
+            })
+          }),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        const first = yield* capture(read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls).toHaveLength(60) // Before: 62, including two overlapping recent-history reads.
+        expect(first.snapshot.history.orders.rows).toHaveLength(1500)
+        expect(first.snapshot.history.fills).toHaveLength(1811)
+        expect(first.snapshot.history.fees).toHaveLength(401)
+        const recentOrder = first.snapshot.history.orders.rows[0]
+        const recentFill = first.snapshot.history.fills.at(-1)
+        if (recentOrder === undefined || recentFill === undefined) throw new Error('missing captured history')
+        expect(first.recentOrders.value).toEqual([recentOrder.value])
+        expect(first.recentOrders.evidence).toEqual(recentOrder.evidence)
+        expect(first.recentFills.value).toEqual({ items: [recentFill.value], nextPageToken: 'fill-1810' })
+        expect(first.recentFills.evidence).toEqual(recentFill.evidence)
+        yield* TestClock.adjust(40_000)
+        source.calls.length = 0
+        const second = yield* capture(read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls).toHaveLength(33) // Before: 34; keep the independent latest-fill invalidation probe.
+        expect(second.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        expect(second.recentOrders.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
+        expect(second.recentFills.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
+      }),
+    )
+  })
+
+  test('empty recent-history projections retain real response evidence without additional probes', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        const value = yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(value.recentOrders.value).toEqual([])
+        expect(value.recentFills.value).toEqual({ items: [] })
+        expect(value.recentOrders.evidence.requestId).toContain('orders:')
+        expect(value.recentFills.evidence.requestId).toContain('fills:')
+        expect(source.calls).toHaveLength(10)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(value))).toBe(true)
+      }),
+    )
+  })
+
+  test('a new latest fill rebuilds the bracket, while a correction with the same identity still rejects it', async () => {
+    const at = '2026-11-13T18:00:00.000Z'
+    const template = observedBrokerSnapshotFixture(accountId, at, '2026-11-13T17:59:59.000Z')
+    const order = template.snapshot.history.orders.rows[0]?.value
+    const fill = template.snapshot.history.fills[0]?.value
+    if (order === undefined || fill === undefined) throw new Error('missing history fixture')
+    const orders: Order[] = []
+    const fills: FillActivity[] = []
+    const source = fixture({ orders, fills })
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        orders.push(order)
+        fills.push(fill)
+        const fresh = yield* capture(source.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        expect(fresh.recentFills.value.items).toEqual([fill])
+        fills[0] = { ...fill, priceAtoms: '199000000000' }
+        const corrected = yield* capture(
+          source.read,
+          { generation: 3, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(corrected).toMatchObject({
+          _tag: 'Failure',
+          failure: { cause: { failure: { reason: 'HistoryChanged' } } },
+        })
+        const rebuilt = yield* capture(source.read, { generation: 4, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(rebuilt.recentFills.value.items[0]?.priceAtoms).toBe('199000000000')
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(7)
+      }),
+    )
+  })
+
   test('stable polls use one fresh full scan after the initial bracket', async () => {
     const source = fixture()
     await run(

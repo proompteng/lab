@@ -17,6 +17,7 @@ import { JevObservationSchema, RetainedJevObservationSchema } from './observatio
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
+import type { EquityShortEligibility } from '../execution/equity-short'
 import { jevHistoryStartMs, jevSignalWindowEndMs } from './observation-query'
 
 const invalidObservation = (
@@ -44,7 +45,10 @@ const reproduceObservation = <
     const snapshot = yield* reproduceStrategySnapshot(observation.manifest, observation.rows).pipe(
       Result.mapError((cause) => invalidObservation(JevObservationCheck.Snapshot, cause)),
     )
-    const market = jevMarketForFeed(snapshot.manifest.feed)
+    const market = jevMarketForFeed(
+      snapshot.manifest.feed,
+      observation.protocol.marketProfiles.find((profile) => profile.feed === snapshot.manifest.feed)?.universeId,
+    )
     const requestedCandidates =
       observation.portfolio.purpose === 'ENTRY' ? (snapshot.manifest.candidateSymbols ?? []) : candidates
     const hasReference =
@@ -193,6 +197,7 @@ export const makeJevObservation = (input: {
   readonly protocol: JevProtocol
   readonly portfolio: JevPortfolio
   readonly snapshot: VerifiedStrategyMarketSnapshot
+  readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
 }) =>
   Result.gen(function* () {
     const rows = yield* persistIntradayRecordRows(input.snapshot)
@@ -203,6 +208,7 @@ export const makeJevObservation = (input: {
       observedAt: input.snapshot.manifest.observedAt,
       protocol: input.protocol,
       portfolio: input.portfolio,
+      ...(input.equityShortEligibility === undefined ? {} : { equityShortEligibility: input.equityShortEligibility }),
       manifest: input.snapshot.manifest,
       rows,
     }
@@ -225,3 +231,5 @@ export const restoreJevObservation = (input: unknown) =>
       return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
     return { observation, snapshot, contentHash }
   })
+
+export type RestoredJevObservation = Result.Result.Success<ReturnType<typeof restoreJevObservation>>

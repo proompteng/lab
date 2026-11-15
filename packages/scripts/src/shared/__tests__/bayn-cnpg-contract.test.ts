@@ -212,6 +212,10 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   })
 
   expect(controller.spec.replicas).toBe(2)
+  expect(controller.spec.template.spec.containers[0].env).toContainEqual({
+    name: 'BAYN_REPORTING_ALLOWED',
+    value: 'false',
+  })
   expect(controller.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(controller.spec.template.spec.topologySpreadConstraints).toEqual([
     {

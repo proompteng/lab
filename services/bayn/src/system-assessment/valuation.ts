@@ -9,13 +9,22 @@ import { Sha256Schema, SignedMicrosSchema, SymbolSchema, UnsignedMicrosSchema, U
 export const AccountValuationSchema = Schema.Struct({
   inventorySourceHash: Sha256Schema,
   positions: Schema.Array(
-    Schema.Struct({
-      symbol: SymbolSchema,
-      quantityAtoms: UnsignedMicrosSchema,
-      bidPriceMicros: UnsignedMicrosSchema,
-      costBasisMicros: UnsignedMicrosSchema,
-      quoteSourceHash: Sha256Schema,
-    }),
+    Schema.Union([
+      Schema.Struct({
+        symbol: SymbolSchema,
+        quantityAtoms: UnsignedMicrosSchema,
+        bidPriceMicros: UnsignedMicrosSchema,
+        costBasisMicros: UnsignedMicrosSchema,
+        quoteSourceHash: Sha256Schema,
+      }),
+      Schema.Struct({
+        symbol: SymbolSchema,
+        quantityAtoms: SignedMicrosSchema.check(Schema.isPattern(/^-[1-9][0-9]*$/)),
+        askPriceMicros: UnsignedMicrosSchema,
+        costBasisMicros: SignedMicrosSchema,
+        quoteSourceHash: Sha256Schema,
+      }),
+    ]),
   ),
 })
 
@@ -36,12 +45,22 @@ export const accountMarkValue = (mark: typeof AccountMarkSchema.Type) => {
   const symbols = new Set<string>()
   for (const position of mark.valuation.positions) {
     const quantity = BigInt(position.quantityAtoms)
-    const bid = BigInt(position.bidPriceMicros)
     const cost = BigInt(position.costBasisMicros)
-    if (symbols.has(position.symbol) || quantity <= 0n || bid <= 0n || cost < 0n) return null
+    const short = quantity < 0n
+    const price = 'askPriceMicros' in position ? BigInt(position.askPriceMicros) : BigInt(position.bidPriceMicros)
+    if (
+      symbols.has(position.symbol) ||
+      quantity === 0n ||
+      price <= 0n ||
+      short !== 'askPriceMicros' in position ||
+      (short ? cost > 0n || position.symbol.includes('/') : cost < 0n)
+    )
+      return null
     symbols.add(position.symbol)
-    // Liquidation marks round down; rounding cannot create an additional microdollar of equity.
-    inventoryValue += (quantity * bid) / quantityScale
+    // Assets round down and cover liabilities round up; neither may invent a microdollar of equity.
+    inventoryValue += short
+      ? -((-quantity * price + quantityScale - 1n) / quantityScale)
+      : (quantity * price) / quantityScale
     costBasis += cost
   }
   return {
@@ -151,8 +170,9 @@ export const prepareValuationInventory = (forward: ForwardPerformanceEvidenceInp
         if (uncertain > 0) return null
         const positions = []
         for (const [symbol, { quantity, cost }] of holdings) {
-          if (quantity < 0n || cost < 0n || (quantity === 0n && cost !== 0n)) return null
-          if (quantity > 0n)
+          if ((quantity > 0n && cost < 0n) || (quantity < 0n && cost > 0n) || (quantity === 0n && cost !== 0n))
+            return null
+          if (quantity !== 0n)
             positions.push({ symbol, quantityAtoms: quantity.toString(), costBasisMicros: cost.toString() })
         }
         return positions.sort((a, b) => a.symbol.localeCompare(b.symbol))

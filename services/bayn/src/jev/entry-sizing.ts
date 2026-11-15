@@ -2,7 +2,7 @@ import { Result } from 'effect'
 
 import { instrumentMarket, MarketKind } from '../instruments'
 import type { ExecutionModel } from '../execution-model-contract'
-import { quantityScale } from '../quantity'
+import { quantityScale, quantityFromNumber } from '../quantity'
 import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
 import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import { JevContractError } from './contract'
@@ -17,7 +17,7 @@ export const maximumAllocatedBuyQuantities = (input: {
     const quantities: Record<string, string> = {}
     for (const [symbol, weight] of Object.entries(input.targetWeights).sort(([a], [b]) => a.localeCompare(b))) {
       quantities[symbol] =
-        weight === 0
+        weight <= 0
           ? '0'
           : (yield* desiredQuantityAtoms(
               BigInt(input.capitalMicros),
@@ -64,4 +64,36 @@ export const maximumFundedBuyQuantities = (
       quantities[symbol] = (BigInt(quantity) < ceiling ? BigInt(quantity) : ceiling).toString()
     }
     return Object.freeze(quantities)
+  })
+
+/** Short quantities use the executable sale bid and the original funded whole-share ceiling. */
+export const maximumFundedSellQuantities = (input: {
+  readonly bidPriceMicros: Readonly<Record<string, string>>
+  readonly bidSize: Readonly<Record<string, number>>
+  readonly targetWeights: Readonly<Record<string, number>>
+  readonly capitalMicros: string
+  readonly precision: ExecutionModel['precision']
+  readonly plans: Readonly<Record<string, FundedEntryExitPlan>>
+}) =>
+  Result.gen(function* () {
+    const allocated = yield* maximumAllocatedBuyQuantities({
+      ...input,
+      askPriceMicros: input.bidPriceMicros,
+      targetWeights: Object.fromEntries(
+        Object.entries(input.targetWeights).map(([symbol, weight]) => [symbol, Math.max(0, -weight)]),
+      ),
+    })
+    const quantities: Record<string, string> = {}
+    for (const [symbol, plan] of Object.entries(input.plans).sort(([a], [b]) => a.localeCompare(b))) {
+      const quantity = BigInt(allocated[symbol] ?? '0')
+      const maximum =
+        plan.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ? BigInt(plan.maximumQuantityAtoms) : 0n
+      const displayed = yield* quantityFromNumber(input.bidSize[symbol] ?? 0).pipe(
+        Result.mapError((cause) => new JevContractError({ message: 'Short displayed bid quantity is invalid', cause })),
+      )
+      quantities[symbol] = [quantity, maximum, (displayed / quantityScale) * quantityScale]
+        .reduce((a, b) => (a < b ? a : b))
+        .toString()
+    }
+    return quantities
   })

@@ -4,7 +4,7 @@ import { replayRateCardFixture } from '../testing/inference-rate-card.test-suppo
 import { registeredReplayInferenceTariff } from './inference-costs'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
+import { cryptoMarketProfile, currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { ReconciliationStatus } from '../execution/contracts'
 import { expect, test } from 'bun:test'
 import { Effect, FileSystem, Layer, Result, Schema } from 'effect'
@@ -18,7 +18,7 @@ import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { makeControlEntryObservation } from './control-entry'
 import { createControlPortfolio } from './control-portfolio'
 import { makeControlJevJournal } from './control-jev-journal'
-import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import { currentJevReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import {
   prepareBacktest as prepareWithCapture,
@@ -26,6 +26,7 @@ import {
   BacktestIssue,
   qualifiesReplayValuation,
   BacktestInputSchema,
+  backtestBrokerEvidenceConfig,
 } from './backtest'
 import {
   bindLatencyReplayInput,
@@ -45,7 +46,7 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { nativeReplayPolicyIdentity } from './native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
 const fixture = () => {
-  const source = retainedReplayFixture()
+  const source = currentJevReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
     schemaVersion: 'bayn.backtest.v11',
@@ -80,7 +81,7 @@ const fixture = () => {
     openingCashMicros: '100000000000',
     fractionalTrading: false,
     calendar: [
-      ...source.input.input.calendar,
+      ...source.calendar,
       { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
     ],
     assets: equityMarketProfile.universe.map((symbol, index) => ({
@@ -551,7 +552,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v40')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v41')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
@@ -672,6 +673,38 @@ test('session preparation rejects changed strategy, partial hours, unknown calen
       }),
     ),
   ).toBe(true)
+})
+
+test('native short replay requires an explicit frozen account observation and preserves counterfactual timing', () => {
+  const input = fixture()
+  const enabled = {
+    shortingEnabled: true,
+    noShorting: false,
+    observedAt: '2026-09-04T13:29:00.000Z',
+    sourceHash: 'f'.repeat(64),
+    policy: 'retained-as-of-session' as const,
+  }
+  const configFor = (value: unknown) =>
+    Result.getOrThrow(backtestBrokerEvidenceConfig(Result.getOrThrow(prepareBacktest(value))))
+  expect(configFor(input).shortingEnabled).toBeUndefined()
+  expect(configFor({ ...input, equityShortAccount: enabled }).shortingEnabled).toBe(true)
+  expect(configFor({ ...input, equityShortAccount: { ...enabled, noShorting: true } }).shortingEnabled).toBe(false)
+  expect(configFor({ ...input, equityShortAccount: { ...enabled, shortingEnabled: false } }).shortingEnabled).toBe(
+    false,
+  )
+  const future = { ...enabled, observedAt: '2026-11-14T18:00:00.000Z' }
+  expect(Result.isFailure(prepareBacktest({ ...input, equityShortAccount: future }))).toBe(true)
+  const counterfactual = {
+    ...input,
+    equityShortAccount: { ...future, policy: 'counterfactual-current-account-eligibility' },
+  }
+  expect(configFor(counterfactual).shortingEnabled).toBe(true)
+  expect(Result.getOrThrow(prepareBacktest(counterfactual)).input.equityShortAccount?.policy).toBe(
+    'counterfactual-current-account-eligibility',
+  )
+  expect(Result.getOrThrow(prepareBacktest(counterfactual)).runId).not.toBe(
+    Result.getOrThrow(prepareBacktest({ ...input, equityShortAccount: enabled })).runId,
+  )
 })
 
 test('independently pinned full-session coverage permits quiet opening and closing intervals', () => {
@@ -969,6 +1002,13 @@ test('stale held-position marks do not qualify replay economics', () => {
   expect(qualifiesReplayValuation({ ...valuation, marks: [mark] })).toBe(true)
   expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, staleForExecution: true }] })).toBe(false)
   expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, bidLiquidityAvailable: false }] })).toBe(false)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, coverLiquidityAvailable: false }] })).toBe(false)
+  expect(
+    qualifiesReplayValuation({
+      ...valuation,
+      marks: [{ ...mark, bidLiquidityAvailable: false, coverLiquidityAvailable: true }],
+    }),
+  ).toBe(true)
 })
 
 test('prepared replay preserves the strict native protocol independently of the equity source profile', () => {

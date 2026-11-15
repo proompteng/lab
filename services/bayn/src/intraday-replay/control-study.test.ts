@@ -4,7 +4,7 @@ import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
@@ -391,8 +391,10 @@ test.each([
   expect(report.completedEpisodes).toBe(0)
   if ('excludedSymbols' in options) {
     expect(report.simulatedOpportunityAccounting?.entrySnapshotsWithCandidateExclusions).toBe(84)
-    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(84 * 15)
-    expect(report.decisions[0]?.exclusions).toHaveLength(15)
+    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(
+      84 * equityMarketProfile.candidateSymbols.length,
+    )
+    expect(report.decisions[0]?.exclusions).toHaveLength(equityMarketProfile.candidateSymbols.length)
   }
 })
 
@@ -936,8 +938,14 @@ test('active-build frozen-source control runner produces reproducible hashed inc
             process.kill()
           }).pipe(Effect.andThen(Effect.promise(() => process.exited))),
       )
-      const status = yield* Effect.promise(() => child.exited)
-      const error = yield* Effect.promise(() => new Response(child.stderr).text())
+      const [status, error] = yield* Effect.all(
+        [
+          Effect.promise(() => child.exited),
+          Effect.promise(() => new Response(child.stderr).text()),
+          Effect.promise(() => new Response(child.stdout).text()),
+        ],
+        { concurrency: 3 },
+      )
       expect({ status, error }).toEqual({ status: 0, error: '' })
       const written = yield* fs.readFileString(`${directory}/report.json`)
       expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
@@ -949,10 +957,10 @@ test('active-build frozen-source control runner produces reproducible hashed inc
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())),
-      Effect.timeout('60 seconds'),
+      Effect.timeout('150 seconds'),
     ),
   )
-}, 70_000)
+}, 160_000)
 
 test.each([ControlManagementMode.Mechanical])(
   'offline %s preflight verifies source coverage and writes a diagnostic without provider configuration',

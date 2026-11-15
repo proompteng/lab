@@ -7,6 +7,10 @@ import { BrokerAccess, type ExecutionAuthority } from '../../execution/authority
 import {
   IntentSchema,
   IntentState,
+  isBracketProtection,
+  isOcoProtection,
+  isStopProtection,
+  isEquityShortProtection,
   OrderSide as DomainSide,
   OrderType as DomainOrderType,
   TimeInForce as DomainTimeInForce,
@@ -249,8 +253,9 @@ export const resolveMutationCapability = (
 export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
   const crypto = instrumentMarket(intent.symbol) === MarketKind.Crypto
   const protective = intent.protection
-  const stop = protective?._tag === 'StopLimit'
-  const grouped = protective?._tag === 'Bracket' || protective?._tag === 'Oco'
+  const stop = isStopProtection(protective)
+  const grouped = isBracketProtection(protective) || isOcoProtection(protective)
+  const short = isEquityShortProtection(protective)
   const expectedDuration = stop
     ? crypto
       ? DomainTimeInForce.GoodUntilCanceled
@@ -262,7 +267,10 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
     intent.orderType !== (stop ? DomainOrderType.StopLimit : DomainOrderType.Limit) ||
     intent.timeInForce !== expectedDuration ||
     (protective !== undefined &&
-      (protective._tag === 'Bracket' ? intent.side !== DomainSide.Buy : intent.side !== DomainSide.Sell)) ||
+      (isBracketProtection(protective)
+        ? intent.side !== (short ? DomainSide.Sell : DomainSide.Buy)
+        : intent.side !== (short ? DomainSide.Buy : DomainSide.Sell))) ||
+    (short && crypto) ||
     (grouped && (crypto || quantity.success % quantityScale !== 0n))
   )
     return Result.fail(
@@ -280,15 +288,18 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
     if (
       stopPrice <= 0n ||
       quantizeInstrumentPriceMicros(intent.symbol, stopPrice, 'DOWN') !== stopPrice ||
-      (stop && price.success > stopPrice) ||
+      (stop && (short ? price.success < stopPrice : price.success > stopPrice)) ||
       (grouped &&
         (quantizeInstrumentPriceMicros(intent.symbol, BigInt(protective.stopLimitPriceMicros), 'UP') !==
           BigInt(protective.stopLimitPriceMicros) ||
           quantizeInstrumentPriceMicros(intent.symbol, BigInt(protective.profitLimitPriceMicros), 'UP') !==
             BigInt(protective.profitLimitPriceMicros) ||
-          BigInt(protective.stopLimitPriceMicros) > stopPrice ||
-          stopPrice >= BigInt(protective.profitLimitPriceMicros))) ||
-      (protective._tag === 'Oco' && intent.limitPriceMicros !== protective.profitLimitPriceMicros)
+          (short
+            ? BigInt(protective.stopLimitPriceMicros) < stopPrice ||
+              stopPrice <= BigInt(protective.profitLimitPriceMicros)
+            : BigInt(protective.stopLimitPriceMicros) > stopPrice ||
+              stopPrice >= BigInt(protective.profitLimitPriceMicros)))) ||
+      (isOcoProtection(protective) && intent.limitPriceMicros !== protective.profitLimitPriceMicros)
     )
       return Result.fail(
         new OrderRequestError({
@@ -308,7 +319,7 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
     ...(stop ? { stop_price: microsToDecimal(BigInt(protective.stopPriceMicros)) } : {}),
     ...(grouped
       ? {
-          order_class: protective._tag === 'Bracket' ? ('bracket' as const) : ('oco' as const),
+          order_class: isBracketProtection(protective) ? ('bracket' as const) : ('oco' as const),
           take_profit: { limit_price: microsToDecimal(BigInt(protective.profitLimitPriceMicros)) },
           stop_loss: {
             stop_price: microsToDecimal(BigInt(protective.stopPriceMicros)),
@@ -533,7 +544,7 @@ const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean
       (facts.request.stop_price === undefined ? undefined : decimalToMicros(facts.request.stop_price)) &&
     order.orderClass === (facts.request.order_class ?? 'simple')
   if (!commonMatches) return false
-  if (facts.intent.protection?._tag === 'Bracket' || facts.intent.protection?._tag === 'Oco') {
+  if (isBracketProtection(facts.intent.protection) || isOcoProtection(facts.intent.protection)) {
     if (
       Result.isFailure(
         verifyProtectionGroup(order, {
