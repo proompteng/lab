@@ -21,11 +21,11 @@ New York fee-date boundaries. It is a small reproducible fixture, not complete f
 On November 15, 2026, using Bun 1.4.2 on Linux x64, baseline `fc70d503c1c139b21cb8827eca7425d259079a9e` and
 the optimized code produced these median measurements in separate sequential processes:
 
-| Change | Single equity sale | Equity entry economics |
-| --- | ---: | ---: |
-| Baseline | 2.647 µs | 230.019 µs |
-| Reuse schema predicates | 2.482 µs | 225.349 µs |
-| Also aggregate fills in one pass | 2.321 µs | 216.347 µs |
+| Change                           | Single equity sale | Equity entry economics |
+| -------------------------------- | -----------------: | ---------------------: |
+| Baseline                         |           2.647 µs |             230.019 µs |
+| Reuse schema predicates          |           2.482 µs |             225.349 µs |
+| Also aggregate fills in one pass |           2.321 µs |             216.347 µs |
 
 The final median reductions were 12.3% and 5.9%, respectively. All three runs emitted the same output checksum:
 `c2a700cfb2b8415b30ae398b5867614ed49cc16a9afc8e9e7fef77a1eaf77f41`.
@@ -34,10 +34,10 @@ against exact values captured from the baseline.
 
 Node 24.11.1, using the same fixture bundled with Bun's Node target, produced these medians:
 
-| Revision | Single equity sale | Equity entry economics |
-| --- | ---: | ---: |
-| Baseline | 4.035 µs | 386.265 µs |
-| Optimized | 3.783 µs | 370.851 µs |
+| Revision  | Single equity sale | Equity entry economics |
+| --------- | -----------------: | ---------------------: |
+| Baseline  |           4.035 µs |             386.265 µs |
+| Optimized |           3.783 µs |             370.851 µs |
 
 The reductions were 6.3% and 4.0%. Both Node runs emitted the same checksum as the Bun runs. The baseline Node
 bundle used a build-time source override containing `git show fc70d503c1c139b21cb8827eca7425d259079a9e:services/bayn/src/strategy/execution-model/fees.ts`;
