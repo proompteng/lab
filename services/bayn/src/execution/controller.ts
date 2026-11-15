@@ -89,6 +89,7 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   lastCompletion: Schema.optionalKey(CompletionSchema),
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
   marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
+  marketDataWakeSuppressed: Schema.optionalKey(Schema.Literal(true)),
   wakeScheduledSequence: Schema.optionalKey(CounterSchema),
   wakeAcceptedAt: Schema.optionalKey(UtcInstantSchema),
   marketFrontier: Schema.optionalKey(
@@ -306,6 +307,7 @@ export const completeExecutionControllerTick = (
   const {
     nextDueAt: _previousDeadline,
     marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
     wakeScheduledSequence: _previousWake,
     wakeAcceptedAt: _previousWakeAcceptedAt,
     ...completedState
@@ -332,6 +334,11 @@ export const completeExecutionControllerTick = (
     },
     ...(decodedNextDueAt.success === undefined ? {} : { nextDueAt: decodedNextDueAt.success }),
     ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
+    ...(result.observation?.result === 'SUCCESS' &&
+    result.observation.outcome === 'WINDOW_CLOSED' &&
+    decodedNextDueAt.success === undefined
+      ? { marketDataWakeSuppressed: true as const }
+      : {}),
   })
 }
 

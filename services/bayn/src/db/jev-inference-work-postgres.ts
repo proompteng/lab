@@ -272,7 +272,7 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const row = rows[0]
       if (row === undefined) return null
       const restored = yield* Effect.fromResult(restoreJevObservation(row.observation))
-      return { batchId: row.batch_id, observation: restored.observation }
+      return { batchId: row.batch_id, source: restored }
     }).pipe(Effect.mapError(failure))
 
   return { read, pending, claim, resume, settleExpired } satisfies typeof JevInferenceWorkStore.Service

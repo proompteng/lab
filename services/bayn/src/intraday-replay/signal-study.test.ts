@@ -1,5 +1,5 @@
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -221,6 +221,9 @@ test.each<{ premium: number; selected: string | null }>([
   const base = streamingFixture()
   const query = {
     ...base.query,
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
+    universe: equityMarketProfile.universe,
     symbols: [...equityMarketProfile.candidateSymbols, 'SPY'].sort(),
     candidateSymbols: equityMarketProfile.candidateSymbols,
     ...(fixture.protocol.candidateEvidencePolicy === undefined

@@ -3,9 +3,11 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
 import { intradayExecutionModel } from '../strategy/intraday-market'
+import { rebuildAccountingLedger } from '../accounting/domain'
 
 import {
   EquityScreenSignal,
+  EquityScreenDirection,
   EquityScreenExclusionReason,
   equityScreenCandidates,
   indexEquityScreenBars,
@@ -16,7 +18,12 @@ import {
 
 const openAt = Date.parse('2026-09-01T13:30:00Z')
 const day = { date: '2026-09-01', openAt, closeAt: openAt + 390 * 60_000 }
-const policy: EquityScreenPolicy = { signal: EquityScreenSignal.Momentum, holdingMinutes: 15, adverseBpsPerSide: 10 }
+const policy: EquityScreenPolicy = {
+  direction: EquityScreenDirection.Long,
+  signal: EquityScreenSignal.Momentum,
+  holdingMinutes: 15,
+  adverseBpsPerSide: 10,
+}
 const fixture = (): EquityScreenBar[] =>
   ['AAPL', 'SPY'].flatMap((symbol) =>
     Array.from({ length: 390 }, (_, i) => {
@@ -38,7 +45,159 @@ const unwrap = <A, E>(value: Result.Result<A, E>): A => {
   return value.success
 }
 const run = (bars: readonly EquityScreenBar[], selected = policy) =>
-  unwrap(runEquityEdgeScreen(unwrap(indexEquityScreenBars(bars)), ['AAPL', 'SPY'], [day], day.date, day.date, selected))
+  unwrap(
+    runEquityEdgeScreen(
+      unwrap(indexEquityScreenBars(bars)),
+      ['AAPL', 'SPY'],
+      [day],
+      day.date,
+      day.date,
+      selected,
+      day.date,
+    ),
+  )
+
+const fallingFixture = () =>
+  fixture().map((bar) => {
+    if (bar.symbol === 'SPY') return bar
+    const price = 100 - ((bar.at - openAt) / 60_000) * 0.05
+    return { ...bar, open: price, high: price + 0.02, low: price - 0.02, close: price, vwap: price }
+  })
+const shortPolicy: EquityScreenPolicy = { ...policy, direction: EquityScreenDirection.Short }
+
+test('historical prices use the explicit fee scenario date without inventing a historical tariff', () => {
+  const shift = Date.parse('2020-03-18T13:30:00Z') - openAt
+  const historical = { date: '2020-03-18', openAt: openAt + shift, closeAt: day.closeAt + shift }
+  const index = unwrap(indexEquityScreenBars(fallingFixture().map((b) => ({ ...b, at: b.at + shift }))))
+  const result = unwrap(
+    runEquityEdgeScreen(
+      index,
+      ['AAPL', 'SPY'],
+      [historical],
+      historical.date,
+      historical.date,
+      shortPolicy,
+      '2026-11-13',
+    ),
+  )
+  expect(result.status).toBe('COMPLETED')
+  expect(result.executionFeeDate).toBe('2026-11-13')
+  expect(result.trades.length).toBeGreaterThan(0)
+  expect(result.trades[0]?.entryAt).toBe(historical.openAt + 31 * 60_000)
+  expect(result.allInProfit).toBeNull()
+  expect(
+    runEquityEdgeScreen(
+      index,
+      ['AAPL', 'SPY'],
+      [historical],
+      historical.date,
+      historical.date,
+      shortPolicy,
+      historical.date,
+    ),
+  ).toMatchObject({
+    _tag: 'Failure',
+    failure: { _tag: 'UnsupportedEquityFeeDate' },
+  })
+})
+
+test('short screening uses native falling prices, adverse SELL entry and adverse BUY cover', () => {
+  const bars = fallingFixture()
+  expect(run(bars).trades).toHaveLength(0)
+  const result = run(bars, shortPolicy)
+  expect(result.status).toBe('COMPLETED')
+  const first = result.trades[0]
+  expect(first?.direction).toBe(EquityScreenDirection.Short)
+  expect(first?.entryAt).toBe(openAt + 31 * 60_000)
+  expect(first?.exitAt).toBe(openAt + 46 * 60_000)
+  expect(BigInt(first?.entryPriceMicros ?? '0')).toBeLessThan(98_450_000n)
+  expect(BigInt(first?.exitPriceMicros ?? '0')).toBeGreaterThan(97_700_000n)
+  expect(BigInt(first?.grossPnlMicros ?? '0')).toBeGreaterThan(0n)
+  expect(result.profitabilityQualified).toBe(false)
+  expect(result.allInProfit).toBeNull()
+})
+
+test('short screen fills reproduce the native signed inventory and ledger plans', () => {
+  const result = run(fallingFixture(), shortPolicy)
+  const inputs: FeeInput[] = []
+  for (const t of result.trades) {
+    expect(t.shortAccounting?.scope).toBe('SYNTHETIC_UNPOSTED')
+    const a = t.shortAccounting
+    if (a === undefined) throw new Error('Short accounting missing')
+    expect(a.entry.realizedPnlMicros).toBe('0')
+    expect(a.cover.realizedPnlMicros).toBe(t.grossPnlMicros)
+    expect(BigInt(a.entry.cashDeltaMicros) + BigInt(a.cover.cashDeltaMicros)).toBe(BigInt(t.executionNetPnlMicros))
+    expect(BigInt(a.entry.quantityDeltaAtoms) + BigInt(a.cover.quantityDeltaAtoms)).toBe(0n)
+    expect(BigInt(a.entry.costBasisDeltaMicros) + BigInt(a.cover.costBasisDeltaMicros)).toBe(0n)
+    for (const x of [a.entry, a.cover]) expect(Result.isSuccess(rebuildAccountingLedger(x, 7001))).toBe(true)
+    inputs.push(
+      {
+        symbol: t.symbol,
+        side: 'sell',
+        quantityAtoms: BigInt(t.shares) * 1_000_000_000n,
+        notionalMicros: BigInt(t.shares) * BigInt(t.entryPriceMicros),
+      },
+      {
+        symbol: t.symbol,
+        side: 'buy',
+        quantityAtoms: BigInt(t.shares) * 1_000_000_000n,
+        notionalMicros: BigInt(t.shares) * BigInt(t.exitPriceMicros),
+      },
+    )
+  }
+  const fees = unwrap(
+    calculateSessionFees(inputs, intradayExecutionModel, 1_000_000n, cryptoMaximumTakerFeeBps, day.date),
+  )
+  expect(result.trades.reduce((s, t) => s + BigInt(t.feesMicros), 0n)).toBe(fees.cashMicros)
+})
+
+test('short squeezes charge the actual later cover scenario without clipping losses to the entry or stop', () => {
+  const bars = fallingFixture().map((bar) =>
+    bar.symbol === 'AAPL' && bar.at >= openAt + 33 * 60_000
+      ? { ...bar, open: 350, high: 350.02, low: 349.98, close: 350, vwap: 350 }
+      : bar,
+  )
+  const first = run(bars, shortPolicy).trades[0]
+  expect(first?.exitReason).toBe('STOP')
+  expect(BigInt(first?.exitPriceMicros ?? '0')).toBeGreaterThan(350_000_000n)
+  expect(BigInt(first?.grossPnlMicros ?? '0')).toBeLessThan(
+    -BigInt(first?.shares ?? 0) * BigInt(first?.entryPriceMicros ?? '0'),
+  )
+})
+
+test('stressed short prices worsen both sides and missing cover evidence remains incomplete', () => {
+  const base = run(fallingFixture(), shortPolicy).trades[0]
+  const stress = run(fallingFixture(), { ...shortPolicy, adverseBpsPerSide: 20 }).trades[0]
+  expect(BigInt(stress?.entryPriceMicros ?? '0')).toBeLessThan(BigInt(base?.entryPriceMicros ?? '0'))
+  expect(BigInt(stress?.exitPriceMicros ?? '0')).toBeGreaterThan(BigInt(base?.exitPriceMicros ?? '0'))
+  expect(BigInt(stress?.executionNetPnlMicros ?? '0')).toBeLessThan(BigInt(base?.executionNetPnlMicros ?? '0'))
+  const incomplete = run(
+    fallingFixture().filter((b) => b.symbol === 'SPY' || b.at < openAt + 46 * 60_000),
+    shortPolicy,
+  )
+  expect(incomplete.status).toBe('INCOMPLETE')
+  expect(incomplete.executionNetPnlMicros).toBeNull()
+  expect(incomplete.incomplete?.reason).toBe('MISSING_EXIT_BAR')
+})
+
+test('future stock prices cannot alter short candidate admission or ranking', () => {
+  const bars = fallingFixture(),
+    at = openAt + 30 * 60_000
+  const rank = (rows: readonly EquityScreenBar[]) =>
+    equityScreenCandidates(
+      unwrap(indexEquityScreenBars(rows)),
+      ['AAPL', 'SPY'],
+      [day],
+      0,
+      at,
+      EquityScreenSignal.Momentum,
+      EquityScreenDirection.Short,
+    )
+  const altered = bars.map((b) =>
+    b.at < at ? b : { ...b, open: b.open * 3, high: b.high * 3, low: b.low * 3, close: b.close * 3, vwap: b.vwap * 3 },
+  )
+  expect(rank(altered)).toEqual(rank(bars))
+})
 
 test('cash days remain in the denominator without invented profit or cost qualification', () => {
   const result = run(fixture().filter((bar) => bar.symbol === 'SPY'))
@@ -78,6 +237,7 @@ test('future bars cannot change the contemporaneous ranking', () => {
       0,
       at,
       EquityScreenSignal.Momentum,
+      EquityScreenDirection.Long,
     )
   const mutated = bars.map((bar) =>
     bar.at < at
@@ -142,6 +302,7 @@ test('fees aggregate once per session, with incremental fill charges summing to 
       day.date,
       secondDay.date,
       policy,
+      day.date,
     ),
   )
   for (const session of [day, secondDay]) {
@@ -207,6 +368,7 @@ test.each(['opening', 'history'] as const)(
       dayIndex,
       day.openAt + 60 * 60_000,
       EquityScreenSignal.OpeningRange,
+      EquityScreenDirection.Long,
     )
     expect(result.candidates).toHaveLength(0)
     expect(result.exclusions).toContainEqual({
@@ -271,7 +433,7 @@ test('low-price entry finds the maximal whole-share quantity including cumulativ
 
 test('empty periods have no numeric result and missing position marks remain explicit', () => {
   const index = unwrap(indexEquityScreenBars(fixture()))
-  const empty = unwrap(runEquityEdgeScreen(index, ['AAPL', 'SPY'], [day], '2026-09-02', '2026-09-03', policy))
+  const empty = unwrap(runEquityEdgeScreen(index, ['AAPL', 'SPY'], [day], '2026-09-02', '2026-09-03', policy, day.date))
   expect(empty.status).toBe('INCOMPLETE')
   expect(empty.executionNetPnlMicros).toBeNull()
   const missingMark = run(fixture().filter((bar) => bar.symbol !== 'AAPL' || bar.at !== openAt + 35 * 60_000))
@@ -305,7 +467,15 @@ test('records a missing-window exclusion even when another symbol is selected', 
     ...original.filter((bar) => bar.symbol === 'AAPL').map((bar) => ({ ...bar, symbol: 'AMD' })),
   ]
   const result = unwrap(
-    runEquityEdgeScreen(unwrap(indexEquityScreenBars(bars)), ['AAPL', 'AMD', 'SPY'], [day], day.date, day.date, policy),
+    runEquityEdgeScreen(
+      unwrap(indexEquityScreenBars(bars)),
+      ['AAPL', 'AMD', 'SPY'],
+      [day],
+      day.date,
+      day.date,
+      policy,
+      day.date,
+    ),
   )
   expect(result.trades[0]?.symbol).toBe('AMD')
   expect(result.candidateExclusions).toContainEqual({
@@ -320,8 +490,15 @@ test('records a missing-window exclusion even when another symbol is selected', 
 test('opening-volume selection cannot use fewer than fourteen prior sessions', () => {
   const index = unwrap(indexEquityScreenBars(fixture()))
   expect(
-    equityScreenCandidates(index, ['AAPL', 'SPY'], [day], 0, openAt + 30 * 60_000, EquityScreenSignal.OpeningRange)
-      .candidates,
+    equityScreenCandidates(
+      index,
+      ['AAPL', 'SPY'],
+      [day],
+      0,
+      openAt + 30 * 60_000,
+      EquityScreenSignal.OpeningRange,
+      EquityScreenDirection.Long,
+    ).candidates,
   ).toEqual([])
 })
 
@@ -338,18 +515,33 @@ test('early opening-range screening uses only prior opening volume and admits at
   if (lastDay === undefined) throw new Error('fixture empty')
   const index = unwrap(indexEquityScreenBars(bars))
   const result = unwrap(
-    runEquityEdgeScreen(index, ['AAPL', 'SPY'], days, lastDay.date, lastDay.date, {
-      ...policy,
-      signal: EquityScreenSignal.EarlyOpeningRange,
-    }),
+    runEquityEdgeScreen(
+      index,
+      ['AAPL', 'SPY'],
+      days,
+      lastDay.date,
+      lastDay.date,
+      {
+        ...policy,
+        signal: EquityScreenSignal.EarlyOpeningRange,
+      },
+      day.date,
+    ),
   )
   expect(result.status).toBe('COMPLETED')
   expect(result.trades).toHaveLength(1)
   expect(result.trades[0]?.signalAt).toBeLessThan(lastDay.openAt + 30 * 60_000)
   const at = lastDay.openAt + 10 * 60_000
   expect(
-    equityScreenCandidates(index, ['AAPL', 'SPY'], days, 14, at, EquityScreenSignal.EarlyOpeningRange).candidates[0]
-      ?.score,
+    equityScreenCandidates(
+      index,
+      ['AAPL', 'SPY'],
+      days,
+      14,
+      at,
+      EquityScreenSignal.EarlyOpeningRange,
+      EquityScreenDirection.Long,
+    ).candidates[0]?.score,
   ).toBe(2)
 })
 

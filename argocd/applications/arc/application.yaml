@@ -34,8 +34,8 @@ spec:
           runnerScaleSetName: arc-arm64
           scaleSetLabels:
             - arc-arm64
-          minRunners: 1
-          maxRunners: 8
+          minRunners: 5
+          maxRunners: 10
           listenerTemplate:
             spec:
               nodeSelector:
@@ -56,6 +56,7 @@ spec:
               serviceAccountName: arc-arm64-gha-rs-kube-mode
               nodeSelector:
                 kubernetes.io/arch: arm64
+                kubernetes.io/hostname: talos-192-168-1-85
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -202,10 +203,14 @@ spec:
                     limits:
                       cpu: "20"
                       memory: "32Gi"
-                      ephemeral-storage: "130Gi"
+                      ephemeral-storage: "100Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
+                    - name: ARC_RUNNER_NODE_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: spec.nodeName
                     - name: ACTIONS_RUNNER_POD_NAME
                       valueFrom:
                         fieldRef:
@@ -247,7 +252,7 @@ spec:
                         volumeMode: Filesystem
                         resources:
                           requests:
-                            storage: 130Gi
+                            storage: 100Gi
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
@@ -262,7 +267,7 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          minRunners: 10
+          minRunners: 5
           maxRunners: 10
           listenerTemplate:
             spec:
@@ -430,7 +435,7 @@ spec:
                     limits:
                       cpu: "20"
                       memory: "32Gi"
-                      ephemeral-storage: "130Gi"
+                      ephemeral-storage: "100Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -479,188 +484,12 @@ spec:
                         volumeMode: Filesystem
                         resources:
                           requests:
-                            storage: 130Gi
+                            storage: 100Gi
               tolerations:
                 - key: workload.proompteng.ai/compute-local
                   operator: Equal
                   value: "true"
                   effect: NoSchedule
-    - repoURL: ghcr.io
-      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.2
-      helm:
-        releaseName: arc-runner-set-analysis
-        valuesObject:
-          controllerServiceAccount:
-            name: arc-controller-gha-rs-controller
-            namespace: arc
-          githubConfigUrl: https://github.com/gregkonush/analysis
-          githubConfigSecret: github-token
-          runnerScaleSetName: analysis-arm64
-          scaleSetLabels:
-            - arc-arm64
-          minRunners: 1
-          # The Altra node currently has about 94Gi of kubelet-local free space. Keep one hard-capped analysis
-          # workspace until additional local capacity is provisioned instead of letting concurrent jobs evict pods.
-          maxRunners: 1
-          listenerTemplate:
-            spec:
-              nodeSelector:
-                kubernetes.io/arch: amd64
-                kubernetes.io/hostname: talos-192-168-1-194
-              tolerations:
-                - key: workload.proompteng.ai/compute-local
-                  operator: Equal
-                  value: "true"
-                  effect: NoSchedule
-              dnsConfig:
-                searches:
-                  - ide-newton.ts.net
-              containers:
-                - name: listener
-          template:
-            spec:
-              automountServiceAccountToken: false
-              nodeSelector:
-                kubernetes.io/arch: arm64
-              dnsConfig:
-                searches:
-                  - ide-newton.ts.net
-              securityContext:
-                runAsNonRoot: false
-                # ARC runners need a writable tool cache under /home/runner/_work/_tool.
-                # The analysis work directory is a disposable node-local emptyDir; set an fsGroup so the
-                # non-root runner user can create directories before any workflow steps run.
-                fsGroup: 1001
-                fsGroupChangePolicy: OnRootMismatch
-              containers:
-                - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  securityContext:
-                    privileged: true
-                  command: [ "/home/runner/run.sh" ]
-                  resources:
-                    requests:
-                      cpu: "2"
-                      memory: "4Gi"
-                      ephemeral-storage: "20Gi"
-                    limits:
-                      cpu: "10"
-                      memory: "18Gi"
-                      ephemeral-storage: "72Gi"
-                  env:
-                    - name: ACTIONS_RUNNER_POD_NAME
-                      valueFrom:
-                        fieldRef:
-                          fieldPath: metadata.name
-                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
-                      value: "false"
-                  volumeMounts:
-                    - name: work
-                      mountPath: /home/runner/_work
-              volumes:
-                - name: work
-                  emptyDir:
-                    sizeLimit: 20Gi
-    - repoURL: ghcr.io
-      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.2
-      helm:
-        releaseName: arc-runner-set-publish
-        valuesObject:
-          controllerServiceAccount:
-            name: arc-controller-gha-rs-controller
-            namespace: arc
-          githubConfigUrl: https://github.com/proompteng/lab
-          githubConfigSecret: github-token
-          runnerScaleSetName: arc-amd64-publish
-          scaleSetLabels:
-            - arc-amd64-publish
-          minRunners: 1
-          maxRunners: 2
-          listenerTemplate:
-            spec:
-              nodeSelector:
-                kubernetes.io/arch: amd64
-                kubernetes.io/hostname: talos-192-168-1-194
-              tolerations:
-                - key: workload.proompteng.ai/compute-local
-                  operator: Equal
-                  value: "true"
-                  effect: NoSchedule
-              dnsConfig:
-                searches:
-                  - ide-newton.ts.net
-              containers:
-                - name: listener
-          template:
-            spec:
-              automountServiceAccountToken: false
-              nodeSelector:
-                kubernetes.io/arch: amd64
-              affinity:
-                nodeAffinity:
-                  requiredDuringSchedulingIgnoredDuringExecution:
-                    nodeSelectorTerms:
-                      - matchExpressions:
-                          - key: kubernetes.io/hostname
-                            operator: In
-                            values:
-                              - talos-192-168-1-194
-                              - turin
-              topologySpreadConstraints:
-                - maxSkew: 1
-                  topologyKey: kubernetes.io/hostname
-                  whenUnsatisfiable: ScheduleAnyway
-                  labelSelector:
-                    matchLabels:
-                      actions.github.com/scale-set-name: arc-amd64-publish
-                      app.kubernetes.io/component: runner
-              dnsConfig:
-                searches:
-                  - ide-newton.ts.net
-              tolerations:
-                - key: workload.proompteng.ai/compute-local
-                  operator: Equal
-                  value: "true"
-                  effect: NoSchedule
-              securityContext:
-                runAsNonRoot: false
-                fsGroup: 1001
-                fsGroupChangePolicy: OnRootMismatch
-              containers:
-                - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  securityContext:
-                    privileged: false
-                  command: [ "/home/runner/run.sh" ]
-                  resources:
-                    requests:
-                      cpu: "1"
-                      memory: "2Gi"
-                      ephemeral-storage: "2Gi"
-                    limits:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "32Gi"
-                  env:
-                    - name: ARC_RUNNER_NODE_NAME
-                      valueFrom:
-                        fieldRef:
-                          fieldPath: spec.nodeName
-                    - name: ACTIONS_RUNNER_POD_NAME
-                      valueFrom:
-                        fieldRef:
-                          fieldPath: metadata.name
-                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
-                      value: "false"
-                  volumeMounts:
-                    - name: work
-                      mountPath: /home/runner/_work
-              volumes:
-                - name: work
-                  emptyDir:
-                    sizeLimit: 32Gi
   destination:
     server: https://kubernetes.default.svc
     namespace: arc

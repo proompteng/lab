@@ -1,5 +1,5 @@
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
@@ -361,6 +361,7 @@ test.each(
       }
       const result = yield* runMatchedEntryStudy(input, registration, arrivals, data.receipt).pipe(Effect.result)
       if (state === 'verified') {
+        Result.getOrThrow(result)
         expect(Result.isSuccess(result)).toBeTrue()
       } else {
         expect(Result.isFailure(result)).toBeTrue()
