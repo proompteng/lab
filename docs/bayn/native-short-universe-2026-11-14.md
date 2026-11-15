@@ -357,3 +357,50 @@ not independent causal estimates or evidence that validation can be skipped. The
 account reconciliation stayed EXACT and controller completions continued after the deadline test. Reporting
 remains prohibited in execution-controller workloads. Issue #15928 remains open; no deadline, financial hash
 contract, evidence validation or unknown-cost rule was weakened to produce an apparent pass.
+
+## Verified same-account PAPER activation
+
+Activation PR [#15948](https://github.com/proompteng/lab/pull/15948) merged as
+`ad84f399433f434f2e2b747e196fe5dc57d504f1` after 33 successful checks and closure of its review finding.
+Main publication `43659466691` completed successfully with all 39 jobs passing. Every cohort member carries
+that exact source revision and run receipt:
+
+| Role        | Digest                                                                    |
+| ----------- | ------------------------------------------------------------------------- |
+| Trading/API | `sha256:bf7edda01fd92da30fbc5923b9d10a210c6ce3f3063641351a5a3468795edc2f` |
+| Research    | `sha256:b2ba2563af7be00c404f269f158dfba75456a909e7e86f447bd0195f2d8d5993` |
+| Broker feed | `sha256:ad7a8c2b8cf89f877e867cac419bbe24d95e1b3b3506ada74788a5213ac68e05` |
+
+Kargo promoted and successfully verified Freight `1895593e412ae42899f3810c6122f3d143035eb5` through
+`bayn.01m7ebx4ayyz2hyvng6ee1gvje.1895593`. Argo completed generated revision
+`bda29f573ae9ea425bdb21a2e225c3fd01982491`, Synced and Healthy. Its native activation hook completed
+before the API rollout; no direct deployment, image-pin substitution or database authority update was used.
+
+At November 15 01:09:34.679081 UTC, the database recorded maximum/effective PAPER, kill CLEAR, version 1844,
+generation `d6abce6b2c40368d6300d9f9897b877c393e49d55c89c9a86eb6b458b751f76f`, v41 parameters/behavior,
+the account-bound risk hash above and the exact ad84f399 activation source/digest. Actual controller work
+completed at 01:09:31.481 UTC from that source with WINDOW_CLOSED. At 01:10:33–01:10:34 UTC, both new API
+replicas returned HTTP 200, READY, exact accounting, exact reconciliation with zero discrepancies and coverage
+of the latest mutation, sandbox mutation access, granted capital and the matching Realized/Research/Standing
+mandate. Kargo advanced the activation lineage to ad84f399 while preserving the authored 503cb2d identity.
+The public API calls PAPER authority “execution”; the durable database enum is PAPER.
+
+The 01:10:04.138773 UTC post-activation cut again reproduced all 1,863 transaction and receipt rows with the
+unchanged fingerprints above, zero active cycles, zero unsettled intents and zero missing receipts. Independent
+broker reads at 01:11:07.899–01:11:10.930 UTC verified the configured account by equality without publishing its
+identifier: ACTIVE, shorting enabled, `no_shorting=false`, no trading/account/user suspension, zero positions
+and zero open orders. These five requests were read-only. The broker clock remained closed, with next regular
+open November 16 14:30 UTC. Existing account identity, monetary limits, one position, 20% gross allocation and
+15-minute maximum hold remain in force.
+
+Post-rollout Mimir retained only the valid research-cost-coverage alert. A five-minute aggregate failure query
+also contained predecessor 503cb2d API observation-fence failures during ownership handoff; source/pod-specific
+readback confined those series to the two predecessor APIs. The new ad84f399 source returned no failed/interrupted
+operation series in that window, and the structured ERROR query returned no rows. The observation owner is
+revision-fenced in the implementation; a superseded API cannot admit a different revision's broker cut. Absence
+of a metric series or log row is bounded observation, not a guarantee against every failure.
+
+This completes the native implementation, revised universe/feed delivery and same-account PAPER activation.
+It does not establish a fresh regular-session short fill, an untouched v41 return series or positive all-in
+profitability. The full-report latency miss and historical cost-evidence gaps remain open with their measured
+limits; neither is replaced with a successful test or an assumed zero cost.
