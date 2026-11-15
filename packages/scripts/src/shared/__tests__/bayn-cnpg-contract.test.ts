@@ -586,7 +586,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
   const activationGeneration = activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value
   expect(activationGeneration).toMatch(/^[0-9a-f]{64}$/)
-  if (mandateIdentity !== undefined) expect(activationGeneration).toBe(mandateIdentity.requestHash)
+  // Kargo binds this invocation key to each promoted image digest. The mandate remains bound through
+  // the lineage checks above and packages/scripts/src/bayn/kargo.test.ts, independently of that key.
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
     name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
     valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },
