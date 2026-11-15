@@ -147,6 +147,9 @@ export const acquireInferenceExpenseSnapshot = (
             for (const input of inputs) {
               const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
               if (row.kind === SnapshotRowKind.Request) {
+                // Reproduction is synchronous CPU work. Service sockets and caller
+                // cancellation between requests without changing the financial cut.
+                yield* Effect.yieldNow
                 requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
               }
               rows.push(row)
