@@ -58,6 +58,7 @@ const account = Schema.Struct({
   accountBlocked: Schema.Boolean,
   tradingBlocked: Schema.Boolean,
   tradeSuspendedByUser: Schema.Boolean,
+  shortingEnabled: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
 })
 const position = Schema.Struct({
@@ -133,6 +134,7 @@ const configuration = Schema.Struct({
   source: Schema.Literal(accountConfigurationObservationSource),
   requestHash: Sha256Schema,
   fractionalTrading: Schema.Boolean,
+  noShorting: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
   normalizedResponseHash: Sha256Schema,
 })

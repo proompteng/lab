@@ -1,9 +1,14 @@
-import { parentPort, workerData } from 'node:worker_threads'
+import { parentPort } from 'node:worker_threads'
 import { NodeRuntime } from '@effect/platform-node'
-import { Cause, Effect, Layer, Logger, Match, Result } from 'effect'
+import { Cause, Effect, Layer, Logger, Match, Queue, Result } from 'effect'
 
 import { constructExecutionDecision, constructObserveShadowDecision } from './shadow-decision'
-import type { DecisionConstructionRequest, DecisionConstructionResponse } from './decision-construction'
+import type {
+  DecisionConstructionJob,
+  DecisionConstructionReply,
+  DecisionConstructionRequest,
+  DecisionConstructionResponse,
+} from './decision-construction'
 
 export const constructDecision = (request: DecisionConstructionRequest) =>
   Match.value(request).pipe(
@@ -34,10 +39,32 @@ export const constructDecision = (request: DecisionConstructionRequest) =>
 
 if (parentPort !== null) {
   const port = parentPort
-  const request: DecisionConstructionRequest = workerData
-  NodeRuntime.runMain(
-    Layer.effectDiscard(
-      constructDecision(request).pipe(Effect.flatMap((reply) => Effect.sync(() => port.postMessage(reply)))),
-    ).pipe(Layer.provide(Logger.layer([])), Layer.launch),
-  )
+  const requests = Effect.gen(function* () {
+    const queue = yield* Queue.unbounded<DecisionConstructionJob>()
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const receive = (job: DecisionConstructionJob) => {
+          Queue.offerUnsafe(queue, job)
+        }
+        port.on('message', receive)
+        return receive
+      }),
+      (receive) =>
+        Effect.sync(() => {
+          port.off('message', receive)
+        }),
+    )
+    return yield* Effect.forever(
+      Queue.take(queue).pipe(
+        Effect.flatMap(({ id, request }) =>
+          constructDecision(request).pipe(
+            Effect.flatMap((response) =>
+              Effect.sync(() => port.postMessage({ id, response } satisfies DecisionConstructionReply)),
+            ),
+          ),
+        ),
+      ),
+    )
+  })
+  NodeRuntime.runMain(Layer.effectDiscard(requests).pipe(Layer.provide(Logger.layer([])), Layer.launch))
 }

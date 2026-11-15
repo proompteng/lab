@@ -1,0 +1,157 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kargo-smoke
+  namespace: oirat-release
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kargo-release-smoke
+  namespace: oirat
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - oirat
+  verbs:
+  - get
+  - watch
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-release-smoke
+  namespace: oirat
+subjects:
+- kind: ServiceAccount
+  name: kargo-smoke
+  namespace: oirat-release
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kargo-release-smoke
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kargo-smoke
+  namespace: relay-release
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kargo-release-smoke
+  namespace: relay
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - relay
+  verbs:
+  - get
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-release-smoke
+  namespace: relay
+subjects:
+- kind: ServiceAccount
+  name: kargo-smoke
+  namespace: relay-release
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kargo-release-smoke
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kargo-smoke
+  namespace: ofz-release
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kargo-release-smoke
+  namespace: ofz
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - ofz-api
+  verbs:
+  - get
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-release-smoke
+  namespace: ofz
+subjects:
+- kind: ServiceAccount
+  name: kargo-smoke
+  namespace: ofz-release
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kargo-release-smoke
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kargo-smoke
+  namespace: temporal-release
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kargo-release-smoke
+  namespace: temporal
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - temporal-worker
+  verbs:
+  - get
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-release-smoke
+  namespace: temporal
+subjects:
+- kind: ServiceAccount
+  name: kargo-smoke
+  namespace: temporal-release
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kargo-release-smoke

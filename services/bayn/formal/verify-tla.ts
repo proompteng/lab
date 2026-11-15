@@ -145,9 +145,23 @@ const faults = [
   {
     model: 'EntryRecovery',
     name: 'missed-short-retry',
-    before: 'IF Pending THEN ContinuationDelay ELSE NormalDelay',
-    after: 'NormalDelay',
+    before: 'ContinuationDelay == IF WithinAdmission /\\ ExpiredWork THEN RetryDelay',
+    after: 'ContinuationDelay == IF WithinAdmission /\\ ExpiredWork THEN NormalDelay',
     violation: 'Invariant CappedRetries is violated.',
+  },
+  {
+    model: 'EntryRecovery',
+    name: 'changed-eligibility-deadline',
+    before: 'THEN EligibilityAt - now ELSE 0',
+    after: 'THEN RetryDelay ELSE 0',
+    violation: 'Invariant EligibilityDeadlineIsOriginal is violated.',
+  },
+  {
+    model: 'EntryRecovery',
+    name: 'ordinary-source-polling',
+    before: 'ContinuationDelay == IF WithinAdmission /\\ ExpiredWork THEN RetryDelay',
+    after: 'ContinuationDelay == IF WithinAdmission /\\ (ExpiredWork \\/ mode = "STREAM") THEN RetryDelay',
+    violation: 'Invariant UnknownSourcesDoNotPoll is violated.',
   },
   {
     model: 'EntryRecovery',
@@ -234,9 +248,23 @@ const productionFaults = [
   {
     name: 'missed-short-retry',
     file: 'src/observe-composition/recovery-driver.ts',
-    before: '        ? Math.min(1_000, normalDelayMs, expiresAt - now)',
-    after: '        ? normalDelayMs',
-    test: 'initial and later input retries retain the original admission, binding and consumed-window guards',
+    before: '      ? 1\n      : undefined',
+    after: '      ? normalDelayMs\n      : undefined',
+    test: 'stream waits and named timers retain the original admission, binding and eligibility deadlines',
+  },
+  {
+    name: 'changed-eligibility-deadline',
+    file: 'src/observe-composition/recovery-driver.ts',
+    before: '    ? remainingMs\n    : undefined',
+    after: '    ? normalDelayMs\n    : undefined',
+    test: 'stream waits and named timers retain the original admission, binding and eligibility deadlines',
+  },
+  {
+    name: 'ordinary-source-polling',
+    file: 'src/observe-composition/recovery-driver.ts',
+    before: '    result.readiness.availableAt === undefined\n  )\n    return undefined',
+    after: '    result.readiness.availableAt === undefined\n  )\n    return 1',
+    test: 'stream waits and named timers retain the original admission, binding and eligibility deadlines',
   },
   {
     name: 'duplicate-dispatch',

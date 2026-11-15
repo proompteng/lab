@@ -10,6 +10,7 @@ import { TestClock } from 'effect/testing'
 import {
   AccountStatus,
   AssetClass,
+  AssetStatus,
   AssetExchange,
   OrderClass,
   OrderSide as BrokerOrderSide,
@@ -18,6 +19,7 @@ import {
   PositionSide,
   TimeInForce as BrokerTimeInForce,
   type Account,
+  type AccountConfigurationObservation,
   type BrokerReadShape,
   type Order,
   type Position,
@@ -25,6 +27,7 @@ import {
   type ReadResult,
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { normalizeAccountConfigurationResult, normalizeAssetResult } from '../broker/alpaca/normalizers'
 import type { BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import { MutationOperation, invalidRequest } from '../broker/alpaca-mutations/model'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
@@ -246,6 +249,7 @@ interface ScenarioInput {
   readonly positionsConfirmedAt?: string
   readonly ordersConfirmedAt?: string
   readonly assetOverrides?: Partial<ReturnType<typeof brokerAssetFixture>>
+  readonly shortConfiguration?: AccountConfigurationObservation
   readonly brokerAccount?: Account
   readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
@@ -282,7 +286,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         input.accountObservedAt,
       )
     }),
-    accountConfiguration: unusedRead,
+    accountConfiguration:
+      input.shortConfiguration === undefined ? unusedRead : Effect.succeed(readResult(input.shortConfiguration)),
     assetBySymbol: (symbol) =>
       Effect.succeed(readResult({ ...brokerAssetFixture(symbol, activeAt), ...input.assetOverrides })),
     positions: Effect.sync(() => {
@@ -398,6 +403,92 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
   const failure = exit.cause.reasons.find(Cause.isFailReason)?.error
   return failure?.cause?.['tag']
 }
+
+test.each([
+  'eligible',
+  'borrow-revoked',
+  'shorting-disabled',
+  'configuration-disabled',
+  'stale-account',
+  'stale-asset',
+  'stale-configuration',
+  'collateral',
+  'cover-after-revocation',
+] as const)('native equity short final transmission: %s', async (scenario) => {
+  const at = '2026-07-28T14:30:00.000Z'
+  const stale = '2026-07-28T14:29:45.000Z'
+  const original = persistedGrantRecord(defaultLimits, BrokerEnvironment.Sandbox)
+  const { grantHash: _hash, ...material } = original
+  const grant = Result.getOrThrow(makeCapitalGrantRecord({ ...material, validUntil: '2026-07-28T15:00:00.000Z' }))
+  const covering = scenario === 'cover-after-revocation'
+  const observed = await runLiveSubmit({
+    environment: BrokerEnvironment.Sandbox,
+    grant,
+    observedAt: at,
+    accountObservedAt: scenario === 'stale-account' ? stale : at,
+    positionsObservedAt: at,
+    ordersObservedAt: at,
+    brokerAccount: account({
+      shortingEnabled: scenario !== 'shorting-disabled' && !covering,
+      observedAt: scenario === 'stale-account' ? stale : at,
+      buyingPowerMicros: scenario === 'collateral' ? '149999999' : '1000000000',
+    }),
+    shortConfiguration: Result.getOrThrow(
+      normalizeAccountConfigurationResult(
+        { fractional_trading: true, no_shorting: scenario === 'configuration-disabled' || covering },
+        scenario === 'stale-configuration' ? stale : at,
+      ),
+    ),
+    assetOverrides: Result.getOrThrow(
+      normalizeAssetResult(
+        {
+          id: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
+          symbol: 'AMD',
+          class: AssetClass.UsEquity,
+          exchange: AssetExchange.Nasdaq,
+          status: AssetStatus.Active,
+          tradable: true,
+          fractionable: true,
+          marginable: true,
+          shortable: scenario !== 'borrow-revoked' && !covering,
+          easy_to_borrow: scenario !== 'borrow-revoked' && !covering,
+        },
+        'AMD',
+        scenario === 'stale-asset' ? stale : at,
+      ),
+    ),
+    ...(covering
+      ? {
+          positions: [
+            position({
+              side: PositionSide.Short,
+              quantityAtoms: '-1000000000',
+              costBasisMicros: '-100000000',
+              marketValueMicros: '-100000000',
+              observedAt: at,
+            }),
+          ],
+          closeOnly: true,
+        }
+      : {}),
+    proposedIntent: intent({
+      side: covering ? OrderSide.Buy : OrderSide.Sell,
+      createdAt: at,
+      ...(covering
+        ? {}
+        : {
+            protection: {
+              _tag: 'EquityShortBracket',
+              stopPriceMicros: '102000000',
+              stopLimitPriceMicros: '103000000',
+              profitLimitPriceMicros: '97000000',
+            },
+          }),
+    }),
+  })
+  expect(observed.submits).toBe(scenario === 'eligible' || covering ? 1 : 0)
+  expect(observed.exit._tag).toBe(scenario === 'eligible' || covering ? 'Success' : 'Failure')
+})
 
 test.each([
   [4, 18, 0],

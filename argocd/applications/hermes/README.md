@@ -26,7 +26,7 @@ the fetched in-toto predicate/source revision before copying the immutable index
 Kargo-eligible image. The workflow never writes a Kargo tag or the Kargo-managed toolchain digest.
 
 All runtime image references are immutable digests. Relevant merges to `main` build the Hermes toolchain image. After
-successful publication, Kargo creates Freight and automatically promotes Stage `lab-delivery/hermes-toolchain`.
+successful publication, Kargo creates Freight and automatically promotes Stage `hermes-release/hermes-toolchain`.
 Kargo copies the selected source into `kargo/hermes-toolchain` and updates the immutable toolchain reference. Argo reconciles
 that deployment branch. Freight, Stage, and the resulting branch commit are the deployment record.
 There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.

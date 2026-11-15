@@ -147,6 +147,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const store = yield* JevEvaluationStore
         let calls = 0
         const admission = yield* admit
+        if (admission.dispatches === null) throw new Error('Expected in-process fixture dispatch rights')
         const dispatch = admission.dispatches[0]
         if (dispatch === undefined || dispatch.visualClaim === null)
           throw new Error('Missing durable fixture admission')

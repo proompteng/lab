@@ -70,6 +70,20 @@ jobs:
             printf 'tag=build-%s-run-%s-%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ARCH"
             printf 'created=%s\n' "$(git show -s --format=%cI HEAD)"
           } >> "$GITHUB_OUTPUT"
+      - name: Configure signed Nix cache for image builds
+        env:
+          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ATTIC_PUBLIC_KEY}"
+          printf '%s\n' \
+            'substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/' \
+            "extra-trusted-public-keys = ${ATTIC_PUBLIC_KEY}" \
+            'require-sigs = true' \
+            'fallback = false' \
+            'connect-timeout = 10' \
+            'stalled-download-timeout = 60' \
+            'download-attempts = 3' > "$RUNNER_TEMP/devbox-nix.conf"
       - uses: docker/build-push-action@v6
         with:
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
@@ -80,6 +94,7 @@ jobs:
           allow: network.host
           tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
           build-args: SOURCE_REVISION=${{ github.sha }}
+          secret-files: nix-config=${{ runner.temp }}/devbox-nix.conf
           labels: |
             org.opencontainers.image.source=https://github.com/proompteng/lab
             org.opencontainers.image.revision=${{ github.sha }}
@@ -90,7 +105,7 @@ jobs:
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [validate, build]
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     permissions:
       contents: read
       id-token: write

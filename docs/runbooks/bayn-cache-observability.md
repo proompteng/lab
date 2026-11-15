@@ -131,7 +131,7 @@ time() - max by (source_revision, service) (bayn_telemetry_heartbeat_timestamp_s
    An older API can remain deployed while a newer controller waits on an activation prerequisite. This is unresolved
    deployment skew, not automatically a false positive or a global telemetry outage. Keep the exact-source alert.
 2. Inspect the existing Kargo promotion and Argo operation messages, then the relevant workload's image/source
-   metadata and hook conditions using explicit namespaces (`lab-delivery`, `argocd`, `bayn`). Distinguish current
+   metadata and hook conditions using explicit namespaces (`bayn-release`, `argocd`, `bayn`). Distinguish current
    and retained controllers. Read only the relevant status/condition fields; do not dump credentials or raw logs.
    If activation is blocked, identify its safe prerequisite evidence separately; do not reset authority, skip a hook,
    force a rollout, change network policy or relax freshness to clear this alert.

@@ -28,7 +28,7 @@ or build-parameter change runs both native builds and their fault proofs. Main s
 cache mounts as signed architecture-specific images in the existing registry; pull requests only read those caches.
 
 Each release validates platform source labels, signs the multi-platform index, uploads its receipt, and only then
-exposes the immutable run-qualified Kargo alias. The Warehouse and Stage `lab-delivery/restate` own promotion to
+exposes the immutable run-qualified Kargo alias. The Warehouse and Stage `restate-release/restate` own promotion to
 `kargo/restate`. Argo follows that exact generated revision under the
 [release contract](../../../docs/release-automation.md). Configuration releases also use this path.
 

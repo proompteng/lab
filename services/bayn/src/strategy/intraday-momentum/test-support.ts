@@ -4,7 +4,6 @@ import type { VerifiedStrategyContext } from '../core'
 import { Result } from 'effect'
 import { equityClockSession } from '../../equity-hours'
 import type { JevProtocol } from '../../jev/protocol'
-import { equityMarketProfile } from '../../jev/markets'
 import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { canonicalHashV1Result } from '../../hash'
 import type { IntradaySnapshotRequest } from '../../market-data/intraday/model'
@@ -27,7 +26,11 @@ export const makeIntradayMomentumTestSnapshot = (
   basePrice = 100,
   bidSizes: Readonly<Record<string, number>> = {},
 ): IntradayMarketSnapshot & { readonly manifest: { readonly calendar: MarketCalendarObservation } } => {
-  const protocol = 'marketProfiles' in inputProtocol ? equityMarketProfile : inputProtocol
+  const protocol =
+    'marketProfiles' in inputProtocol
+      ? inputProtocol.marketProfiles.find((profile) => profile.feed === 'iex')
+      : inputProtocol
+  if (protocol === undefined) throw new Error('Equity fixture requires its declared source profile')
   if (request.calendar.schemaVersion === 'bayn.continuous-market-hours.v1')
     throw new Error('equity fixture requires exchange hours')
   const rangeStartEpoch = Date.parse(request.rangeStartAt)

@@ -54,7 +54,8 @@ const nextTurn = () => {
   if (!closed && consumed < total) immediate = setImmediate(nextTurn)
 }
 const transport = {
-  offsets: async (_topics, timestamp) => positions(timestamp === -1n),
+  offsets: async (topics, timestamp) =>
+    positions(timestamp === -1n).filter((position) => topics.includes(position.topic)),
   consume: async (starts, invalidated) => {
     notifyInvalidation = invalidated
     const quoteStart = starts.find((position) => position.topic === 'quotes')
