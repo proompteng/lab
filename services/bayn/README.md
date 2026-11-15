@@ -338,8 +338,12 @@ labeled as crypto, fails the read contract without changing the original respons
 
 Broker capture preserves typed read and session-acquisition failures across its managed runtime boundary. Poll
 warnings retain operation, failure kind, retryability and HTTP status without response payloads. A failed cut
-discards retained history. Retryable read failures keep an already verified session for the next quota-paced poll;
-acquisition failures, permission failures, defects and interruption dispose its scoped runtime before settlement.
+discards retained history. A retryable snapshot rejection keeps its already verified session for the next quota-paced
+poll. Transport failures, exhausted request or capture deadlines, acquisition failures, permission failures, defects
+and interruption dispose its scoped runtime before settlement. The next poll lazily creates a new dispatcher and
+repeats account and permission verification. GET response-header attempts are bounded to five seconds and use the
+configured transient retry count; shorter whole-read deadlines retain sole ownership of cancellation. The original
+whole-read deadline still covers every retry, response body and validation. Every attempt remains quota-accounted.
 Defects and interruption retain their original failure semantics.
 
 Failed-capture warnings also emit the fixed `broker.poll_failure_reason`: acquisition deadline,
