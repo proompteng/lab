@@ -201,6 +201,10 @@ Run it only in a separate research process; it is not part of the live service o
 
 ## Internal APIs
 
+The [fee-validation benchmark](tools/benchmark-fee-validation.md) measures dated fee and entry-economics work.
+Schema predicates are reused and fill totals are accumulated in one pass; exact fee caps, rounding, and separate
+crypto cash and coin charges retain their existing behavior.
+
 Internal functions use a single data-first calling convention. The execution worker uses the recovering native runtime
 adapter, and its tests exercise that same adapter. The current execution model is defined directly in
 `src/strategy/intraday-market.ts`. Historical wire decoders and the daily snapshot readers remain available for

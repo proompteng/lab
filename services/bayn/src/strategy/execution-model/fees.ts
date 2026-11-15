@@ -34,13 +34,14 @@ const roundedFee = (numerator: bigint, denominator: bigint, increment: bigint): 
       )
 
 const feeDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+const isIsoDate = Schema.is(IsoDateSchema)
+const isUtcInstant = Schema.is(UtcInstantSchema)
 
 export const equityTafRate = (model: Pick<ExecutionModel, 'fees'>, at: string): ExecutionResult<bigint> => {
   if (model.fees.scheduleVersion === 'alpaca-brokerage-2026-07-01')
     return ensureUnsigned(model.fees.tafSellPerShareMicros, 'retained TAF share rate')
   const parsed = Date.parse(at)
-  if (!Schema.is(IsoDateSchema)(at) && !Schema.is(UtcInstantSchema)(at))
-    return fail({ _tag: 'UnsupportedEquityFeeDate', at })
+  if (!isIsoDate(at) && !isUtcInstant(at)) return fail({ _tag: 'UnsupportedEquityFeeDate', at })
   const date = /^\d{4}-\d{2}-\d{2}$/.test(at) ? at : feeDate.format(parsed)
   // Alpaca's October 12 disclosure and SEC release 34-106409. Later schedules require new evidence.
   if (date < '2026-07-01' || date >= '2029-01-01') return fail({ _tag: 'UnsupportedEquityFeeDate', at })
@@ -90,13 +91,24 @@ export const calculateSessionFees = (
   if (costMultiplierMicros <= 0n) {
     return fail({ _tag: 'InvalidFeeCostMultiplier', costMultiplierMicros, minimum: 1n })
   }
-  const crypto = fills.map((fill) => receivedCryptoFee(fill, costMultiplierMicros, takerFeeBps))
-  const cryptoMicros = crypto.reduce((sum, fee) => sum + fee.valueMicros, 0n)
-  const cryptoCashMicros = crypto.reduce((sum, fee) => sum + fee.cashMicros, 0n)
-  const equityFills = fills.filter((fill) => instrumentMarket(fill.symbol) === MarketKind.Equity)
-  const totalNotional = equityFills.reduce((sum, fill) => sum + fill.notionalMicros, 0n)
-  const sellNotional = equityFills.reduce((sum, fill) => sum + (fill.side === 'sell' ? fill.notionalMicros : 0n), 0n)
-  const totalQuantity = equityFills.reduce((sum, fill) => sum + fill.quantityAtoms, 0n)
+  let cryptoMicros = 0n
+  let cryptoCashMicros = 0n
+  let totalNotional = 0n
+  let sellNotional = 0n
+  let totalQuantity = 0n
+  const equityFills: FeeInput[] = []
+  for (const fill of fills) {
+    if (instrumentMarket(fill.symbol) === MarketKind.Equity) {
+      equityFills.push(fill)
+      totalNotional += fill.notionalMicros
+      totalQuantity += fill.quantityAtoms
+      if (fill.side === 'sell') sellNotional += fill.notionalMicros
+    } else {
+      const fee = receivedCryptoFee(fill, costMultiplierMicros, takerFeeBps)
+      cryptoMicros += fee.valueMicros
+      cryptoCashMicros += fee.cashMicros
+    }
+  }
 
   return pipe(
     Result.all({
