@@ -14,7 +14,7 @@ import { makeJevEvaluationStore } from './jev-evaluation-postgres'
 
 const fixture = nativeJevFixture(undefined, undefined, 'receipt-cohort-test', {
   ...defaultJevProtocolDocument,
-  candidateSymbols: ['AAPL', 'AMZN', 'IWM', 'NVDA'],
+  candidateSymbols: ['AAPL', 'AMZN', 'GOOGL', 'NVDA'],
 })
 const { batchPlan: plan, batchResult: batch } = nativeJevDecisionEvidence(fixture)
 const entries = plan.candidates.map((candidate, index) => {

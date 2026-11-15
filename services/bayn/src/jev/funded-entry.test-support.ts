@@ -1,4 +1,5 @@
 import { nativeChartInference } from './retained-chart.test-support'
+import { retainedJevProtocolV40Document } from './protocol'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result } from 'effect'
@@ -23,7 +24,7 @@ export const makeFundedEvaluationRequest = (current: ReturnType<typeof currentRe
     numericalState: { ...current.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
     schemaVersion: 'bayn.entry-inference-input.v4' as const,
     protocol: {
-      ...current.request.protocol,
+      ...retainedJevProtocolV40Document,
       model: retainedJevModel,
       executionModel: retainedIntradayExecutionModel,
       schemaVersion: 'bayn.jev.protocol.v25' as const,

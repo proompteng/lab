@@ -1,5 +1,5 @@
 import { DecisionConstructionLive } from '../decision-construction'
-import { equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
 
 import type { MarketSources } from '../market-data/streaming/raw-events'
 import { ValkeyCacheLive } from '../valkey-cache'

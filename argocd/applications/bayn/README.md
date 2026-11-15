@@ -1,8 +1,8 @@
 # Bayn deployment
 
-## Jev 1.14 cutover
+## Native equity long and short cutover
 
-[The Box cutover](../../../docs/bayn/jev114-box-cutover.md) first settles the exact v39 PAPER identity through migration 186 and native OBSERVE recovery. The old mandate remains absent until the new protocol and verified immutable image have a reviewed same-account activation request.
+[The native short cutover](../../../docs/bayn/equity-short-cutover.md) first settles the exact v40 PAPER identity through migration 199 and native OBSERVE recovery. Migration 200 admits v41 only from settled, flat, clear OBSERVE. The mandate stays absent until the immutable successor image and same-account PAPER request are verified. [The universe and strategy evidence](../../../docs/bayn/native-short-universe-2026-11-14.md) records the ten S&P 100 entry candidates, retained source symbols, directional execution and economic limitations.
 
 ## Images and operating commands
 

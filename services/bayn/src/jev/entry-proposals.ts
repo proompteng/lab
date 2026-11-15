@@ -270,6 +270,7 @@ export const makeEntrySourceCandidates = (input: {
 export const makeChartSourceCandidates = (input: {
   readonly chart: NativeChartEvidence
   readonly bidMicros: bigint
+  readonly allowShort?: boolean
 }) => {
   const { chart, bidMicros } = input
   const prices = chart.bars.map((bar) => ({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
@@ -306,7 +307,11 @@ export const makeChartSourceCandidates = (input: {
         break
       high = price.high.success > high ? price.high.success : high
       low = price.low.success < low ? price.low.success : low
-      if (high > low && bidMicros > high && quantizeInstrumentPriceMicros(chart.symbol, low - 1n, 'DOWN') > 0n)
+      if (
+        high > low &&
+        (bidMicros > high || (input.allowShort === true && bidMicros < low)) &&
+        quantizeInstrumentPriceMicros(chart.symbol, low - 1n, 'DOWN') > 0n
+      )
         baseWindows.push({ firstBarId: firstBar.id, lastBarId: lastBar.id })
     }
   }

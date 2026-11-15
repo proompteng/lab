@@ -18,6 +18,7 @@ import { JevObservationSchema } from './observation-contract'
 import { JevPortfolioSchema, JevPurpose, jevManagedExitPlan } from './portfolio'
 import type { JevStrategyExitPlan } from './strategy-exit-plan'
 import { JevProtocolSchema } from './protocol'
+import { isShortExitPlan } from '../strategy/funded-exit-plan'
 
 export enum JevExitReason {
   ProfitTarget = 'PROFIT_TARGET',
@@ -53,7 +54,8 @@ export type JevExitEvidenceMaterial = Omit<JevExitEvidence, 'protocol'> & {
   readonly protocol: Pick<
     JevExitEvidence['protocol'],
     'candidateSymbols' | 'maximumHoldingMinutes' | 'maximumQuoteAgeMs'
-  >
+  > &
+    Partial<Pick<JevExitEvidence['protocol'], 'marketProfiles'>>
 }
 
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
@@ -68,8 +70,9 @@ export const jevProtectiveQuoteIsFresh = (
 
 export const jevProtectiveStopCrossed = (
   bidMicros: bigint,
-  plan: Pick<JevStrategyExitPlan, 'stopPriceMicros'>,
-): boolean => bidMicros <= BigInt(plan.stopPriceMicros)
+  plan: Pick<JevStrategyExitPlan, 'stopPriceMicros'> & { readonly positionSide?: 'SHORT' },
+): boolean =>
+  plan.positionSide === 'SHORT' ? bidMicros >= BigInt(plan.stopPriceMicros) : bidMicros <= BigInt(plan.stopPriceMicros)
 export const jevMaximumHoldDueAt = (firstFillAt: string, maximumHoldingMinutes: number): string =>
   new Date(Date.parse(firstFillAt) + maximumHoldingMinutes * 60_000).toISOString()
 export const jevBrokerEvidenceFreshUntilMs = (state: {
@@ -92,14 +95,20 @@ type PriceExitSource = {
 }
 
 export const verifiedPositionQuote = (
-  input: Pick<JevExitEvidenceMaterial, 'protocol' | 'sessionDate' | 'observedAt'> & { readonly symbol: string },
+  input: Pick<JevExitEvidenceMaterial, 'protocol' | 'sessionDate' | 'observedAt'> & {
+    readonly symbol: string
+    readonly positionSide?: 'SHORT'
+  },
   source: PriceExitSource,
 ) =>
   Result.gen(function* () {
     const snapshot = yield* reproduceStrategySnapshot(source.manifest, source.rows)
     const { protocol, sessionDate, observedAt, symbol } = input
-    const market = jevMarketForSymbol(symbol)
     const m = snapshot.manifest
+    const market = jevMarketForSymbol(
+      symbol,
+      protocol.marketProfiles?.find((profile) => profile.feed === m.feed)?.universeId ?? m.universeId,
+    )
     const end = Math.floor(Date.parse(observedAt) / 60_000) * 60_000
     const session = isContinuousMarket(m.calendar)
       ? undefined
@@ -126,12 +135,13 @@ export const verifiedPositionQuote = (
     const quote = snapshot.latestQuotes[symbol]
     if (
       quote === undefined ||
-      quote.bidSize <= 0 ||
+      (input.positionSide === 'SHORT' ? quote.askSize <= 0 : quote.bidSize <= 0) ||
       !jevProtectiveQuoteIsFresh(quote, observedAt, protocol.maximumQuoteAgeMs)
     )
       return yield* invalid('Price exit has no fresh executable bid')
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
-    return { bid, quote }
+    const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
+    return { bid, ask, quote }
   })
 
 export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMaterial, 'trigger'>) =>
@@ -141,7 +151,7 @@ export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMateri
     if (!equal(portfolio.exitPolicy, jevPositionExitPolicy(protocol, portfolio.exitPolicy.plans)))
       return yield* invalid('Exit policy differs from the policy sealed into the entry decision')
     const state = portfolio.brokerState
-    const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
+    const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
     const firstFill = portfolio.entryFills[0]
     const entryPlan = yield* jevManagedExitPlan(portfolio)
     if (position === undefined || firstFill === undefined)
@@ -181,11 +191,16 @@ export const deriveJevExitTargetMaterial = <Evidence extends JevExitEvidenceMate
         break
       case JevExitReason.ProtectiveStop:
       case JevExitReason.ProfitTarget: {
-        const { bid, quote } = yield* verifiedPositionQuote({ ...evidence, symbol: position.symbol }, trigger)
+        const short = isShortExitPlan(entryPlan)
+        const { bid, ask, quote } = yield* verifiedPositionQuote(
+          { ...evidence, symbol: position.symbol, ...(short ? { positionSide: 'SHORT' as const } : {}) },
+          trigger,
+        )
+        const exitPrice = short ? ask : bid
         const crossed =
           trigger.reason === JevExitReason.ProtectiveStop
-            ? jevProtectiveStopCrossed(bid, entryPlan.levels)
-            : yield* jevProfitTargetCrossed(portfolio, bid)
+            ? jevProtectiveStopCrossed(exitPrice, entryPlan.levels)
+            : yield* jevProfitTargetCrossed(portfolio, exitPrice)
         if (!crossed) return yield* invalid('The verified bid has not crossed its entry-bound exit threshold')
         commitDeadlineAt = new Date(Date.parse(quote.eventAt) + protocol.maximumQuoteAgeMs).toISOString()
         break
@@ -257,8 +272,15 @@ export const jevProfitTargetStopCrossed = (
     if (portfolio.purpose !== JevPurpose.Manage)
       return yield* invalid('A profit limit requires the entry-bound managed portfolio')
     const plan = yield* jevManagedExitPlan(portfolio)
-    const { bid, quote } = yield* verifiedPositionQuote(
-      { protocol: target.evidence.protocol, sessionDate: target.sessionDate, observedAt, symbol: plan.levels.symbol },
+    const short = isShortExitPlan(plan)
+    const { bid, ask, quote } = yield* verifiedPositionQuote(
+      {
+        protocol: target.evidence.protocol,
+        sessionDate: target.sessionDate,
+        observedAt,
+        symbol: plan.levels.symbol,
+        ...(short ? { positionSide: 'SHORT' as const } : {}),
+      },
       source,
     )
     if (
@@ -266,7 +288,7 @@ export const jevProfitTargetStopCrossed = (
       !jevProtectiveQuoteIsFresh(quote, evaluatedAt, target.evidence.protocol.maximumQuoteAgeMs)
     )
       return yield* invalid('Profit cancellation quote expired before its decision')
-    return jevProtectiveStopCrossed(bid, plan.levels)
+    return jevProtectiveStopCrossed(short ? ask : bid, plan.levels)
   })
 
 export const jevProfitTargetLimitFloors = (
@@ -280,6 +302,7 @@ export const jevProfitTargetLimitFloors = (
     if (portfolio.purpose !== JevPurpose.Manage)
       return yield* invalid('A profit limit requires the entry-bound managed portfolio')
     const plan = yield* jevManagedExitPlan(portfolio)
+    if (isShortExitPlan(plan)) return {}
     const firstFill = portfolio.entryFills[0]
     const reference = references.find(({ symbol }) => symbol === plan.levels.symbol)
     if (firstFill === undefined || reference === undefined)
@@ -303,3 +326,27 @@ export const jevProfitTargetHoldingDeadlineAt = (
     jevMaximumHoldDueAt(portfolio.entryFills[0].occurredAt, target.evidence.protocol.maximumHoldingMinutes),
   )
 }
+
+export const jevProfitTargetLimitCeilings = (
+  target: JevExitTargetMaterial | undefined,
+  observedAt: string,
+  references: readonly { readonly symbol: string; readonly referencePriceMicros: string }[],
+): Result.Result<Readonly<Record<string, bigint>>, JevContractError> =>
+  Result.gen(function* () {
+    if (!isProfitExit(target)) return {}
+    const portfolio = target.evidence.portfolio
+    if (portfolio.purpose !== JevPurpose.Manage)
+      return yield* invalid('A profit cover requires the entry-bound short portfolio')
+    const plan = yield* jevManagedExitPlan(portfolio)
+    if (!isShortExitPlan(plan)) return {}
+    const firstFill = portfolio.entryFills[0]
+    const reference = references.find((value) => value.symbol === plan.levels.symbol)
+    if (firstFill === undefined || reference === undefined)
+      return yield* invalid('A profit cover requires its first fill and current ask reference')
+    if (
+      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, target.evidence.protocol.maximumHoldingMinutes) ||
+      jevProtectiveStopCrossed(BigInt(reference.referencePriceMicros), plan.levels)
+    )
+      return {}
+    return { [plan.levels.symbol]: BigInt(plan.levels.profitLimitPriceMicros) }
+  })

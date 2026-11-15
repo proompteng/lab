@@ -68,7 +68,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: 896338d216e9c1ff5a2ae7a7a24177260336db9c
+              value: 503cb2d60c58c5309c2e031d032069481ac4b0db
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: RESTATE_INGRESS_ORIGIN
@@ -90,18 +90,18 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:9f16522c4e510492ae8cda5e6e5102bd89b03cfb6688713189ad520f96187e63
+              value: sha256:0b6ddb52c548cb16791843a3a6c13e20e06abe81cce3f99e9b1833d6dd4cd841
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb"
+              value: "004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf"
+              value: "b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
-              value: "1529d63053bb4b2f2979e14cfe29282928d02fee603ac5d8094ff4f39ef316a5"
+              value: "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

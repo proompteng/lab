@@ -195,6 +195,7 @@ export const makeMutationStartPostgres = (
           authority.maximum, authority.effective, authority.kill_state, authority.reason,
           intent.intent_id, intent.authority_generation_hash AS intent_authority_generation_hash,
           intent.client_order_id, intent.side, ${input.brokerOrderId}::text AS broker_order_id,
+          intent.protection->>'_tag' AS protection_tag,
           to_char(execution_account_commit_now(intent.account_id) AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS admitted_at
         FROM authority_state AS authority

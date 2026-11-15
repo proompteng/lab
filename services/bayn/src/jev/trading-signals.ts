@@ -35,6 +35,8 @@ import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
 import { webullEntryContext } from './webull-entry-context'
+import { equityShortIsEligible, type EquityShortEligibility } from '../execution/equity-short'
+import { equityClockSession } from '../equity-hours'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -300,6 +302,7 @@ export const jevTradingSignalRequestMaterial = (
   symbol: string,
   native: {
     readonly protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+    readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
     readonly portfolio: JevPortfolio
   },
   selectionPolicy: EntryAblationSelection | null,
@@ -357,12 +360,25 @@ export const jevTradingSignalRequestMaterial = (
         askMicros: candidate.prices.ask.toString(),
         capitalMicros: native.portfolio.brokerState.account.equityMicros,
         cryptoFeeTier,
+        ...(native.protocol.schemaVersion === 'bayn.jev.protocol.v41' &&
+        equityClockSession(snapshot.manifest.observedAt) === 'regular' &&
+        equityShortIsEligible(
+          native.equityShortEligibility?.[symbol],
+          native.portfolio.brokerState.account.accountId,
+          symbol,
+          snapshot.manifest.observedAt,
+        )
+          ? {
+              accountId: native.portfolio.brokerState.account.accountId,
+              equityShortEligibility: native.equityShortEligibility?.[symbol],
+            }
+          : {}),
       },
       numericalState: {
         schemaVersion: native.protocol.inputDefinition,
         webullContext,
         task: {
-          positionPolicy: 'long-only',
+          positionPolicy: native.protocol.positionPolicy,
           horizonMinutes: native.protocol.horizonMinutes,
           decisionPurpose: native.portfolio.purpose,
           purpose:
@@ -418,7 +434,11 @@ export const jevTradingSignalRequestMaterial = (
 const requestFromSnapshot = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
-  native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  native: {
+    readonly protocol: JevProtocol
+    readonly portfolio: JevPortfolio
+    readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
+  },
   selectionPolicy: EntryAblationSelection | null,
 ) =>
   jevTradingSignalRequestMaterial(snapshot, symbol, native, selectionPolicy).pipe(
