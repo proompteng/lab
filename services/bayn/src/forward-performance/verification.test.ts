@@ -7,6 +7,8 @@ import { TestClock } from 'effect/testing'
 import { verifyReportJob } from '../forward-performance-verification-worker'
 import { executionEvidenceFromRows, indexExecutionEvidence, verifyPerformanceDecisions } from './postgres/projection'
 import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-support'
+import { makeIntradayPerformanceFixture } from './intraday-cycle.test-support'
+import { makeIntradayPerformanceVolumeEvidenceBatch } from './intraday-volume'
 import {
   makeReportVerification,
   reportVerificationConcurrency,
@@ -288,4 +290,32 @@ test('native worker preserves genuine retained execution projections and rejects
   expect(actual).toEqual(inputs.map((_, n) => expected[n % expected.length]))
   expect(actual[0]?.executionEvidence.length).toBeGreaterThan(0)
   expect(actual[1]?.unverifiedDecisionHashes).toEqual([valid.decision_hash])
+}, 30_000)
+
+test('native volume verification preserves complete, sparse and missing-close evidence and typed failures', async () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  const inputs = [bars, bars.slice(1), bars.slice(0, -1), [bars[0], ...bars]]
+  const actual = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification()
+        return yield* Effect.forEach(inputs, (input) => verifier.volume([request], archive, input).pipe(Effect.result))
+      }),
+    ),
+  )
+  for (const [i, input] of inputs.entries()) {
+    const expected = makeIntradayPerformanceVolumeEvidenceBatch([request], archive, input)
+    const result = actual[i]
+    if (Result.isSuccess(expected)) expect(result).toEqual(expected)
+    else {
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'IntradaySnapshotFailure',
+          reason: expected.failure.reason,
+          message: expected.failure.message,
+        },
+      })
+    }
+  }
 }, 30_000)

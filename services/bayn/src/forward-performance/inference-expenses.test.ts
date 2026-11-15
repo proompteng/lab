@@ -160,6 +160,7 @@ const runPartitioned = (
   Effect.runPromise(
     readForwardInferenceExpenseSummary(input, accountId, quotes, generation).pipe(
       Effect.provideService(ReportVerification, {
+        volume: () => Effect.die('unexpected volume'),
         decision: () => Effect.die('unexpected decision job'),
         inference: () => Effect.die('unexpected inference job'),
         coverage: (part) =>
