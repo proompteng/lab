@@ -18,6 +18,8 @@ export interface ReportDecisionProjection {
   readonly unverifiedDecisionHashes: readonly string[]
 }
 
+export type ReportDecisionIndex = ReturnType<typeof indexExecutionEvidence>
+
 export enum ReportVerificationTask {
   Decision = 'DECISION',
   Inference = 'INFERENCE',
@@ -37,7 +39,7 @@ export type ReportVerificationInput =
   | {
       readonly task: ReportVerificationTask.Decision
       readonly row: typeof CycleDecisionRow.Type
-      readonly index: ReturnType<typeof indexExecutionEvidence>
+      readonly index?: ReportDecisionIndex
     }
   | { readonly task: ReportVerificationTask.Inference; readonly input: unknown; readonly asOf: string }
   | { readonly task: ReportVerificationTask.Coverage; readonly input: ReportExpenseCoverageInput }
@@ -63,6 +65,7 @@ export class ReportVerificationError extends Data.TaggedError('ReportVerificatio
 interface Slot {
   worker: Worker | undefined
   unhealthy: boolean
+  decisionIndex: ReportDecisionIndex | undefined
 }
 
 const failed = (message: string, cause?: unknown) => new ReportVerificationError({ message, cause })
@@ -89,6 +92,7 @@ export const makeReportVerification = (
       (): Slot => ({
         worker: undefined,
         unhealthy: false,
+        decisionIndex: undefined,
       }),
     )
     const available = yield* Queue.bounded<Slot>(slots.length)
@@ -99,6 +103,7 @@ export const makeReportVerification = (
       Effect.promise(async () => {
         const worker = slot.worker
         slot.worker = undefined
+        slot.decisionIndex = undefined
         if (worker !== undefined) {
           await worker.terminate()
           worker.removeAllListeners()
@@ -159,7 +164,15 @@ export const makeReportVerification = (
                 if (slot.unhealthy || worker.threadId === -1) {
                   cleanup()
                   resume(Effect.fail(failed('Report verification worker is unavailable')))
-                } else worker.postMessage({ id, input } satisfies ReportVerificationJob)
+                } else {
+                  // The immutable report cut is installed once per worker, rather than cloned for every decision.
+                  const transferred =
+                    input.task === ReportVerificationTask.Decision && input.index === slot.decisionIndex
+                      ? { task: input.task, row: input.row }
+                      : input
+                  worker.postMessage({ id, input: transferred } satisfies ReportVerificationJob)
+                  if (input.task === ReportVerificationTask.Decision) slot.decisionIndex = input.index
+                }
               } catch (cause) {
                 cleanup()
                 resume(Effect.fail(failed('Report verification worker could not receive the job', cause)))

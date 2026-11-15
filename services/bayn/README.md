@@ -1876,7 +1876,8 @@ The default report reads performance and inference-expense records in one read-o
 transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
 Read-only CLI reports verify decision documents, inference sources and request-partitioned expense coverage in a
 scoped pool of at most eight native workers. Each worker uses the original domain verifier and returns compact
-projections; source duplicates remain together, every session quote is verified, and exact TigerBeetle session
+projections. The immutable execution index is installed once per worker for each report cut. Source duplicates
+remain together, every session quote is verified, and exact TigerBeetle session
 reconciliation still follows coverage verification. Results retain source order. Failure, defects, interruption and
 deadlines close outstanding workers before the report scope returns; incomplete output is discarded by the supervisor.
 The fenced persistence path retains inline verification. The pool's V8 resource limits are advisory when Node's

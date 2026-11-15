@@ -7,19 +7,25 @@ import { verifyInferenceExpenseCoverage } from './inference-expense'
 import { executionEvidenceFromRows, verifyPerformanceDecisions } from './forward-performance/postgres/projection'
 import {
   ReportVerificationTask,
+  type ReportDecisionIndex,
   type ReportVerificationJob,
   type ReportVerificationReply,
 } from './forward-performance/verification'
 
-export const verifyReportJob = (job: ReportVerificationJob): ReportVerificationReply => {
+export const verifyReportJob = (
+  job: ReportVerificationJob,
+  retainedIndex?: ReportDecisionIndex,
+): ReportVerificationReply => {
   const { id, input } = job
   if (input.task === ReportVerificationTask.Decision) {
+    const index = input.index ?? retainedIndex
+    if (index === undefined) throw new Error('Report decision index is unavailable')
     const verified = verifyPerformanceDecisions([input.row])
     return {
       id,
       outcome: 'DECISION',
       value: {
-        executionEvidence: executionEvidenceFromRows(verified.verifiedRows, input.index),
+        executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
         unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
       },
     }
@@ -54,6 +60,7 @@ if (parentPort !== null) {
   const port = parentPort
   const requests = Effect.gen(function* () {
     const queue = yield* Queue.bounded<ReportVerificationJob>(1)
+    let decisionIndex: ReportDecisionIndex | undefined
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         const receive = (job: ReportVerificationJob) => {
@@ -70,7 +77,11 @@ if (parentPort !== null) {
     return yield* Effect.forever(
       Queue.take(queue).pipe(
         Effect.flatMap((job) =>
-          Effect.sync(() => verifyReportJob(job)).pipe(
+          Effect.sync(() => {
+            if (job.input.task === ReportVerificationTask.Decision && job.input.index !== undefined)
+              decisionIndex = job.input.index
+            return verifyReportJob(job, decisionIndex)
+          }).pipe(
             Effect.catchDefect((cause) =>
               Effect.succeed<ReportVerificationReply>({ id: job.id, outcome: 'DEFECT', cause }),
             ),

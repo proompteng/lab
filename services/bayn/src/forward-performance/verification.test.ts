@@ -10,6 +10,8 @@ import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-
 import {
   makeReportVerification,
   reportVerificationConcurrency,
+  ReportVerificationTask,
+  type ReportDecisionIndex,
   type ReportVerificationJob,
   type ReportVerificationReply,
 } from './verification'
@@ -26,6 +28,8 @@ class FixtureWorker extends EventEmitter {
   threadId = 1
   terminations = 0
   readonly pending: ReportVerificationJob[] = []
+  readonly received: ReportVerificationJob[] = []
+  decisionIndex: ReportDecisionIndex | undefined
   constructor(
     readonly automatic: boolean,
     readonly reply: (job: ReportVerificationJob) => ReportVerificationReply = verifyReportJob,
@@ -33,13 +37,19 @@ class FixtureWorker extends EventEmitter {
     super()
   }
   postMessage(job: ReportVerificationJob) {
-    this.pending.push(structuredClone(job))
+    const cloned = structuredClone(job)
+    this.pending.push(cloned)
+    this.received.push(cloned)
     if (this.automatic) queueMicrotask(() => this.complete())
   }
   complete() {
     const job = this.pending.shift()
     if (job === undefined) throw new Error('No pending fixture job')
-    this.emit('message', this.reply(job))
+    if (job.input.task === ReportVerificationTask.Decision) {
+      this.decisionIndex = job.input.index ?? this.decisionIndex
+      if (this.decisionIndex === undefined) throw new Error('Fixture decision index is unavailable')
+      this.emit('message', this.reply({ ...job, input: { ...job.input, index: this.decisionIndex } }))
+    } else this.emit('message', this.reply(job))
   }
   async terminate() {
     this.terminations++
@@ -90,6 +100,40 @@ test('report verification bounds in-flight jobs, preserves ordering and terminat
   )
   expect(result.map((value) => value.unverifiedDecisionHashes)).toEqual(inputs.map((input) => [input.decision_hash]))
   expect(fixture.workers.every((worker) => worker.terminations === 1 && worker.eventNames().length === 0)).toBe(true)
+  expect(
+    fixture.workers.every(
+      (worker) =>
+        worker.received.filter(
+          (job) => job.input.task === ReportVerificationTask.Decision && job.input.index !== undefined,
+        ).length === 1,
+    ),
+  ).toBe(true)
+})
+
+test('replaces each worker index when a new report cut is supplied', async () => {
+  const fixture = fixtures()
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification(fixture.spawn)
+        for (const cut of [index, index, indexExecutionEvidence([], [], [])])
+          yield* Effect.forEach(
+            Array.from({ length: reportVerificationConcurrency }, (_, n) => row(n)),
+            (input) => verifier.decision(input, cut),
+            { concurrency: reportVerificationConcurrency },
+          )
+        expect(fixture.workers).toHaveLength(reportVerificationConcurrency)
+        for (const worker of fixture.workers) {
+          expect(worker.received).toHaveLength(3)
+          expect(
+            worker.received.map(
+              (job) => job.input.task === ReportVerificationTask.Decision && job.input.index !== undefined,
+            ),
+          ).toEqual([true, false, true])
+        }
+      }),
+    ),
+  )
 })
 
 test.each(['job identity', 'task identity'] as const)(
@@ -225,7 +269,7 @@ test('native worker preserves genuine retained execution projections and rejects
     document: JSON.parse(bytes.toString('utf8')),
   }
   const corrupt = { ...valid, document: { ...valid.document, contentHash: 'f'.repeat(64) } }
-  const inputs = [valid, corrupt]
+  const inputs = Array.from({ length: reportVerificationConcurrency + 2 }, (_, n) => (n % 2 === 0 ? valid : corrupt))
   const actual = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -234,15 +278,14 @@ test('native worker preserves genuine retained execution projections and rejects
       }),
     ),
   )
-  expect(actual).toEqual(
-    inputs.map((input) => {
-      const verified = verifyPerformanceDecisions([input])
-      return {
-        executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
-        unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
-      }
-    }),
-  )
+  const expected = [valid, corrupt].map((input) => {
+    const verified = verifyPerformanceDecisions([input])
+    return {
+      executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
+      unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
+    }
+  })
+  expect(actual).toEqual(inputs.map((_, n) => expected[n % expected.length]))
   expect(actual[0]?.executionEvidence.length).toBeGreaterThan(0)
   expect(actual[1]?.unverifiedDecisionHashes).toEqual([valid.decision_hash])
-}, 15_000)
+}, 30_000)
