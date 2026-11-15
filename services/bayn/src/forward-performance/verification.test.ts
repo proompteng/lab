@@ -7,8 +7,12 @@ import { TestClock } from 'effect/testing'
 import { verifyReportJob } from '../forward-performance-verification-worker'
 import { executionEvidenceFromRows, indexExecutionEvidence, verifyPerformanceDecisions } from './postgres/projection'
 import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-support'
-import { makeIntradayPerformanceFixture } from './intraday-cycle.test-support'
-import { makeIntradayPerformanceVolumeEvidenceBatch } from './intraday-volume'
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
+import { intradayPerformanceDecisionRequest, makeIntradayPerformanceVolumeEvidenceBatch } from './intraday-volume'
 import {
   makeReportVerification,
   reportVerificationConcurrency,
@@ -317,5 +321,39 @@ test('native volume verification preserves complete, sparse and missing-close ev
         },
       })
     }
+  }
+}, 30_000)
+
+test('native grouping authenticates original intraday, streaming and partition manifests before querying', async () => {
+  const inputs = [
+    makeIntradayPerformanceFixture,
+    makeStreamingPerformanceFixture,
+    makeStreamingPartitionPerformanceFixture,
+  ].flatMap((makeFixture) => {
+    const { request } = makeFixture()
+    return [request, { ...request, decisionSnapshotId: '0'.repeat(64) }]
+  })
+  const actual = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const verifier = yield* makeReportVerification()
+        return yield* Effect.forEach(inputs, (request) => verifier.volumeRequest(request).pipe(Effect.result), {
+          concurrency: 2,
+        })
+      }),
+    ),
+  )
+  for (const [i, request] of inputs.entries()) {
+    const expected = intradayPerformanceDecisionRequest(request)
+    if (Result.isSuccess(expected)) expect(actual[i]).toEqual(expected)
+    else
+      expect(actual[i]).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'IntradaySnapshotFailure',
+          reason: expected.failure.reason,
+          message: expected.failure.message,
+        },
+      })
   }
 }, 30_000)

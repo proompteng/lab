@@ -33,6 +33,7 @@ import {
   type ForwardPerformanceReaders,
 } from './program'
 import { ForwardPerformanceScopeKind } from './report'
+import { ReportVerificationLive } from './verification'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
@@ -1541,9 +1542,13 @@ describe('forward performance read program', () => {
   })
 })
 
-test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
-  'routes native completed cycles to the bounded archive and preserves their evidence: %p',
-  async (makeFixture) => {
+test.each(
+  [makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture].flatMap(
+    (makeFixture) => [false, true].map((workers) => ({ makeFixture, workers })),
+  ),
+)(
+  'routes completed cycles through inline or native verification without changing archive evidence: %p',
+  async ({ makeFixture, workers }) => {
     const { request, archive, bars } = makeFixture()
     let volumeReads = 0
     let watermarkReads = 0
@@ -1571,11 +1576,10 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient
     const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
-    const evidence = await Effect.runPromise(
-      readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
-        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
-      ),
+    const read = readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
+      Effect.provideService(ClickhouseClient.ClickhouseClient, client),
     )
+    const evidence = await Effect.runPromise(workers ? read.pipe(Effect.provide(ReportVerificationLive)) : read)
     expect(watermarkReads).toBe(1)
     expect(volumeReads).toBe(1)
     expect(evidence).toHaveLength(1)
