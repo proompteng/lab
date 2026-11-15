@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema, Stream } from 'effect'
+import { Effect, Option, Schema, Stream } from 'effect'
+import { ReportVerification, reportVerificationConcurrency } from './forward-performance/verification'
 
 import { canonicalHashV1Result } from './hash'
 import {
@@ -142,18 +143,27 @@ export const acquireInferenceExpenseSnapshot = (
       .pipe(
         Effect.map((inputs) => ({
           verify: Effect.gen(function* () {
-            const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
-            const requests: DecodedInferenceCostRequest[] = []
-            for (const input of inputs) {
-              const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
-              if (row.kind === SnapshotRowKind.Request) {
-                // Reproduction is synchronous CPU work. Service sockets and caller
-                // cancellation between requests without changing the financial cut.
-                yield* Effect.yieldNow
-                requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
-              }
-              rows.push(row)
-            }
+            const verifier = yield* Effect.serviceOption(ReportVerification)
+            const decoded = yield* Effect.forEach(
+              inputs,
+              (input) =>
+                Effect.gen(function* () {
+                  const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
+                  let request: DecodedInferenceCostRequest | undefined
+                  if (row.kind === SnapshotRowKind.Request) {
+                    // Reproduction is synchronous CPU work. Service sockets and caller
+                    // cancellation between requests without changing the financial cut.
+                    yield* Effect.yieldNow
+                    request = yield* Option.isSome(verifier)
+                      ? verifier.value.inference(row.payload, row.as_of)
+                      : Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of))
+                  }
+                  return { row, request }
+                }),
+              { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
+            )
+            const rows = decoded.map(({ row }) => row)
+            const requests = decoded.flatMap(({ request }) => (request === undefined ? [] : [request]))
             const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
             const cut = cuts[0]
             if (

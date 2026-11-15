@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
+import { readPerformanceDecisionCursor } from './decision-cursor'
 import { openSnapshotRows } from '../../db/snapshot-rows'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
@@ -14,14 +15,12 @@ import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
-  ForwardPerformanceExecutionEvidence,
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from '../model'
 
 import {
   ForwardPerformancePostgresError,
-  CycleDecisionRow,
   ReconciliationRow,
   type ForwardPerformancePostgresEvidence,
   type TerminalCycleRow,
@@ -49,12 +48,7 @@ import {
 } from './scope'
 import { decisionQuery, ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { firstCapturedCycleQuery, firstCycleQuery, readForwardPerformanceCycles } from './cycles'
-import {
-  executionEvidenceFromRows,
-  indexExecutionEvidence,
-  marketVolumeRequestsFromRows,
-  verifyPerformanceDecisions,
-} from './projection'
+import { indexExecutionEvidence, marketVolumeRequestsFromRows } from './projection'
 
 export const readForwardPerformanceExecutionOrders = (
   sql: PgClient.PgClient,
@@ -888,17 +882,10 @@ export const readForwardPerformancePostgres = (
           }),
         )
         const executionIndex = indexExecutionEvidence(executionIntentRows, executionOrderRows, executionFillRows)
-        const unverified = new Set<string>()
-        const executionEvidence: ForwardPerformanceExecutionEvidence[] = []
-        yield* consumeDecisionRows((input) =>
-          Effect.gen(function* () {
-            const row = yield* Schema.decodeUnknownEffect(CycleDecisionRow, strictParseOptions)(input)
-            const verified = verifyPerformanceDecisions([row])
-            for (const hash of verified.unverifiedDecisionHashes) unverified.add(hash)
-            executionEvidence.push(...executionEvidenceFromRows(verified.verifiedRows, executionIndex))
-          }),
+        const { executionEvidence, unverifiedDecisionHashes } = yield* readPerformanceDecisionCursor(
+          consumeDecisionRows,
+          executionIndex,
         )
-        const unverifiedDecisionHashes = [...unverified].sort()
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,

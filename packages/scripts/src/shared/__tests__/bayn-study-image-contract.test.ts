@@ -61,7 +61,13 @@ test('the installed wrapper invokes image Node and forwards arguments without co
 
 const archive = (
   role: 'research' | 'trading',
-  options: { bundle?: boolean; wrapper?: boolean; screenBundle?: boolean; screenWrapper?: boolean } = {},
+  options: {
+    bundle?: boolean
+    wrapper?: boolean
+    screenBundle?: boolean
+    screenWrapper?: boolean
+    reportWorker?: boolean
+  } = {},
 ) => {
   const path = scratch()
   const fs = join(path, 'rootfs')
@@ -102,6 +108,7 @@ const archive = (
       `app/services/bayn/dist/${command}.js`,
       'this.#connectController?.abort()\nthis.#connectWithSignal(retries, controller.signal)\nAbortSignal.any([withDefaults.signal, signal])',
     )
+  if (options.reportWorker !== false) put(fs, 'app/services/bayn/dist/forward-performance-verification-worker.js')
   const wrappers =
     role === 'research'
       ? [
@@ -146,6 +153,12 @@ test('the research archive requires the exporter bundle and executable together'
   const missingWrapper = archive('research', { bundle: true })
   expect(missingWrapper.code).not.toBe(0)
   expect(missingWrapper.stderr).toContain('bayn-jev-study-export')
+})
+
+test.each(['research', 'trading'] as const)('the %s archive requires the report verification worker', (role) => {
+  const result = archive(role, { reportWorker: false, bundle: role === 'research', wrapper: role === 'research' })
+  expect(result.code).not.toBe(0)
+  expect(result.stderr).toContain('forward-performance-verification-worker.js')
 })
 
 test('the trading archive rejects either exporter artifact', () => {

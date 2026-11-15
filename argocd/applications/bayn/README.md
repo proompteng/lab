@@ -9,6 +9,9 @@
 The `bayn` image serves status, execution, activation and market projection. It retains `bayn-forward-performance`
 for private financial reports in the API workload. The trading artifact retains its replay executable and compiler
 receipt for candidate image-membership qualification; the registered trading digest remains authoritative.
+Read-only reports own at most eight native verification workers on x64 or sixteen on ARM64. The API has a sixteen-core burst limit, a 250m
+CPU request and a 6 GiB memory limit; execution-controller resources stay separate. Report cancellation and the
+CLI supervisor close the worker pool and discard incomplete stdout. Fenced receipt persistence verifies inline.
 The `bayn-research` image owns research, replay, GEPA, frozen
 controls and `bayn-system-assessment`. Qualification flags (`--system-*`) move to that command; the financial
 report command rejects them. Both artifacts publish as one commit- and run-bound Kargo cohort. Trading and research
