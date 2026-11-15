@@ -306,13 +306,20 @@ export const acquireBrokerObservationRuntime = (
                   }),
                   Effect.onExit((exit) => {
                     if (Exit.isSuccess(exit)) return Effect.void
-                    const retryableReadFailure =
+                    const reusableSessionFailure =
                       exit.cause.reasons.length > 0 &&
-                      exit.cause.reasons.every((reason) => reason._tag === 'Fail' && reason.error.retryable)
-                    // A rejected or timed-out cut already discards its retained history. Keep the verified
-                    // connection for the next quota-paced poll instead of repeating startup preflight.
-                    // Acquisition failures and uncertain exits must still stop their lazy resource scope.
-                    return sessionVerified && retryableReadFailure
+                      exit.cause.reasons.every(
+                        (reason) =>
+                          reason._tag === 'Fail' &&
+                          reason.error.retryable &&
+                          reason.error.kind !== BrokerReadErrorKind.Transport &&
+                          (reason.error.kind !== BrokerReadErrorKind.Timeout ||
+                            reason.error.pollFailureReason === BrokerPollFailureReason.SnapshotRejected),
+                      )
+                    // A rejected snapshot can reuse its verified connection. Exhausted transport/timeouts
+                    // must dispose the old dispatcher so a stuck pool cannot stall the next capture too.
+                    // Reacquisition stays lazy and the next poll repeats account/permission verification.
+                    return sessionVerified && reusableSessionFailure
                       ? Effect.void
                       : ScopedRef.set(brokerRuntimes, acquireBroker)
                   }),

@@ -19,7 +19,9 @@ const connection = Result.getOrThrow(
   }),
 )
 for (const intercepted of [true, false]) {
-  for (const mode of ['before-start', 'after-start', 'valid', 'rejected'] as const) {
+  for (const mode of ['before-start', 'after-start', 'valid', 'rejected', 'retry-after-start'] as const) {
+    const retry = mode === 'retry-after-start'
+    const currentConnection = retry ? { ...connection, operationTimeoutMs: 30_000, retryAttempts: 1 } : connection
     let calls = 0,
       aborted = 0,
       destroyed = 0
@@ -31,7 +33,10 @@ for (const intercepted of [true, false]) {
         calls++
         assert.equal(options.method, 'GET')
         assert.equal(options.origin, alpacaSandboxBaseUrl)
-        assert.equal(options.path, '/v2/calendar?start=2026-11-11&end=2026-11-11&date_type=TRADING')
+        assert.equal(
+          options.path,
+          retry ? '/v2/account/configurations' : '/v2/calendar?start=2026-11-11&end=2026-11-11&date_type=TRADING',
+        )
         signal = (options as Undici.Dispatcher.RequestOptions).signal as AbortSignal
         let isAborted = false
         let abortReason: Error | null = null
@@ -53,9 +58,9 @@ for (const intercepted of [true, false]) {
           },
         }
         if (mode !== 'before-start') handler.onRequestStart?.(controller, null)
-        if (mode === 'valid' || mode === 'rejected') {
-          handler.onResponseStart?.(controller, 200, mode === 'valid' ? { 'x-request-id': 'fixture' } : {}, 'OK')
-          handler.onResponseData?.(controller, Buffer.from('[]'))
+        if (mode === 'valid' || mode === 'rejected' || (retry && calls === 2)) {
+          handler.onResponseStart?.(controller, 200, mode !== 'rejected' ? { 'x-request-id': 'fixture' } : {}, 'OK')
+          handler.onResponseData?.(controller, Buffer.from(retry ? '{"fractional_trading":true}' : '[]'))
           handler.onResponseEnd?.(controller, {})
         }
         return true
@@ -67,11 +72,14 @@ for (const intercepted of [true, false]) {
       Effect.gen(function* () {
         const underlying = yield* Tracer.Tracer
         return yield* Effect.gen(function* () {
-          const broker = yield* make(connection)
-          return yield* broker.marketCalendar({ start: '2026-11-11', end: '2026-11-11' }).pipe(Effect.exit)
+          const broker = yield* make(currentConnection)
+          const read = retry
+            ? broker.accountConfiguration.pipe(Effect.asVoid)
+            : broker.marketCalendar({ start: '2026-11-11', end: '2026-11-11' }).pipe(Effect.asVoid)
+          return yield* read.pipe(Effect.exit)
         }).pipe(
           Effect.provide(
-            alpacaHttpLayer(connection, {
+            alpacaHttpLayer(currentConnection, {
               create: () => dispatcher,
               destroy: async () => {
                 destroyed++
@@ -99,12 +107,12 @@ for (const intercepted of [true, false]) {
     )
     assert.equal(attributes['broker.transport.interceptor_available'], intercepted)
     assert.equal(attributes['broker.transport.interceptor_installed'], intercepted)
-    assert.equal(calls, 1)
+    assert.equal(calls, retry ? 2 : 1)
     assert.equal(destroyed, 1)
-    assert.equal(Exit.isSuccess(result), mode === 'valid')
+    assert.equal(Exit.isSuccess(result), mode === 'valid' || retry)
     if (mode === 'before-start' || mode === 'after-start') assert.equal(signal?.aborted, true)
-    if (mode === 'after-start') assert.equal(aborted, 1)
-    assert.equal(attributes['broker.transport.attempts'], !intercepted ? 0 : 1)
+    if (mode === 'after-start' || retry) assert.equal(aborted, 1)
+    assert.equal(attributes['broker.transport.attempts'], !intercepted ? 0 : retry ? 2 : 1)
     assert.equal(
       attributes['broker.transport.phase'],
       !intercepted
