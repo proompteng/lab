@@ -50,7 +50,7 @@ import { postgresError } from './postgres/model'
 import {
   intradayPerformanceDecisionRequest,
   intradayPerformanceSessionQuery,
-  makeIntradayPerformanceVolumeEvidence,
+  makeIntradayPerformanceVolumeEvidenceBatch,
 } from './intraday-volume'
 import { loadIntradayArchivePages } from '../market-data/intraday/program'
 import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
@@ -362,10 +362,12 @@ const readIntradayPerformanceVolume = (
       decodeIntradayBarRows,
       (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
     )
-    // Every cycle still verifies its own manifest, old watermark lower bounds and complete result.
-    // Only the identical archive I/O is shared, never a decision identity or financial receipt.
-    return yield* Effect.forEach(group, ({ request }) =>
-      Effect.fromResult(makeIntradayPerformanceVolumeEvidence(request, archiveRequest, rawBars)),
+    return yield* Effect.fromResult(
+      makeIntradayPerformanceVolumeEvidenceBatch(
+        group.map(({ request }) => request),
+        archiveRequest,
+        rawBars,
+      ),
     )
   })
 
@@ -484,7 +486,7 @@ export const readForwardPerformanceMarketVolumeWithClient = (
     const intradayGroups = yield* Effect.fromResult(
       groupIntradayVolumeRequests(requests.filter((request) => 'decisionManifest' in request)),
     )
-    const intraday = yield* Effect.forEach(intradayGroups, readIntradayPerformanceVolume, { concurrency: 2 })
+    const intraday = yield* Effect.forEach(intradayGroups, readIntradayPerformanceVolume, { concurrency: 4 })
     const evidence: ForwardPerformanceMarketVolumeEvidence[] = [
       ...groups.flat(),
       ...intraday.flat().filter((item) => item !== undefined),

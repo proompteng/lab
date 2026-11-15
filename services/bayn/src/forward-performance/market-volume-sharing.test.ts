@@ -8,7 +8,7 @@ import {
   makeStreamingPerformanceFixture,
   makeStreamingPartitionPerformanceFixture,
 } from './intraday-cycle.test-support'
-import { makeIntradayPerformanceVolumeEvidence } from './intraday-volume'
+import { makeIntradayPerformanceVolumeEvidence, makeIntradayPerformanceVolumeEvidenceBatch } from './intraday-volume'
 import { readForwardPerformanceMarketVolumeWithClient } from './program'
 import type { ForwardPerformanceIntradayMarketVolumeRequest } from './model'
 
@@ -90,6 +90,48 @@ const withWatermarkDelta = (request: ForwardPerformanceIntradayMarketVolumeReque
     decisionManifest: { ...material, contentHash, snapshotId },
   }
 }
+
+test('shared volume retains missing minutes in independently owned cycle evidence', () => {
+  const fixture = makeIntradayPerformanceFixture()
+  const omitted = fixture.bars[10]
+  if (omitted === undefined) throw new Error('Expected a complete session fixture')
+  const requests = [fixture.request, { ...fixture.request, cycleId: hash('sibling') }]
+  const evidence = Result.getOrThrow(
+    makeIntradayPerformanceVolumeEvidenceBatch(
+      requests,
+      fixture.archive,
+      fixture.bars.filter((_, index) => index !== 10),
+    ),
+  )
+  const [first, second] = evidence
+  if (first === undefined || second === undefined) throw new Error('Expected explicit incomplete capacity evidence')
+  expect(first.missingMinutes).toEqual([omitted.event_at])
+  expect(second.missingMinutes).toEqual([omitted.event_at])
+  expect(first.barCount).toBe(389)
+  expect(first.contentHash).not.toBe(second.contentHash)
+  expect(first.missingMinutes).not.toBe(second.missingMinutes)
+})
+
+test('volume verification reuse ends with the call and never accepts changed archive bytes', () => {
+  const fixture = makeIntradayPerformanceFixture()
+  const requests = [fixture.request, { ...fixture.request, cycleId: hash('sibling') }]
+  const before = Result.getOrThrow(makeIntradayPerformanceVolumeEvidenceBatch(requests, fixture.archive, fixture.bars))
+  const changed = fixture.bars.map((bar, index) => (index === 0 ? { ...bar, volume: '101.00000000' } : bar))
+  const after = Result.getOrThrow(makeIntradayPerformanceVolumeEvidenceBatch(requests, fixture.archive, changed))
+  expect(before[0]?.quantityAtoms).toBe('39000000000000')
+  expect(after[0]?.quantityAtoms).toBe('39001000000000')
+  expect(after[0]?.barsContentHash).not.toBe(before[0]?.barsContentHash)
+  expect(after[0]?.contentHash).not.toBe(before[0]?.contentHash)
+  expect(
+    Result.isFailure(
+      makeIntradayPerformanceVolumeEvidenceBatch(
+        requests,
+        fixture.archive,
+        fixture.bars.map((bar, index) => (index === 0 ? { ...bar, symbol: 'MSFT' } : bar)),
+      ),
+    ),
+  ).toBe(true)
+})
 
 test('sharing retains each original decision identity and watermark lower bound', async () => {
   const fixture = makeIntradayPerformanceFixture()

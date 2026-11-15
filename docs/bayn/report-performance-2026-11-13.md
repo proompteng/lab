@@ -109,3 +109,39 @@ source completeness and storage evidence remain tracked in
 [the original investigation](system-investigation-2026-11-13.md). None is resolved by this performance change.
 The [stock short investigation](stock-short-research-2026-11-13.md) separately records failed numerical controls,
 native accounting tests and the contracts still required before short exposure can be considered.
+
+## November 15 complete-report work
+
+The concrete goal remains a complete generation report within 30 seconds, exact ledger reconciliation, and explicit
+known and missing operating costs. This is an engineering target, not a claim of economic qualification.
+
+On deployed `0601a22a91900642c0283210ebfb704fa379b53e`, a supervised 30-second report failed after 32,662 ms
+including cleanup and emitted no stdout. A separate bounded diagnostic spent 91,090 ms in PostgreSQL retrieval
+and decision verification, 9,304 ms in market-volume reads, and exceeded its 120-second deadline during expenses.
+CPU profiling identified repeated pure decision and inference reconstruction as the primary work.
+
+A development-provenance candidate with six native verification workers completed the same retained generation
+under the existing two-core API limit in 116,952 ms wall time. Its measured report interval was 113,107 ms, and
+process-lifetime peak RSS was 1,817,556 KiB. Phase times were 71,364 ms for PostgreSQL and decision verification,
+9,498 ms for market volume, 734 ms for the execution ledger, 525 ms for expense snapshot acquisition, and
+29,967 ms for expense reconstruction and reconciliation. Different mutable source cuts prevent treating these
+separate runs as a controlled end-to-end speedup. The 30-second target was not met by this trial.
+
+That complete cut retained 107 cycles, 174 execution transactions, 87 realized closes, 38 complete episodes,
+-$179.45 gross realized P&L, $13.61 execution fees, exact accounting receipts and exact ledger reconciliation.
+It still retained 192 unclosed cycles and incomplete operating costs. Fully costed profit and return remained null;
+profitability remained UNDETERMINED. No receipt was persisted.
+
+The final candidate bounds the read-only CLI pool at eight workers, keeps complete source verification and all
+session-ledger checks, and raises only the API CPU burst limit from two to eight cores. CPU reservations and the
+4 GiB container limit remain unchanged. Intraday archive reads are bounded at four concurrent groups. Native
+worker tests compare genuine retained projections and inference coverage with the original verifier; lifecycle
+tests exercise successful reuse without accumulating listeners, failure, defects, timeout and interruption.
+Partition tests retain conflicting duplicates, orphan quotes, foreign accounts and other-generation validation.
+
+For repeated-window volume fixtures (117 decisions and 390 minute bars), alternating Node trials showed median
+verification times of 2,085 to 780 ms for intraday snapshots, 2,288 to 899 ms for streaming snapshots, and 1,934 to
+825 ms for partitioned snapshots, with exact complete output parity including sparse and missing closing bars.
+These are synthetic component measurements, not a complete-report latency claim. Global schema JIT and frozen
+canonical serialization memoization experiments were discarded after negligible improvement or regression.
+Raw retained documents, outputs and CPU profiles remain private temporary diagnostics, outside Git and CI.
