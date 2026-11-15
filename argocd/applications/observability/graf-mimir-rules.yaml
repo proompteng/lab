@@ -3522,12 +3522,26 @@ data:
                 (
                   time()
                   -
-                  max by (job, namespace, service) (
-                    bayn_execution_controller_next_due_timestamp_seconds{
-                      job="bayn",
-                      namespace="bayn",
-                      service="bayn"
-                    }
+                  (
+                    (
+                      max by (job, namespace, service) (
+                        bayn_execution_controller_next_due_timestamp_seconds{
+                          job="bayn",
+                          namespace="bayn",
+                          service="bayn"
+                        }
+                      ) > 0
+                    )
+                    or on(job, namespace, service)
+                    (
+                      max by (job, namespace, service) (
+                        bayn_execution_controller_last_completion_timestamp_seconds{
+                          job="bayn",
+                          namespace="bayn",
+                          service="bayn"
+                        }
+                      ) > 0
+                    )
                   )
                 )
                 >
@@ -3547,7 +3561,7 @@ data:
               notify: email
             annotations:
               summary: Bayn durable execution controller is overdue
-              description: The active Restate execution controller has remained past its durable next-due time longer than Bayn's configured stall threshold for one minute.
+              description: The active Restate execution controller has remained past its durable next-due time, or its last completion when no next-due time is recorded, longer than Bayn's configured stall threshold for one minute.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionWindowUnready
             expr: |
