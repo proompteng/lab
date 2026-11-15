@@ -132,7 +132,7 @@ That complete cut retained 107 cycles, 174 execution transactions, 87 realized c
 It still retained 192 unclosed cycles and incomplete operating costs. Fully costed profit and return remained null;
 profitability remained UNDETERMINED. No receipt was persisted.
 
-The final candidate bounds the read-only CLI pool at eight workers, keeps complete source verification and all
+The first released candidate bounds the read-only CLI pool at eight workers, keeps complete source verification and all
 session-ledger checks, and raises only the API CPU burst limit from two to eight cores. CPU reservations and the
 4 GiB container limit remain unchanged. Intraday archive reads are bounded at four concurrent groups. Native
 worker tests compare genuine retained projections and inference coverage with the original verifier; lifecycle
@@ -145,3 +145,43 @@ verification times of 2,085 to 780 ms for intraday snapshots, 2,288 to 899 ms fo
 These are synthetic component measurements, not a complete-report latency claim. Global schema JIT and frozen
 canonical serialization memoization experiments were discarded after negligible improvement or regression.
 Raw retained documents, outputs and CPU profiles remain private temporary diagnostics, outside Git and CI.
+
+### Released x64 result and ARM64 follow-up
+
+PR [#15952](https://github.com/proompteng/lab/pull/15952) merged as
+`c65251c7dacac08079b3d221fd9f70896453e0e1` after all 67 reported checks completed without blocking failures.
+Publication run `43710238239` succeeded after retrying one truncated Attic NAR download. Kargo promoted Freight
+`9e8b2a0c963e9c1dea0c5136bfa0f340a7fd771c` through generated commit
+`1a6afd9b26fb3f0fb59ba1dd242d9849845ba913`; Argo reported Synced/Healthy. The native image is
+`sha256:e550a0a1c14d92e9cc66d66e97f66abee85959b4800e9ef7d9aef98581152be0`.
+
+The deployed x64 command completed within the unchanged 30-second supervisor budget in **26,633 ms wall time**
+(25,338 ms measured report interval), at 1,252,592 KiB process-lifetime peak RSS. An earlier complete x64 run of
+`0601a22a91900642c0283210ebfb704fa379b53e` took 57,796 ms wall time at a two-core limit and 726,660 KiB peak RSS.
+The new allocation was eight cores; source clocks and build bindings differ. These are separate runtime observations,
+not a controlled estimate of algorithmic speedup or lower cost.
+
+ARM64 exceeded the 30-second budget, exited after 31,951 ms including cleanup and emitted zero stdout. A private
+instrumented 120-second diagnostic completed in 57,391 ms wall time at 1,334,388 KiB peak RSS. PostgreSQL plus
+decision verification took 33,485 ms, market volume 8,509 ms, and expenses 9,546 ms. Its 73 decision jobs accounted
+for 108,621 ms summed worker wall time over a 26,178 ms job span: about 4.1 busy workers despite an eight-worker
+limit. Batch barriers leave capacity idle while larger documents and the cursor finish.
+
+The released x64 report and ARM64 diagnostic produced the same financial receipt hash,
+`f8d74be86633c0a9dcb7edba83bccd5e9897a25b584fac709da82e4d8af239ae`, with exact accounting and ledger reconciliation,
+107 cycles, 174 execution transactions, 87 realized closes and 38 completed episodes. Known inference estimates
+remain $0.256883466 with twenty usage gaps. Gross P&L remains -$179.45, fees $13.61, and fully costed profit/return
+remain null. No receipt was persisted. Both API replicas and execution controllers retained readiness and zero restarts.
+
+The ARM follow-up replaces batch barriers with bounded ordered lookahead, fills freed inference slots immediately,
+and overlaps independent external reads after releasing the same PostgreSQL source cut. Intraday volume verification
+uses the same bounded pool; grouping yields between manifest checks so worker replies can make progress. Native concurrency is bounded
+at eight on x64 and sixteen on ARM64; the API burst ceiling becomes sixteen cores and 6 GiB, while reservations and
+execution-controller limits remain unchanged. Tests cover ordering, raw lookahead bounds, prompt failure propagation,
+defects, timeouts, interruption, source consistency and completed cleanup. This proposal still requires its own
+reviewed release and runtime proof; the x64 success does not establish the ARM64 target.
+
+A private development build with ordered lookahead and sixteen workers completed on the still-eight-core ARM64
+allocation in 48,403 ms wall time (44,786 ms measured interval), using 2,575,492 KiB peak RSS. It preserved the
+financial receipt hash above. This diagnostic preceded volume offload and does not establish the proposed sixteen-core
+release target.

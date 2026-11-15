@@ -1,12 +1,13 @@
 import { expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Effectable, Exit, Fiber, Redacted, Result, Stream } from 'effect'
+import { Deferred, Effect, Effectable, Exit, Fiber, Redacted, Result, Stream } from 'effect'
 import * as Reactivity from 'effect/reactivity/Reactivity'
 import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from './hash'
-import { decodeInferenceCostEvidence } from './inference-costs'
+import { decodeInferenceCostEvidence, decodeInferenceCostRequest } from './inference-costs'
+import { ReportVerification, reportVerificationConcurrency } from './forward-performance/verification'
 import { acquireInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { inferenceExpenseRateCard, makeInferenceExpenseQuotes, type InferenceExpenseSource } from './inference-expense'
 import {
@@ -107,6 +108,58 @@ const readFixture = (input: readonly unknown[], afterCapture: () => void, onRele
       return yield* snapshot.verify
     }),
   ).pipe(Effect.provide(Reactivity.layer))
+
+test('expense verification starts the next request while an earlier request is still outstanding', async () => {
+  const inputRequests = Array.from(
+    { length: reportVerificationConcurrency + 1 },
+    (_, n) => requests[n % requests.length]!,
+  )
+  const metadata = { as_of: asOf, request_count: inputRequests.length, quote_count: 0 }
+  const input = [
+    { ...metadata, kind: 'CUT', payload: null },
+    ...inputRequests.map((payload) => ({ ...metadata, kind: 'REQUEST', payload })),
+  ]
+  let calls = 0,
+    releases = 0
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = yield* Deferred.make<void>()
+        const next = yield* Deferred.make<void>()
+        const pending = yield* readFixture(
+          input,
+          () => {},
+          () => {
+            releases++
+          },
+        ).pipe(
+          Effect.provideService(ReportVerification, {
+            volume: () => Effect.die('unexpected volume'),
+            decision: () => Effect.die('unexpected decision'),
+            coverage: () => Effect.die('unexpected coverage'),
+            inference: (payload, cutoff) =>
+              Effect.gen(function* () {
+                const ordinal = calls++
+                if (ordinal === reportVerificationConcurrency) yield* Deferred.succeed(next, undefined)
+                if (ordinal === 0) yield* Deferred.await(first)
+                return yield* Effect.fromResult(decodeInferenceCostRequest(payload, cutoff))
+              }),
+          }),
+          Effect.forkChild,
+        )
+        yield* Deferred.await(next)
+        expect(releases).toBe(1)
+        expect(calls).toBe(inputRequests.length)
+        yield* Deferred.succeed(first, undefined)
+        return yield* Fiber.join(pending)
+      }),
+    ),
+  )
+  expect(result.evidence.requests.map((request) => request.requestId)).toEqual(
+    inputRequests.map((request) => request.requestId).sort(),
+  )
+  expect(result.quotes).toEqual([])
+})
 
 test('expense snapshot verification services the event loop after releasing its complete source cut', async () => {
   let serviced = false
