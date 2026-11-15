@@ -1307,6 +1307,10 @@ It does not acquire a broker client, inference client, writer fence, or executio
 filter execute in a repeatable-read, read-only transaction. Reports retain the complete request and quote set without
 truncating large sessions. Query, socket and connection deadlines remain enforced. Keep evidence, rate cards, and
 report outputs private; they are not public status endpoints, source fixtures, or CI artifacts.
+Captured inference-expense verification yields between requests so socket handling and caller cancellation can run
+without waiting for the complete session. Read-only capture releases its transaction before this verification;
+receipt persistence retains its enclosing writer transaction. Each request still reproduces its full source graph
+and original financial cutoff before any result is returned.
 `node dist/inference-cost-command.js` is the corresponding compiled entry.
 
 Forward-performance reports discover generation-scoped expense sessions with a direct generation predicate and
