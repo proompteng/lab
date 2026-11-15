@@ -8,6 +8,7 @@ import {
   RiskOutcome,
   TimeInForce,
   intentPlanSchemaVersion,
+  isBracketProtection,
 } from '../execution/contracts'
 import { makeExecutionIntentFromDecodedPlan, type IntentPlan } from '../execution/intents/domain'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -20,13 +21,14 @@ export const replacementProtectionFixture = (
   document: ExecutionDecisionDocument,
   kind: 'Oco' | 'StopLimit' = 'Oco',
 ) => {
-  const f =
-    document.deltaRisk[0]?.protection?._tag === 'Bracket'
-      ? bracketEvidenceFixture(document)
-      : nativeEntryEvidenceFixture(document)
+  const f = isBracketProtection(document.deltaRisk[0]?.protection)
+    ? bracketEvidenceFixture(document)
+    : nativeEntryEvidenceFixture(document)
   const decision = document.strategyDecision
   if (decision === undefined || !('exitPolicy' in decision)) throw new Error('Expected a protected entry decision')
   const terms = decision.exitPolicy.plans[f.parent.symbol]!.levels
+  const short = terms.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1'
+  const closingSide = short ? OrderSide.Buy : OrderSide.Sell
   const risk = document.deltaRisk[0]!
   const { contentHash: _content, reconciliationId: _id, ...originalReconciliation } = risk.facts!.state.reconciliation
   const reconciliationMaterial = { ...originalReconciliation, reconciledAt: f.at(500) }
@@ -42,13 +44,17 @@ export const replacementProtectionFixture = (
   const protection =
     kind === 'Oco'
       ? {
-          _tag: kind,
+          _tag: short ? ('EquityShortOco' as const) : kind,
           profitLimitPriceMicros: terms.profitLimitPriceMicros,
           stopPriceMicros: terms.stopPriceMicros,
           stopLimitPriceMicros: terms.stopLimitPriceMicros,
           entryDecisionHash: document.contentHash,
         }
-      : { _tag: kind, stopPriceMicros: terms.stopPriceMicros, entryDecisionHash: document.contentHash }
+      : {
+          _tag: short ? ('EquityShortStopLimit' as const) : kind,
+          stopPriceMicros: terms.stopPriceMicros,
+          entryDecisionHash: document.contentHash,
+        }
   const plan: IntentPlan = {
     schemaVersion: intentPlanSchemaVersion,
     strategyName: document.bindings.strategyName,
@@ -57,7 +63,7 @@ export const replacementProtectionFixture = (
     policyHash: document.bindings.policyHash,
     accountId: document.bindings.accountId,
     symbol: f.parent.symbol,
-    side: OrderSide.Sell,
+    side: closingSide,
     orderType: kind === 'Oco' ? OrderType.Limit : OrderType.StopLimit,
     timeInForce: f.parent.symbol.includes('/') ? TimeInForce.GoodUntilCanceled : TimeInForce.Day,
     quantityAtoms: f.parent.quantityAtoms!,
@@ -104,7 +110,7 @@ export const replacementProtectionFixture = (
     brokerOrderId: 'replacement-parent',
     clientOrderId: intent.clientOrderId,
     intentId: intent.intentId,
-    side: OrderSide.Sell,
+    side: closingSide,
     orderType: plan.orderType,
     timeInForce: plan.timeInForce,
     limitPriceMicros: plan.limitPriceMicros,
@@ -114,7 +120,7 @@ export const replacementProtectionFixture = (
   })
   const stop = {
     ...parent,
-    side: OrderSide.Sell,
+    side: closingSide,
     orderType: OrderType.StopLimit,
     stopPriceMicros: terms.stopPriceMicros,
     limitPriceMicros: terms.stopLimitPriceMicros,
@@ -151,7 +157,7 @@ export const replacementProtectionFixture = (
       intentId: intent.intentId,
       decisionId: intent.intentId,
       brokerOrderId: order.brokerOrderId,
-      side: OrderSide.Sell,
+      side: closingSide,
       quantityAtoms: quantity.toString(),
       priceAtoms: (BigInt(order.limitPriceMicros!) * 1000n).toString(),
       occurredAt: f.at(2000 + index * 1000),

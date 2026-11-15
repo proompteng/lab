@@ -8,6 +8,7 @@ import { makeThreadedKafkaProjection, type ProjectionWorkerOptions } from './wor
 import { nativeArrivalEpochFixture as epoch } from './native-arrival.test-support'
 
 const options: ProjectionWorkerOptions = {
+  controllerKey: 'a'.repeat(64),
   kafka: {
     brokers: ['unused:9092'],
     username: 'unused',

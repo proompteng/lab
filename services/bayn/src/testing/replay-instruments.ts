@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 export const replayTestInstruments = {
   ...Object.fromEntries(

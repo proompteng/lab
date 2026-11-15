@@ -100,7 +100,12 @@ test.each(['AAPL', 'BTC/USD'])(
     const plan = decision.exitPolicy.plans[symbol]
     const quantity = compiled.maximumBuyQuantityAtoms[symbol]
     const ask = compiled.askPriceMicros[symbol]
-    if (plan === undefined || quantity === undefined || ask === undefined)
+    if (
+      plan === undefined ||
+      plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4' ||
+      quantity === undefined ||
+      ask === undefined
+    )
       throw new Error('Missing funded crypto terms')
     const pricing = Result.getOrThrow(
       deriveExecutionIntentPricing({
@@ -152,7 +157,8 @@ test('equity entry retains the real refreshed ask and its funded buy ceiling', (
   const { fixture, decision, pricing } = pricingFixture(ask - 0.02, ask)
   const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
   const plan = decision.exitPolicy.plans['AAPL']
-  if (plan === undefined) throw new Error('Missing funded plan')
+  if (plan === undefined || plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4')
+    throw new Error('Missing funded long plan')
   expect(compiled.askPriceMicros['AAPL']).toBe(String(Math.round(ask * 1_000_000)))
   const limit = Result.getOrThrow(
     deriveExecutionIntentPricing({

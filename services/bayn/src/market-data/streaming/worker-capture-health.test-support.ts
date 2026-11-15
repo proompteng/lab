@@ -35,7 +35,13 @@ await mock.module('./kafka', () => ({
       yield* failed.observe(observation(3))
       yield* capture(epoch.bootstrap, epoch.sources)
       const status = Effect.succeed({ epoch: 'fixture', sequence: 0, ready: true, bootstrapDeadlineAtMs: null })
-      return { status, check: Effect.void, read: Effect.never, readForLiquidation: Effect.never }
+      return {
+        status,
+        check: Effect.void,
+        read: Effect.never,
+        readForLiquidation: Effect.never,
+        startWakeups: () => Effect.void,
+      }
     }),
 }))
 const { projectionWorkerProgram } = await import('./market-projection-worker')

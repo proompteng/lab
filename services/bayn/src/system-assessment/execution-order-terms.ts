@@ -1,3 +1,4 @@
+import { isBracketProtection, isOcoProtection, isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { Result } from 'effect'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { quantityScale } from '../quantity'
@@ -56,12 +57,12 @@ export const resolveExecutionOrderTerms = (
         new SystemAssessmentError({ message: 'Broker order differs from its sealed target or ownership' }),
       )
     const protection = risk.protection
-    const group = protection?._tag === 'Bracket' || protection?._tag === 'Oco' ? protection : undefined
+    const group = isBracketProtection(protection) || isOcoProtection(protection) ? protection : undefined
     if (group === undefined) {
       if (
         children.length !== 0 ||
         !isRoot ||
-        parent.stopPriceMicros !== (protection?._tag === 'StopLimit' ? protection.stopPriceMicros : undefined)
+        parent.stopPriceMicros !== (isStopProtection(protection) ? protection.stopPriceMicros : undefined)
       )
         return yield* Result.fail(
           new SystemAssessmentError({ message: 'Broker children or stop trigger lack sealed protection terms' }),
@@ -75,7 +76,9 @@ export const resolveExecutionOrderTerms = (
         protection: null,
       }
     }
-    const bracket = group._tag === 'Bracket'
+    const bracket = isBracketProtection(group)
+    const short = isEquityShortProtection(group)
+    const exitSide = short ? OrderSide.Buy : OrderSide.Sell
     const expectedChildren = bracket ? 2 : 1
     if (children.length < expectedChildren)
       return { _tag: 'Missing' as const, reason: 'MISSING_NATIVE_PROTECTION_LEGS' }
@@ -88,7 +91,7 @@ export const resolveExecutionOrderTerms = (
       profit === undefined ||
       maximum <= 0n ||
       maximum % quantityScale !== 0n ||
-      parent.side !== (bracket ? OrderSide.Buy : OrderSide.Sell) ||
+      parent.side !== (bracket ? (short ? OrderSide.Sell : OrderSide.Buy) : exitSide) ||
       parent.orderType !== OrderType.Limit ||
       parent.timeInForce !== TimeInForce.Day ||
       parent.stopPriceMicros !== undefined ||
@@ -97,7 +100,7 @@ export const resolveExecutionOrderTerms = (
       children.some((row) => row.order.parentBrokerOrderId !== parent.brokerOrderId) ||
       [stop, profit].some(
         (leg) =>
-          leg.side !== OrderSide.Sell ||
+          leg.side !== exitSide ||
           leg.timeInForce !== TimeInForce.Day ||
           leg.notionalMicros !== undefined ||
           BigInt(leg.quantityAtoms ?? '0') <= 0n ||

@@ -315,7 +315,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             intradayMarketData: marketData,
             executionCycleClosureStore: closures,
             blockedCycleIntentStore,
-            pollIntervalMs: input.pollIntervalMs,
             reconciliationIntervalMs: input.reconciliationIntervalMs,
             reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
           },
@@ -377,8 +376,15 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      advance: driver.advance.pipe(Effect.provideContext(resources)),
-      nextDelayMs: driver.nextDelayMs,
+      // Offline studies retain their registered sampling cadence even when the live owner waits for a stream event.
+      advance: driver.advance.pipe(
+        Effect.provideContext(resources),
+        Effect.map((pass) => ({
+          ...pass,
+          nextDelayMs: Math.min(input.pollIntervalMs, pass.nextDelayMs ?? input.pollIntervalMs),
+        })),
+      ),
+      nextDelayMs: input.pollIntervalMs,
       reconcile,
       decisionLatencyEvidence: latency.evidence,
     }

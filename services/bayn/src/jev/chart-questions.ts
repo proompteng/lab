@@ -82,7 +82,11 @@ export const chartAssessmentsFromBoxes = (source: ChartDecisionSource, input: un
     const projection = candleProjection(chart.bars)
     const marginX = chartQuestionPolicy.coordinateReportingHalfStep * projection.width + 1
     const marginY = chartQuestionPolicy.coordinateReportingHalfStep * projection.height + 1
-    const candidates = makeChartSourceCandidates({ chart, bidMicros: BigInt(funding.bidMicros) })
+    const candidates = makeChartSourceCandidates({
+      chart,
+      bidMicros: BigInt(funding.bidMicros),
+      allowShort: source.protocol.schemaVersion === 'bayn.jev.protocol.v41',
+    })
     const absent = { status: 'NOT_IDENTIFIED' as const }
     const presence = (name: string) => {
       const answer = response.answers[`${name}_present`]
