@@ -4,7 +4,7 @@ import { Effect, Layer, Schema } from 'effect'
 import { JevExitReason, JevExitTargetSchema } from '../jev/exit'
 
 import { operationalError } from '../errors'
-import { FillSchema, OrderSide } from '../execution/contracts'
+import { FillSchema } from '../execution/contracts'
 import {
   decodeJevPortfolio,
   JevInventoryDebitSchema,
@@ -45,7 +45,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
         AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1')
         AND decision.document #> '{strategyDecision,exitPolicy}' = ${JSON.stringify(portfolio.exitPolicy)}::jsonb
         AND NOT EXISTS (
-          SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND intent.side = ${OrderSide.Buy}
+          SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND decision.document -> 'orderedIntentIds' ? intent.intent_id
             AND (intent.account_id <> cycle.account_id OR intent.strategy_name <> 'jev'
               OR intent.decision_hash IS DISTINCT FROM decision.document #>> '{bindings,strategyDecisionHash}'
               OR intent.authority_generation_hash IS DISTINCT FROM decision.document #>> '{bindings,authorityGenerationHash}')
@@ -54,7 +54,9 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
         AND ARRAY(SELECT value FROM jsonb_array_elements_text(decision.document -> 'orderedIntentIds') AS item(value) ORDER BY value COLLATE "C")
           = ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...portfolio.entryIntentIds].sort())}::jsonb))
     ) AND ARRAY(
-      SELECT intent_id FROM intents WHERE cycle_id = ${cycleId} AND side = ${OrderSide.Buy} ORDER BY intent_id COLLATE "C"
+      SELECT i.intent_id FROM intents i JOIN autonomous_cycle_shadow_decisions d ON d.cycle_id = i.cycle_id
+      WHERE i.cycle_id = ${cycleId} AND d.decision_hash = ${portfolio.entryDecisionHash}
+        AND d.document -> 'orderedIntentIds' ? i.intent_id ORDER BY i.intent_id COLLATE "C"
     ) = ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...portfolio.entryIntentIds].sort())}::jsonb)) AS matches
   `,
     )
@@ -139,7 +141,7 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
     )(
       yield* sql`
     SELECT intent_id AS "intentId" FROM intents WHERE cycle_id = ${cycleId} AND protection IS NOT NULL
-      AND (protection ->> '_tag' = 'Bracket' OR protection ->> 'entryDecisionHash' = ${entryDecisionHash})
+      AND (protection ->> '_tag' IN ('Bracket','EquityShortBracket') OR protection ->> 'entryDecisionHash' = ${entryDecisionHash})
     ORDER BY intent_id COLLATE "C"
   `,
     )
@@ -152,12 +154,13 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
       SELECT c.requested_at AS at FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
         WHERE i.cycle_id = ${cycleId}
       UNION ALL
-      SELECT i.updated_at FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit')
+      SELECT i.updated_at FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit','EquityShortOco','EquityShortStopLimit')
         AND i.state = 'TERMINAL' AND i.terminal_outcome = 'REJECTED'
       UNION ALL
       SELECT t.occurred_at FROM accounting_transactions t JOIN intents i USING (intent_id)
         JOIN accounting_receipts r USING (broker_event_id)
-        WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL AND t.side = 'SELL'
+        WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL
+          AND t.side = CASE WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY' ELSE 'SELL' END
     ) requests
   `,
     )
@@ -200,9 +203,10 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
       strictParseOptions,
     )(
       yield* sql`
-    SELECT COALESCE(sum(-t.quantity_delta_atoms),0)::text AS "quantityAtoms", COALESCE(sum(-t.cost_basis_delta_micros),0)::text AS "costBasisMicros"
+    SELECT COALESCE(sum(abs(t.quantity_delta_atoms)),0)::text AS "quantityAtoms", COALESCE(sum(abs(t.cost_basis_delta_micros)),0)::text AS "costBasisMicros"
     FROM accounting_transactions t JOIN accounting_receipts receipt ON receipt.broker_event_id = t.broker_event_id AND receipt.intent_id = t.intent_id JOIN intents i ON i.intent_id = t.intent_id
-    WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL AND t.side = 'SELL'
+    WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL
+      AND t.side = CASE WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY' ELSE 'SELL' END
   `,
     )
     return {
@@ -230,8 +234,10 @@ export const makeJevPositionStore = Effect.gen(function* () {
           strictParseOptions,
         )(
           yield* sql`
-        SELECT intent_id FROM intents WHERE cycle_id = ${cycleId} AND account_id = ${brokerState.account.accountId}
-          AND side = ${OrderSide.Buy} ORDER BY intent_id COLLATE "C"
+        SELECT intent_id FROM intents i WHERE cycle_id = ${cycleId} AND account_id = ${brokerState.account.accountId}
+          AND EXISTS (SELECT 1 FROM autonomous_cycle_shadow_decisions d WHERE d.cycle_id = i.cycle_id
+            AND d.decision_hash = ${entryDecisionHash} AND d.document -> 'orderedIntentIds' ? i.intent_id)
+          ORDER BY intent_id COLLATE "C"
       `,
         )
         const rows = yield* Schema.decodeUnknownEffect(
@@ -249,7 +255,9 @@ export const makeJevPositionStore = Effect.gen(function* () {
         FROM fills AS fill JOIN broker_events AS event ON event.event_id = fill.event_id
         JOIN intents AS intent ON intent.intent_id = fill.intent_id
         WHERE intent.cycle_id = ${cycleId} AND fill.account_id = ${brokerState.account.accountId}
-          AND intent.side = ${OrderSide.Buy} AND fill.side = ${OrderSide.Buy}
+          AND fill.side = intent.side
+          AND EXISTS (SELECT 1 FROM autonomous_cycle_shadow_decisions d WHERE d.cycle_id = intent.cycle_id
+            AND d.decision_hash = ${entryDecisionHash} AND d.document -> 'orderedIntentIds' ? intent.intent_id)
         ORDER BY event.occurred_at, fill.fill_id COLLATE "C"
       `,
         )

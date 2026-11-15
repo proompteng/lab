@@ -79,7 +79,6 @@ const config: ForwardPerformanceConfig & { readonly historicalSignal: Historical
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
   unknownMutationThresholdMs: 300_000,
-  cyclePollIntervalMs: 30_000,
   clickhouse: {
     url: 'http://clickhouse.invalid',
     username: 'bayn',
@@ -773,7 +772,7 @@ describe('forward performance read program', () => {
           ),
         ),
       )
-      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v7')
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v8')
       expect(postgresGeneration).toBe(authorityGenerationHash)
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(

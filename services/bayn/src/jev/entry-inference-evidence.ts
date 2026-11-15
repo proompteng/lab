@@ -31,7 +31,8 @@ import {
   type EntryInferenceInput,
   type EntryInferenceMaterial,
 } from './entry-inference-input'
-import { EntryProposalSchema, EntrySetup, ProposalRejection } from './entry-proposals'
+import { EntrySetup, ProposalRejection } from './entry-proposals'
+import { NativeEntryProposalSchema } from './native-entry-proposal'
 import { makeEntryJudgmentRequest } from './entry-questions'
 import {
   BaseStartEvidenceSchema,
@@ -45,7 +46,7 @@ import { JevProviderDiagnosticsSchema } from './provider-diagnostics'
 
 const HttpStatus = Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })))
 const Evaluation = Schema.Struct({
-  proposals: Schema.Array(EntryProposalSchema).check(Schema.isMaxLength(2)),
+  proposals: Schema.Array(NativeEntryProposalSchema).check(Schema.isMaxLength(4)),
   rejections: Schema.Array(Schema.Struct({ setup: Schema.Enum(EntrySetup), reason: Schema.Enum(ProposalRejection) })),
 })
 const makeDispositionSchema = <S extends Schema.Top>(assessments: S) =>
@@ -215,7 +216,10 @@ export const decodeStagedEntryHandoff = (
   stages: ChartCheckpointCodecs & Pick<ChartStageCodecs, 'stagedChartAssessments'>,
 ) =>
   Result.gen(function* () {
-    if (source.input.protocol.schemaVersion === 'bayn.jev.protocol.v40')
+    if (
+      source.input.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      source.input.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+    )
       return yield* decodeBoxEntryHandoff(source, input, inputHash, prepareJudgments)
     if (stages.makeSelectedBaseStartStageRequest === undefined)
       return yield* invalid('Retained staged handoff requires its original chart codec')

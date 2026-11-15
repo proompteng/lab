@@ -71,6 +71,7 @@ const ExpiredEntryCancellationRows = Schema.Array(
     intent_authority_generation_hash: Sha256,
     client_order_id: NonEmptyString,
     side: Schema.Enum(OrderSide),
+    protection_tag: Schema.NullOr(Schema.String),
     broker_order_id: NonEmptyString,
     admitted_at: UtcInstant,
   }),
@@ -202,6 +203,7 @@ export const decodeExpiredEntryCancellationFacts = (
             intentAuthorityGenerationHash: row.intent_authority_generation_hash,
             clientOrderId: row.client_order_id,
             side: row.side,
+            protectionTag: row.protection_tag,
             brokerOrderId: row.broker_order_id,
             admittedAt: row.admitted_at,
           }

@@ -7,6 +7,7 @@ import {
   TargetPlanStatus,
   canonicalizePlannerOutputFailure,
   referenceTargetPlanSchemaVersion,
+  shortTargetCollateralMicros,
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
@@ -30,11 +31,19 @@ import {
 } from './result'
 
 const targetPlanExecutionTerms = (input: TargetPlannerInput): { readonly executionTerms: TargetPlanExecutionTerms } => {
-  const { executionPurpose, orderType, timeInForce, priceReference, snapshotId, snapshotContentHash } =
-    input.executionTerms
+  const {
+    executionPurpose,
+    orderType,
+    timeInForce,
+    priceReference,
+    snapshotId,
+    snapshotContentHash,
+    equityShortEntries,
+  } = input.executionTerms
   return {
     executionTerms: {
       ...(executionPurpose === undefined ? {} : { executionPurpose }),
+      ...(equityShortEntries === undefined ? {} : { equityShortEntries }),
       orderType,
       timeInForce,
       priceReference,
@@ -60,6 +69,9 @@ const blocked = (
   targets,
   intentTargets: [],
   requiredReferenceBuyNotionalMicros,
+  ...(shortTargetCollateralMicros(targets) === 0n
+    ? {}
+    : { requiredShortCollateralMicros: shortTargetCollateralMicros(targets).toString() }),
   availableBuyingPowerMicros,
   residualBuyingPowerMicros: availableBuyingPowerMicros,
 })
@@ -112,7 +124,9 @@ const selectTargetNotionalBlock = (
       requiredBuyingPower.toString(),
     )
   }
-  return requiredBuyingPower > 0n && requiredBuyingPower > facts.availableBuyingPower
+  const requiredCollateral = shortTargetCollateralMicros(targets)
+  return requiredBuyingPower + requiredCollateral > 0n &&
+    requiredBuyingPower + requiredCollateral > facts.availableBuyingPower
     ? blocked(
         facts.input,
         facts.inputHash,
@@ -179,6 +193,7 @@ const assembleExecutableTargetPlan = (
     )
     .map((fact) => referenceNotional(fact.delta, fact.referencePrice))
   const requiredBuyingPower = requiredReferenceBuyNotionals.reduce((total, value) => total + value, 0n)
+  const requiredCollateral = shortTargetCollateralMicros(targets)
   const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)
   if (notionalBlock !== undefined) return notionalBlock
   const common = {
@@ -187,8 +202,9 @@ const assembleExecutableTargetPlan = (
     ...targetPlanExecutionTerms(facts.input),
     targets,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),
+    ...(requiredCollateral === 0n ? {} : { requiredShortCollateralMicros: requiredCollateral.toString() }),
     availableBuyingPowerMicros: facts.input.brokerState.account.buyingPowerMicros,
-    residualBuyingPowerMicros: (facts.availableBuyingPower - requiredBuyingPower).toString(),
+    residualBuyingPowerMicros: (facts.availableBuyingPower - requiredBuyingPower - requiredCollateral).toString(),
   } as const
   return intents.length === 0
     ? {

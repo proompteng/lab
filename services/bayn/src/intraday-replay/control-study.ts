@@ -1,7 +1,7 @@
 import type { InferenceRateCardSchema } from '../inference-costs'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery, makeMomentumEntryQuery } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'

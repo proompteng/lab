@@ -1,8 +1,53 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import v39 from '../src/jev/fixtures/retained-v39/index.json'
+
+test('production Node services do not start the separate activation command', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'bayn-service-startup-'))
+  try {
+    await symlink(join(import.meta.dir, '../node_modules'), join(directory, 'node_modules'), 'dir')
+    const built = await Bun.build({
+      entrypoints: [
+        join(import.meta.dir, '../src/index.ts'),
+        join(import.meta.dir, '../src/restate/restate-execution-server.ts'),
+        join(import.meta.dir, '../src/restate/restate-execution-activate.ts'),
+      ],
+      target: 'node',
+      outdir: directory,
+      naming: '[name].mjs',
+      external: ['tigerbeetle-node', '@platformatic/kafka'],
+    })
+    if (!built.success) throw new AggregateError(built.logs, 'Service startup verifier did not compile')
+    for (const name of ['index', 'restate-execution-server']) {
+      const child = Bun.spawn(['node', join(directory, `${name}.mjs`)], {
+        env: { PATH: process.env['PATH'] },
+        stdout: 'pipe',
+        stderr: 'pipe',
+        timeout: 10_000,
+        killSignal: 'SIGKILL',
+      })
+      try {
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ])
+        const output = stdout + stderr
+        expect(exitCode).toBe(1)
+        expect(output).toContain('ConfigError')
+        expect(output).not.toContain('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')
+        expect(output).not.toContain('BAYN_EXECUTION_ACTIVATION_GENERATION')
+      } finally {
+        if (child.exitCode === null) child.kill('SIGKILL')
+        await child.exited
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30_000)
 
 test('production Nix Node replays original v38 and v39 entry and exit bytes through retained financial readers', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bayn-retained-jev-node-'))

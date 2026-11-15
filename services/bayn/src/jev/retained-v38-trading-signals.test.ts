@@ -1,4 +1,4 @@
-import { retainedJevProtocolV39Document } from './protocol'
+import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from './protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -34,7 +34,9 @@ const retainedProtocol = Schema.decodeUnknownSync(RetainedJevProtocolV38Schema)(
 })
 const fixture = () => {
   const current = nativeJevFixture().observation.payload
-  const observation = { ...current, cycleId: 'a'.repeat(64), protocol: retainedProtocol }
+  const historical = nativeJevFixture(undefined, undefined, undefined, retainedJevProtocolV40Document).observation
+    .payload
+  const observation = { ...historical, cycleId: 'a'.repeat(64), protocol: retainedProtocol }
   return {
     current,
     observation,
@@ -84,7 +86,8 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         requests: [...golden.requests],
       })
       expect(
-        Result.getOrThrow(reproduceRetainedJevTradingSignalBatchEvidence(input.observation, structuredClone(plan))),
+        Result.getOrThrow(reproduceRetainedJevTradingSignalBatchEvidence(input.observation, structuredClone(plan)))
+          .plan,
       ).toEqual(plan)
       expect(Result.isFailure(makeJevTradingSignalBatch({ ...input, planVersion: plan.schemaVersion }))).toBe(true)
       expect(Result.isFailure(decodeJevBatchPlan(plan))).toBe(true)
@@ -249,7 +252,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         planVersion: JevBatchPlanVersion.V8,
       }),
     )
-    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v40')
+    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v41')
     expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(10)
     expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(10)
     for (const candidate of plan.candidates) {

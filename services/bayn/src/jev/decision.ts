@@ -4,14 +4,7 @@ import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import {
-  IsoDateSchema,
-  Sha256Schema,
-  SymbolSchema,
-  UnitIntervalSchema,
-  UtcInstantSchema,
-  strictParseOptions,
-} from '../schemas'
+import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableEntryBatchInferences } from './batch'
@@ -22,7 +15,9 @@ import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
-import { entryProposalExitPlan, JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
+import { JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
+import { nativeEntryProposalExitPlan, isShortEntryProposal } from './native-entry-proposal'
+import { ShortFundedExitPlanSchema, type ShortFundedExitPlan } from './short-exit-plan'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -83,7 +78,7 @@ export const selectJevEntryCandidates = (
       judgmentSupport: number
       modeledLossMicros: bigint
       weight: number
-      exitPlan: JevFundedExitPlan
+      exitPlan: JevFundedExitPlan | ShortFundedExitPlan
     }[] = []
     for (const { symbol, inference } of inferences) {
       const quote = observation.snapshot.latestQuotes[symbol]
@@ -112,8 +107,8 @@ export const selectJevEntryCandidates = (
         symbol,
         judgmentSupport,
         modeledLossMicros,
-        weight: proposal.funding.maximumTargetWeight,
-        exitPlan: entryProposalExitPlan(proposal),
+        weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
+        exitPlan: nativeEntryProposalExitPlan(proposal),
       })
     }
     eligible.sort(
@@ -146,7 +141,7 @@ export const makeChartEntryTargetMaterial = <Evidence extends { readonly decided
     readonly selected: readonly {
       readonly symbol: string
       readonly weight: number
-      readonly exitPlan: JevFundedExitPlan
+      readonly exitPlan: JevFundedExitPlan | ShortFundedExitPlan
     }[]
   },
 ) =>
@@ -200,7 +195,7 @@ export const ChartEntryTargetFields = {
   ),
   exitPolicy: Schema.Struct({
     ...JevPositionExitPolicySchema.fields,
-    plans: Schema.Record(SymbolSchema, JevFundedExitPlanSchema),
+    plans: Schema.Record(SymbolSchema, Schema.Union([JevFundedExitPlanSchema, ShortFundedExitPlanSchema])),
   }),
   sessionDate: IsoDateSchema,
   snapshotId: Sha256Schema,
@@ -208,7 +203,7 @@ export const ChartEntryTargetFields = {
   decidedAt: UtcInstantSchema,
   calendarHash: Sha256Schema,
   selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isMaxLength(1), Schema.isUnique()),
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  targetWeights: Schema.Record(SymbolSchema, Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
   evidence: JevDecisionEvidenceSchema,
 }
 
@@ -252,7 +247,7 @@ export type JevEntryTarget = typeof JevEntryTargetSchema.Type
 export const jevPlanningTargetWeights = (
   target: Pick<ProtectedEntryTarget, 'targetWeights'>,
 ): Readonly<Record<string, number>> =>
-  Object.fromEntries(Object.entries(target.targetWeights).filter(([, weight]) => weight > 0))
+  Object.fromEntries(Object.entries(target.targetWeights).filter(([, weight]) => weight !== 0))
 
 export const jevEntryQuoteMaximumAgeMs = (
   _target: Pick<ProtectedEntryTarget, 'schemaVersion'>,

@@ -1,5 +1,26 @@
 import { Data, Duration, Effect, Result, Schema } from 'effect'
 
+export const InternalHttpOriginSchema = Schema.Trim.check(
+  Schema.makeFilter(
+    (candidate: string) => {
+      try {
+        const url = new URL(candidate)
+        return (
+          url.protocol === 'http:' &&
+          url.username === '' &&
+          url.password === '' &&
+          url.pathname === '/' &&
+          url.search === '' &&
+          url.hash === ''
+        )
+      } catch {
+        return false
+      }
+    },
+    { expected: 'an uncredentialed internal HTTP origin' },
+  ),
+)
+
 export interface RestateInvocationRequestOptions {
   readonly headers?: Readonly<Record<string, string>>
   readonly timeoutMs: number

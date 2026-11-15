@@ -748,7 +748,11 @@ const makeStore = Effect.gen(function* () {
           WHERE o.intent_id = i.intent_id AND o.broker_order_id = ${brokerOrderId}
           ORDER BY e.source_sequence DESC LIMIT 1
         ) latest ON true
-        WHERE i.intent_id = ${intentId} AND i.protection IS NOT NULL AND latest.side = 'SELL'
+        WHERE i.intent_id = ${intentId} AND i.protection IS NOT NULL
+          AND latest.side = CASE
+            WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY'
+            WHEN i.protection ->> '_tag' IN ('Bracket','Oco','StopLimit') THEN 'SELL'
+          END
           AND (${exitTarget === undefined} OR (i.cycle_id = ${exitTarget?.cycleId ?? null}
             AND EXISTS (SELECT 1 FROM autonomous_cycle_shadow_decisions d WHERE d.cycle_id = i.cycle_id
               AND d.decision_hash = ${exitTarget?.entryDecisionHash ?? null}

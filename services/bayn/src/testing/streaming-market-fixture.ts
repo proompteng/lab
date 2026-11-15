@@ -3,7 +3,7 @@ import type { MarketCalendarObservation } from '../broker/alpaca/model'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import type { RollingMarketFeature } from '../market-data/features/contract'
 import type { StreamingVerifiedMarketSnapshot, StreamingFeatureReceipt } from '../market-data/streaming/snapshot'
-import { equityMarketProfile } from '../jev/markets'
+import { retainedEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 import { Effect, Result } from 'effect'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
@@ -128,10 +128,10 @@ export const streamingFixtureFromRaw = (
   request: IntradaySnapshotQuery,
 ) => {
   const universe = {
-    universeId: equityMarketProfile.universeId,
-    universeSymbolHash: equityMarketProfile.universeSymbolHash,
-    symbols: protocol.universe,
-    topics: { ...equityMarketProfile.sourceTopics, features: intradayMomentumFeatureTopic },
+    universeId: request.universeId,
+    universeSymbolHash: request.universeSymbolHash,
+    symbols: request.universe,
+    topics: { ...request.sourceTopics, features: intradayMomentumFeatureTopic },
   }
   const observed = Date.parse(request.observedAt)
   let projection = emptyStreamingProjection('fixture-epoch')
@@ -151,8 +151,8 @@ export const streamingFixtureFromRaw = (
       provider: 'alpaca',
       feed: 'iex',
       delayClass: 'real_time_exchange_only',
-      universeId: equityMarketProfile.universeId,
-      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      universeId: request.universeId,
+      universeSymbolHash: request.universeSymbolHash,
       symbol,
       sessionDate: request.sessionDate,
       sessionPolicy: MarketFeatureSessionPolicy.IexClockSegments,

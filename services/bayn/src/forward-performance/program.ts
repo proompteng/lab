@@ -50,12 +50,13 @@ import { postgresError } from './postgres/model'
 import {
   intradayPerformanceDecisionRequest,
   intradayPerformanceSessionQuery,
-  makeIntradayPerformanceVolumeEvidence,
+  makeIntradayPerformanceVolumeEvidenceBatch,
 } from './intraday-volume'
 import { loadIntradayArchivePages } from '../market-data/intraday/program'
 import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
 import { verifyIntradayArchiveWatermarks } from '../market-data/intraday/verification'
+import type { IntradaySnapshotRequest } from '../market-data/intraday/model'
 import { brokerFeeCashDeltaMicros, verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
 
 export type ForwardPerformanceProgramCause =
@@ -320,11 +321,39 @@ const groupMarketVolumeRequests = (
     .map(([, group]) => group)
 }
 
-const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarketVolumeRequest) =>
+const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[]) =>
+  Result.gen(function* () {
+    const groups = new Map<
+      string,
+      {
+        readonly request: ForwardPerformanceIntradayMarketVolumeRequest
+        readonly original: IntradaySnapshotRequest
+        readonly query: IntradaySnapshotRequest
+      }[]
+    >()
+    for (const request of requests) {
+      const original = yield* intradayPerformanceDecisionRequest(request)
+      const query = intradayPerformanceSessionQuery(request, original)
+      // Capture does not use the decision's old watermarks. All other query material, including
+      // symbol, exact report cutoff and feed, must agree before sharing one retrospective read.
+      const { archiveWatermarks: _decisionWatermarks, ...captureQuery } = query
+      const key = yield* canonicalHashV1Result(captureQuery)
+      const group = groups.get(key)
+      const entry = { request, original, query }
+      if (group === undefined) groups.set(key, [entry])
+      else group.push(entry)
+    }
+    return [...groups.values()]
+  })
+
+const readIntradayPerformanceVolume = (
+  group: Result.Result.Success<ReturnType<typeof groupIntradayVolumeRequests>>[number],
+) =>
   Effect.gen(function* () {
-    const original = yield* Effect.fromResult(intradayPerformanceDecisionRequest(request))
+    const first = group[0]
+    if (first === undefined) return []
+    const { original, query } = first
     const queries = makeIntradayMarketDataQueries(yield* ClickhouseClient.ClickhouseClient)
-    const query = intradayPerformanceSessionQuery(request, original)
     const rawWatermarks = yield* queries.captureIntradayArchiveWatermarks(query)
     const archiveWatermarks = yield* Effect.fromResult(verifyIntradayArchiveWatermarks(original, rawWatermarks))
     const archiveRequest = { ...query, archiveWatermarks }
@@ -333,7 +362,13 @@ const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarket
       decodeIntradayBarRows,
       (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
     )
-    return yield* Effect.fromResult(makeIntradayPerformanceVolumeEvidence(request, archiveRequest, rawBars))
+    return yield* Effect.fromResult(
+      makeIntradayPerformanceVolumeEvidenceBatch(
+        group.map(({ request }) => request),
+        archiveRequest,
+        rawBars,
+      ),
+    )
   })
 
 export const readForwardPerformanceMarketVolumeWithClient = (
@@ -448,14 +483,13 @@ export const readForwardPerformanceMarketVolumeWithClient = (
         ),
       { concurrency: 2 },
     )
-    const intraday = yield* Effect.forEach(
-      requests.filter((request) => 'decisionManifest' in request),
-      readIntradayPerformanceVolume,
-      { concurrency: 2 },
+    const intradayGroups = yield* Effect.fromResult(
+      groupIntradayVolumeRequests(requests.filter((request) => 'decisionManifest' in request)),
     )
+    const intraday = yield* Effect.forEach(intradayGroups, readIntradayPerformanceVolume, { concurrency: 4 })
     const evidence: ForwardPerformanceMarketVolumeEvidence[] = [
       ...groups.flat(),
-      ...intraday.filter((item) => item !== undefined),
+      ...intraday.flat().filter((item) => item !== undefined),
     ]
     return evidence.sort((left, right) => {
       const leftKey = JSON.stringify([left.executionSessionDate, left.cycleId, left.symbol])

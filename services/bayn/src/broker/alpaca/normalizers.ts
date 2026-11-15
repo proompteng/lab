@@ -261,6 +261,7 @@ export const normalizeAccountResult = (
       accountBlocked: raw.account_blocked,
       tradingBlocked: raw.trading_blocked,
       tradeSuspendedByUser: raw.trade_suspended_by_user,
+      ...(raw.shorting_enabled === undefined ? {} : { shortingEnabled: raw.shorting_enabled }),
       observedAt,
     }
   })
@@ -277,6 +278,7 @@ export const normalizeAccountConfigurationResult = (
       source: accountConfigurationObservationSource,
       requestHash,
       fractionalTrading: raw.fractional_trading,
+      ...(raw.no_shorting === undefined ? {} : { noShorting: raw.no_shorting }),
     }
     const normalizedResponseHash = yield* hashResult(normalized, 'account configuration response')
     return { ...normalized, observedAt, normalizedResponseHash }
@@ -388,6 +390,12 @@ export const normalizeAssetResult = (
       status: raw.status,
       tradable: raw.tradable,
       fractionable: raw.fractionable,
+      ...(raw.class === AssetClass.UsEquity &&
+      raw.marginable !== undefined &&
+      raw.shortable !== undefined &&
+      raw.easy_to_borrow !== undefined
+        ? { equityShort: { marginable: raw.marginable, shortable: raw.shortable, easyToBorrow: raw.easy_to_borrow } }
+        : {}),
       minimumQuantityAtoms: instrument.minimumQuantityAtoms.toString(),
       quantityIncrementAtoms: instrument.quantityIncrementAtoms.toString(),
       priceIncrementAtoms: instrument.priceIncrementAtoms.toString(),

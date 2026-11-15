@@ -27,7 +27,14 @@ Kargo-owned rollout and does not contact the retired API endpoints.
 
 The websocket producer also polls IEX latest quotes and trades for
 `AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`. The configured interval is two seconds after each pass, with a ten-second
-maximum provider event age. The existing 16 bar, seven quote and seven trade WebSocket subscriptions remain unchanged.
+maximum provider event age. The admitted WebSocket baseline remains 16 bars, seven quotes and seven trades.
+
+The reviewed configuration arms a [same-session diagnostic qualification](../../../services/dorvud/README.md#same-session-iex-subscription-qualification)
+of the nine missing quote/trade memberships. Extra WebSocket frames never enter Kafka or ordinary freshness tracking;
+REST remains their sole admitted source. A complete acknowledgement and a usable regular-session observation window,
+followed by verified baseline restoration, are required evidence. Neither an existing single-connection limit nor
+after-hours silence establishes whether the full 48-membership target is entitled. The normal single-replica Recreate
+rollout has a restart gap; no additional provider connection or credential is introduced.
 
 Verify that the deployed TA consumer contains the `source=rest_latest` trade exclusion before activating this
 configuration. The exclusion was introduced in source `0f48bef14941942e4bf67f05f15777916db79d76`. Check the actual

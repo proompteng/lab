@@ -28,7 +28,7 @@ import { strictParseOptions } from './schemas'
 import { BrokerMutationError, MutationFailure } from './broker/alpaca-mutations/model'
 import { advancePositionProtection } from './observe-composition/position-protection-interpreter'
 import { withProviderSessions } from './testing/market-calendar-fixture'
-import { equityMarketProfile } from './jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from './jev/markets'
 import { CandidateObservationStore } from './observe-composition/candidate-observation'
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, spyOn, test } from 'bun:test'
@@ -235,7 +235,13 @@ const unusedAuthorityStore: AuthorityGenerationStoreShape = {
   readAuthorityGenerationLineage: () => unusedAuthority,
 }
 
-type JevTestServices = JevBatchStore | JevEvaluationStore | JevClient | JevPositionStore | EntryInferenceJournal
+type JevTestServices =
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | JevPositionStore
+  | EntryInferenceJournal
+  | DecisionConstruction
 
 const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
   const unexpected = Effect.die('Composition fixture uses already committed Jev entry evidence')
@@ -307,9 +313,9 @@ const makeMutationAutonomousCycleStartup =
       buildMutationShadowCycleDecision,
     )(startup).pipe(Effect.map((driver) => driver.pipe(Effect.flatMap(owner))))
 
-test('Restate scheduling never waits past the reconciliation cadence', () => {
-  expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 300_000, reconciliationIntervalMs: 30_000 })).toBe(30_000)
-  expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 15_000, reconciliationIntervalMs: 30_000 })).toBe(15_000)
+test('recovery receipt bounds retain reconciliation and post-mutation consistency deadlines', () => {
+  expect(recoveryFirstCycleNextDelayMs({ reconciliationIntervalMs: 30_000 })).toBe(30_000)
+  expect(recoveryFirstCycleNextDelayMs({ reconciliationIntervalMs: 30_000, postMutationDelayMs: 1_000 })).toBe(1_000)
 })
 
 test('execution submissions use the cycle entry cutoff and the final close-session cutoff', () => {
@@ -443,7 +449,6 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
           {
             accountId,
             authorityGenerationHash: generationHash,
-            pollIntervalMs: 30_000,
             reconciliationIntervalMs: 30_000,
             reconciliationPassTimeoutMs: 30_000,
             strategy: currentIntradayRuntime,
@@ -1091,9 +1096,7 @@ const calendarRead =
 const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): BrokerReadShape => {
   const unused = Effect.die(new Error('decision building must not use unrelated broker reads'))
   return {
-    account: unused,
-    accountConfiguration: unused,
-    assetBySymbol: unusedAssetBySymbol,
+    ...longEntryBrokerReads(account, evaluatedAt),
     positions: unused,
     orders: () => unused,
     orderById: () => unused,
@@ -1147,9 +1150,8 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   }
   const unusedRead = Effect.die(new Error('exact reconciliation used an unrelated broker capability'))
   const brokerRead: BrokerReadShape = {
+    ...longEntryBrokerReads(account, reconciledAt),
     account: Effect.succeed({ value: brokerAccount, evidence: evidence('account') }),
-    accountConfiguration: unusedRead,
-    assetBySymbol: unusedAssetBySymbol,
     positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
     orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
     orderById: () => unusedRead,
@@ -1283,7 +1285,6 @@ const executionLifecycleFixture = async (
   const input = {
     accountId,
     authorityGenerationHash: generationHash,
-    pollIntervalMs: 30_000,
     reconciliationIntervalMs: 30_000,
     reconciliationPassTimeoutMs: 30_000,
     strategy,
@@ -2688,7 +2689,7 @@ describe('OBSERVE runtime composition', () => {
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.IdentityMismatch),
-        [{ symbol: 'TSLA', quantityAtoms: '1000000000' }],
+        [{ symbol: 'XYZ', quantityAtoms: '1000000000' }],
         strategyUniverse,
       ),
     ).toBe(true)
@@ -4918,7 +4919,11 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect((await buildClose()).contentHash).toBe(close.contentHash)
-    await expect(buildClose(reconciliationResultAt(observedAt, 1, 0, [position]))).rejects.toMatchObject({
+    const rejectedClose = await buildClose(reconciliationResultAt(observedAt, 1, 0, [position])).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    )
+    expect(rejectedClose).toMatchObject({
       _tag: 'ExecutionCloseAwaitingReconciliation',
       unknownMutationCount: 1,
     })
@@ -5526,7 +5531,6 @@ describe('OBSERVE runtime composition', () => {
     const prepared = prepareObserveStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: currentIntradayRuntime,
@@ -5559,7 +5563,6 @@ describe('OBSERVE runtime composition', () => {
     const prepared = prepareObserveStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy,
@@ -5579,7 +5582,6 @@ describe('OBSERVE runtime composition', () => {
     const customProtocol = prepareObserveStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: {
@@ -5607,7 +5609,6 @@ describe('OBSERVE runtime composition', () => {
     const prepared = prepareObserveStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: {
@@ -5821,7 +5822,12 @@ describe('OBSERVE runtime composition', () => {
     if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('expected funded Jev entry')
     const plan = entry.exitPolicy.plans['NVDA']
     const risk = document.deltaRisk[0]
-    if (plan === undefined || risk?.facts === undefined) throw new Error('expected complete risk binding')
+    if (
+      plan === undefined ||
+      plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4' ||
+      risk?.facts === undefined
+    )
+      throw new Error('expected complete long risk binding')
     expect(risk.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
     expect(risk.limitPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
     expect(risk.facts.state.expectedExecutionPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
@@ -6380,6 +6386,7 @@ describe('OBSERVE runtime composition', () => {
         })).document
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        provideJevTestServices,
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -6607,7 +6614,6 @@ describe('OBSERVE runtime composition', () => {
       {
         accountId,
         authorityGenerationHash: generationHash,
-        pollIntervalMs: 30_000,
         reconciliationIntervalMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
         strategy: currentIntradayRuntime,
@@ -6798,7 +6804,6 @@ describe('OBSERVE runtime composition', () => {
           const startup = makeObserveAutonomousCycleStartup({
             accountId,
             authorityGenerationHash: generationHash,
-            pollIntervalMs: 1_000,
             reconciliationIntervalMs: 100,
             reconciliationPassTimeoutMs: 50,
             strategy: currentIntradayRuntime,
@@ -6850,7 +6855,6 @@ describe('OBSERVE runtime composition', () => {
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: currentIntradayRuntime,
@@ -6870,7 +6874,6 @@ describe('OBSERVE runtime composition', () => {
       const startup = makeMutationAutonomousCycleStartup({
         accountId,
         authorityGenerationHash: generationHash,
-        pollIntervalMs: 30_000,
         reconciliationIntervalMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
         strategy: currentIntradayRuntime,
@@ -8260,7 +8263,7 @@ test.each([
         yield* TestClock.adjust(1_000)
         const missing = yield* driver.advance
         expect(missing.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
-        expect(missing.nextDelayMs).toBe(scenario.fast ? 1_000 : undefined)
+        expect(missing.nextDelayMs).toBe(scenario.fast ? 1_000 : 30_000)
         expect(cyclePasses).toBe(1)
         if (scenario.fast) {
           const previousReads = reads
@@ -8271,24 +8274,24 @@ test.each([
           expect(cyclePasses).toBe(1)
           // A new driver cannot inherit the previous driver's exit continuation hint.
           const restarted = yield* makeDriver
-          expect((yield* restarted.advance).nextDelayMs).toBeUndefined()
+          expect((yield* restarted.advance).nextDelayMs).toBe(30_000)
           if ('clearOnError' in scenario) {
             errorKind = BrokerReadErrorKind.Authentication
             errorMarked = false
             yield* TestClock.adjust(1_000)
-            expect((yield* driver.advance).nextDelayMs).toBeUndefined()
+            expect((yield* driver.advance).nextDelayMs).toBe(30_000)
             errorKind = BrokerReadErrorKind.Timeout
             errorMarked = true
             yield* TestClock.adjust(30_000)
             const previousReads = reads
-            expect((yield* driver.advance).nextDelayMs).toBeUndefined()
+            expect((yield* driver.advance).nextDelayMs).toBe(30_000)
             expect(reads).toBe(previousReads + 1)
             expect(cyclePasses).toBe(1)
             return
           }
           if (scenario.closeMs < 30_000) {
             yield* TestClock.adjust(1_000)
-            expect((yield* driver.advance).nextDelayMs).toBeUndefined()
+            expect((yield* driver.advance).nextDelayMs).toBe(30_000)
             expect(cyclePasses).toBe(1)
             return
           }
@@ -8299,7 +8302,7 @@ test.each([
           // Successful reconciliation clears the hint; later absence is not a post-exit retry.
           unavailable = true
           yield* TestClock.adjust(30_000)
-          expect((yield* driver.advance).nextDelayMs).toBeUndefined()
+          expect((yield* driver.advance).nextDelayMs).toBe(30_000)
         }
       }).pipe(
         Effect.provideService(BrokerRead, {
@@ -8404,21 +8407,23 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
         waitReason: 'BROKER_OBSERVATION_PENDING',
       })
       expect('result' in first).toBe(false)
-      expect(first.nextDelayMs).toBe(1_000)
+      expect(first.nextDelayMs).toBe(30_000)
+      expect(first.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 30_000))
+      // A broker publication may wake the owner earlier; this is its named financial freshness deadline.
       yield* TestClock.adjust(first.nextDelayMs ?? driver.nextDelayMs)
       const second = yield* driver.advance
       expect(reads).toBe(2)
-      expect(second.nextDelayMs).toBe(1_000)
+      expect(second.nextDelayMs).toBe(30_000)
       kind = BrokerReadErrorKind.Timeout
       const expired = yield* driver.advance
       expect(expired.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
-      expect(expired.nextDelayMs).toBeUndefined()
+      expect(expired.nextDelayMs).toBe(30_000)
       expect(reads).toBe(3)
       kind = BrokerReadErrorKind.RateLimited
       yield* TestClock.adjust(30_000)
       const rateLimited = yield* driver.advance
       expect(rateLimited.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
-      expect(rateLimited.nextDelayMs).toBeUndefined()
+      expect(rateLimited.nextDelayMs).toBe(30_000)
       expect(passes).toEqual([first.observation, second.observation, expired.observation, rateLimited.observation])
     }).pipe(
       Effect.provideService(BrokerRead, {
@@ -8537,14 +8542,19 @@ test.each([
           recoveryAction: 'WAITING',
           ...(bound ? { waitReason: 'reconciliation-not-later' } : { readiness }),
         })
-        expect(first.nextDelayMs).toBe(expectedNextDelayMs)
+        const initialDeadlineDelayMs =
+          expectedNextDelayMs ?? (bound ? 30_000 : unusedEntryExpiresAt(cycle) - Date.parse(evaluatedAt))
+        expect(first.nextDelayMs).toBe(initialDeadlineDelayMs)
+        expect(first.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + initialDeadlineDelayMs))
         const firstCount = reconciliationWrites
         const second = yield* driver.advance
-        expect(second.nextDelayMs).toBe(expectedNextDelayMs)
+        expect(second.nextDelayMs).toBe(initialDeadlineDelayMs)
         const secondCount = reconciliationWrites
         yield* TestClock.adjust(30_000)
         const elapsed = yield* driver.advance
-        expect(elapsed.nextDelayMs).toBeUndefined()
+        expect(elapsed.nextDelayMs).toBe(
+          bound ? 30_000 : unusedEntryExpiresAt(cycle) - Date.parse(evaluatedAt) - 30_000,
+        )
         return [firstCount, secondCount, reconciliationWrites]
       }).pipe(
         Effect.provideService(BrokerRead, services.brokerRead),
@@ -9200,7 +9210,7 @@ test.each(
   },
 )
 
-test('cycle-free protection keeps reconciliation and projection checks on the existing driver cadence', async () => {
+test('cycle-free protection rechecks stream updates and retains its original financial freshness deadline', async () => {
   const fixture = await executionLifecycleFixture()
   const services = makeExactReconciliationServices(Authority.Execution)
   let reconciliationWrites = 0
@@ -9292,11 +9302,16 @@ test('cycle-free protection keeps reconciliation and projection checks on the ex
           outcome: 'ADMISSION_WAITING',
           readiness: { reason: DecisionReadinessReason.AccountProtection },
         })
-        expect(result.nextDelayMs ?? driver.nextDelayMs).toBe(30_000)
+        if (result.result?.outcome !== 'ADMISSION_WAITING')
+          throw new Error('Expected account protection admission evidence')
+        const validUntil = result.result.admissionProtection.validUntil
+        expect(result.nextWakeAt).toBe(validUntil)
+        expect(result.nextDelayMs).toBe(Date.parse(validUntil) - (yield* Clock.currentTimeMillis))
         expect([reconciliationWrites, reconciliationRecords, unfinishedReads, projectionChecks, passes.length]).toEqual(
           Array(5).fill(index + 1),
         )
-        yield* TestClock.adjust(driver.nextDelayMs)
+        // A fresh canonical broker event can arrive before the retained protection deadline.
+        yield* TestClock.adjust(30_000)
       }
     }).pipe(
       Effect.provideService(BrokerRead, services.brokerRead),
@@ -9567,3 +9582,4 @@ test('ablation uses native risk, entry protection and exact policy-bound executi
     ).toBe(true)
   }
 })
+import { longEntryBrokerReads } from './testing/entry-broker-reads.test-support'

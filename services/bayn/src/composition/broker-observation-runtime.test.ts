@@ -14,6 +14,8 @@ import { brokerPollFailureAnnotations, brokerPublicationFailureAnnotations } fro
 test.each([
   'retryable',
   'timeout',
+  'provider-timeout',
+  'transport',
   'identity',
   'permission',
   'mixed',
@@ -34,7 +36,7 @@ test.each([
   const line = stdout.split('\n').find((value) => value.startsWith('BROKER_RECOVERY_RESULT='))
   if (line === undefined) throw new Error(`Broker recovery worker returned no result: ${stdout}`)
   const result = JSON.parse(line.slice('BROKER_RECOVERY_RESULT='.length))
-  const retained = mode === 'retryable' || mode === 'timeout'
+  const retained = mode === 'retryable'
   expect(result.first).toBe(mode === 'defect' || mode === 'interruption' ? 'Failed' : 'Unavailable')
   expect(result.recovered).toBe('Published')
   expect(result.publications).toBe(1)
@@ -294,6 +296,7 @@ test('only a matching unused expired capture releases speculative debt after inv
   const line = stdout.split('\n').find((value) => value.startsWith('CAPTURE_CLAIM_RESULT='))
   if (line === undefined) throw new Error(`Capture claim worker returned no result: ${stdout}`)
   const result = JSON.parse(line.slice('CAPTURE_CLAIM_RESULT='.length))
+  expect(result.consistencyWait).toEqual({ _tag: 'QuotaWait', nextPollNotBeforeMs: result.consistencyDeadline })
   expect(result.expired).toMatchObject({
     _tag: 'Unavailable',
     nextPollNotBeforeMs: expect.any(Number),

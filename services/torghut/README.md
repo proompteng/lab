@@ -203,7 +203,7 @@ request:
 
 1. Merge a green service PR to `main`.
 2. Wait for the main-branch image build/tests to publish the immutable `torghut` image and its Warehouse channel.
-3. Confirm the `torghut` Warehouse creates Freight in `lab-delivery`, then wait for the exact automatic Stage policy to
+3. Confirm the `torghut` Warehouse creates Freight in `torghut-release`, then wait for the exact automatic Stage policy to
    promote it.
 4. Kargo copies the exact source commit and full digest/build metadata to `kargo/torghut` without a pull request; the
    Argo Application tracks that branch and syncs it. Wait for `Synced` and `Healthy`.
@@ -213,6 +213,6 @@ request:
    and scheduled closeout.
 
 Use the read-only evidence commands in [`docs/release-automation.md`](../../docs/release-automation.md) for
-`lab-delivery` and `argocd`. Do not create a digest/SHA promotion PR, run a manual Argo sync, or deploy the service
+`torghut-release` and `argocd`. Do not create a digest/SHA promotion PR, run a manual Argo sync, or deploy the service
 directly from a local worktree. If a rollout must be reversed, re-promote a previously proven Freight through Kargo;
 the trading safety gates remain independent of image availability.

@@ -16,6 +16,8 @@ import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
 import { entryJudgmentThresholds } from './judgment-policy'
 import { WebullEntryContextSchema, webullEntryContextPolicy } from './webull-entry-context'
+import { isShortEntryProposal, nativeModeledLossMicros, type NativeEntryProposal } from './native-entry-proposal'
+import { shortQuestionNames } from './short-entry-questions'
 
 const questionNames = (setup: EntrySetup, market: MarketKind) => {
   const setupName = setup === EntrySetup.SupportRecovery ? 'support_recovery' : 'base_breakout'
@@ -271,12 +273,12 @@ export const makeEntryJudgmentRequest = (input: {
   )
 
 export const selectSupportedEntryProposal = (input: {
-  readonly proposals: readonly EntryProposal[]
+  readonly proposals: readonly NativeEntryProposal[]
   readonly response: JevResponse
 }) =>
   Result.gen(function* () {
     const eligible: {
-      readonly proposal: EntryProposal
+      readonly proposal: NativeEntryProposal
       readonly judgmentSupport: number
       readonly modeledLossMicros: bigint
     }[] = []
@@ -285,7 +287,9 @@ export const selectSupportedEntryProposal = (input: {
       readonly reason: 'SETUP_UNSUPPORTED' | 'INVALIDATION_UNSUPPORTED' | 'OBJECTIVE_OBSTRUCTED' | 'JUDGMENT_UNCERTAIN'
     }[] = []
     for (const proposal of input.proposals) {
-      const names = questionNames(proposal.source.setup, instrumentMarket(proposal.symbol))
+      const names = isShortEntryProposal(proposal)
+        ? { ...shortQuestionNames(proposal.source.setup), market: MarketKind.Equity as const }
+        : questionNames(proposal.source.setup, instrumentMarket(proposal.symbol))
       const setup = input.response.answers[names.setup]
       const stop = input.response.answers[names.stop]
       if (setup?.type !== 'noul' || stop?.type !== 'noul')
@@ -306,6 +310,21 @@ export const selectSupportedEntryProposal = (input: {
         continue
       }
       let judgmentSupport = Math.min(setup.noul, stop.noul)
+      if (isShortEntryProposal(proposal)) {
+        const obstruction = input.response.answers[shortQuestionNames(proposal.source.setup).obstruction]
+        if (obstruction?.type !== 'noul')
+          return yield* Result.fail(
+            new JevContractError({ message: 'Short entry proposal is missing its downside-support judgment' }),
+          )
+        if (obstruction.noul > negativeAtMost) {
+          rejections.push({
+            proposalId: proposal.proposalId,
+            reason: obstruction.noul >= affirmativeAtLeast ? 'OBJECTIVE_OBSTRUCTED' : 'JUDGMENT_UNCERTAIN',
+          })
+          continue
+        }
+        judgmentSupport = Math.min(judgmentSupport, 1 - obstruction.noul)
+      }
       if (names.market === MarketKind.Crypto) {
         const obstruction = input.response.answers[names.obstruction]
         if (obstruction?.type !== 'noul')
@@ -324,8 +343,7 @@ export const selectSupportedEntryProposal = (input: {
       eligible.push({
         proposal,
         judgmentSupport,
-        modeledLossMicros:
-          BigInt(proposal.funding.acquisitionCostMicros) - BigInt(proposal.funding.estimatedStopNetMicros),
+        modeledLossMicros: nativeModeledLossMicros(proposal),
       })
     }
     eligible.sort(

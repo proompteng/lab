@@ -116,7 +116,7 @@ target:
 release:
   mode: kargo_auto
   promotion_authority: kargo
-  kargo_project: lab-delivery
+  kargo_project: symphony-release
   kargo_warehouse: symphony
   kargo_branch: kargo/symphony
   kargo_stages:
