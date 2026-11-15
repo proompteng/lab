@@ -130,7 +130,8 @@ export const decodeStagedCheckpointForRequest = (
       if (new Set(rows.map((row) => row.stage)).size !== rows.length)
         return yield* invalid('Duplicate staged journal row')
     if (
-      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' &&
+      (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40') &&
       (checkpoint.claims.some((claim) => claim.stage !== 'CHART') ||
         checkpoint.terminals.some((terminal) => terminal.stage !== 'CHART') ||
         checkpoint.skips.length !== 0)

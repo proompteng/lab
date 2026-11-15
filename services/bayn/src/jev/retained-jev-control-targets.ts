@@ -53,6 +53,10 @@ export const reproduceRetainedJevAblationTarget = (input: unknown) =>
         entryPlanRejections[candidate.symbol] = 'NO_FUNDED_CANDIDATES'
         continue
       }
+      if (proposal.schemaVersion !== 'bayn.entry-proposal.v1')
+        return yield* Result.fail(
+          new JevContractError({ message: 'Retained ablation cannot contain a native short proposal' }),
+        )
       if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
       selected.push({
         symbol: candidate.symbol,

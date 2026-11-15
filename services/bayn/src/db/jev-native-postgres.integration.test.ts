@@ -92,7 +92,7 @@ import {
   evaluateJevPositionManagement,
 } from '../jev/runtime'
 import { JevExitReason, jevProfitTargetLimitFloors } from '../jev/exit'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -475,13 +475,13 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       }),
     )
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-    expect(plan.candidates).toHaveLength(15)
+    expect(plan.candidates).toHaveLength(equityMarketProfile.candidateSymbols.length)
     expect(requested.map((candidate) => candidate.symbol)).toEqual([...symbols].sort())
     const admission = yield* (yield* JevBatchStore).begin(plan, observation.payload)
     return { plan, requested, observation: observation.payload, admission }
   })
 
-const prepareSingleEntryBatch = (symbol = 'LITE') =>
+const prepareSingleEntryBatch = (symbol = 'NFLX') =>
   Effect.gen(function* () {
     const { plan, requested, observation, admission } = yield* prepareEntryBatch([symbol])
     const candidate = requested[0]
@@ -1163,7 +1163,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     },
   )
 
-  test.each(['AAPL', 'WDC'])(
+  test.each(['AAPL', 'TSLA'])(
     'single-request ENTRY preserves exclusions when %s is at a plan boundary',
     async (symbol) => {
       await runtime.runPromise(
@@ -1182,8 +1182,10 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           )
           expect(
             saved?.result?.candidates.filter((candidate) => candidate.status === JevCandidateResultStatus.Excluded),
-          ).toHaveLength(14)
-          expect(saved?.result?.candidates[symbol === 'AAPL' ? 0 : 14]).toEqual({
+          ).toHaveLength(equityMarketProfile.candidateSymbols.length - 1)
+          expect(
+            saved?.result?.candidates[symbol === 'AAPL' ? 0 : equityMarketProfile.candidateSymbols.length - 1],
+          ).toEqual({
             symbol,
             status: JevCandidateResultStatus.Resolved,
             requestId: request.requestId,
@@ -1199,7 +1201,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { plan, requested, observation } = yield* prepareEntryBatch(['AAPL', 'WDC'])
+          const { plan, requested, observation } = yield* prepareEntryBatch(['AAPL', 'TSLA'])
 
           const sql = yield* PgClient.PgClient
           const monitored = monitorSql(sql)
@@ -1525,7 +1527,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             })
             expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
             expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
-            expect(calls).toBe(15)
+            expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
           } else {
             expect(calls).toBe(0)
           }
@@ -1581,24 +1583,24 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const staleEvidence = {
           ...raw,
           quotes: raw.quotes.map((quote) =>
-            quote.symbol === 'AMD'
+            quote.symbol === 'AMZN'
               ? { ...quote, eventAt: staleAt, ingestedAt: staleAt }
               : quote.symbol === 'AAPL'
                 ? { ...quote, askPrice: quote.bidPrice * 1.01 }
                 : quote,
           ),
           trades: raw.trades.map((trade) =>
-            trade.symbol === 'AMD' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
+            trade.symbol === 'AMZN' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
           ),
         }
         const snapshot = streamingFixtureFromRaw(staleEvidence, query).snapshot
         expect(snapshot.manifest.candidateExclusions).toContainEqual(
-          expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
+          expect.objectContaining({ symbol: 'AMZN', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
         expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
         expect(result.batchPlan.candidates).toContainEqual(
-          expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
+          expect.objectContaining({ symbol: 'AMZN', status: 'EXCLUDED' }),
         )
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AAPL', status: 'EXCLUDED', reason: JevEntryExclusion.Spread }),
@@ -1984,9 +1986,13 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             if (latencyMs === 10) {
               expect(Result.isSuccess(result)).toBe(true)
               if (Result.isFailure(result)) throw result.failure
-              expect(calls.filter((call) => call.stage === 'CHART')).toHaveLength(15)
+              expect(calls.filter((call) => call.stage === 'CHART')).toHaveLength(
+                equityMarketProfile.candidateSymbols.length,
+              )
               expect(calls.filter((call) => call.stage === 'BASE_START')).toHaveLength(0)
-              expect(calls.filter((call) => call.stage === 'JEV')).toHaveLength(15)
+              expect(calls.filter((call) => call.stage === 'JEV')).toHaveLength(
+                equityMarketProfile.candidateSymbols.length,
+              )
               expect(Result.getOrThrow(decideJevEntry(result.success)).selectedSymbols).toEqual(['AAPL'])
               expect(result.success.batchResult.completedAt).toBe(
                 utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
@@ -2014,7 +2020,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const evidence = yield* evaluateJevObservation(nativeInput)
         const target = Result.getOrThrow(decideJevEntry(evidence))
         expect(target.selectedSymbols).toEqual(['AAPL'])
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         const saved = yield* (yield* JevBatchStore).read(evidence.batchPlan.batchId)
         expect(saved).toEqual({ plan: evidence.batchPlan, result: evidence.batchResult })
         expect(yield* (yield* JevBatchStore).pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual(
@@ -2095,7 +2101,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     const firstAssertionsStartedAt = performance.now()
     expect(Result.isSuccess(first)).toBe(true)
     if (Result.isSuccess(first)) expect(Result.getOrThrow(decideJevEntry(first.success)).selectedSymbols).toEqual([])
-    expect(calls).toBe(15)
+    expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
     await Effect.runPromise(phase('first-assertions', firstAssertionsStartedAt, 0))
     const restartStartedAt = performance.now()
     await runtime.dispose()
@@ -2109,12 +2115,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         _tag: 'JevAwaitingFreshWindow',
         availableAt: utcInstantFromEpochMillis(observed + 60_000),
       })
-    expect(calls).toBe(15)
+    expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
     await Effect.runPromise(phase('same-window-assertions', repeatedAssertionsStartedAt, 1000))
     const fresh = await runtime.runPromise(observeAt(60_000))
     const assertionsStartedAt = performance.now()
     expect(Result.isSuccess(fresh)).toBe(true)
-    expect(calls).toBe(30)
+    expect(calls).toBe(2 * equityMarketProfile.candidateSymbols.length)
     expect(
       await runtime.runPromise(
         Effect.gen(function* () {
@@ -2177,7 +2183,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isSuccess(result)) throw new Error('A partial batch authorized a decision')
         expect(result.failure._tag).toBe('JevAwaitingEvidence')
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         const sql = yield* PgClient.PgClient
         expect(yield* sql`SELECT count(*)::integer AS count FROM jev_batch_results`).toEqual([{ count: 1 }])
         expect(
@@ -2283,10 +2289,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     let calls = 0
     const unused = Effect.die(new Error('Unexpected broker read'))
     const broker: BrokerReadShape = {
-      account: unused,
-      accountConfiguration: unused,
+      ...longEntryBrokerReads(fixture.portfolio.brokerState.account, at),
       positions: unused,
-      assetBySymbol: () => unused,
       orders: () => unused,
       orderById: () => unused,
       orderByClientId: () => unused,
@@ -2503,7 +2507,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         if (management._tag !== 'Exit') throw new Error('Expected native Jev exit')
         const exitTarget = management.target
         expect(exitTarget.reason).toBe(JevExitReason.ProfitTarget)
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         if (reconciliation.riskContext.authority === null) throw new Error('Expected execution authority')
         const closeFacts: ReconciliationPassResult = {
           brokerState: portfolio.brokerState,
@@ -3036,7 +3040,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 60_000)
         expect(yield* store.bind(closure)).toEqual(saved)
         expect(Option.getOrThrow(yield* store.read(nativeInput.cycleId))).toEqual(saved)
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         const closeWindow = {
           startAt: new Date(Date.parse(cycle.window.executionCloseAt) - 300_000).toISOString(),
           submitCutoffAt: cycle.window.executionCloseAt,
@@ -3124,7 +3128,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
         })
         expect(recoveredReplan).toEqual({ _tag: 'Close', document: residual.document })
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
       }).pipe(
         Effect.provideService(BrokerRead, broker),
         Effect.provideService(
@@ -3133,8 +3137,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             evaluate: (request) =>
               Effect.gen(function* () {
                 calls += 1
-                if (calls === 15) yield* TestClock.setTime(observed + 7000)
-                return nativeJevInference(request, new Date(yield* Clock.currentTimeMillis).toISOString(), calls <= 15)
+                if (calls === equityMarketProfile.candidateSymbols.length) yield* TestClock.setTime(observed + 7000)
+                return nativeJevInference(
+                  request,
+                  new Date(yield* Clock.currentTimeMillis).toISOString(),
+                  calls <= equityMarketProfile.candidateSymbols.length,
+                )
               }),
           }),
         ),
@@ -3154,3 +3162,4 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     'protection-receipt-missing',
   ])('native exit persistence: %s', nativeExitPersistence, 30_000)
 })
+import { longEntryBrokerReads } from '../testing/entry-broker-reads.test-support'

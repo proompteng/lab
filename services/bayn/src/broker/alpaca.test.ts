@@ -391,6 +391,7 @@ describe('Alpaca paper reads', () => {
       source: 'alpaca-v2-account-configurations',
       requestHash,
       fractionalTrading: true,
+      noShorting: true,
     } as const
     expect(result.value).toEqual({
       ...normalized,
@@ -969,12 +970,11 @@ describe('Alpaca paper reads', () => {
     let interrupted = 0
     const client = HttpClient.make((request, url) => {
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
-      return Effect.never.pipe(
-        Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            interrupted += 1
-          }),
-        ),
+      // Withhold the body so the whole-preflight deadline, rather than the earlier header-attempt bound, wins.
+      return Effect.succeed(
+        Object.defineProperty(jsonResponse(request, accountConfigurationResponse), 'json', {
+          value: Effect.never.pipe(Effect.ensuring(Effect.sync(() => interrupted++))),
+        }),
       )
     })
 
