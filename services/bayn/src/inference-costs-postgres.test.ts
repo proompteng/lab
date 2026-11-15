@@ -135,6 +135,7 @@ test('expense verification starts the next request while an earlier request is s
         ).pipe(
           Effect.provideService(ReportVerification, {
             volume: () => Effect.die('unexpected volume'),
+            volumeRequest: () => Effect.die('unexpected volume request'),
             decision: () => Effect.die('unexpected decision'),
             coverage: () => Effect.die('unexpected coverage'),
             inference: (payload, cutoff) =>

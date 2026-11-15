@@ -43,6 +43,7 @@ const service = (
   inference: () => Effect.die('unexpected inference'),
   coverage: () => Effect.die('unexpected coverage'),
   volume: () => Effect.die('unexpected volume'),
+  volumeRequest: () => Effect.die('unexpected volume request'),
 })
 
 test('cursor bounds raw lookahead, feeds beyond a slow first batch and preserves source order', async () => {
