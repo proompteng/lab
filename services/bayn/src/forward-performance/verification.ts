@@ -28,6 +28,7 @@ export enum ReportVerificationTask {
   Inference = 'INFERENCE',
   Coverage = 'COVERAGE',
   Volume = 'VOLUME',
+  VolumeRequest = 'VOLUME_REQUEST',
 }
 
 export interface ReportExpenseCoverageInput {
@@ -49,6 +50,10 @@ export type ReportVerificationInput =
   | { readonly task: ReportVerificationTask.Inference; readonly input: unknown; readonly asOf: string }
   | { readonly task: ReportVerificationTask.Coverage; readonly input: ReportExpenseCoverageInput }
   | {
+      readonly task: ReportVerificationTask.VolumeRequest
+      readonly request: ForwardPerformanceIntradayMarketVolumeRequest
+    }
+  | {
       readonly task: ReportVerificationTask.Volume
       readonly requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[]
       readonly archiveRequest: IntradaySnapshotRequest
@@ -65,6 +70,7 @@ export type ReportVerificationReply = { readonly id: number } & (
   | { readonly outcome: 'INFERENCE'; readonly value: DecodedInferenceCostRequest }
   | { readonly outcome: 'COVERAGE'; readonly value: ReportExpenseCoverage }
   | { readonly outcome: 'VOLUME'; readonly value: ReportVolumeEvidence }
+  | { readonly outcome: 'VOLUME_REQUEST'; readonly value: IntradaySnapshotRequest }
   | {
       readonly outcome: 'INVALID_VOLUME'
       readonly failure: Pick<
@@ -204,6 +210,8 @@ export const makeReportVerification = (
                   : (input.task === ReportVerificationTask.Decision && reply.outcome === 'DECISION') ||
                       (input.task === ReportVerificationTask.Volume &&
                         (reply.outcome === 'VOLUME' || reply.outcome === 'INVALID_VOLUME')) ||
+                      (input.task === ReportVerificationTask.VolumeRequest &&
+                        (reply.outcome === 'VOLUME_REQUEST' || reply.outcome === 'INVALID_VOLUME')) ||
                       (input.task === ReportVerificationTask.Coverage &&
                         (reply.outcome === 'COVERAGE' || reply.outcome === 'INVALID_INFERENCE')) ||
                       (input.task === ReportVerificationTask.Inference &&
@@ -217,6 +225,17 @@ export const makeReportVerification = (
           (Exit.isFailure(exit) ? dispose(slot) : Effect.void).pipe(Effect.ensuring(Queue.offer(available, slot))),
       )
     return {
+      volumeRequest: (request: ForwardPerformanceIntradayMarketVolumeRequest) =>
+        run({ task: ReportVerificationTask.VolumeRequest, request }).pipe(
+          Effect.flatMap(
+            (reply): Effect.Effect<IntradaySnapshotRequest, IntradaySnapshotFailure | ReportVerificationError> =>
+              reply.outcome === 'VOLUME_REQUEST'
+                ? Effect.succeed(reply.value)
+                : reply.outcome === 'INVALID_VOLUME'
+                  ? Effect.fail(new IntradaySnapshotFailure(reply.failure))
+                  : Effect.fail(failed('Report verification omitted its volume request')),
+          ),
+        ),
       volume: (
         requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[],
         archiveRequest: IntradaySnapshotRequest,

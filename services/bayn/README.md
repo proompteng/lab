@@ -1887,6 +1887,7 @@ independent archive/account-ledger and expense reconstruction/ledger branches ru
 The fenced persistence path retains inline verification and its existing read sequence. The pool's V8 resource limits are advisory when Node's
 process-wide heap flags override them; the API container has a 6 GiB memory limit. Its sixteen-core CPU burst
 limit supports the pool without increasing the 250m CPU reservation. Reports remain forbidden in execution controllers.
+Manifest authentication for archive grouping also uses the same pool, preserving request order and grouping keys.
 Completed-session intraday reads run at concurrency eight. Requests for an identical archive window reuse one
 verified bar summary within that read while retaining each decision's identity, scope and watermark lower bound.
 See the [report measurements](../../docs/bayn/report-performance-2026-11-13.md) for observed timings and limitations.

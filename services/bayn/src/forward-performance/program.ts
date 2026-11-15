@@ -46,7 +46,7 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceCostError } from '../inference-costs'
 import { forwardPerformanceSnapshot } from './postgres/snapshot'
 import { postgresError } from './postgres/model'
-import { ReportVerification } from './verification'
+import { ReportVerification, reportVerificationConcurrency } from './verification'
 
 import {
   intradayPerformanceDecisionRequest,
@@ -324,6 +324,23 @@ const groupMarketVolumeRequests = (
 
 const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[]) =>
   Effect.gen(function* () {
+    const verifier = yield* Effect.serviceOption(ReportVerification)
+    const entries = yield* Effect.forEach(
+      requests,
+      (request) =>
+        Effect.gen(function* () {
+          yield* Effect.yieldNow
+          const original = yield* Option.isSome(verifier)
+            ? verifier.value.volumeRequest(request)
+            : Effect.fromResult(intradayPerformanceDecisionRequest(request))
+          const query = intradayPerformanceSessionQuery(request, original)
+          // Capture does not use the decision's old watermarks. All other query material must agree.
+          const { archiveWatermarks: _decisionWatermarks, ...captureQuery } = query
+          const key = yield* Effect.fromResult(canonicalHashV1Result(captureQuery))
+          return { key, entry: { request, original, query } }
+        }),
+      { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
+    )
     const groups = new Map<
       string,
       {
@@ -332,16 +349,8 @@ const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntrad
         readonly query: IntradaySnapshotRequest
       }[]
     >()
-    for (const request of requests) {
-      yield* Effect.yieldNow
-      const original = yield* Effect.fromResult(intradayPerformanceDecisionRequest(request))
-      const query = intradayPerformanceSessionQuery(request, original)
-      // Capture does not use the decision's old watermarks. All other query material, including
-      // symbol, exact report cutoff and feed, must agree before sharing one retrospective read.
-      const { archiveWatermarks: _decisionWatermarks, ...captureQuery } = query
-      const key = yield* Effect.fromResult(canonicalHashV1Result(captureQuery))
+    for (const { key, entry } of entries) {
       const group = groups.get(key)
-      const entry = { request, original, query }
       if (group === undefined) groups.set(key, [entry])
       else group.push(entry)
     }
