@@ -458,7 +458,8 @@ describe('Alpaca broker session acquisition retry', () => {
     const client = HttpClient.make((request) => {
       requests += 1
       const requestId = `req-${requests}`
-      return Effect.sleep(6_000).pipe(
+      // Each response arrives within the header bound; all three retries still exceed the 5-second session window.
+      return Effect.sleep(4_000).pipe(
         Effect.as(jsonResponse(request, { code: 50010000, message: 'slow temporary failure' }, requestId, 500)),
       )
     })
@@ -470,11 +471,11 @@ describe('Alpaca broker session acquisition retry', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(requests).toBe(1)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         expect(requests).toBe(2)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         expect(requests).toBe(3)
-        yield* TestClock.adjust(6_000)
+        yield* TestClock.adjust(4_000)
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestClock.layer())),
     )
