@@ -1874,6 +1874,18 @@ bun test services/bayn/src/forward-performance/position-episodes.test.ts --test-
 
 The default report reads performance and inference-expense records in one read-only repeatable-read PostgreSQL
 transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
+Read-only CLI reports verify decision documents, inference sources and request-partitioned expense coverage in a
+scoped pool of at most eight native workers. Each worker uses the original domain verifier and returns compact
+projections. The immutable execution index is installed once per worker for each report cut. Source duplicates
+remain together, every session quote is verified, and exact TigerBeetle session
+reconciliation still follows coverage verification. Results retain source order. Failure, defects, interruption and
+deadlines close outstanding workers before the report scope returns; incomplete output is discarded by the supervisor.
+The fenced persistence path retains inline verification. The pool's V8 resource limits are advisory when Node's
+process-wide heap flags override them; the API container retains its 4 GiB memory limit. Its eight-core CPU burst
+limit supports the pool without increasing the 250m CPU reservation. Reports remain forbidden in execution controllers.
+Completed-session intraday reads run at concurrency four. Requests for an identical archive window reuse one
+verified bar summary within that read while retaining each decision's identity, scope and watermark lower bound.
+See the [report measurements](../../docs/bayn/report-performance-2026-11-13.md) for observed timings and limitations.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.

@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
-import { Effect, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
+import { ReportVerification, reportVerificationConcurrency } from '../verification'
 import { openSnapshotRows } from '../../db/snapshot-rows'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
@@ -890,14 +891,37 @@ export const readForwardPerformancePostgres = (
         const executionIndex = indexExecutionEvidence(executionIntentRows, executionOrderRows, executionFillRows)
         const unverified = new Set<string>()
         const executionEvidence: ForwardPerformanceExecutionEvidence[] = []
+        const verifier = yield* Effect.serviceOption(ReportVerification)
+        const batch: (typeof CycleDecisionRow.Type)[] = []
+        const flushDecisions = () =>
+          Effect.gen(function* () {
+            const projections = yield* Effect.forEach(
+              batch.splice(0),
+              (row) =>
+                Option.isSome(verifier)
+                  ? verifier.value.decision(row, executionIndex)
+                  : Effect.sync(() => {
+                      const verified = verifyPerformanceDecisions([row])
+                      return {
+                        executionEvidence: executionEvidenceFromRows(verified.verifiedRows, executionIndex),
+                        unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
+                      }
+                    }),
+              { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
+            )
+            for (const projection of projections) {
+              for (const hash of projection.unverifiedDecisionHashes) unverified.add(hash)
+              executionEvidence.push(...projection.executionEvidence)
+            }
+          })
         yield* consumeDecisionRows((input) =>
           Effect.gen(function* () {
             const row = yield* Schema.decodeUnknownEffect(CycleDecisionRow, strictParseOptions)(input)
-            const verified = verifyPerformanceDecisions([row])
-            for (const hash of verified.unverifiedDecisionHashes) unverified.add(hash)
-            executionEvidence.push(...executionEvidenceFromRows(verified.verifiedRows, executionIndex))
+            batch.push(row)
+            if (batch.length === (Option.isSome(verifier) ? reportVerificationConcurrency : 1)) yield* flushDecisions()
           }),
         )
+        yield* flushDecisions()
         const unverifiedDecisionHashes = [...unverified].sort()
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],

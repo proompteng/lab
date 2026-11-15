@@ -12,6 +12,7 @@ import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-perfor
 import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 import { runForwardPerformanceWithinDeadline } from './forward-performance-deadline'
+import { ReportVerificationLive } from './forward-performance/verification'
 import { reportingLogger, requireReportingRuntime, withReportResourceMeasurement } from './reporting-runtime'
 
 export const FORWARD_PERFORMANCE_COMMAND_USAGE =
@@ -121,7 +122,14 @@ const runProof = (options: {
         return yield* runForwardPerformanceReport(config, undefined, options)
       }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
-        Effect.provide(WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))),
+        Effect.provide(
+          options.persistReceipt === true
+            ? WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))
+            : Layer.mergeAll(
+                WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config))),
+                ReportVerificationLive,
+              ),
+        ),
       )
       const output = yield* Effect.fromResult(canonicalJsonV1Result(report)).pipe(
         Effect.mapError(
