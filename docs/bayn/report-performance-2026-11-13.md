@@ -185,3 +185,31 @@ A private development build with ordered lookahead and sixteen workers completed
 allocation in 48,403 ms wall time (44,786 ms measured interval), using 2,575,492 KiB peak RSS. It preserved the
 financial receipt hash above. This diagnostic preceded volume offload and does not establish the proposed sixteen-core
 release target.
+
+### Released continuous scheduling and grouping follow-up
+
+PR [#15953](https://github.com/proompteng/lab/pull/15953) merged as `b582178d648a0132359707d1d3dc65481fbc0327`
+after all 36 reported checks passed or were skipped and review approved the change. Release run `43722229151`
+succeeded after retrying a GitHub HTTP 403 download of the pinned TLC checker. Freight
+`fafa02864aab5f5e7e8899b958bf96d82a2b0f2c` promoted through generated commit
+`d3512dcb18b8b6d51cc3b43174558e8654d0377b`; Argo reported Synced/Healthy. The native image digest is
+`sha256:a01131cf745039f020891a06f8b2319af6412da07de9c0a7b2f24519afd63341`.
+
+At the deployed sixteen-core/six-GiB ceiling, the packaged x64 command succeeded within the original 30-second
+budget in 17,932 ms wall time (16,600 ms measured interval), with 1,508,396 KiB peak RSS. ARM64 still exceeded
+the budget, exiting in 32,086 ms with zero stdout. A bounded instrumented ARM diagnostic completed in
+31,350 ms wall time (27,645 ms measured interval), using 2,254,964 KiB peak RSS. PostgreSQL took 16,624 ms;
+volume took 8,898 ms while expenses took 8,723 ms concurrently. Manifest grouping alone occupied the
+coordinating thread for 3,685 ms. The next change moves that authentication into the existing pool without
+changing its pure verifier, original watermark bounds, grouping keys, or the sixteen-worker ceiling.
+
+Both completed reports produced financial receipt hash
+`e35e898c9de21ff4459a74d1f1190f4f70aade67355694ffa4e3a914a152e9d3` for this runtime binding. Counts, gross
+P&L, fees, known inference estimates, twenty gaps and exact ledger proofs remain unchanged. Costs remain
+incomplete and profitability undetermined; no receipt was persisted. API readiness and exact accounting
+were retained before and after every run. The ARM deadline target remains open.
+
+The private grouping candidate completed ARM64 in 28,948 ms wall time under the unchanged 30-second deadline
+(25,199 ms measured interval), using 2,233,344 KiB peak RSS. It ran on the existing sixteen-core/six-GiB API
+allocation with development provenance and produced the same financial receipt hash as the released x64 report
+above. This is candidate evidence; completion still requires the reviewed packaged release on both architectures.
