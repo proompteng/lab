@@ -46,6 +46,7 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceCostError } from '../inference-costs'
 import { forwardPerformanceSnapshot } from './postgres/snapshot'
 import { postgresError } from './postgres/model'
+import { ReportVerification } from './verification'
 
 import {
   intradayPerformanceDecisionRequest,
@@ -322,7 +323,7 @@ const groupMarketVolumeRequests = (
 }
 
 const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[]) =>
-  Result.gen(function* () {
+  Effect.gen(function* () {
     const groups = new Map<
       string,
       {
@@ -332,12 +333,13 @@ const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntrad
       }[]
     >()
     for (const request of requests) {
-      const original = yield* intradayPerformanceDecisionRequest(request)
+      yield* Effect.yieldNow
+      const original = yield* Effect.fromResult(intradayPerformanceDecisionRequest(request))
       const query = intradayPerformanceSessionQuery(request, original)
       // Capture does not use the decision's old watermarks. All other query material, including
       // symbol, exact report cutoff and feed, must agree before sharing one retrospective read.
       const { archiveWatermarks: _decisionWatermarks, ...captureQuery } = query
-      const key = yield* canonicalHashV1Result(captureQuery)
+      const key = yield* Effect.fromResult(canonicalHashV1Result(captureQuery))
       const group = groups.get(key)
       const entry = { request, original, query }
       if (group === undefined) groups.set(key, [entry])
@@ -346,9 +348,7 @@ const groupIntradayVolumeRequests = (requests: readonly ForwardPerformanceIntrad
     return [...groups.values()]
   })
 
-const readIntradayPerformanceVolume = (
-  group: Result.Result.Success<ReturnType<typeof groupIntradayVolumeRequests>>[number],
-) =>
+const readIntradayPerformanceVolume = (group: Effect.Success<ReturnType<typeof groupIntradayVolumeRequests>>[number]) =>
   Effect.gen(function* () {
     const first = group[0]
     if (first === undefined) return []
@@ -362,13 +362,11 @@ const readIntradayPerformanceVolume = (
       decodeIntradayBarRows,
       (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
     )
-    return yield* Effect.fromResult(
-      makeIntradayPerformanceVolumeEvidenceBatch(
-        group.map(({ request }) => request),
-        archiveRequest,
-        rawBars,
-      ),
-    )
+    const requests = group.map(({ request }) => request)
+    const verification = yield* Effect.serviceOption(ReportVerification)
+    return yield* Option.isSome(verification)
+      ? verification.value.volume(requests, archiveRequest, rawBars)
+      : Effect.fromResult(makeIntradayPerformanceVolumeEvidenceBatch(requests, archiveRequest, rawBars))
   })
 
 export const readForwardPerformanceMarketVolumeWithClient = (
@@ -483,10 +481,10 @@ export const readForwardPerformanceMarketVolumeWithClient = (
         ),
       { concurrency: 2 },
     )
-    const intradayGroups = yield* Effect.fromResult(
-      groupIntradayVolumeRequests(requests.filter((request) => 'decisionManifest' in request)),
+    const intradayGroups = yield* groupIntradayVolumeRequests(
+      requests.filter((request) => 'decisionManifest' in request),
     )
-    const intraday = yield* Effect.forEach(intradayGroups, readIntradayPerformanceVolume, { concurrency: 4 })
+    const intraday = yield* Effect.forEach(intradayGroups, readIntradayPerformanceVolume, { concurrency: 8 })
     const evidence: ForwardPerformanceMarketVolumeEvidence[] = [
       ...groups.flat(),
       ...intraday.flat().filter((item) => item !== undefined),
@@ -630,18 +628,13 @@ const verifyRetainedAccounting = (
     return yield* verifyAccountingReceipts(prepared, receipts, config)
   })
 
-export const readForwardPerformanceInput = (
-  loadedConfig: ForwardPerformanceConfig,
+const completeForwardPerformanceInput = (
+  config: BoundForwardPerformanceConfig,
+  postgres: ForwardPerformancePostgresEvidence,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
 ): Effect.Effect<ForwardPerformanceEvidenceInput, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
-    const config = yield* requireBrokerIdentity(loadedConfig)
     const identity = config.execution.brokerIdentity
-    const sql = yield* PgClient.PgClient
-    const postgres = yield* readers
-      .postgres(sql, identity.accountId, options.authorityGenerationHash, options.writerFence)
-      .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause)))
     const marketVolumeEvidence = yield* readers
       .marketVolume(config, postgres.marketVolumeRequests)
       .pipe(Effect.mapError((cause) => programError('market-volume-read', cause.message, cause)))
@@ -805,6 +798,20 @@ export const readForwardPerformanceInput = (
     }
   })
 
+export const readForwardPerformanceInput = (
+  loadedConfig: ForwardPerformanceConfig,
+  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
+): Effect.Effect<ForwardPerformanceEvidenceInput, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
+  Effect.gen(function* () {
+    const config = yield* requireBrokerIdentity(loadedConfig)
+    const sql = yield* PgClient.PgClient
+    const postgres = yield* readers
+      .postgres(sql, config.execution.brokerIdentity.accountId, options.authorityGenerationHash, options.writerFence)
+      .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause)))
+    return yield* completeForwardPerformanceInput(config, postgres, readers)
+  })
+
 export const runForwardPerformanceReport = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
@@ -820,7 +827,15 @@ export const runForwardPerformanceReport = (
     const captured = yield* forwardPerformanceSnapshot(sql, options.writerFence)
       .withTransaction(
         Effect.gen(function* () {
-          const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
+          const source =
+            options.writerFence === undefined
+              ? {
+                  kind: 'POSTGRES' as const,
+                  postgres: yield* readers
+                    .postgres(sql, identity.execution.brokerIdentity.accountId, options.authorityGenerationHash)
+                    .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause))),
+                }
+              : { kind: 'INPUT' as const, input: yield* readForwardPerformanceInput(loadedConfig, readers, options) }
           const assessment =
             options.assessmentHash === undefined ? null : yield* readPersistedSystemAssessment(options.assessmentHash)
           if (assessment !== null) {
@@ -829,7 +844,7 @@ export const runForwardPerformanceReport = (
             const accountHash = yield* Effect.fromResult(
               canonicalHashV1Result({
                 schemaVersion: 'bayn.inference-cost-account.v1',
-                accountId: input.account.accountId,
+                accountId: identity.execution.brokerIdentity.accountId,
               }),
             )
             if (
@@ -849,7 +864,7 @@ export const runForwardPerformanceReport = (
               options.writerFence,
             )
             .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
-          return { input, assessment, expenseSnapshots }
+          return { source, assessment, expenseSnapshots }
         }),
       )
       .pipe(
@@ -859,7 +874,7 @@ export const runForwardPerformanceReport = (
             : programError('postgres-read', 'forward-performance report snapshot failed', postgresError(cause)),
         ),
       )
-    const expenses = yield* readers
+    const readExpenses = readers
       .inferenceExpenses(
         loadedConfig,
         sql,
@@ -868,8 +883,20 @@ export const runForwardPerformanceReport = (
         options.authorityGenerationHash,
       )
       .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+    // The complete PostgreSQL cut is captured before independent archive and ledger reads.
+    // Fenced evaluation retains its existing sequence and transaction ownership.
+    const { input, expenses } =
+      captured.source.kind === 'POSTGRES'
+        ? yield* Effect.all(
+            {
+              input: Effect.scoped(completeForwardPerformanceInput(identity, captured.source.postgres, readers)),
+              expenses: Effect.scoped(readExpenses),
+            },
+            { concurrency: 2 },
+          )
+        : { input: captured.source.input, expenses: yield* readExpenses }
     return yield* Effect.fromResult(
-      makeForwardPerformanceReport(captured.input, expenses, options.authorityGenerationHash, captured.assessment),
+      makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash, captured.assessment),
     ).pipe(
       Effect.mapError((cause) =>
         programError('construct-receipt', 'forward-performance report construction failed', cause),
