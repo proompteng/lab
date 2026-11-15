@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema, Stream } from 'effect'
+import { Effect, Option, Schema, Stream } from 'effect'
+import { ReportVerification, reportVerificationConcurrency } from './forward-performance/verification'
 
 import { canonicalHashV1Result } from './hash'
 import {
@@ -144,16 +145,36 @@ export const acquireInferenceExpenseSnapshot = (
           verify: Effect.gen(function* () {
             const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
             const requests: DecodedInferenceCostRequest[] = []
+            const verifier = yield* Effect.serviceOption(ReportVerification)
+            const pending: { readonly payload: unknown; readonly asOf: string }[] = []
+            const flushRequests = () =>
+              Effect.forEach(
+                pending.splice(0),
+                ({ payload, asOf }) =>
+                  Option.isSome(verifier)
+                    ? verifier.value.inference(payload, asOf)
+                    : Effect.fromResult(decodeInferenceCostRequest(payload, asOf)),
+                { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
+              ).pipe(
+                Effect.tap((decoded) =>
+                  Effect.sync(() => {
+                    requests.push(...decoded)
+                  }),
+                ),
+              )
             for (const input of inputs) {
               const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
               if (row.kind === SnapshotRowKind.Request) {
                 // Reproduction is synchronous CPU work. Service sockets and caller
                 // cancellation between requests without changing the financial cut.
                 yield* Effect.yieldNow
-                requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
+                pending.push({ payload: row.payload, asOf: row.as_of })
+                if (pending.length === (Option.isSome(verifier) ? reportVerificationConcurrency : 1))
+                  yield* flushRequests()
               }
               rows.push(row)
             }
+            yield* flushRequests()
             const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
             const cut = cuts[0]
             if (
