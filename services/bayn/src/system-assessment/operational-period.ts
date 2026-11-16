@@ -11,6 +11,7 @@ import {
   defaultJevProtocolDocument,
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
+  retainedJevProtocolV40Document,
   jevBehaviorHash,
 } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
@@ -79,11 +80,13 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
       return yield* invalid('Operational registration requires a recognized native protocol')
     const parameterHash = yield* canonicalHashV1Result(runtime.protocol)
     const expectedParameterHash = yield* canonicalHashV1Result(
-      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
         ? defaultJevProtocolDocument
-        : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document,
+        : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? retainedJevProtocolV40Document
+          : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+            ? retainedJevProtocolV39Document
+            : retainedJevProtocolV38Document,
     )
     const protocolHash = yield* makeStrategyProtocolHashResult({
       name: 'jev',

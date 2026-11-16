@@ -7,12 +7,14 @@ import {
 } from '../../shadow-decision-contract'
 import { strictParseOptions } from '../../schemas'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
+import { isBracketProtection, isOcoProtection } from '../../execution/contracts'
 import {
   CycleDecisionRow,
   FillExecutionRow,
   IntentExecutionRow,
   MarketVolumeBindingRow,
   OrderExecutionRow,
+  NativeProtectionOrderRow,
   type VerifiedCycleDecisionRow,
 } from './model'
 
@@ -87,6 +89,7 @@ export const indexExecutionEvidence = (
   intentRows: readonly (typeof IntentExecutionRow.Type)[],
   orderRows: readonly (typeof OrderExecutionRow.Type)[],
   fillRows: readonly (typeof FillExecutionRow.Type)[],
+  nativeOrderRows: readonly (typeof NativeProtectionOrderRow.Type)[] = [],
 ) => {
   const intents = uniqueRows(intentRows, (row) =>
     intentExecutionKey({
@@ -108,12 +111,20 @@ export const indexExecutionEvidence = (
     else found.push(row)
   }
 
-  return { intents, orders, fills }
+  const nativeOrders = new Map<string, (typeof NativeProtectionOrderRow.Type)[]>()
+  for (const row of nativeOrderRows) {
+    const intentId = row.order.intentId
+    if (intentId === undefined) continue
+    const group = nativeOrders.get(intentId)
+    if (group === undefined) nativeOrders.set(intentId, [row])
+    else group.push(row)
+  }
+  return { intents, orders, fills, nativeOrders }
 }
 
 export const executionEvidenceFromRows = (
   decisionRows: readonly VerifiedCycleDecisionRow[],
-  { intents, orders, fills }: ReturnType<typeof indexExecutionEvidence>,
+  { intents, orders, fills, nativeOrders }: ReturnType<typeof indexExecutionEvidence>,
 ): readonly ForwardPerformanceExecutionEvidence[] => {
   const evidence: ForwardPerformanceExecutionEvidence[] = []
   for (const row of decisionRows) {
@@ -121,7 +132,7 @@ export const executionEvidenceFromRows = (
     if (document.targetPlan.status !== 'PLANNED') continue
     const replanGenerationHash =
       document.mode === legacyExecutionAuthorityToken ? document.replanGenerationHash : undefined
-    for (const target of document.targetPlan.intentTargets) {
+    for (const [targetIndex, target] of document.targetPlan.intentTargets.entries()) {
       const matchingReferences = document.targetPlan.targets.filter((candidate) => candidate.symbol === target.symbol)
       const reference = matchingReferences.length === 1 ? matchingReferences[0] : undefined
       const intentRow = intents.get(
@@ -138,7 +149,12 @@ export const executionEvidenceFromRows = (
       )
       const intentId = intentRow === undefined || intentRow === null ? '' : intentRow.intent_id
       const orderRow = orders.get(intentId)
+      const risk = document.deltaRisk[targetIndex]
+      const protection = risk?.protection
+      const group = nativeOrders.get(intentId) ?? []
+      const hasNativeProtection = isBracketProtection(protection) || isOcoProtection(protection)
       const fillEvidence = (fills.get(intentId) ?? []).map((fill) => ({
+        ...(hasNativeProtection && fill.source_sequence !== undefined ? { sourceSequence: fill.source_sequence } : {}),
         brokerEventId: fill.event_id,
         fillId: fill.fill_id,
         brokerOrderId: fill.broker_order_id,
@@ -207,7 +223,31 @@ export const executionEvidenceFromRows = (
                 observedAt: orderRow.observed_at.toISOString(),
               },
             }),
-        fills: fillEvidence,
+        fills:
+          hasNativeProtection && orderRow !== undefined && orderRow !== null
+            ? fillEvidence.filter((fill) => fill.brokerOrderId === orderRow.broker_order_id)
+            : fillEvidence,
+        ...(hasNativeProtection && risk !== undefined && protection !== undefined
+          ? {
+              nativeProtection: {
+                schemaVersion: 'bayn.forward-performance-native-protection.v1' as const,
+                target,
+                limitPriceMicros: risk.limitPriceMicros,
+                protection,
+                authorityGenerationHash:
+                  'authorityGenerationHash' in document.bindings ? document.bindings.authorityGenerationHash : '',
+                orders: group.map((native) => ({
+                  eventId: native.event_id,
+                  occurredAt: native.occurred_at.toISOString(),
+                  order: native.order,
+                })),
+                fills:
+                  orderRow === undefined || orderRow === null
+                    ? []
+                    : fillEvidence.filter((fill) => fill.brokerOrderId !== orderRow.broker_order_id),
+              },
+            }
+          : {}),
       })
     }
   }

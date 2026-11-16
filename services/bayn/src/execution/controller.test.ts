@@ -50,6 +50,47 @@ const completedResult: ExecutionAdvanceStepResult = {
 }
 
 describe('execution controller decisions', () => {
+  test.each([undefined, '2026-08-13T18:01:00.000Z'])(
+    'broker reconciliation market gate preserves explicit deadline %s',
+    (nextWakeAt) => {
+      const state = Result.getOrThrow(
+        completeExecutionControllerTick(
+          activated(),
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+          {
+            completedAt: '2026-08-13T18:00:00.000Z',
+            observation: {
+              result: 'FAILURE',
+              observedAt: '2026-08-13T18:00:00.000Z',
+              operation: 'reconcile',
+              failure: 'market-data',
+              message: 'Unavailable broker observation',
+            },
+            outcome: {
+              _tag: ExecutionControllerOutcome.Blocked,
+              receiptHash: '1'.repeat(64),
+              nextDelayMs: 1,
+              ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+            },
+          },
+          sourceRevision,
+        ),
+      )
+      expect(state.nextDueAt).toBe(nextWakeAt)
+      expect(state.marketEligibleAt).toBe(nextWakeAt)
+      expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
+      const recovered = Result.getOrThrow(
+        completeExecutionControllerTick(
+          state,
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
+          completedResult,
+          sourceRevision,
+        ),
+      )
+      expect(recovered.marketEligibleAt).toBeUndefined()
+      expect(recovered.nextDueAt).toBeUndefined()
+    },
+  )
   test('decodes bounded canonical Jev references while preserving unknown legacy evidence', () => {
     const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: completedResult.completedAt }
     expect(Result.isSuccess(decodeExecutionAdvanceStepResult({ ...completedResult, observation }))).toBe(true)

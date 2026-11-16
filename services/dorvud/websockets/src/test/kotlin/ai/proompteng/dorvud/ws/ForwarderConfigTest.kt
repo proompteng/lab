@@ -11,6 +11,40 @@ import kotlin.test.assertNull
 
 class ForwarderConfigTest {
   @Test
+  fun `expanded equity source preserves thirty admitted streams and polls only missing completed bars`() {
+    val old = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
+    val added = "GOOGL,INTC,META,MSFT,NFLX,TSLA"
+    val streamed = "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "$old,$added",
+        "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
+        "ALPACA_MARKET_DATA_BARS_SYMBOLS" to old,
+        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to streamed,
+        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to streamed,
+        "ALPACA_LATEST_SYMBOLS" to "AMD,AVGO,COHR,CRDO,GOOGL,INTC,LITE,META,MRVL,MSFT,MU,NFLX,SNDK,TSLA,WDC",
+        "ALPACA_LATEST_BAR_SYMBOLS" to added,
+      )
+    val parsed = ForwarderConfig.fromEnv(base)
+    assertEquals(
+      30,
+      parsed
+        .marketDataFeedConfigs()
+        .single()
+        .desiredSymbolsByChannel(parsed.staticSymbols)
+        .values
+        .sumOf { it.size },
+    )
+    assertEquals(added.split(","), requireNotNull(parsed.latestMarketData).barSymbols)
+    for (invalid in listOf("AAPL", "TSLA,TSLA", "UNREQUESTED")) {
+      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_BAR_SYMBOLS" to invalid)) }
+    }
+    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base - "ALPACA_LATEST_SYMBOLS") }
+  }
+
+  @Test
   fun `IEX qualification keeps the admitted baseline and requires its exact REST-only candidates`() {
     val all = "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
     val admitted = "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"

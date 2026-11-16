@@ -1,4 +1,5 @@
 import { nativeChartInference } from './retained-chart.test-support'
+import { retainedJevProtocolV40Document } from './protocol'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result } from 'effect'
@@ -27,7 +28,7 @@ export const entryEvaluationRequestFixture = (observedAt?: string, symbol?: stri
     numericalState: { ...current.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
     schemaVersion: 'bayn.entry-inference-input.v3' as const,
     protocol: {
-      ...current.request.protocol,
+      ...retainedJevProtocolV40Document,
       model: retainedJevModel,
       executionModel: retainedIntradayExecutionModel,
       schemaVersion: 'bayn.jev.protocol.v24' as const,

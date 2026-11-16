@@ -69,6 +69,15 @@ const invalidFacts: readonly [string, Partial<ExpiredEntryCancellationFacts>][] 
   ['invalid database time', { admittedAt: 'invalid' }],
   ['unsafe authority version', { authorityVersion: Number.MAX_SAFE_INTEGER + 1 }],
 ]
+test('expired native short entries require the exactly bound SELL bracket', () => {
+  const short = { ...facts, side: OrderSide.Sell, protectionTag: 'EquityShortBracket' }
+  expect(expiredEntryCancellationAdmissionIsCurrent(admission, short)).toBe(true)
+  expect(expiredEntryCancellationAdmissionIsCurrent(admission, { ...facts, side: OrderSide.Sell })).toBe(false)
+  for (const protectionTag of [null, 'Bracket', 'EquityShortOco', 'EquityShortStopLimit'])
+    expect(expiredEntryCancellationAdmissionIsCurrent(admission, { ...short, protectionTag })).toBe(false)
+  for (const [, patch] of invalidFacts.filter(([name]) => name !== 'exit intent'))
+    expect(expiredEntryCancellationAdmissionIsCurrent(admission, { ...short, ...patch })).toBe(false)
+})
 for (const [name, patch] of invalidFacts)
   test(`expired-entry admission rejects ${name}`, () => {
     expect(expiredEntryCancellationAdmissionIsCurrent(admission, { ...facts, ...patch })).toBe(false)

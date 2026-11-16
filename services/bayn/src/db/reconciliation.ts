@@ -1,3 +1,4 @@
+import { isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
 import { Data, Effect, Option, Result, Schema } from 'effect'
@@ -324,9 +325,11 @@ export const readAccountingHistory = (
     Effect.gen(function* () {
       const rows = yield* sql<Record<string, unknown>>`
       WITH inventory_debits AS MATERIALIZED (
-        SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at
+        SELECT account_id, symbol, sum(quantity_atoms) AS quantity_atoms,
+          sum(cost_basis_micros) AS cost_basis_micros, effective_at
         FROM broker_inventory_debits
         WHERE account_id = ${accountId} AND posted
+        GROUP BY account_id, symbol, effective_at
       ), ranked AS (
         SELECT
           transaction.schema_version, transaction.transaction_id, transaction.broker_event_id,
@@ -558,13 +561,13 @@ export const verifyBrokerStateVersion = (
           AND d.document #>> '{bindings,accountId}' = ${accountId}
           AND (
             (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'))
           )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
@@ -675,7 +678,7 @@ export const makeReconciliation = (
         const childExpectations = yield* Effect.forEach(children, (child) =>
           Effect.gen(function* () {
             const terms = child.protection
-            if (terms._tag === 'StopLimit')
+            if (isStopProtection(terms))
               return yield* storeError(
                 'reconcile',
                 'invariant',
@@ -687,7 +690,7 @@ export const makeReconciliation = (
               brokerOrderId: child.broker_order_id,
               parentBrokerOrderId: child.parent_broker_order_id,
               symbol: child.symbol,
-              side: OrderSide.Sell,
+              side: isEquityShortProtection(terms) ? OrderSide.Buy : OrderSide.Sell,
               orderType: child.order_type,
               submittedOrderType: child.order_type,
               timeInForce: TimeInForce.Day,
@@ -704,7 +707,9 @@ export const makeReconciliation = (
         const intents: readonly IntentExpectation[] = [...projected.intents, ...childExpectations]
         const unknownMutationCount = projected.unknownMutationCount
 
-        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger)
+        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger).pipe(
+          withObservedStage('bayn.reconciliation.accounting-history'),
+        )
         const transactions = prepared.map(({ transaction }) => transaction)
         const receiptRows = yield* sql<Record<string, unknown>>`
           SELECT
@@ -722,14 +727,16 @@ export const makeReconciliation = (
           FROM accounting_receipts
           WHERE broker_event_id IN (SELECT broker_event_id FROM accounting_transactions WHERE account_id = ${accountId})
           ORDER BY broker_event_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeReceipts))
+        `.pipe(
+          Effect.flatMap(decodeReceipts),
+          withObservedStage('bayn.reconciliation.accounting-receipt-read', { dependency: 'postgresql' }),
+        )
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
-        const { exactReceipts, plans } = yield* fromDecision(
-          'reconcile',
-          verifyAccountingReceipts(prepared, receipts, config),
-        )
+        const { exactReceipts, plans } = yield* Effect.suspend(() =>
+          fromDecision('reconcile', verifyAccountingReceipts(prepared, receipts, config)),
+        ).pipe(withObservedStage('bayn.reconciliation.accounting-receipt-verify'))
         const ledgerExact = yield* journal
           .verifyAccount(accountId, [
             ...plans,
@@ -738,6 +745,7 @@ export const makeReconciliation = (
             ...accruals.map((accrual) => accrual.plan),
           ])
           .pipe(
+            withObservedStage('bayn.reconciliation.accounting-ledger-verify', { dependency: 'tigerbeetle' }),
             Effect.mapError((cause) =>
               storeError('reconcile', 'ledger', 'TigerBeetle account verification failed during reconciliation', cause),
             ),

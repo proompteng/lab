@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { makeMomentumEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'

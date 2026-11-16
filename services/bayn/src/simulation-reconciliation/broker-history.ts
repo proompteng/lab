@@ -8,6 +8,7 @@ import {
   type FeeActivity,
   type Order as BrokerOrder,
   type ReadResult,
+  type FillActivityPage,
 } from '../broker/alpaca/model'
 import { type BrokerReadError } from '../broker/alpaca/failures'
 import { canonicalHashV1Result } from '../hash'
@@ -221,7 +222,11 @@ const readOrderPages = (
   read: BrokerReadShape,
   until: string,
   state: OrderPaginationState,
-): Effect.Effect<OrderRead, BrokerReadError | ReconciliationError> => {
+  firstPage?: ReadResult<readonly BrokerOrder[]>,
+): Effect.Effect<
+  { readonly history: OrderRead; readonly recentOrders: ReadResult<readonly BrokerOrder[]> },
+  BrokerReadError | ReconciliationError
+> => {
   const limit = ordersPageSize
   return Effect.suspend(() =>
     read.orders({
@@ -231,9 +236,14 @@ const readOrderPages = (
       until: state.cursor ?? until,
     }),
   ).pipe(
-    Effect.flatMap((page) => Effect.fromResult(decideOrderPage(state, limit, page))),
-    Effect.flatMap((decision) =>
-      decision._tag === 'Complete' ? Effect.succeed(decision.read) : readOrderPages(read, until, decision.state),
+    Effect.flatMap((page) =>
+      Effect.gen(function* () {
+        const first = firstPage ?? page
+        const decision = yield* Effect.fromResult(decideOrderPage(state, limit, page))
+        return decision._tag === 'Complete'
+          ? { history: decision.read, recentOrders: { value: first.value.slice(0, 1), evidence: first.evidence } }
+          : yield* readOrderPages(read, until, decision.state, first)
+      }),
     ),
   )
 }
@@ -242,7 +252,10 @@ const readFillPages = (
   read: BrokerReadShape,
   until: string,
   state: FillPaginationState,
-): Effect.Effect<readonly Observed<FillActivity>[], BrokerReadError | ReconciliationError> => {
+): Effect.Effect<
+  { readonly rows: readonly Observed<FillActivity>[]; readonly recentFills: ReadResult<FillActivityPage> },
+  BrokerReadError | ReconciliationError
+> => {
   const pageSize = fillsPageSize
   return Effect.suspend(() =>
     read.fillActivities({
@@ -252,9 +265,20 @@ const readFillPages = (
       ...(state.cursor === undefined ? {} : { pageToken: state.cursor }),
     }),
   ).pipe(
-    Effect.flatMap((page) => Effect.fromResult(decideFillPage(state, pageSize, page))),
-    Effect.flatMap((decision) =>
-      decision._tag === 'Complete' ? Effect.succeed(decision.rows) : readFillPages(read, until, decision.state),
+    Effect.flatMap((page) =>
+      Effect.gen(function* () {
+        const decision = yield* Effect.fromResult(decideFillPage(state, pageSize, page))
+        if (decision._tag === 'Continue') return yield* readFillPages(read, until, decision.state)
+        const latest = decision.rows.at(-1)
+        return {
+          rows: decision.rows,
+          recentFills: {
+            value:
+              latest === undefined ? { items: [] } : { items: [latest.value], nextPageToken: latest.value.activityId },
+            evidence: latest?.evidence ?? page.evidence,
+          },
+        }
+      }),
     ),
   )
 }
@@ -290,10 +314,7 @@ const readFeePages = (
     }
   })
 
-const readHistory = (
-  read: BrokerReadShape,
-  until: string,
-): Effect.Effect<BrokerHistory, BrokerReadError | ReconciliationError> =>
+const readHistory = (read: BrokerReadShape, until: string) =>
   Effect.all(
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
@@ -301,6 +322,12 @@ const readHistory = (
       fees: readFeePages(read),
     },
     { concurrency: 3 },
+  ).pipe(
+    Effect.map(({ orders, fills, fees }) => ({
+      history: { orders: orders.history, fills: fills.rows, fees },
+      recentOrders: orders.recentOrders,
+      recentFills: fills.recentFills,
+    })),
   )
 
 const historyHashResult = (history: BrokerHistory): Result.Result<string, HistoryHashFailure> =>
@@ -388,16 +415,28 @@ export const readBrokerSnapshotOnce = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
   previous: BrokerHistory | undefined,
-): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
-  read.projection?.snapshot ??
+): Effect.Effect<
+  {
+    readonly snapshot: StableBrokerSnapshot
+    readonly recentOrders: ReadResult<readonly BrokerOrder[]>
+    readonly recentFills: ReadResult<FillActivityPage>
+  },
+  BrokerReadError | ReconciliationError
+> =>
   Effect.gen(function* () {
     const beforeUntil = yield* now
-    const before = previous ?? (yield* readHistory(read, beforeUntil))
+    const before = previous ?? (yield* readHistory(read, beforeUntil)).history
     const [account, positions] = yield* Effect.all([read.account, read.positions], { concurrency: 2 })
     const afterUntil = yield* now
     const after = yield* readHistory(read, afterUntil)
-    const history = yield* Effect.fromResult(decideStableHistory(before, after))
-    return { account, positions, history }
+    const history = yield* Effect.fromResult(decideStableHistory(before, after.history))
+    // Project recent-history probes only from the complete, verified after-cut. Retain the actual page's
+    // response evidence, including empty history, instead of issuing independent overlapping HTTP reads.
+    return {
+      snapshot: { account, positions, history },
+      recentOrders: after.recentOrders,
+      recentFills: after.recentFills,
+    }
   })
 
 export const readStableBrokerSnapshot = (
@@ -405,7 +444,9 @@ export const readStableBrokerSnapshot = (
   now: Effect.Effect<string, ReconciliationError>,
   waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  read.projection?.snapshot ??
   readBrokerSnapshotOnce(read, now, undefined).pipe(
+    Effect.map((value) => value.snapshot),
     Effect.retry(
       Schedule.recurs(2).pipe(
         Schedule.while(({ input: cause }) =>

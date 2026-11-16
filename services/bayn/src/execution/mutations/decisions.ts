@@ -242,7 +242,7 @@ export const expiredEntryCancellationAdmissionIsCurrent = (
     admission.intentId === facts.intentId &&
     admission.clientOrderId === facts.clientOrderId &&
     admission.brokerOrderId === facts.brokerOrderId &&
-    facts.side === OrderSide.Buy &&
+    (facts.side === OrderSide.Buy || (facts.side === OrderSide.Sell && facts.protectionTag === 'EquityShortBracket')) &&
     facts.maximum === Authority.Execution &&
     ((facts.effective === Authority.Execution && facts.killState === KillState.Clear) ||
       (facts.effective === Authority.Observe &&

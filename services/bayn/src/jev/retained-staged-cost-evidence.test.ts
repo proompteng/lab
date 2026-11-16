@@ -37,6 +37,7 @@ import {
   RetainedJevProtocolV34Schema,
   RetainedJevProtocolV35Schema,
   RetainedJevProtocolV36Schema,
+  retainedJevProtocolV40Document,
 } from './protocol'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
@@ -62,7 +63,7 @@ const fixture = (
     ablation ? EntryAblationSelection.LowestModeledLoss : undefined,
   )
   const baseProtocol = {
-    ...current.request.protocol,
+    ...retainedJevProtocolV40Document,
     model: 'jev-1.13.0' as const,
     entrySignalPolicy: 'openai-decisions-then-jev' as const,
     executionModel:

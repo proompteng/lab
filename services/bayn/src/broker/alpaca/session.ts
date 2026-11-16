@@ -158,6 +158,9 @@ export const cachedLayer = (
   ).pipe(Layer.provideMerge(session))
 }
 
+export const projectedReadLayer = (connection: BrokerConnection) =>
+  Layer.effect(BrokerRead, make(connection).pipe(Effect.flatMap(makeProjectedBrokerRead)))
+
 export const mapHttpAcquisitionError = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,

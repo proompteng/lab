@@ -8,6 +8,8 @@ suggestions and document chat backed by the existing Flamingo inference service.
 - UI: `https://paperless.ide-newton.ts.net` (Tailscale only, no public ingress).
 - Paperless `3.4.2`: one **rootless** Pod with 1 CPU / 2 GiB requested and
   4 CPU / 4 GiB limited. Two task workers × two OCR threads, with English OCR.
+  Kubernetes Service links are disabled to avoid injecting the `PAPERLESS_PORT`
+  service URI into Granian's numeric listening-port setting.
 - CloudNativePG `paperless-db`: PostgreSQL 18, two instances, 10 GiB RBD each.
 - `paperless-valkey`: authenticated Valkey 9, AOF persistence on 2 GiB RBD.
 - Tika and Gotenberg: isolated internal services to support Office documents
