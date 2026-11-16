@@ -309,17 +309,13 @@ let
   };
 
   bunVersion = "1.4.2";
-  # Keep archive names and hashes stable when selecting the same release bytes through GitHub's asset API.
+  # Public release URLs avoid the unauthenticated API quota during fixed-output downloads.
   bunSource = sourceFor "bun" {
     x86_64-linux = {
       sourceRoot = "bun-linux-x64";
       src = fetchurl {
         name = "bun-linux-x64.zip";
-        url = "https://api.github.com/repos/oven-sh/bun/releases/assets/545310218";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64.zip";
         hash = "sha256-NjaPrvdSeHXV/6UuU81IAhdB8qg+tiCKjdZAaNQiqRM=";
       };
     };
@@ -327,11 +323,7 @@ let
       sourceRoot = "bun-linux-aarch64";
       src = fetchurl {
         name = "bun-linux-aarch64.zip";
-        url = "https://api.github.com/repos/oven-sh/bun/releases/assets/545308380";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-aarch64.zip";
         hash = "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=";
       };
     };
@@ -339,11 +331,7 @@ let
       sourceRoot = "bun-darwin-x64-baseline";
       src = fetchurl {
         name = "bun-darwin-x64-baseline.zip";
-        url = "https://api.github.com/repos/oven-sh/bun/releases/assets/545306941";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-x64-baseline.zip";
         hash = "sha256-utW71s8U0JgNEV9ZVMn/kE32GdXplNLaH/zNPzFjALA=";
       };
     };
@@ -351,11 +339,7 @@ let
       sourceRoot = "bun-darwin-aarch64";
       src = fetchurl {
         name = "bun-darwin-aarch64.zip";
-        url = "https://api.github.com/repos/oven-sh/bun/releases/assets/545329049";
-        curlOptsList = [
-          "--header"
-          "Accept: application/octet-stream"
-        ];
+        url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-aarch64.zip";
         hash = "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=";
       };
     };
