@@ -22,6 +22,7 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { makeNativeArrivalStore } from '../../db/native-arrival-postgres'
 import { initializeErrorTracking } from '../../error-tracking'
 import { makeConfiguredTelemetryRuntimeLayer } from '../../telemetry'
+import { sampleRuntimeMemory } from '../../telemetry-memory'
 import { KafkaMarketFailure, makeKafkaMarketProjection } from './kafka'
 import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { compactStreamingProjection } from './query-cut'
@@ -152,6 +153,7 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
       port.postMessage({
         _tag: 'CaptureHealth',
         health: health.sample(monotonic, now),
+        memory: yield* sampleRuntimeMemory,
       } satisfies ProjectionWorkerResponse)
       awaitingHealthAck = true
     }).pipe(Effect.catchDefect(() => Effect.logWarning('Native capture health delivery failed')))

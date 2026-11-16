@@ -137,6 +137,17 @@ data:
             usage: GAUGE
             description: Whether WAL I/O timings are currently collected
   financial-queries: |
+    bayn_native_arrivals:
+      primary: true
+      target_databases: [bayn]
+      query: |
+        SELECT pg_catalog.pg_total_relation_size(
+                 pg_catalog.to_regclass('public.native_arrival_chunks')
+               ) AS total_bytes
+      metrics:
+        - total_bytes:
+            usage: GAUGE
+            description: Retained native arrival heap, TOAST and index bytes; missing relation remains unknown
     bayn_generation_index:
       primary: true
       target_databases: [bayn]

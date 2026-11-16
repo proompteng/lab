@@ -149,13 +149,33 @@ This restriction ships through the normal immutable main image and Kargo/Argo pa
 change the risk limits, reset financial history or revoke PAPER capital. The deployed `/v1/status` response reports
 `tradingScope.entryMarkets: ["EQUITY"]`; retained crypto cycles report recovery-only or closed entry scope.
 
+## Execution-worker memory
+
+The execution controller requests 1 GiB and has a 2 GiB container limit shared by its parent, market projection,
+decision worker and native buffers. This provides headroom above the measured November 16 peaks of 960/987 MiB;
+it does not establish a fixed leak or a complete-session upper bound. Both eligible nodes had sufficient allocated
+memory headroom when this mitigation was selected. Reporting remains isolated from execution workers.
+
+The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
+`bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.
+Kinds are `heap_used`, `heap_total`, `external`, `array_buffers` and `heap_limit`. `array_buffers` is included in
+`external`; `heap_used` is included in `heap_total`. These overlapping measures must not be added together.
+Projection memory travels in the bounded 15-second capture-health frame; decision memory travels in completed
+decision replies. Workers acquire no additional exporter or diagnostic request channel.
+
+Always display `time() - bayn_runtime_memory_sample_timestamp_seconds` beside worker memory. An idle decision
+worker retains its original sample time, and a replaced, failed or closed worker clears its sample timestamp to zero.
+Filter timestamp zero before treating a series as observed. Completion acceptance requires a representative session
+with zero OOMs, memory headroom and unchanged financial reconciliation; a healthy rollout alone establishes none
+of those session-long claims. Rollback uses a compatible prior verified Freight through Kargo.
+
 ## Private evidence reporting
 
 Run the private forward-performance command in the API workload, separately from the native controller.
 The API workload retains its existing CPU allocation and 256 MiB memory request; its 4 GiB memory limit supports
 large immutable evidence cuts. Use a 3 GiB Node heap for that command and stream stdout to a private file.
-A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The native controller's resource limits,
-original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
+A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. Reporting preserves the native controller's
+original deadlines and capital enforcement. Historical cuts and financial records are retained.
 
 ## Webull supplementary context
 

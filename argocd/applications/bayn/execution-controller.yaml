@@ -239,10 +239,12 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 1Gi
             limits:
               cpu: "2"
-              memory: 1Gi
+              # Measured shared-process peaks approach 1 GiB across the parent
+              # and both workers. Preserve headroom while isolate metrics locate growth.
+              memory: 2Gi
           securityContext:
             # TigerBeetle's native client requires io_uring, which containerd's
             # RuntimeDefault seccomp profile blocks. Keep every other control.

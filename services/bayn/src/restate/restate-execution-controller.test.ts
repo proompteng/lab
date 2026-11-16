@@ -518,6 +518,109 @@ test.each(['broker', 'market-boundary'] as const)(
   },
 )
 
+test('an early broker publication failure retains the original recovery deadline', async () => {
+  let now = Date.parse('2026-08-13T18:00:00.000Z')
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+  }
+  let invocationId = 'inv_initial'
+  let advances = 0
+  const deliveries: Delivery[] = []
+  const cancelled: string[] = []
+  const object = handlers(
+    makeBaynExecutionController(
+      config,
+      {
+        prepareActivation: async () => undefined,
+        projectState: async () => undefined,
+        log: async () => undefined,
+        advance: async () => {
+          advances++
+          const completedAt = new Date(now).toISOString()
+          return {
+            completedAt,
+            observation: {
+              result: 'FAILURE',
+              observedAt: completedAt,
+              operation: 'reconcile',
+              failure: 'market-data',
+              message: 'Broker observation is unavailable or invalidated by a mutation',
+            },
+            outcome: {
+              _tag: ExecutionControllerOutcome.Blocked,
+              receiptHash: 'd'.repeat(64),
+              nextDelayMs: 30_000,
+              nextWakeAt: new Date(now + 30_000).toISOString(),
+            },
+          }
+        },
+      },
+      [],
+      { currentTimeMillisUnsafe: () => now },
+    ),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    run: async <A>(_name: string, action: () => Promise<A>) => action(),
+    genericSend: (delivery: Delivery) => {
+      deliveries.push(delivery)
+      return { invocationId: Promise.resolve(InvocationIdParser.fromString(`inv_sent${deliveries.length}`)) }
+    },
+    invocation: (id: string) => ({ cancel: () => cancelled.push(id) }),
+    request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
+    date: { now: async () => now },
+  } as unknown as TestContext
+
+  await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+  expect(deliveries).toHaveLength(1)
+  expect(deliveries[0]?.delay).toBe(30_000)
+  now += 12_000
+  await object.wake(context, {
+    schemaVersion: 'bayn.execution-wakeup.v1',
+    _tag: 'BrokerObservation',
+    sourceRevision,
+    eventId: 'a'.repeat(64),
+    snapshotHash: 'b'.repeat(64),
+    observedAt: new Date(now).toISOString(),
+  })
+  expect(deliveries).toHaveLength(2)
+  invocationId = 'inv_sent2'
+  await object.tick(context, deliveries[1]?.parameter)
+  expect(advances).toBe(2)
+  expect(cancelled).toEqual(['inv_sent1'])
+  expect(state.nextDueAt).toBe('2026-08-13T18:00:30.000Z')
+  expect(state.marketEligibleAt).toBe(state.nextDueAt)
+  expect(deliveries).toHaveLength(3)
+  expect(deliveries[2]).toMatchObject({
+    delay: 18_000,
+    parameter: { epoch: 1, sequence: 6, attempt: 0 },
+    idempotencyKey: executionControllerTickIdempotencyKey(1, 6, 0),
+  })
+  state = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+  await object.tick(context, deliveries[1]?.parameter)
+  await object.tick(context, deliveries[0]?.parameter)
+  expect(advances).toBe(2)
+  expect(deliveries).toHaveLength(3)
+
+  now += 18_000
+  invocationId = 'inv_sent3'
+  await object.tick(context, deliveries[2]?.parameter)
+  expect(advances).toBe(3)
+  expect(state.nextDueAt).toBe('2026-08-13T18:01:00.000Z')
+  expect(deliveries[3]?.delay).toBe(30_000)
+  expect(cancelled).toEqual(['inv_sent1'])
+})
+
 test.each(['broker', 'inference', 'Startup', 'Ready', 'Recovery'] as const)(
   'a closed owner without a deadline ignores quote bursts until %s supplies relevant work',
   async (wake) => {
