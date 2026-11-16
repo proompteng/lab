@@ -44,6 +44,19 @@ terminations were November 16 20:19:03 and 20:55:42 UTC. Their memory limit was 
 found only the controller Node process, about 824 MiB RSS and 765 MiB anonymous cgroup memory. These are runtime
 failures separate from the diagnostic-report OOM documented on November 13.
 
+The containment assigns 192 MiB old space and 16 MiB semi-space to each Node isolate. The controller, market
+projection and reused decision worker share the container. A probe in the immutable ARM64 image measured
+240 MiB heap limits for the main isolate and two workers: 720 MiB total, leaving 304 MiB for native/external
+memory. Eighty-three decision/projection/worker tests passed under these flags. This bounds V8 allowances;
+it does not bound external buffers or establish that the observed OOM cause is fully resolved. Live session
+load remains necessary for acceptance.
+
+The Effect OTLP HTTP exporter also lacked a request deadline. Its batch threshold does not limit concurrent
+exports, so a collector hanging on response headers or body could retain export fibers. Each HTTP attempt now
+has a three-second deadline including body consumption. Regression tests observe connection cancellation,
+retry of the same batch and a subsequent healthy export. This repairs a reproduced failure path; the retained
+evidence does not establish that telemetry caused today's OOMs.
+
 The published x64 report for retained generation
 `5fcc26b3a8aeaa80033862db9dbb265b79e0a2b4e67c87a336d1a192af4cdf0f` completed in 24,029 ms wall time,
 22,667 ms measured work, at 1,556,296 KiB peak RSS. The same packaged command on ARM64 exceeded its unchanged
