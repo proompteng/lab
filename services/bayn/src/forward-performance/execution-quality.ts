@@ -474,7 +474,8 @@ const measureExecutionQuality = (
     if (seenIntents.has(evidence.intentId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
-    const protective = verifyForwardNativeProtection(evidence, input, transactionByBrokerEvent)
+    const blocked = blockedIntentMatches(evidence)
+    const protective = verifyForwardNativeProtection(evidence, input, transactionByBrokerEvent, blocked)
     for (const reason of protective.reasons) recordReason(reason)
     for (const fill of protective.fills) {
       fillCount += 1
@@ -496,7 +497,6 @@ const measureExecutionQuality = (
     if (!identityMatches(input, evidence, completedCycleIds)) recordReason('FILL_IDENTITY_DRIFT')
 
     const order = evidence.terminalOrder
-    const blocked = blockedIntentMatches(evidence)
     if (!blocked && (order === undefined || !orderMatches(evidence))) recordReason('TERMINAL_ORDER_EVIDENCE_GAP')
     const terminalOccurredAt = blocked ? evidence.intent?.updatedAt : order?.occurredAt
     const terminalObservedAt = blocked ? evidence.intent?.updatedAt : order?.observedAt

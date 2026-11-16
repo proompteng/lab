@@ -165,6 +165,39 @@ test('native bracket fills retain exact parent/child and accounting identities w
   )
 })
 
+test('a pre-submission block does not require broker protection receipts, but cannot hide actual orders', () => {
+  const input = fixture()
+  const execution = input.executionEvidence[0]
+  assert(execution !== undefined && execution.intent !== undefined)
+  const { terminalOrder: _terminal, nativeProtection, ...rest } = execution
+  const blocked: ForwardPerformanceExecutionEvidence = {
+    ...rest,
+    intent: { ...execution.intent, terminalOutcome: 'BLOCKED' },
+    fills: [],
+  }
+  const source = { ...input, transactions: [], executionEvidence: [blocked] }
+  const baseline = Result.getOrThrow(makeForwardPerformanceExecutionMeasurements(source))
+  const projected = Result.getOrThrow(
+    makeForwardPerformanceExecutionMeasurements({
+      ...source,
+      executionEvidence: [{ ...blocked, nativeProtection: { ...nativeProtection, orders: [], fills: [] } }],
+    }),
+  )
+  assert.deepEqual(projected.executionQuality.reasonCodes, baseline.executionQuality.reasonCodes)
+  for (const unexpectedNative of [
+    { ...nativeProtection, fills: [] },
+    { ...nativeProtection, orders: [] },
+  ]) {
+    const unexpected = Result.getOrThrow(
+      makeForwardPerformanceExecutionMeasurements({
+        ...source,
+        executionEvidence: [{ ...blocked, nativeProtection: unexpectedNative }],
+      }),
+    )
+    assert(unexpected.executionQuality.reasonCodes.includes('TERMINAL_ORDER_EVIDENCE_GAP'))
+  }
+})
+
 test.each(['parent', 'price', 'side', 'account', 'quantity', 'accounting', 'cutoff', 'missing'] as const)(
   'native protective evidence rejects %s corruption',
   (kind) => {

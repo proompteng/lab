@@ -21,6 +21,7 @@ export const verifyForwardNativeProtection = (
   evidence: ForwardPerformanceExecutionEvidence,
   input: ForwardPerformanceEvidenceInput,
   transactions: ReadonlyMap<string, ForwardPerformanceTransactionEvidence>,
+  blockedBeforeSubmission: boolean,
 ) => {
   const native = evidence.nativeProtection
   const reasons = new Set<ForwardPerformanceExecutionQualityReasonCode>()
@@ -43,6 +44,9 @@ export const verifyForwardNativeProtection = (
     fail('FILL_IDENTITY_DRIFT')
     return { reasons: [...reasons], fills }
   }
+  // A durably blocked intent never created broker protection; actual receipts must still be verified.
+  if (blockedBeforeSubmission && native.orders.length === 0 && fills.length === 0)
+    return { reasons: [...reasons], fills }
   const roots = native.orders.filter((row) => row.order.parentBrokerOrderId === undefined)
   const root = roots[0]
   const terminal = evidence.terminalOrder
