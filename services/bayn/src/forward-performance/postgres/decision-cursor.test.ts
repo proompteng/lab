@@ -10,7 +10,7 @@ import {
   type ReportDecisionProjection,
 } from '../verification'
 import { indexExecutionEvidence } from './projection'
-import type { CycleDecisionRow } from './model'
+import type { CycleDecisionJsonRow } from './model'
 import { readPerformanceDecisionCursor } from './decision-cursor'
 
 const index = indexExecutionEvidence([], [], [])
@@ -18,9 +18,9 @@ const rows = Array.from({ length: reportVerificationConcurrency * 5 }, (_, n) =>
   cycle_id: n.toString(16).padStart(64, '0'),
   decision_hash: n.toString(16).padStart(64, '0'),
   created_at: new Date('2026-11-15T00:00:00.000Z'),
-  document: null,
+  document_json: 'null',
 }))
-const projection = (row: typeof CycleDecisionRow.Type): ReportDecisionProjection => ({
+const projection = (row: typeof CycleDecisionJsonRow.Type): ReportDecisionProjection => ({
   executionEvidence: [
     {
       cycleId: row.cycle_id,
@@ -37,7 +37,7 @@ const projection = (row: typeof CycleDecisionRow.Type): ReportDecisionProjection
   unverifiedDecisionHashes: [],
 })
 const service = (
-  decision: (row: typeof CycleDecisionRow.Type) => Effect.Effect<ReportDecisionProjection, ReportVerificationError>,
+  decision: (row: typeof CycleDecisionJsonRow.Type) => Effect.Effect<ReportDecisionProjection, ReportVerificationError>,
 ) => ({
   decision,
   inference: () => Effect.die('unexpected inference'),
@@ -194,7 +194,10 @@ test('a cursor transport failure cancels an already-running verification before 
 test('inline verification retains complete hash rejection without materializing native jobs', async () => {
   const result = await Effect.runPromise(
     readPerformanceDecisionCursor(
-      (consume) => Effect.forEach([rows[0]!, rows[0]!], consume, { discard: true }).pipe(Effect.as(undefined)),
+      (consume) =>
+        Effect.forEach([rows[0]!, { ...rows[0]!, document_json: '{' }, { ...rows[0]!, document_json: null }], consume, {
+          discard: true,
+        }).pipe(Effect.as(undefined)),
       index,
     ),
   )
