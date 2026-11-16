@@ -6,7 +6,7 @@ import type { ExecutionOrderPlan } from './execution-plans'
 import { SystemAssessmentError } from './economics'
 import type { SystemSourceCut } from './source-cut'
 
-type Receipt = SystemSourceCut['orders'][number]
+type Receipt = Pick<SystemSourceCut['orders'][number], 'intentId' | 'decisionId' | 'authorityGenerationHash' | 'order'>
 
 export const nativeOrderEvidenceAssumptions = [
   'Broker order and fill observations are authentic and retain provider timestamps and atomic units.',
@@ -20,7 +20,11 @@ export const resolveExecutionOrderTerms = (
   brokerOrderId: string,
   root: Receipt,
   children: readonly Receipt[],
-  plan: ExecutionOrderPlan,
+  plan: Pick<ExecutionOrderPlan, 'target' | 'risk' | 'intentId' | 'decisionId'> & {
+    readonly document: {
+      readonly bindings: Pick<ExecutionOrderPlan['document']['bindings'], 'accountId' | 'authorityGenerationHash'>
+    }
+  },
 ) =>
   Result.gen(function* () {
     const { target, risk, document, intentId } = plan
