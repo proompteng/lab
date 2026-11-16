@@ -1,3 +1,4 @@
+import type { DecisionConstruction } from '../decision-construction'
 import { advancePositionProtection } from './position-protection-interpreter'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
@@ -463,7 +464,11 @@ export const ensureExecutionCycleClosure = <R>({
   readonly refreshReconciliation: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
   readonly existing: ExecutionCycleClosure | undefined
   readonly exitTarget?: JevExitTarget
-}): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, R | IntentStore | MutationStore> =>
+}): Effect.Effect<
+  ExecutionCycleClosureResult,
+  CycleRunnerError,
+  R | DecisionConstruction | IntentStore | MutationStore
+> =>
   Effect.gen(function* () {
     const store = input.executionCycleClosureStore
     const observedAt = yield* currentUtcInstant

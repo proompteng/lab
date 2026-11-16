@@ -117,10 +117,27 @@ export const NativeProtectionSchema = Schema.TaggedUnion({
   Bracket: ProtectivePrices,
   Oco: { ...ProtectivePrices, entryDecisionHash: Sha256 },
   StopLimit: { stopPriceMicros: PositiveMicros, entryDecisionHash: Sha256 },
+  EquityShortBracket: ProtectivePrices,
+  EquityShortOco: { ...ProtectivePrices, entryDecisionHash: Sha256 },
+  EquityShortStopLimit: { stopPriceMicros: PositiveMicros, entryDecisionHash: Sha256 },
 })
 export type NativeProtection = typeof NativeProtectionSchema.Type
+export const isBracketProtection = (
+  value: NativeProtection | undefined,
+): value is Extract<NativeProtection, { readonly _tag: 'Bracket' | 'EquityShortBracket' }> =>
+  value?._tag === 'Bracket' || value?._tag === 'EquityShortBracket'
+export const isOcoProtection = (
+  value: NativeProtection | undefined,
+): value is Extract<NativeProtection, { readonly _tag: 'Oco' | 'EquityShortOco' }> =>
+  value?._tag === 'Oco' || value?._tag === 'EquityShortOco'
+export const isStopProtection = (
+  value: NativeProtection | undefined,
+): value is Extract<NativeProtection, { readonly _tag: 'StopLimit' | 'EquityShortStopLimit' }> =>
+  value?._tag === 'StopLimit' || value?._tag === 'EquityShortStopLimit'
+export const isEquityShortProtection = (value: NativeProtection | undefined): boolean =>
+  value?._tag === 'EquityShortBracket' || value?._tag === 'EquityShortOco' || value?._tag === 'EquityShortStopLimit'
 export const submittedBrokerOrderCount = (protection: NativeProtection | undefined): number =>
-  protection?._tag === 'Bracket' ? 3 : protection?._tag === 'Oco' ? 2 : 1
+  isBracketProtection(protection) ? 3 : isOcoProtection(protection) ? 2 : 1
 
 export enum TimeInForce {
   Day = 'DAY',
@@ -425,22 +442,33 @@ const intentContractIssues = (intent: IntentContract): readonly Schema.FilterIss
   const issues: Schema.FilterIssue[] = []
   const crypto = instrumentMarket(intent.symbol) === MarketKind.Crypto
   const protection = intent.protection
-  const stop = protection?._tag === 'StopLimit'
-  const group = protection?._tag === 'Bracket' || protection?._tag === 'Oco'
+  const stop = isStopProtection(protection)
+  const group = isBracketProtection(protection) || isOcoProtection(protection)
+  const short = isEquityShortProtection(protection)
+  const exitSide = short ? OrderSide.Buy : OrderSide.Sell
   if (
     stop !== (intent.orderType === OrderType.StopLimit) ||
-    (protection?._tag === 'Bracket' && (crypto || intent.side !== OrderSide.Buy)) ||
-    (protection?._tag === 'Oco' && (crypto || intent.side !== OrderSide.Sell)) ||
-    (stop && intent.side !== OrderSide.Sell)
+    (isBracketProtection(protection) && (crypto || intent.side !== (short ? OrderSide.Sell : OrderSide.Buy))) ||
+    (isOcoProtection(protection) && (crypto || intent.side !== exitSide)) ||
+    (stop && (intent.side !== exitSide || (short && crypto))) ||
+    (short && BigInt(intent.quantityAtoms) % quantityScale !== 0n)
   )
     issues.push({ path: ['protection'], issue: 'native protection must match its market, side and order type' })
-  if (stop && BigInt(intent.limitPriceMicros) > BigInt(protection.stopPriceMicros))
+  if (
+    stop &&
+    (short
+      ? BigInt(intent.limitPriceMicros) < BigInt(protection.stopPriceMicros)
+      : BigInt(intent.limitPriceMicros) > BigInt(protection.stopPriceMicros))
+  )
     issues.push({ path: ['limitPriceMicros'], issue: 'a sell stop-limit floor cannot exceed its trigger' })
   if (
     group &&
-    (BigInt(protection.stopLimitPriceMicros) > BigInt(protection.stopPriceMicros) ||
-      BigInt(protection.stopPriceMicros) >= BigInt(protection.profitLimitPriceMicros) ||
-      (protection._tag === 'Oco' && intent.limitPriceMicros !== protection.profitLimitPriceMicros))
+    ((short
+      ? BigInt(protection.stopLimitPriceMicros) < BigInt(protection.stopPriceMicros) ||
+        BigInt(protection.stopPriceMicros) <= BigInt(protection.profitLimitPriceMicros)
+      : BigInt(protection.stopLimitPriceMicros) > BigInt(protection.stopPriceMicros) ||
+        BigInt(protection.stopPriceMicros) >= BigInt(protection.profitLimitPriceMicros)) ||
+      (isOcoProtection(protection) && intent.limitPriceMicros !== protection.profitLimitPriceMicros))
   )
     issues.push({ path: ['protection'], issue: 'linked sell exits must preserve their ordered strategy prices' })
   const duration = stop

@@ -21,7 +21,7 @@ import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { jevBatchQuestionSetHash } from '../jev/batch'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeJevMarketTestSnapshot } from '../testing/jev-market-fixture'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevPurpose } from '../jev/portfolio'
 import { exchangeSessions } from '../market-hours'
@@ -474,7 +474,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(providerCalls).toBe(firstCalls)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toEqual({
           batchId: plan.batchId,
-          observation: fixture.observation.payload,
+          source: {
+            observation: fixture.observation.payload,
+            snapshot: fixture.snapshot,
+            contentHash: plan.observationHash,
+          },
         })
         expect(yield* work.resume(plan.cycleId, 'e'.repeat(64))).toBeNull()
         expect(yield* work.pending()).toEqual([])

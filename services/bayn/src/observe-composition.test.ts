@@ -28,7 +28,7 @@ import { strictParseOptions } from './schemas'
 import { BrokerMutationError, MutationFailure } from './broker/alpaca-mutations/model'
 import { advancePositionProtection } from './observe-composition/position-protection-interpreter'
 import { withProviderSessions } from './testing/market-calendar-fixture'
-import { equityMarketProfile } from './jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from './jev/markets'
 import { CandidateObservationStore } from './observe-composition/candidate-observation'
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, spyOn, test } from 'bun:test'
@@ -235,7 +235,13 @@ const unusedAuthorityStore: AuthorityGenerationStoreShape = {
   readAuthorityGenerationLineage: () => unusedAuthority,
 }
 
-type JevTestServices = JevBatchStore | JevEvaluationStore | JevClient | JevPositionStore | EntryInferenceJournal
+type JevTestServices =
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | JevPositionStore
+  | EntryInferenceJournal
+  | DecisionConstruction
 
 const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
   const unexpected = Effect.die('Composition fixture uses already committed Jev entry evidence')
@@ -1090,9 +1096,7 @@ const calendarRead =
 const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): BrokerReadShape => {
   const unused = Effect.die(new Error('decision building must not use unrelated broker reads'))
   return {
-    account: unused,
-    accountConfiguration: unused,
-    assetBySymbol: unusedAssetBySymbol,
+    ...longEntryBrokerReads(account, evaluatedAt),
     positions: unused,
     orders: () => unused,
     orderById: () => unused,
@@ -1146,9 +1150,8 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   }
   const unusedRead = Effect.die(new Error('exact reconciliation used an unrelated broker capability'))
   const brokerRead: BrokerReadShape = {
+    ...longEntryBrokerReads(account, reconciledAt),
     account: Effect.succeed({ value: brokerAccount, evidence: evidence('account') }),
-    accountConfiguration: unusedRead,
-    assetBySymbol: unusedAssetBySymbol,
     positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
     orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
     orderById: () => unusedRead,
@@ -2686,7 +2689,7 @@ describe('OBSERVE runtime composition', () => {
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.IdentityMismatch),
-        [{ symbol: 'TSLA', quantityAtoms: '1000000000' }],
+        [{ symbol: 'XYZ', quantityAtoms: '1000000000' }],
         strategyUniverse,
       ),
     ).toBe(true)
@@ -5819,7 +5822,12 @@ describe('OBSERVE runtime composition', () => {
     if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('expected funded Jev entry')
     const plan = entry.exitPolicy.plans['NVDA']
     const risk = document.deltaRisk[0]
-    if (plan === undefined || risk?.facts === undefined) throw new Error('expected complete risk binding')
+    if (
+      plan === undefined ||
+      plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4' ||
+      risk?.facts === undefined
+    )
+      throw new Error('expected complete long risk binding')
     expect(risk.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
     expect(risk.limitPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
     expect(risk.facts.state.expectedExecutionPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
@@ -6378,6 +6386,7 @@ describe('OBSERVE runtime composition', () => {
         })).document
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        provideJevTestServices,
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -9573,3 +9582,4 @@ test('ablation uses native risk, entry protection and exact policy-bound executi
     ).toBe(true)
   }
 })
+import { longEntryBrokerReads } from './testing/entry-broker-reads.test-support'

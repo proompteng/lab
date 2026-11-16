@@ -299,7 +299,22 @@ describe('enabled app inventory', () => {
 
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
     expect(inventory.applicationSetEntryCount).toBeGreaterThan(0)
-    expect(inventory.directApplicationCount).toBe(1)
+    expect(inventory.directApplicationCount).toBe(2)
+    expect(
+      inventory.entries
+        .filter((candidate) => candidate.sourceKind === 'direct-application')
+        .map((candidate) => candidate.name)
+        .sort(),
+    ).toEqual(['agents-workspace', 'home-root'])
+    expect(entry('agents-workspace')).toMatchObject({
+      class: 'vendor-manifest',
+      sourceKind: 'direct-application',
+      sourceFile: 'argocd/applicationsets/agents-workspace.yaml',
+      path: 'argocd/applications/agents-workspace',
+      repoImages: [],
+      hasHelmChart: false,
+      workflowPaths: [],
+    })
     expect(inventory.entries).toHaveLength(inventory.applicationSetEntryCount + inventory.directApplicationCount)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)

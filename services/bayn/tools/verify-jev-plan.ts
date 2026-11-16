@@ -4,7 +4,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../src/hash'
 import { JevEntryTargetSchema } from '../src/jev/decision'
 import { selectSupportedEntryProposal } from '../src/jev/entry-questions'
-import { entryProposalExitPlan } from '../src/jev/strategy-exit-plan'
+import { nativeEntryProposalExitPlan } from '../src/jev/native-entry-proposal'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
 import { Sha256Schema } from '../src/schemas'
@@ -44,7 +44,7 @@ export const verifyJevPlan = (input: unknown) => {
     if (
       selected === null ||
       bound === undefined ||
-      Result.getOrThrow(canonicalHashV1Result(entryProposalExitPlan(selected.proposal))) !==
+      Result.getOrThrow(canonicalHashV1Result(nativeEntryProposalExitPlan(selected.proposal))) !==
         Result.getOrThrow(canonicalHashV1Result(bound))
     )
       throw new Error('Bound protection differs from the source-anchored proposal selected by code')

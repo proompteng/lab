@@ -19,6 +19,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -35,7 +36,14 @@ class WebullApiTest {
     runBlocking {
       val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
       val executor = Executors.newFixedThreadPool(3)
-      server.executor = executor
+      val admissions = AtomicInteger()
+      server.executor =
+        Executor { task ->
+          executor.execute {
+            if (admissions.getAndIncrement() == 0) Thread.sleep(300)
+            task.run()
+          }
+        }
       val backgroundStarted = CompletableDeferred<Unit>()
       val releaseBackground = CountDownLatch(1)
       val requestTimes = ConcurrentLinkedQueue<Long>()
@@ -52,14 +60,18 @@ class WebullApiTest {
       server.start()
       try {
         val api = WebullApi(WebullCredentials("key", "secret"), origin = URI("http://127.0.0.1:${server.address.port}"))
+        val requestsStartedAt = System.nanoTime()
         val background = async { api.request(WEBULL_BARS_PATH, query = mapOf("batch" to "catalog")) }
         withTimeout(2_000) { backgroundStarted.await() }
+        val priorityStartedAt = System.nanoTime()
         withTimeout(2_000) {
           repeat(2) { api.request(WEBULL_BARS_PATH, query = mapOf("batch" to "priority")) }
         }
+        val completedAt = System.nanoTime()
         assertFalse(background.isCompleted)
         assertEquals(3, requestTimes.size)
-        assertTrue(requestTimes.toList().zipWithNext().all { (previous, next) -> next - previous >= 240_000_000 })
+        assertTrue(completedAt - priorityStartedAt >= 240_000_000, "Priority requests must span a reservation interval")
+        assertTrue(completedAt - requestsStartedAt >= 490_000_000, "Three requests must span two reservation intervals")
         releaseBackground.countDown()
         assertEquals(Json.parseToJsonElement("{}"), background.await())
       } finally {

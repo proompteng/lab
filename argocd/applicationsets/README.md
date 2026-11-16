@@ -13,6 +13,12 @@ The same root also owns `home-root.yaml`, which delegates the separate home repo
 `home-repo-credentials.yaml`, which generates its repository credential. A normal repository change must preserve all
 of these root-owned resources.
 
+`agents-workspace.yaml` is a separate root-owned, manually synced Application for the protected Agent Shell workspace
+claim. It tracks `main`, renders only that PVC, and does not create or manage the existing `agents` Namespace. This
+separates the storage lifecycle from the Agents image/Freight rollout; it does not change the existing Agents
+Application. Follow [the migration gates](../../docs/agents/agents-shell-workspace-migration.md) before attaching or
+copying data to the claim.
+
 ## Normal change path
 
 1. Edit the owning ApplicationSet entry or application manifests under `argocd/applications/**`.

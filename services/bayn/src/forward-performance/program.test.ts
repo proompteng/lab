@@ -7,7 +7,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { DateTime, Effect, Redacted, Result } from 'effect'
+import { Cause, DateTime, Deferred, Effect, Exit, Redacted, Result } from 'effect'
 
 import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import { prepareFeeMatchCorrection, type StoredBrokerFee } from '../accounting/broker-fees'
@@ -29,9 +29,11 @@ import {
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformanceReport,
   readForwardPerformanceInput,
+  ForwardPerformanceMarketVolumeError,
   type ForwardPerformanceReaders,
 } from './program'
 import { ForwardPerformanceScopeKind } from './report'
+import { ReportVerificationLive } from './verification'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
@@ -772,7 +774,7 @@ describe('forward performance read program', () => {
           ),
         ),
       )
-      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v7')
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v8')
       expect(postgresGeneration).toBe(authorityGenerationHash)
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(
@@ -1044,76 +1046,135 @@ describe('forward performance read program', () => {
     expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
-  test('captures one cut and releases its transaction before expense verification', async () => {
-    const sql = makeReadOnlySql({ statements: [] })
-    let committedCut = 1
-    let snapshotCut: number | undefined
-    let performanceCut: number | undefined
-    let expenseCut: number | undefined
-    Object.assign(sql, {
-      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        Effect.acquireUseRelease(
-          Effect.sync(() => {
-            const previous = snapshotCut
-            snapshotCut = committedCut
-            return previous
-          }),
-          () => effect,
-          (previous) =>
+  test.each(['success', 'archive failure', 'interruption'] as const)(
+    'captures one cut and closes independent archive and expense scopes on %s',
+    async (outcome) => {
+      const sql = makeReadOnlySql({ statements: [] })
+      const archiveStarted = Deferred.makeUnsafe<void>()
+      const expensesStarted = Deferred.makeUnsafe<void>()
+      const controller = new AbortController()
+      let expenseResources = 0,
+        expenseReleases = 0
+      let committedCut = 1
+      let snapshotCut: number | undefined
+      let performanceCut: number | undefined
+      let expenseCut: number | undefined
+      Object.assign(sql, {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.acquireUseRelease(
             Effect.sync(() => {
-              snapshotCut = previous
+              const previous = snapshotCut
+              snapshotCut = committedCut
+              return previous
             }),
-        ),
-    })
-    const readers: ForwardPerformanceReaders = {
-      postgres: (...args) =>
-        readForwardPerformancePostgres(...args).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              performanceCut = snapshotCut ?? committedCut
-            }),
+            () => effect,
+            (previous) =>
+              Effect.sync(() => {
+                snapshotCut = previous
+              }),
           ),
+      })
+      const readers: ForwardPerformanceReaders = {
+        postgres: (...args) =>
+          readForwardPerformancePostgres(...args).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                performanceCut = snapshotCut ?? committedCut
+              }),
+            ),
+          ),
+        marketVolume: () =>
+          Effect.gen(function* () {
+            expect(snapshotCut).toBeUndefined()
+            yield* Deferred.succeed(archiveStarted, undefined)
+            yield* Deferred.await(expensesStarted)
+            if (outcome === 'archive failure')
+              return yield* new ForwardPerformanceMarketVolumeError({
+                operation: 'read',
+                message: 'synthetic archive failure',
+                cause: 'fixture',
+              })
+            if (outcome === 'interruption') {
+              controller.abort()
+              return yield* Effect.never
+            }
+            committedCut++
+            return []
+          }),
+        inferenceExpenseSnapshots: () =>
+          Effect.sync(() => {
+            expenseCut = snapshotCut ?? committedCut
+            return []
+          }),
+        inferenceExpenses: (_config, _sql, _accountId, snapshots) =>
+          Effect.gen(function* () {
+            yield* Effect.acquireRelease(
+              Effect.sync(() => {
+                expenseResources++
+              }),
+              () =>
+                Effect.sync(() => {
+                  expenseReleases++
+                }),
+            )
+            expect(snapshotCut).toBeUndefined()
+            expect(snapshots).toEqual([])
+            yield* Deferred.succeed(expensesStarted, undefined)
+            yield* Deferred.await(archiveStarted)
+            if (outcome !== 'success') return yield* Effect.never
+            return []
+          }),
+        ledger: () =>
+          Effect.succeed({
+            totals: {
+              realizedGainMicros: '0',
+              cashSettlementRoundingMicros: '0',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '0',
+              otherChargedCostsMicros: null,
+              cashYieldMicros: '0',
+            },
+            ledgerExact: true,
+            missingLedgerAccountCount: 0,
+            openPositionCount: 0,
+            cashYieldEvidenceRequired: false,
+          }),
+      }
+      const exit = await Effect.runPromiseExit(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const result = yield* runForwardPerformanceReport(config, readers).pipe(
+              Effect.provideService(PgClient.PgClient, sql),
+              Effect.timeout(1000),
+              Effect.exit,
+            )
+            expect(expenseReleases).toBe(1)
+            return result
+          }),
         ),
-      marketVolume: () =>
-        Effect.sync(() => {
-          committedCut++
-          return []
-        }),
-      inferenceExpenseSnapshots: () =>
-        Effect.sync(() => {
-          expenseCut = snapshotCut ?? committedCut
-          return []
-        }),
-      inferenceExpenses: (_config, _sql, _accountId, snapshots) =>
-        Effect.sync(() => {
-          expect(snapshotCut).toBeUndefined()
-          expect(snapshots).toEqual([])
-          return []
-        }),
-      ledger: () =>
-        Effect.succeed({
-          totals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: null,
-            cashYieldMicros: '0',
+        { signal: controller.signal },
+      )
+      if (outcome === 'success') expect(exit).toMatchObject({ _tag: 'Success', value: { _tag: 'Success' } })
+      if (outcome === 'archive failure') {
+        expect(
+          Exit.isSuccess(exit) && Exit.isFailure(exit.value) && Cause.findErrorOption(exit.value.cause),
+        ).toMatchObject({
+          value: {
+            _tag: 'ForwardPerformanceProgramError',
+            operation: 'market-volume-read',
+            message: 'synthetic archive failure',
           },
-          ledgerExact: true,
-          missingLedgerAccountCount: 0,
-          openPositionCount: 0,
-          cashYieldEvidenceRequired: false,
-        }),
-    }
-    await Effect.runPromise(
-      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
-    )
-    expect(committedCut).toBe(2)
-    expect(performanceCut).toBe(1)
-    expect(expenseCut).toBe(performanceCut)
-    expect(snapshotCut).toBeUndefined()
-  })
+        })
+      }
+      if (outcome === 'interruption') expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+      expect(expenseResources).toBe(1)
+      expect(expenseReleases).toBe(1)
+      expect(committedCut).toBe(outcome === 'success' ? 2 : 1)
+      expect(performanceCut).toBe(1)
+      expect(expenseCut).toBe(performanceCut)
+      expect(snapshotCut).toBeUndefined()
+    },
+  )
 
   test('scopes forward-performance PostgreSQL evidence to one execution authority generation', async () => {
     const observation: SqlObservation = { statements: [] }
@@ -1481,9 +1542,13 @@ describe('forward performance read program', () => {
   })
 })
 
-test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
-  'routes native completed cycles to the bounded archive and preserves their evidence: %p',
-  async (makeFixture) => {
+test.each(
+  [makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture].flatMap(
+    (makeFixture) => [false, true].map((workers) => ({ makeFixture, workers })),
+  ),
+)(
+  'routes completed cycles through inline or native verification without changing archive evidence: %p',
+  async ({ makeFixture, workers }) => {
     const { request, archive, bars } = makeFixture()
     let volumeReads = 0
     let watermarkReads = 0
@@ -1511,11 +1576,10 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient
     const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
-    const evidence = await Effect.runPromise(
-      readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
-        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
-      ),
+    const read = readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
+      Effect.provideService(ClickhouseClient.ClickhouseClient, client),
     )
+    const evidence = await Effect.runPromise(workers ? read.pipe(Effect.provide(ReportVerificationLive)) : read)
     expect(watermarkReads).toBe(1)
     expect(volumeReads).toBe(1)
     expect(evidence).toHaveLength(1)

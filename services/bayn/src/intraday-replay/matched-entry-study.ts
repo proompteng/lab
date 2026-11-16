@@ -684,7 +684,7 @@ export const runMatchedEntryStudy = (
           const reproduced = yield* Effect.fromResult(
             constructSimulatedSnapshot(yield* source.cursor, source.source, {
               ...manifest,
-              universe: jevMarketForFeed(manifest.feed).universe,
+              universe: jevMarketForFeed(manifest.feed, manifest.universeId).universe,
             }),
           )
           const expected = yield* Effect.fromResult(canonicalHashV1Result(matchedObservationMaterial(batch.snapshot)))

@@ -1,3 +1,4 @@
+import { isBracketProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
@@ -55,7 +56,7 @@ export const readSystemProtectionIntents = (scope: ExecutionCaptureScope, maximu
       WHERE intent.account_id=${scope.accountId} AND cycle.account_id=${scope.accountId}
         AND intent.authority_generation_hash=${scope.generationHash}
         AND cycle.execution_session_date BETWEEN ${scope.firstSession}::date AND ${scope.lastSession}::date
-        AND intent.protection->>'_tag' IN ('Oco','StopLimit') AND risk.outcome='APPROVED'
+        AND intent.protection->>'_tag' IN ('Oco','StopLimit','EquityShortOco','EquityShortStopLimit') AND risk.outcome='APPROVED'
         AND intent.created_at<=${scope.asOf}::timestamptz AND risk.decided_at<=${scope.asOf}::timestamptz
       ORDER BY intent.created_at,intent.intent_id`,
     )
@@ -66,7 +67,7 @@ export const readSystemProtectionIntents = (scope: ExecutionCaptureScope, maximu
           const hash = yield* Effect.fromResult(
             canonicalHashV1Result({
               entryDecisionHash:
-                row.plan.protection !== undefined && row.plan.protection._tag !== 'Bracket'
+                row.plan.protection !== undefined && !isBracketProtection(row.plan.protection)
                   ? row.plan.protection.entryDecisionHash
                   : null,
               reconciliationId: reconciliation.reconciliationId,

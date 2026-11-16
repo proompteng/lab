@@ -89,6 +89,7 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   lastCompletion: Schema.optionalKey(CompletionSchema),
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
   marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
+  marketDataWakeSuppressed: Schema.optionalKey(Schema.Literal(true)),
   wakeScheduledSequence: Schema.optionalKey(CounterSchema),
   wakeAcceptedAt: Schema.optionalKey(UtcInstantSchema),
   marketFrontier: Schema.optionalKey(
@@ -274,6 +275,11 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerReconciliationRetry =
+    result.outcome._tag === ExecutionControllerOutcome.Blocked &&
+    result.observation?.result === 'FAILURE' &&
+    result.observation.operation === 'reconcile' &&
+    result.observation.failure === 'market-data'
   const nextDueAt = Result.try({
     try: () => {
       if (result.outcome.nextWakeAt === undefined) return undefined
@@ -301,14 +307,20 @@ export const completeExecutionControllerTick = (
   const {
     nextDueAt: _previousDeadline,
     marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
     wakeScheduledSequence: _previousWake,
     wakeAcceptedAt: _previousWakeAcceptedAt,
     ...completedState
   } = state
-  const availableAt =
-    result.observation?.result !== 'SUCCESS'
+  // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
+  // without inventing polling from a legacy delay; broker observations can still wake promptly.
+  const availableAt = brokerReconciliationRetry
+    ? decodedNextDueAt.success
+    : result.observation?.result !== 'SUCCESS'
       ? undefined
-      : result.observation.outcome === 'WINDOW_CLOSED'
+      : result.observation.outcome === 'WINDOW_CLOSED' ||
+          result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
         ? result.outcome.nextWakeAt
         : result.observation.readiness?.availableAt
   return Result.succeed({
@@ -322,6 +334,11 @@ export const completeExecutionControllerTick = (
     },
     ...(decodedNextDueAt.success === undefined ? {} : { nextDueAt: decodedNextDueAt.success }),
     ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
+    ...(result.observation?.result === 'SUCCESS' &&
+    result.observation.outcome === 'WINDOW_CLOSED' &&
+    decodedNextDueAt.success === undefined
+      ? { marketDataWakeSuppressed: true as const }
+      : {}),
   })
 }
 

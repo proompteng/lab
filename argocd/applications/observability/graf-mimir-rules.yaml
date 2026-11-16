@@ -3316,6 +3316,24 @@ data:
             annotations:
               summary: Restate Operator is waiting for a required CRD
               description: At least one operator controller has been unable to discover its required CRD for five minutes.
+      - name: bayn-database-backup.rules
+        interval: 1m
+        rules:
+          - alert: BaynDatabaseBackupStale
+            expr: |
+              time() - max(kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}) > 129600
+              or max(absent(kube_cnpg_backup_stopped_at{namespace="bayn",cluster="bayn-db",phase="completed"}))
+            for: 5m
+            labels:
+              severity: critical
+              team: trading
+              namespace: bayn
+              service: bayn-db
+              notify: email
+            annotations:
+              summary: Bayn has no recent completed database backup
+              description: No completed bayn-db backup observation is newer than thirty-six hours, or completion telemetry is missing. Check the daily ScheduledBackup, Barman plugin, object store, WAL archive and metric collection. A running or failed backup does not establish completion; a completed backup still requires an independent restore proof.
+              runbook_url: docs/bayn/cnpg-backup-restore.md
       - name: bayn-cycle-operations.rules
         interval: 15s
         rules:
@@ -3504,12 +3522,26 @@ data:
                 (
                   time()
                   -
-                  max by (job, namespace, service) (
-                    bayn_execution_controller_next_due_timestamp_seconds{
-                      job="bayn",
-                      namespace="bayn",
-                      service="bayn"
-                    }
+                  (
+                    (
+                      max by (job, namespace, service) (
+                        bayn_execution_controller_next_due_timestamp_seconds{
+                          job="bayn",
+                          namespace="bayn",
+                          service="bayn"
+                        }
+                      ) > 0
+                    )
+                    or on(job, namespace, service)
+                    (
+                      max by (job, namespace, service) (
+                        bayn_execution_controller_last_completion_timestamp_seconds{
+                          job="bayn",
+                          namespace="bayn",
+                          service="bayn"
+                        }
+                      ) > 0
+                    )
                   )
                 )
                 >
@@ -3529,7 +3561,7 @@ data:
               notify: email
             annotations:
               summary: Bayn durable execution controller is overdue
-              description: The active Restate execution controller has remained past its durable next-due time longer than Bayn's configured stall threshold for one minute.
+              description: The active Restate execution controller has remained past its durable next-due time, or its last completion when no next-due time is recorded, longer than Bayn's configured stall threshold for one minute.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionWindowUnready
             expr: |
@@ -3753,6 +3785,50 @@ data:
               description: |
                 Bayn readiness is blocked by a required dependency, autonomous-loop,
                 or broker-read/account-binding failure.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynRepeatedEntryExpiry
+            expr: |
+              max by (job, namespace, service) (
+                (
+                  min_over_time(bayn_cycle_terminal_reason{
+                    job="bayn", namespace="bayn", service="bayn",
+                    reason="blocked_unused_entry_expired"
+                  }[10m]) == 1
+                )
+                and on(job, namespace, service, instance)
+                (
+                  changes(bayn_cycle_last_terminal_timestamp_seconds{
+                    job="bayn", namespace="bayn", service="bayn"
+                  }[10m]) >= 5
+                )
+                and on(job, namespace, service, instance)
+                (bayn_cycle_observation_available{job="bayn", namespace="bayn", service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (up{job="bayn", namespace="bayn", service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (bayn_cycle_submission_open_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} <= time())
+                and on(job, namespace, service, instance)
+                (bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} > time())
+                and on(job, namespace, service, instance)
+                (time() - bayn_runtime_projection_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} < 90)
+                and on(job, namespace, service, instance)
+                (time() - bayn_runtime_projection_timestamp_seconds{job="bayn", namespace="bayn", service="bayn"} >= -5)
+              )
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn entry attempts repeatedly expire without a sampled successful outcome
+              description: |
+                During the current submission window, one freshly observed replica has at least five changes
+                to its latest terminal-cycle timestamp in ten minutes while every sampled terminal reason
+                remains BLOCKED_UNUSED_ENTRY_EXPIRED. Instantaneous readiness or a newly ACTIVE cycle does
+                not clear this signal. These are sampled transitions, not exact missed-trade counts or proof
+                of profitable opportunities. Inspect original input, inference, admission and submission
+                deadlines and source revisions. Missing telemetry is unknown, not a successful outcome.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleStalled
             expr: |

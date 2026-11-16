@@ -1,4 +1,5 @@
 import { withProviderSessions } from './testing/market-calendar-fixture'
+import { shortEligibilityFixture } from './execution/equity-short.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
@@ -47,6 +48,52 @@ import {
 import { strictParseOptions } from './schemas'
 
 const evaluatedAt = '2026-07-21T19:30:00.000Z'
+
+test('native short risk requires fresh borrow eligibility and reserves collateral without treating proceeds as buying power', () => {
+  const intent = makeIntent({
+    side: OrderSide.Sell,
+    protection: {
+      _tag: 'EquityShortBracket',
+      stopPriceMicros: '110000000',
+      stopLimitPriceMicros: '111000000',
+      profitLimitPriceMicros: '90000000',
+    },
+  })
+  const eligibility = shortEligibilityFixture(intent.accountId, intent.symbol, evaluatedAt)
+  const state = makeState({
+    positions: [],
+    equityShortEligibility: eligibility,
+    account: { ...baseState().account, buyingPowerMicros: '150000000' },
+  })
+  const policy = makePolicy({ maxOpenOrders: 3 })
+  expect(evaluateSuccess(intent, state, policy).decision).toMatchObject({
+    outcome: RiskOutcome.Approved,
+    reasonCodes: [],
+  })
+  for (const change of [
+    { easyToBorrow: false },
+    { noShorting: true },
+    { shortingEnabled: null },
+    { assetObservedAt: '2026-07-21T19:29:45.000Z' },
+  ]) {
+    expectBlocked(
+      Reason.ShortPositionNotAllowed,
+      intent,
+      makeState({ positions: [], equityShortEligibility: { ...eligibility, ...change } }),
+      policy,
+    )
+  }
+  expectBlocked(
+    Reason.BuyingPowerExceeded,
+    intent,
+    makeState({
+      positions: [],
+      equityShortEligibility: eligibility,
+      account: { ...state.account, buyingPowerMicros: '149999999' },
+    }),
+    policy,
+  )
+})
 
 test('property: absolute account loss limits retain micro-dollar precision after capital translations', () => {
   checkProperty(
