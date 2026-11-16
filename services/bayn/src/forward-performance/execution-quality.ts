@@ -1,4 +1,5 @@
 import { validIntradayPerformanceVolumeEvidence } from './intraday-volume'
+import { verifyForwardNativeProtection } from './native-protection'
 import { DateTime, Option, Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
@@ -35,7 +36,11 @@ const newExecutionDiagnostics = (): {
   inputExecutionCount: number
   inputTransactionCount: number | null
   evaluatedFillCount: number | null
-  reasonOccurrences: Record<ForwardPerformanceExecutionQualityReasonCode, number>
+  reasonOccurrences: Record<
+    Exclude<ForwardPerformanceExecutionQualityReasonCode, 'PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP'>,
+    number
+  > &
+    Partial<Record<'PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP', number>>
 } => ({
   schemaVersion: 'bayn.forward-performance-execution-diagnostics.v1',
   evaluation: ExecutionDiagnosticEvaluation.NotEvaluated,
@@ -397,6 +402,17 @@ const measureExecutionQuality = (
   const orderedExecutions = executions.map((evidence) => ({
     ...evidence,
     fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
+    ...(evidence.nativeProtection === undefined
+      ? {}
+      : {
+          nativeProtection: {
+            ...evidence.nativeProtection,
+            orders: [...evidence.nativeProtection.orders].sort((a, b) =>
+              compareStrings(a.order.brokerOrderId, b.order.brokerOrderId),
+            ),
+            fills: [...evidence.nativeProtection.fills].sort((a, b) => compareStrings(fillSortKey(a), fillSortKey(b))),
+          },
+        }),
   }))
   const evidenceHash = sourceEvidenceHash(input, orderedExecutions, transactions)
   if (Result.isFailure(evidenceHash)) return Result.fail(evidenceHash.failure)
@@ -412,7 +428,7 @@ const measureExecutionQuality = (
   const reasons = new Set<ForwardPerformanceExecutionQualityReasonCode>()
   // Count the existing predicate failures, not unique rows or independent root causes.
   const recordReason = (reason: ForwardPerformanceExecutionQualityReasonCode) => {
-    diagnostics.reasonOccurrences[reason] += 1
+    diagnostics.reasonOccurrences[reason] = (diagnostics.reasonOccurrences[reason] ?? 0) + 1
     reasons.add(reason)
   }
   const seenIntents = new Set<string>()
@@ -458,6 +474,22 @@ const measureExecutionQuality = (
     if (seenIntents.has(evidence.intentId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
+    const blocked = blockedIntentMatches(evidence)
+    const protective = verifyForwardNativeProtection(evidence, input, transactionByBrokerEvent, blocked)
+    for (const reason of protective.reasons) recordReason(reason)
+    for (const fill of protective.fills) {
+      fillCount += 1
+      diagnostics.evaluatedFillCount = fillCount
+      if (seenFillEvents.has(fill.brokerEventId)) recordReason('DUPLICATE_EXECUTION_EVIDENCE')
+      seenFillEvents.add(fill.brokerEventId)
+      const fee = parseUnsigned(fill.feeMicros, false)
+      const next = fee === undefined ? undefined : checkedAdd(observedFillFees, fee)
+      if (next === undefined) recordReason('INVALID_EXECUTION_MICROS')
+      else observedFillFees = next
+    }
+    // A conditional stop/profit limit is not an unconditional strategy reference price.
+    if (protective.fills.length > 0) recordReason('PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP')
+
     const planned = parseUnsigned(evidence.plannedQuantityAtoms, true)
     const referencePrice = parseUnsigned(evidence.referencePriceMicros, true)
     if (planned === undefined) recordReason('PLANNED_DECISION_EVIDENCE_GAP')
@@ -465,7 +497,6 @@ const measureExecutionQuality = (
     if (!identityMatches(input, evidence, completedCycleIds)) recordReason('FILL_IDENTITY_DRIFT')
 
     const order = evidence.terminalOrder
-    const blocked = blockedIntentMatches(evidence)
     if (!blocked && (order === undefined || !orderMatches(evidence))) recordReason('TERMINAL_ORDER_EVIDENCE_GAP')
     const terminalOccurredAt = blocked ? evidence.intent?.updatedAt : order?.occurredAt
     const terminalObservedAt = blocked ? evidence.intent?.updatedAt : order?.observedAt

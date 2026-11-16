@@ -156,6 +156,10 @@ decision worker and native buffers. This provides headroom above the measured No
 it does not establish a fixed leak or a complete-session upper bound. Both eligible nodes had sufficient allocated
 memory headroom when this mitigation was selected. Reporting remains isolated from execution workers.
 
+The main process and both workers inherit `--max-old-space-size=192 --max-semi-space-size=16` through
+`NODE_OPTIONS`. These per-isolate V8 allowances are separate from the shared container limit and do not bound
+native buffers or process RSS; live isolate and process measurements remain necessary for acceptance.
+
 The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.
 Kinds are `heap_used`, `heap_total`, `external`, `array_buffers` and `heap_limit`. `array_buffers` is included in

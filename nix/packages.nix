@@ -305,7 +305,7 @@ let
   };
 
   bunVersion = "1.4.2";
-  # Fetch pinned public release archives without the asset API; names and fixed-output hashes stay unchanged.
+  # Public release URLs avoid the unauthenticated API quota during fixed-output downloads.
   bunSource = sourceFor "bun" {
     x86_64-linux = {
       sourceRoot = "bun-linux-x64";

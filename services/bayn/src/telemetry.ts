@@ -133,6 +133,9 @@ const exporterHttpClient = (options: TelemetryRuntimeOptions, signal: 'traces' |
     HttpClient.HttpClient,
     Effect.map(HttpClient.HttpClient, (client) =>
       client.pipe(
+        // Consume the cached response inside the deadline so a stalled body cannot retain an export fiber.
+        HttpClient.tap((response) => response.arrayBuffer),
+        HttpClient.timeout('3 seconds'),
         HttpClient.tap((response) =>
           response.status >= 200 && response.status < 300
             ? Effect.gen(function* () {
