@@ -46,8 +46,12 @@ failures separate from the diagnostic-report OOM documented on November 13.
 
 The containment assigns 192 MiB old space and 16 MiB semi-space to each Node isolate. The controller, market
 projection and reused decision worker share the container. A probe in the immutable ARM64 image measured
-240 MiB heap limits for the main isolate and two workers: 720 MiB total, leaving 304 MiB for native/external
-memory. Eighty-three decision/projection/worker tests passed under these flags. This bounds V8 allowances;
+240 MiB heap limits for the main isolate and two workers: 720 MiB total. Against the historical 1 GiB container
+limit, that left a nominal 304 MiB outside those V8 allowances. The merged controller configuration requests
+1 GiB and has a 2 GiB limit, giving a nominal 1,328 MiB outside the same allowances. These remainders are budget
+arithmetic, not observed free memory or a process RSS bound.
+
+Eighty-three decision/projection/worker tests passed under these flags. This bounds V8 allowances;
 it does not bound external buffers or establish that the observed OOM cause is fully resolved. Live session
 load remains necessary for acceptance.
 

@@ -8362,6 +8362,149 @@ test.each([
   }
 })
 
+test.each([
+  { kind: BrokerReadErrorKind.Timeout, marked: true, retryable: true, refreshesEarly: true },
+  { kind: BrokerReadErrorKind.ObservationPending, marked: false, retryable: true, refreshesEarly: true },
+  { kind: BrokerReadErrorKind.Timeout, marked: false, retryable: true, refreshesEarly: false },
+  { kind: BrokerReadErrorKind.RateLimited, marked: true, retryable: true, refreshesEarly: false },
+  { kind: BrokerReadErrorKind.Timeout, marked: true, retryable: false, refreshesEarly: false },
+])('an admitted event revalidates only transient local broker absence: $kind/$marked/$retryable', async (scenario) => {
+  const fixture = await executionLifecycleFixture()
+  const services = makeExactReconciliationServices(Authority.Execution)
+  const forbidden = () => Effect.die(new Error('unreconciled broker evidence cannot acquire, bind or mutate'))
+  let published = false
+  let reads = 0
+  let cyclePasses = 0
+  const pass = spyOn(executionCycleModule, 'runRecoveryFirstCyclePass').mockImplementation(() =>
+    Effect.sync(() => {
+      cyclePasses += 1
+      return {
+        outcome: 'RECOVERED' as const,
+        action: 'WAITING' as const,
+        waitReason: 'JEV_POSITION_HELD' as const,
+        observedAt: evaluatedAt,
+        cycle,
+      }
+    }),
+  )
+  const cycleStore: CycleStoreShape = {
+    readOldestUnfinished: () => Effect.succeed(Option.none()),
+    acquire: forbidden,
+    read: forbidden,
+    readAuthoritySlot: forbidden,
+    readDecisionDocument: forbidden,
+    activate: forbidden,
+    bindDecision: forbidden,
+    finish: forbidden,
+    block: forbidden,
+  }
+  try {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        const driver = yield* Effect.fromResult(
+          makeRecoveryFirstCycleDriver(
+            fixture.input,
+            { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
+            fixture.preparation,
+            fixture.policy,
+            { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+            forbidden,
+            'mutation autonomous cycle loop',
+          ),
+        ).pipe(Effect.flatten)
+        const initial = yield* Effect.exit(driver.advance)
+        if (!scenario.retryable) {
+          expect(Exit.isFailure(initial)).toBe(true)
+          expect(reads).toBe(1)
+          expect(cyclePasses).toBe(0)
+          return
+        }
+        if (Exit.isFailure(initial)) return yield* Effect.failCause(initial.cause)
+        const unavailable = initial.value
+        expect(unavailable.observation).toMatchObject(
+          scenario.kind === BrokerReadErrorKind.ObservationPending
+            ? { result: 'SUCCESS', waitReason: 'BROKER_OBSERVATION_PENDING' }
+            : { result: 'FAILURE', operation: 'reconcile' },
+        )
+        expect(reads).toBe(1)
+        expect(cyclePasses).toBe(0)
+        expect(unavailable.nextDelayMs).toBe(30_000)
+
+        // The externally admitted publication arrives before the failed attempt's recovery deadline.
+        published = true
+        yield* TestClock.adjust(12_000)
+        const freshWake = yield* driver.advance
+        expect(reads).toBe(scenario.refreshesEarly ? 2 : 1)
+        expect(cyclePasses).toBe(scenario.refreshesEarly ? 1 : 0)
+        if (scenario.refreshesEarly) {
+          expect(freshWake.observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+        } else {
+          expect(freshWake.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
+          yield* TestClock.adjust(18_000)
+          const due = yield* driver.advance
+          expect(due.observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+          expect(reads).toBe(2)
+          expect(cyclePasses).toBe(1)
+        }
+      }).pipe(
+        Effect.provideService(BrokerRead, {
+          ...services.brokerRead,
+          account: Effect.suspend(() => {
+            reads += 1
+            return published
+              ? services.brokerRead.account
+              : Effect.fail(
+                  new BrokerReadError({
+                    operation: 'preflight',
+                    kind: scenario.kind,
+                    retryable: scenario.retryable,
+                    message: 'synthetic broker preflight failure',
+                    ...(scenario.marked ? { observationFailure: 'NO_ADMISSIBLE_CUT' as const } : {}),
+                  }),
+                )
+          }),
+        }),
+        Effect.provideService(CycleStore, cycleStore),
+        Effect.provideService(BrokerEventStore, services.executionStore),
+        Effect.provideService(FillAccountingStore, services.executionStore),
+        Effect.provideService(ValuationStore, services.executionStore),
+        Effect.provideService(ReconciliationStore, services.executionStore),
+        Effect.provideService(AuthorityGenerationStore, services.executionStore),
+        Effect.provideService(AuthorityRestrictionStore, services.executionStore),
+        Effect.provideService(IntentStore, {
+          protectionForCycle: forbidden,
+          beginProtectionCancel: forbidden,
+          recordProtectionCancelAccepted: forbidden,
+          commit: forbidden,
+          read: forbidden,
+        }),
+        Effect.provideService(MutationStore, {
+          authorizeSubmit: forbidden,
+          beginSubmit: forbidden,
+          submitAccepted: forbidden,
+          submitRejected: forbidden,
+          submitDenied: forbidden,
+          submitUnknown: forbidden,
+          beginCancel: forbidden,
+          cancelAccepted: forbidden,
+          cancelUnknown: forbidden,
+          recoveryFound: forbidden,
+          recoveryNotFound: forbidden,
+          recoveryUnknown: forbidden,
+          latest: forbidden,
+        }),
+        Effect.provideService(WriterFence, services.writerFence),
+        Effect.provideService(CandidateObservationStore, { record: forbidden, latestJevWindowEnd: forbidden }),
+        provideJevTestServices,
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+  } finally {
+    pass.mockRestore()
+  }
+})
+
 test('a pending broker cut waits without cycle or order I/O and rechecks expiry on the next pass', async () => {
   const fixture = await executionLifecycleFixture()
   const services = makeExactReconciliationServices(Authority.Execution)

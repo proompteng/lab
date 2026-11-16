@@ -58,10 +58,10 @@ test('CNPG relabeling retains the complete bounded database diagnostics and coll
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const allow = metricAllowlist(config, 'cnpg_metrics')
   const manifest = YAML.parse(readRepoFile('argocd/applications/bayn/postgres-monitoring.yaml'))
-  const queries = YAML.parse(manifest.data.queries) as Record<
-    string,
-    { metrics: Array<Record<string, { usage: string }>> }
-  >
+  const queries = Object.assign(
+    {},
+    ...Object.values(manifest.data).map((value) => YAML.parse(String(value))),
+  ) as Record<string, { metrics: Array<Record<string, { usage: string }>> }>
   // Exercise the retained metric names produced by the configured exporter; labels are not themselves metric samples.
   for (const [query, { metrics }] of Object.entries(queries)) {
     for (const metric of metrics) {
@@ -87,6 +87,7 @@ test('CNPG relabeling retains the complete bounded database diagnostics and coll
   for (const sample of [
     'cnpg_bayn_unbounded_future_metric;',
     'cnpg_bayn_io_write_seconds_total_extra;',
+    'cnpg_bayn_native_arrivals_total_bytes_extra;',
     'cnpg_pg_settings_setting;application_name',
     'unrelated_metric;',
   ])
