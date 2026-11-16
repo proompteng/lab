@@ -234,3 +234,13 @@ keeps PostgreSQL JSONB documents as text until their owning verification worker,
 number/string parsing, all document verification, cursor ordering and bounded lookahead. Group authentication
 already uses the worker pool. The original 30-second packaged ARM64 acceptance remains open until this
 transport change is released and measured against this exact 196-transaction cut.
+
+### ARM transport component verification — November 16
+
+The same fixed benchmark also ran with Node v24.11.1 in the existing ARM64 status runtime (six GiB, sixteen-core
+ceiling), using sixteen workers, 196 repetitions of the 1,523,926-byte retained fixture, one warm-up pair and three
+alternating measured pairs. Median elapsed time was 2,575.9 ms with coordinator parsing and object transport,
+versus 338.0 ms with JSON text transport and worker parsing. Every returned parsed-document SHA-256 matched.
+This isolates transport and parsing; it does not establish the complete retained-report deadline. Acceptance
+still requires the reviewed packaged release to complete the original 196-transaction report within 30 seconds
+on both architectures, with exact financial totals and explicit incomplete evidence preserved.
