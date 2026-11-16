@@ -187,7 +187,8 @@ const serializeObject = (
   const keys = canonicalObjectKeys(value, path)
 
   ancestors.add(value)
-  const entries: string[] = []
+  let body = '{'
+  let separator = ''
   for (const key of keys) {
     if (!key.isWellFormed()) return validationFailure(path, 'invalid-unicode-key', 'string')
     path.push(key)
@@ -198,13 +199,14 @@ const serializeObject = (
         quotedKey = quoteCanonicalString(key)
         quotedKeys.set(key, quotedKey)
       }
-      entries.push(`${quotedKey}:${nested}`)
+      body += `${separator}${quotedKey}:${nested}`
+      separator = ','
     } finally {
       path.pop()
     }
   }
   ancestors.delete(value)
-  return `{${entries.join(',')}}`
+  return `${body}}`
 }
 
 const serializeCanonicalValue = (
