@@ -155,6 +155,18 @@ export const makeResearchStore = (sql: PgClient.PgClient) => {
     sql`UPDATE research_inference_receipts SET verified_at = transaction_timestamp() WHERE run_id = ${runId} AND verified_at IS NULL`.pipe(
       Effect.asVoid,
     )
+  const continuation = sql`SELECT EXISTS (
+    SELECT 1 FROM research_inference_receipts
+    WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL
+  ) AS pending, NULL::text AS "nextWakeAt"`.pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Tuple([Schema.Struct({ pending: Schema.Boolean, nextWakeAt: Schema.Null })]),
+        strictParseOptions,
+      ),
+    ),
+    Effect.map(([row]) => row),
+  )
   const coverage = sql`SELECT
     count(*) FILTER (WHERE payload->>'costPicoUsd' IS NULL)::int AS unpriced,
     count(*) FILTER (WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL)::int AS pending,
@@ -172,7 +184,7 @@ export const makeResearchStore = (sql: PgClient.PgClient) => {
     ),
     Effect.map(([row]) => row),
   )
-  return { read, claim, finish, pending, acknowledge, coverage }
+  return { read, claim, finish, pending, acknowledge, coverage, continuation }
 }
 export type ResearchStore = ReturnType<typeof makeResearchStore>
 

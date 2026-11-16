@@ -5,10 +5,10 @@ import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { jevModel } from '../jev/contract'
 import { jevInstructions } from '../jev/instructions'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import { currentJevReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { ControlManagementMode } from './control-study'
 
@@ -27,7 +27,7 @@ export const compressedControlFixture = (body: string) => {
 }
 
 export const frozenControlFixture = () => {
-  const retained = retainedReplayFixture()
+  const retained = currentJevReplayFixture()
   const source = {
     ...retained.manifest,
     dataSha256: sha256(compressedControlFixture(retained.body)),
@@ -72,7 +72,7 @@ export const frozenControlFixture = () => {
       openingCashMicros: '100000000000',
       fractionalTrading: false,
       calendar: [
-        ...retained.input.input.calendar,
+        ...retained.calendar,
         { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
         { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
       ],

@@ -14,7 +14,8 @@ import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/
 import { historicalRawArrivals } from './historical-streaming-fixture'
 import { retainReplayArrivals } from './retained-replay-fixture'
 import { fixtureProtocol } from './runtime-fixtures'
-import { streamingFixture, streamingFixtureFromRaw } from './streaming-market-fixture'
+import { streamingFixtureFromRaw } from './streaming-market-fixture'
+import { nativeJevFixture } from '../jev/native.test-support'
 
 /** Synthetic short exchange sessions exercise the whole registered window, never empirical profitability. */
 export const registeredTradeReplayFixture = () => {
@@ -34,7 +35,7 @@ export const registeredTradeReplayFixture = () => {
   const last = dates.at(-1)
   if (first === undefined || last === undefined) throw new Error('Missing registered synthetic calendar')
   const calendarObservation = Result.getOrThrow(normalizeMarketCalendarResult(calendar, { start: first, end: last }))
-  const base = streamingFixture()
+  const base = nativeJevFixture()
   const arrivals: HistoricalMarketArrival[] = []
   const offsets = new Map<string, bigint>()
   const next = (topic: string, partition = 0) => {
@@ -179,7 +180,7 @@ export const registeredTradeReplayFixture = () => {
     }
     const raw = makeIntradayMomentumTestSnapshot(
       fixtureProtocol,
-      { ...request, archiveWatermarks: base.archive.manifest.archiveWatermarks },
+      { ...request, archiveWatermarks: [] },
       { AAPL: 0.02, AMZN: 0.01 },
     )
     const bars = raw.bars.map((bar) => ({

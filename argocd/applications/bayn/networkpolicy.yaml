@@ -32,6 +32,16 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: glitchtip
           podSelector:
             matchLabels:
@@ -169,6 +179,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: bayn-egress-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: bayn-egress-proxy
     app.kubernetes.io/part-of: bayn
@@ -190,6 +202,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-research
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-broker-feed
       ports:
         - port: 3128
           protocol: TCP

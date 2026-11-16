@@ -16,7 +16,7 @@ import {
 } from 'effect'
 
 import type { ApplicationPlan } from '../app'
-import type { OperationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import type { ExecutionBuild } from '../build'
 import {
@@ -25,6 +25,9 @@ import {
 } from '../cycle/runner/pass-observation'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevInferenceWorkStore, executeJevInferenceWork } from '../jev/inference-work'
+import type { JevInferenceCompletion, JevInferenceJob } from '../jev/inference-work'
+import type { EntryInferenceRuntime } from '../restate/restate-entry-inference'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -36,14 +39,14 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  executionControllerPlanHash,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { type RecoveryFirstCycleAdvance, type RecoveryFirstRuntime } from '../observe-composition/model'
 import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
-import { currentUtcInstant } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeExecutionCycleDriver } from './autonomous-runtime'
 import { nativeActivationPreflight } from './native-activation-preflight'
@@ -54,6 +57,10 @@ import {
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { IntradayMarketData } from '../market-data/intraday/model'
+import { restoreJevObservation } from '../jev/observation'
+import { KillState } from '../execution/contracts'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -64,7 +71,9 @@ export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecuti
 export interface NativeExecutionRuntimeResource {
   readonly config: ExecutionControllerConfig
   readonly runtime: NativeExecutionRuntime
+  readonly inferenceRuntime: EntryInferenceRuntime
   readonly readMarketReadiness: () => Promise<boolean>
+  readonly startMarketWakeups: typeof KafkaMarketProjection.Service.startWakeups
 }
 
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
@@ -73,6 +82,10 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError>
   readonly nextDelayMs: number
+  readonly inference?: {
+    readonly pending: Effect.Effect<readonly JevInferenceJob[], OperationalError>
+    readonly execute: (jobId: string) => Effect.Effect<JevInferenceCompletion | null, OperationalError>
+  }
 }
 
 export class ExecutionCycleDriver extends Context.Service<ExecutionCycleDriver, BoundRecoveryFirstCycleDriver>()(
@@ -98,6 +111,26 @@ export const executionControllerConfig = (
     planHash: executionControllerPlanHash,
     sourceRevision: plan.config.build.sourceRevision,
   })
+
+const pendingInferenceForAuthority = (context: Context.Context<RecoveryFirstRuntime>) =>
+  Effect.gen(function* () {
+    const work = Context.getOption(context, JevInferenceWorkStore)
+    if (Option.isNone(work)) return []
+    const authority = yield* Context.get(context, AuthorityGenerationStore).readAuthorityState.pipe(
+      Effect.mapError((cause) =>
+        operationalError({
+          component: 'database',
+          operation: 'jev-batch',
+          message: 'inference authority read failed',
+          cause,
+        }),
+      ),
+    )
+    return yield* work.value.pending(authority.generationHash)
+  })
+
+export const executionReceiptDelayMs = (completedAt: string, nextWakeAt?: string): number =>
+  nextWakeAt === undefined ? 1 : Math.min(86_400_000, Math.max(1, Date.parse(nextWakeAt) - Date.parse(completedAt)))
 
 export const bindRecoveryFirstCycleDriver = (
   driver: {
@@ -162,16 +195,56 @@ export const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan, observation) =>
-              observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
+            begin: (plan, observation, options) =>
+              observe(
+                Effect.gen(function* () {
+                  const source = yield* Effect.fromResult(restoreJevObservation(observation)).pipe(
+                    Effect.mapError((cause) =>
+                      operationalError({
+                        component: 'market-data',
+                        operation: 'jev-batch',
+                        message: 'admitted source could not be restored',
+                        cause,
+                      }),
+                    ),
+                  )
+                  const marketData = Context.getOption(context, IntradayMarketData)
+                  if (Option.isNone(marketData))
+                    return yield* operationalError({
+                      component: 'market-data',
+                      operation: 'jev-batch',
+                      message: 'deferred inference requires the current market source verifier',
+                    })
+                  const sourceReference = yield* marketData.value.verifyReference(source.snapshot)
+                  return yield* store.begin(plan, source.observation, {
+                    ...options,
+                    deferProviderDispatch: true,
+                    sourceReference,
+                  })
+                }),
+                (batch) => batch.plan.observationHash,
+              ),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
             complete: (plan, observation, result) =>
               observe(store.complete(plan, observation, result), (batch) => batch.plan.observationHash),
           })
         } else complete = false
         const advanced = yield* Effect.provideContext(driver.advance, observedContext)
+        const pending = yield* pendingInferenceForAuthority(context)
+        const expiry = pending.reduce<number | undefined>((earliest, job) => {
+          const at = Date.parse(job.expiresAt)
+          return earliest === undefined ? at : Math.min(earliest, at)
+        }, undefined)
+        const nextWakeAt =
+          expiry === undefined
+            ? advanced.nextWakeAt
+            : utcInstantFromEpochMillis(
+                Math.min(expiry, advanced.nextWakeAt === undefined ? expiry : Date.parse(advanced.nextWakeAt)),
+              )
         return {
           ...advanced,
+          ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+          ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore)) ? { inferenceJobs: pending } : {}),
           observation: {
             ...advanced.observation,
             executionBuild,
@@ -180,6 +253,49 @@ export const bindRecoveryFirstCycleDriver = (
         }
       }),
       nextDelayMs: driver.nextDelayMs,
+      ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore))
+        ? {
+            inference: {
+              pending: pendingInferenceForAuthority(context),
+              execute: (jobId: string) => {
+                const work = Context.getOption(context, JevInferenceWorkStore)
+                if (Option.isNone(work))
+                  return Effect.fail(
+                    operationalError({
+                      component: 'config',
+                      operation: 'jev-batch',
+                      message: 'inference work store disappeared',
+                    }),
+                  )
+                return Effect.provideContext(
+                  executeJevInferenceWork(
+                    jobId,
+                    Effect.gen(function* () {
+                      const job = yield* work.value.read(jobId)
+                      const authority = yield* Context.get(context, AuthorityGenerationStore).readAuthorityState
+                      return (
+                        job !== null &&
+                        job.authorityGenerationHash === authority.generationHash &&
+                        authority.kill === KillState.Clear &&
+                        authority.effective === authority.maximum
+                      )
+                    }),
+                  ),
+                  Context.add(context, JevInferenceWorkStore, work.value),
+                ).pipe(
+                  Effect.mapError((cause) =>
+                    operationalError({
+                      component: 'strategy',
+                      operation: 'jev-batch',
+                      message: 'admitted inference failed',
+                      cause,
+                    }),
+                  ),
+                )
+              },
+            },
+          }
+        : {}),
     })),
   )
 
@@ -289,9 +405,6 @@ const replayProjectedAdvance = (
   ) {
     return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
   }
-  if (status.nextDueAt === undefined) {
-    return Result.fail(projectionFailure('replayed controller status does not retain its next due time'))
-  }
   return Result.mapError(
     decodeExecutionAdvanceStepResult({
       completedAt: status.completedAt,
@@ -299,10 +412,8 @@ const replayProjectedAdvance = (
       outcome: {
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
-        nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
-        ...(status.lastPass?.result === 'SUCCESS' && status.lastPass.nextWakeAt !== undefined
-          ? { nextWakeAt: status.lastPass.nextWakeAt }
-          : {}),
+        nextDelayMs: executionReceiptDelayMs(status.completedAt, status.nextDueAt),
+        ...(status.nextDueAt !== undefined ? { nextWakeAt: status.nextDueAt } : {}),
       },
     }),
     projectionFailure,
@@ -360,13 +471,11 @@ const advanceAndProject = (
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
         observation: outcome.observation,
+        ...(outcome.inferenceJobs === undefined ? {} : { inferenceJobs: outcome.inferenceJobs }),
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
-          nextDelayMs:
-            outcome.nextWakeAt === undefined
-              ? outcome.nextDelayMs
-              : Math.min(outcome.nextDelayMs, Math.max(1, Date.parse(outcome.nextWakeAt) - Date.parse(completedAt))),
+          nextDelayMs: executionReceiptDelayMs(completedAt, outcome.nextWakeAt),
           ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
         },
       }),
@@ -384,7 +493,7 @@ const advanceAndProject = (
           lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,
           completedAt,
-          nextDueAt: new Date(Date.parse(completedAt) + step.outcome.nextDelayMs).toISOString(),
+          ...(step.outcome.nextWakeAt === undefined ? {} : { nextDueAt: step.outcome.nextWakeAt }),
           lastPass: outcome.observation,
         })
         .pipe(
@@ -409,6 +518,14 @@ export const executeNativeExecutionAdvance = (
   readProjectedAdvance(command, statusStore, planHash).pipe(
     Effect.flatMap((replayed) =>
       replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
+    ),
+    Effect.flatMap((step) =>
+      driver.inference === undefined || step.inferenceJobs !== undefined
+        ? Effect.succeed(step)
+        : driver.inference.pending.pipe(
+            Effect.mapError(projectionFailure),
+            Effect.map((inferenceJobs) => ({ ...step, inferenceJobs })),
+          ),
     ),
   )
 
@@ -638,6 +755,23 @@ export const acquireNativeExecutionRuntime = (
     return {
       config,
       runtime,
+      inferenceRuntime: {
+        executeInference: (jobId, signal) =>
+          ScopedRef.getUnsafe(managed).runPromise(
+            ExecutionCycleDriver.pipe(
+              Effect.flatMap(
+                (
+                  driver,
+                ): Effect.Effect<JevInferenceCompletion | null, NativeExecutionRuntimeError | OperationalError> =>
+                  driver.inference === undefined
+                    ? Effect.fail(runtimeError('binding', 'native execution driver has no admitted inference port'))
+                    : driver.inference.execute(jobId),
+              ),
+            ),
+            { signal },
+          ),
+      },
       readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
+      startMarketWakeups: market.startWakeups,
     }
   })

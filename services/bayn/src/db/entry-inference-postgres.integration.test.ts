@@ -1,5 +1,5 @@
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
-import { retainedJevProtocolV39Document } from '../jev/protocol'
+import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
@@ -246,6 +246,7 @@ const retainReplayDispatch = Effect.gen(function* () {
     ),
     Effect.provide(TestClock.layer()),
   )
+  if (admission.dispatches === null) throw new Error('Expected in-process replay dispatch rights')
   const dispatch = admission.dispatches.find((entry) => entry.request.requestId === current.requestId)
   if (dispatch === undefined) throw new Error('Missing initial replay admission')
   return dispatch
@@ -305,7 +306,9 @@ integration('committed sequential provider handoff', () => {
   beforeEach(async () => {
     initialDispatch = undefined
     const admission = await resetDatabase()
-    initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
+    if (admission === undefined) return
+    if (admission.dispatches === null) throw new Error('Expected in-process fixture dispatch rights')
+    initialDispatch = admission.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
   }, 30_000)
 
   test.each([
@@ -868,11 +871,17 @@ integration('committed sequential provider handoff', () => {
             maximum: Authority.Observe,
           })
           expect(initialized).toMatchObject({ maximum: Authority.Observe, effective: Authority.Observe, kill: 'CLEAR' })
-          yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+          const predecessorFixture = nativeJevFixture(
+            JevPurpose.Entry,
+            request.observedAt,
+            replayAccountId,
+            retainedJevProtocolV40Document,
+          )
+          yield* (yield* CycleStore).acquire(predecessorFixture.draft, request.observedAt)
           const originalPlan = Result.getOrThrow(
             reconstructRetainedJevTradingSignalBatch({
               observation: {
-                ...fixture.observation.payload,
+                ...predecessorFixture.observation.payload,
                 protocol: { ...retainedJevProtocolV39Document, schemaVersion: retainedVersion },
               },
               expiresAt: request.expiresAt,
@@ -935,7 +944,7 @@ integration('committed sequential provider handoff', () => {
             JevPurpose.Entry,
             new Date(Date.parse(request.observedAt) + 60_000).toISOString(),
             replayAccountId,
-            undefined,
+            retainedJevProtocolV40Document,
             Result.getOrThrow(canonicalHashV1Result({ cutover: 'v39', previousCycleId: original.cycleId })),
           )
           const successorPlan = Result.getOrThrow(

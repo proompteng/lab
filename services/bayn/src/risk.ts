@@ -1,4 +1,6 @@
 import { executionIntentSchemaVersion, submittedBrokerOrderCount } from './execution/contracts'
+import { isEquityShortProtection } from './execution/contracts'
+import { EquityShortEligibilitySchema, equityShortIsEligible } from './execution/equity-short'
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -283,6 +285,7 @@ const StateBase = Schema.Struct({
   marketDataObservedAt: UtcInstant,
   /** Absent only in legacy stored evaluations and close-only recovery. */
   entryQuote: Schema.optionalKey(EntryQuoteFreshnessSchema),
+  equityShortEligibility: Schema.optionalKey(EquityShortEligibilitySchema),
   executionSession: ExecutionSessionBindingSchema,
   reservedBuyingPowerMicros: UnsignedMicrosSchema,
   evaluatedAt: UtcInstant,
@@ -795,7 +798,12 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   const postTradeNetExposureMicros = divideAwayFromZero(postTradeNetExposureNumerator, QUANTITY_SCALE)
   const postTradeNetExposureMagnitudeMicros = divideUp(absolute(postTradeNetExposureNumerator), QUANTITY_SCALE)
   const aggregateBuyingPowerMicros =
-    facts.reservedBuyingPowerMicros + (facts.intent.side === OrderSide.Buy ? orderNotionalMicros : 0n)
+    facts.reservedBuyingPowerMicros +
+    (facts.intent.protection?._tag === 'EquityShortBracket'
+      ? (orderNotionalMicros * 3n + 1n) / 2n
+      : facts.intent.side === OrderSide.Buy
+        ? orderNotionalMicros
+        : 0n)
   const dailyTradedNotionalMicros = facts.priorDailyTradedNotionalMicros + orderNotionalMicros
   const { dailyLossMicros, drawdownMicros } = accountLossMicros(facts)
   const adversePriceDifference =
@@ -909,7 +917,12 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
       state.account.status,
       AccountStatus.Active,
     ),
-    makeGate(Gate.Equity, facts.accountEquityMicros > 0n, state.account.equityMicros, '>0'),
+    makeGate(
+      Gate.Equity,
+      facts.accountEquityMicros > 0n || closeOnlyPositionReduction,
+      state.account.equityMicros,
+      facts.accountEquityMicros > 0n ? '>0' : 'STRICTLY_EXPOSURE_REDUCING_CLOSE',
+    ),
     makeGate(
       Gate.Symbol,
       policy.allowedSymbols.includes(intent.symbol) || closeOnlyPositionReduction,
@@ -1042,12 +1055,28 @@ const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): re
 const buildExposureGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
   const { policy } = facts
   const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
+  const permittedShort =
+    facts.intent.protection?._tag === 'EquityShortBracket' &&
+    facts.intent.side === OrderSide.Sell &&
+    metrics.currentSymbolQuantityAtoms === 0n &&
+    metrics.postTradeSymbolQuantityAtoms < 0n &&
+    equityShortIsEligible(
+      facts.state.equityShortEligibility,
+      facts.intent.accountId,
+      facts.intent.symbol,
+      facts.state.evaluatedAt,
+      Math.min(15_000, policy.maxBrokerStateAgeMs),
+    )
   return [
     makeGate(
       Gate.LongOnly,
-      exposureReducingClose || (metrics.currentSymbolQuantityAtoms >= 0n && metrics.postTradeSymbolQuantityAtoms >= 0n),
+      exposureReducingClose ||
+        permittedShort ||
+        (metrics.currentSymbolQuantityAtoms >= 0n &&
+          metrics.postTradeSymbolQuantityAtoms >= 0n &&
+          !isEquityShortProtection(facts.intent.protection)),
       `${metrics.currentSymbolQuantityAtoms}:${metrics.postTradeSymbolQuantityAtoms}`,
-      '>=0:>=0',
+      permittedShort ? 'FLAT_TO_ELIGIBLE_EQUITY_SHORT' : '>=0:>=0',
     ),
     makeGate(
       Gate.SymbolExposure,

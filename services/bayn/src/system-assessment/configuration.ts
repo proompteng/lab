@@ -7,13 +7,10 @@ import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { SystemAssessmentError } from './economics'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 
-/** Only operational settings and public strategy parameters are retained; credentials and endpoints are excluded. */
-export const QualificationRuntimeSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.qualification-runtime.v1'),
+const qualificationRuntimeFields = {
   controllerPlanHash: Schema.NullOr(Sha256Schema),
-  cyclePollIntervalMs: PositiveIntegerSchema,
   operationTimeoutMs: PositiveIntegerSchema,
   reconciliationIntervalMs: PositiveIntegerSchema,
   reconciliationStaleThresholdMs: PositiveIntegerSchema,
@@ -23,15 +20,34 @@ export const QualificationRuntimeSchema = Schema.Struct({
   entryMarkets: Schema.optionalKey(
     Schema.Array(Schema.Enum(MarketKind)).check(Schema.isMinLength(1), Schema.isUnique()),
   ),
+}
+
+/** Financial registrations retain their original polling assumptions and hashes. */
+export const RetainedQualificationRuntimeSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-runtime.v1'),
+  cyclePollIntervalMs: PositiveIntegerSchema,
+  ...qualificationRuntimeFields,
 })
+
+/** Only operational settings and public strategy parameters are retained; credentials and endpoints are excluded. */
+export const StreamingQualificationRuntimeSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-runtime.v2'),
+  decisionTrigger: Schema.Literal('streaming'),
+  ...qualificationRuntimeFields,
+})
+
+export const QualificationRuntimeSchema = Schema.Union([
+  RetainedQualificationRuntimeSchema,
+  StreamingQualificationRuntimeSchema,
+])
 
 export const qualificationRuntime = (
   config: LoadedRuntimeConfig,
   protocol: JevProtocol,
-): Omit<typeof QualificationRuntimeSchema.Type, 'protocol'> & { readonly protocol: JevProtocol } => ({
-  schemaVersion: 'bayn.qualification-runtime.v1',
+): Omit<typeof StreamingQualificationRuntimeSchema.Type, 'protocol'> & { readonly protocol: JevProtocol } => ({
+  schemaVersion: 'bayn.qualification-runtime.v2',
+  decisionTrigger: 'streaming',
   controllerPlanHash: executionControllerPlanHash,
-  cyclePollIntervalMs: config.cyclePollIntervalMs,
   operationTimeoutMs: config.operationTimeoutMs,
   reconciliationIntervalMs: config.alpaca.reconciliationIntervalMs,
   reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
@@ -61,6 +77,12 @@ export const captureQualificationRuntime = (
   },
 ) =>
   Result.gen(function* () {
+    if (runtime.schemaVersion !== registered.configuration.schemaVersion)
+      return yield* Result.fail(
+        new SystemAssessmentError({
+          message: 'Capture runtime differs from the prospectively registered decision trigger',
+        }),
+      )
     // Capture has already verified the persisted registration. Unknown historical plans stay unknown.
     const retainedPlanRuntime =
       registered.configuration.controllerPlanHash === null ? { ...runtime, controllerPlanHash: null } : runtime

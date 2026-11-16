@@ -599,6 +599,24 @@ describe('PostgreSQL reconciliation algebra', () => {
     }
   })
 
+  test('rejects tampering with every stored transaction field', () => {
+    for (const [field, value] of Object.entries(prepared.transaction)) {
+      const transaction = { ...prepared.transaction }
+      Object.defineProperty(transaction, field, {
+        value: /^[0-9a-f]{64}$/.test(value) ? hash(`tampered-${field}`) : `${value}-tampered`,
+        enumerable: true,
+      })
+      expect(
+        failureOf(
+          verifyAccountingHistory(
+            [{ transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }],
+            tigerBeetle.ledger,
+          ),
+        )._tag,
+      ).toBe('AccountingTransactionMismatch')
+    }
+  })
+
   test('compares opening cash and binds the current fee accrual accounting identity', () => {
     const result = makeComparison()
 

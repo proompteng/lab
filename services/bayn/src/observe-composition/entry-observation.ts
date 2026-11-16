@@ -10,12 +10,16 @@ import { JevDecisionEvidenceSchema } from '../jev/decision'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevAwaitingEvidence, evaluateJevObservationFromSnapshot } from '../jev/runtime'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
-import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { isRepeatedMomentumRuntime, type StrategyRuntime } from '../strategy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { strictParseOptions } from '../schemas'
 import type { ObserveDecisionAwaitingSignal } from './decision-builder'
 import type { CandidateObservationStore } from './candidate-observation'
+import { readEquityShortEligibility } from '../execution/equity-short'
+import { currentUtcInstant } from '../time'
+import { BrokerRead } from '../broker/alpaca/model'
+import { equityClockSession } from '../equity-hours'
 
 export interface EntryObservationContext {
   readonly strategy: StrategyRuntime
@@ -41,9 +45,9 @@ type Evaluation = ReturnType<
 export type EntryObservation = (
   context: EntryObservationContext,
 ) => Effect.Effect<
-  { readonly snapshot: VerifiedStrategyMarketSnapshot; readonly decision: ProtectedEntryTarget },
+  { readonly snapshot: StrategyMarketSnapshot; readonly decision: ProtectedEntryTarget },
   Effect.Error<Evaluation> | Schema.SchemaError | JevContractError,
-  Effect.Services<Evaluation>
+  Effect.Services<Evaluation> | BrokerRead
 >
 
 export const observeChartEntry = (
@@ -77,9 +81,36 @@ export const observeChartEntry = (
     return { snapshot: evaluated.snapshot, decision }
   })
 
-export const observeNativeEntry: EntryObservation = (context) =>
+export const observeNativeEntry = (context: EntryObservationContext) =>
   context.strategy.definition.parameters.schemaVersion === defaultJevProtocolDocument.schemaVersion
-    ? observeChartEntry(context, JevBatchPlanVersion.V8)
+    ? Effect.gen(function* () {
+        const eligibility =
+          context.query.feed === 'iex' && equityClockSession(context.observedAt) === 'regular'
+            ? yield* readEquityShortEligibility(context.query.candidateSymbols ?? []).pipe(
+                Effect.mapError((cause) =>
+                  operationalError({
+                    component: 'strategy',
+                    operation: 'current-decision',
+                    message: 'Native entry broker eligibility could not be observed',
+                    cause,
+                  }),
+                ),
+              )
+            : undefined
+        const observedAt = yield* currentUtcInstant
+        return yield* observeChartEntry(
+          {
+            ...context,
+            observedAt,
+            query: { ...context.query, observedAt },
+            observation: {
+              ...context.observation,
+              ...(eligibility === undefined ? {} : { equityShortEligibility: eligibility }),
+            },
+          },
+          JevBatchPlanVersion.V8,
+        )
+      })
     : Effect.fail(
         operationalError({
           component: 'strategy',

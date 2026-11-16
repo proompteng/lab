@@ -1,4 +1,5 @@
 import { cryptoMarketFixture } from './testing/crypto-market-fixture'
+import { shortEligibilityFixture } from './execution/equity-short.test-support'
 import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
 import { adverseQuotePrices } from './observe-composition/intraday-market-data'
 import { jevEntryQuoteExclusion } from './jev/trading-signals'
@@ -239,6 +240,54 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
+
+test('native equity short planning allocates whole shares and reserves 150 percent before entry', () => {
+  const base = fixture({
+    positions: [],
+    targetWeights: { AMD: -0.2 },
+    buyingPowerMicros: '3000000000',
+    priceMicros: { AMD: '50000000' },
+  })
+  const eligible = shortEligibilityFixture(base.accountId, 'AMD', base.observedAt)
+  const input: TargetPlannerInput = {
+    ...base,
+    executionTerms: { ...base.executionTerms, timeInForce: TimeInForce.Day, equityShortEntries: { AMD: eligible } },
+  }
+  const plan = planSuccess(input)
+  expect(plan.status).toBe(TargetPlanStatus.Planned)
+  expect(plan.targets[0]?.targetQuantityAtoms).toBe('-40000000000')
+  expect(plan.intentTargets[0]).toMatchObject({ side: OrderSide.Sell, quantityAtoms: '40000000000' })
+  expect(plan.requiredShortCollateralMicros).toBe('3000000000')
+  expect(plan.residualBuyingPowerMicros).toBe('0')
+  expect(planSuccess({ ...input, brokerState: { ...base.brokerState, unknownOrderCount: 1 } }).status).toBe(
+    TargetPlanStatus.Blocked,
+  )
+  expect(
+    planSuccess({ ...base, executionTerms: { ...base.executionTerms, timeInForce: TimeInForce.Day } }).status,
+  ).toBe(TargetPlanStatus.Blocked)
+})
+
+test('a negative allocation below one whole share persists a zero-share abstention', () => {
+  const base = fixture({
+    positions: [],
+    targetWeights: { AMD: -0.2 },
+    allocationCapitalMicros: '100000000',
+    buyingPowerMicros: '3000000000',
+    priceMicros: { AMD: '50000000' },
+  })
+  const plan = planSuccess({
+    ...base,
+    executionTerms: {
+      ...base.executionTerms,
+      timeInForce: TimeInForce.Day,
+      equityShortEntries: { AMD: shortEligibilityFixture(base.accountId, 'AMD', base.observedAt) },
+    },
+  })
+  expect(plan.status).toBe(TargetPlanStatus.NoTrade)
+  expect(plan.targets[0]).toMatchObject({ targetWeight: -0.2, targetQuantityAtoms: '0', currentQuantityAtoms: '0' })
+  expect(plan.intentTargets).toEqual([])
+  expect(plan.requiredShortCollateralMicros ?? '0').toBe('0')
+})
 
 test('property: the shared equity and crypto planner obeys quantity precision, liquidity and available capital', () => {
   checkProperty(

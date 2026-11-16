@@ -509,6 +509,7 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       freeze: () => Effect.void,
       pending: Effect.sync(() => (verified ? [] : [quote])),
       settleExpiredTerminalBatches: Effect.succeed({ candidates: 0, sealed: 0, pending: 0, failed: 0 }),
+      settleExpiredInferenceWork: Effect.succeed({ sealed: 0, failed: 0, remaining: false }),
       acknowledge: () =>
         Effect.sync(() => {
           verified = true
@@ -538,6 +539,7 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       freeze: () => Effect.void,
       pending: Effect.succeed([quote]),
       settleExpiredTerminalBatches: Effect.succeed({ candidates: 0, sealed: 0, pending: 0, failed: 0 }),
+      settleExpiredInferenceWork: Effect.succeed({ sealed: 0, failed: 0, remaining: false }),
       acknowledge: () =>
         Effect.suspend(() =>
           ++attempts === 1

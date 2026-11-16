@@ -89,7 +89,6 @@ const plan = (serialized?: string): ApplicationPlan => ({
       capitalAuthority: { _tag: CapitalAuthorityKind.None },
     },
     capitalActivationRequestJson: serialized,
-    cyclePollIntervalMs: 30_000,
     alpaca: {
       provider: BrokerProvider.Alpaca,
       environment: BrokerEnvironment.Sandbox,

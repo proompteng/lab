@@ -194,6 +194,35 @@ jobs:
       - name: Verify market-data replay and controller recovery against disposable Kafka and Restate
         run: timeout 8m bash services/bayn/scripts/test-market-data-replay.sh
 
+  streaming-integration:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify required integration result checks
+        run: python3 -m unittest discover -s services/bayn/scripts -p test_verify_integration_results.py -v
+      - name: Verify streaming failure boundaries against disposable services
+        run: timeout 12m bash services/bayn/scripts/test-streaming-integrations.sh
+      - name: Retain required integration results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-streaming-integration
+          path: .artifacts/bayn-streaming-integration/
+
   postgres-integration:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
@@ -440,6 +469,7 @@ jobs:
       - ledger-integration
       - postgres-integration
       - market-data-replay
+      - streaming-integration
       - replay-execution-observer
     runs-on: ubuntu-latest
     steps:
@@ -457,6 +487,7 @@ jobs:
           LEDGER_RESULT: ${{ needs.ledger-integration.result }}
           POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
           MARKET_DATA_REPLAY_RESULT: ${{ needs.market-data-replay.result }}
+          STREAMING_INTEGRATION_RESULT: ${{ needs.streaming-integration.result }}
           REPLAY_EXECUTION_RESULT: ${{ needs.replay-execution-observer.result }}
         run: |
           set -euo pipefail
@@ -483,6 +514,7 @@ jobs:
             LEDGER_RESULT \
             POSTGRES_RESULT \
             MARKET_DATA_REPLAY_RESULT \
+            STREAMING_INTEGRATION_RESULT \
             REPLAY_EXECUTION_RESULT; do
             result="${!result_name}"
             if [[ "${result}" != 'success' ]]; then

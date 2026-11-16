@@ -1,4 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
+import { equityShortAccountingSchemaVersion } from '../../accounting/schema'
 import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 import { databaseUtcInstant } from '../../db/clock'
@@ -1018,7 +1019,7 @@ const makeCycleObservability = Effect.gen(function* () {
             (
               SELECT count(*)::integer
               FROM selected_accounting_transactions
-              WHERE side = 'SELL'
+              WHERE side = CASE WHEN schema_version = ${equityShortAccountingSchemaVersion} THEN 'BUY' ELSE 'SELL' END
             ) AS accounting_realized_close_count,
             (
               SELECT count(*)::integer

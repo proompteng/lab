@@ -17,7 +17,7 @@ import {
   References,
   Tracer,
 } from 'effect'
-import { PrometheusMetrics } from 'effect/observability'
+import { OtlpExporter, PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -500,6 +500,92 @@ describe('Bayn telemetry', () => {
       await new Promise<void>((resolve, reject) =>
         server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
       )
+    }
+  })
+
+  test.each(['headers', 'body'])('aborts stalled export %s and permits subsequent exports', async (stalled) => {
+    const output: unknown[] = []
+    const testConsole: Console.Console = { ...console, error: (...messages) => output.push(...messages) }
+    const bodies: Buffer[] = []
+    let acceptFirst: (() => void) | undefined
+    let closeFirst: (() => void) | undefined
+    const firstAccepted = new Promise<void>((resolve) => {
+      acceptFirst = resolve
+    })
+    const firstClosed = new Promise<void>((resolve) => {
+      closeFirst = resolve
+    })
+    const server = createServer((request, response) => {
+      const chunks: Uint8Array[] = []
+      request.on('data', (chunk: Uint8Array) => chunks.push(chunk))
+      request.on('end', () => {
+        bodies.push(Buffer.concat(chunks))
+        if (bodies.length !== 1) {
+          response.writeHead(200).end()
+          return
+        }
+        response.once('close', () => closeFirst?.())
+        if (stalled === 'body') {
+          response.writeHead(200)
+          response.write('unfinished collector response')
+        }
+        acceptFirst?.()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('telemetry test server did not bind TCP')
+    try {
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const exporter = yield* OtlpExporter.Flusher
+          yield* Effect.void.pipe(withObservedSpan('bayn.test.stalled-export'))
+          const flushing = yield* exporter.flush.pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Effect.promise(() => firstAccepted)
+          yield* TestClock.adjust('3 seconds')
+          yield* Effect.promise(() => firstClosed)
+          yield* TestClock.adjust('1 second')
+          yield* Fiber.join(flushing)
+          yield* Effect.void.pipe(withObservedSpan('bayn.test.after-timeout'))
+          yield* exporter.flush
+          return 'application-result'
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              makeTelemetryRuntimeLayer({
+                serviceName: 'bayn-telemetry-test',
+                endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+              }),
+              OtlpExporter.layerFlusher,
+            ),
+          ),
+          Effect.provide(TestClock.layer()),
+          Effect.provideService(Console.Console, testConsole),
+        ),
+      )
+      expect(result).toBe('application-result')
+      expect(bodies).toHaveLength(3)
+      expect(bodies[0]).toEqual(bodies[1])
+      expect(bodies[2]?.includes(Buffer.from('bayn.test.after-timeout'))).toBe(true)
+      expect(output.map((entry) => JSON.parse(String(entry)))).toContainEqual(
+        expect.objectContaining({
+          message: 'Bayn OTLP trace export attempt failed',
+          annotations: expect.objectContaining({ failureReason: 'TransportError' }),
+        }),
+      )
+      expect(output.map((entry) => JSON.parse(String(entry)))).toContainEqual(
+        expect.objectContaining({
+          message: 'Bayn OTLP trace export request recovered',
+          annotations: expect.objectContaining({ failedAttempts: 1, httpStatus: 200 }),
+        }),
+      )
+      expect(output.join()).not.toContain('unfinished collector response')
+    } finally {
+      server.closeAllConnections()
+      if (server.listening)
+        await new Promise<void>((resolve, reject) =>
+          server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+        )
     }
   })
 
