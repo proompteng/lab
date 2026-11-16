@@ -70,9 +70,18 @@ The repair uses versioned public release downloads with the same archive names, 
 All four platform archives were downloaded and existing SHA-256 and ZIP integrity verified. Replay validation
 remains required.
 
-Protective execution reporting and cost completeness retain the separate requirements in
-[the November 13 investigation](system-investigation-2026-11-13.md). Missing invoices, unsettled fee cuts and
-conditional execution references cannot be repaired by inventing zeros or weakening qualification.
+The protective execution reader now retains the latest parent and native child orders under the same
+account/generation/reconciliation cut. The verifier checks sealed protection terms, actual child identities,
+partial quantities, shared parent inventory, prices, timestamps, fees and accounting allocation. Protective
+fills remain separate from parent BUY executions. Parent-only report golden hashes remain unchanged.
+Conditional protective exits retain PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP rather than an invented
+unconditional implementation-shortfall benchmark. PostgreSQL integration and packaged runtime acceptance
+remain separate release gates.
+
+Cost completeness retains the requirements in [the November 13 investigation](system-investigation-2026-11-13.md).
+Missing invoices, unsettled fee cuts and conditional references cannot be repaired by inventing zeros or
+weakening qualification. Natural-session stability, complete costs and all-in profitability remain distinct
+from the source repairs and synthetic regressions.
 
 ## Reproduction
 
