@@ -173,11 +173,7 @@ let
   talosctlSource = sourceFor "talosctl" {
     x86_64-linux.src = fetchurl {
       name = "talosctl-linux-amd64";
-      url = "https://api.github.com/repos/siderolabs/talos/releases/assets/678470893";
-      curlOptsList = [
-        "--header"
-        "Accept: application/octet-stream"
-      ];
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-linux-amd64";
       hash = "sha256-/0MraJhnCea2nFY6CKLO1CMtUZaw3M1tLng+nXFNfX0=";
     };
     aarch64-linux.src = fetchurl {
