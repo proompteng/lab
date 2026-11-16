@@ -2,7 +2,7 @@ import { CashReportingQuantumSchema } from '../../broker/alpaca/cash-reporting'
 import { Data, Schema } from 'effect'
 import type { AccountingTransaction } from '../../accounting/schema'
 import { FinalizedSnapshotProvenanceSchema } from '../../contracts'
-import { DiscrepancySchema, type AccountingReceipt } from '../../execution/contracts'
+import { DiscrepancySchema, OrderSchema, type AccountingReceipt } from '../../execution/contracts'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../../db/accounting-rows'
 import {
   ImageDigestSchema,
@@ -144,6 +144,7 @@ export const OrderExecutionRow = Schema.Struct({
   observed_at: Schema.Date,
 })
 export const FillExecutionRow = Schema.Struct({
+  source_sequence: Schema.optionalKey(Schema.String),
   event_id: Sha256,
   fill_id: NonEmptyString,
   broker_order_id: NonEmptyString,
@@ -158,6 +159,11 @@ export const FillExecutionRow = Schema.Struct({
   source_timestamp: Schema.String,
   occurred_at: Schema.Date,
   observed_at: Schema.Date,
+})
+export const NativeProtectionOrderRow = Schema.Struct({
+  event_id: Sha256,
+  occurred_at: Schema.Date,
+  order: OrderSchema,
 })
 
 export const decodeCycles = Schema.decodeUnknownEffect(Schema.Array(TerminalCycleRow), strictParseOptions)
