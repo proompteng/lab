@@ -7,7 +7,7 @@
    `kargo-sha-<40>` alias with the required OCI source-time/revision labels. Warehouses ignore legacy `sha-*` and
    mutable `latest`. For external `analysis`, `latest` is only a `Digest`-strategy discovery pointer and Freight/manifests
    pin the immutable digest; external `bilig` uses bare 40-hex/`NewestBuild`.
-3. Inspect the Kargo Warehouse and Freight in `lab-delivery`.
+3. Inspect the Kargo Warehouse and Freight in its `<project>-release` namespace.
 4. Wait for the exact automatic promotion policy to promote the target Stage.
 5. Let Kargo copy the exact source commit, write the full digest and companion build/provenance metadata to
    `kargo/<stage>`, push that branch without a pull request, and let the Argo Application track and sync it.
@@ -21,10 +21,10 @@ Argo syncs, and direct `kubectl apply` are retired from the normal path.
 ```bash
 set -euo pipefail
 
-kubectl -n lab-delivery get project,warehouse,freight,stage
-kubectl -n lab-delivery get warehouse/<warehouse> -o yaml
-kubectl -n lab-delivery get freight/<freight> -o yaml
-kubectl -n lab-delivery get stage/<stage> -o yaml
+kubectl -n <project>-release get project,warehouse,freight,stage
+kubectl -n <project>-release get warehouse/<warehouse> -o yaml
+kubectl -n <project>-release get freight/<freight> -o yaml
+kubectl -n <project>-release get stage/<stage> -o yaml
 
 kubectl -n argocd get application/<application> -o jsonpath='{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
 kubectl -n argocd get application/<application> -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'
@@ -43,7 +43,7 @@ before changing anything. Correct the owning source or build failure, then re-pr
 Kargo. Do not patch a live Deployment, run `argocd app sync`, or create a manifest-bump PR.
 
 Direct deployment is a break-glass action only when explicitly authorized and recorded with the incident. Restore Kargo
-control after the incident. Bayn follows this Kargo recovery path through `lab-delivery/bayn` and `kargo/bayn`.
+control after the incident. Bayn follows this Kargo recovery path through `bayn-release/bayn` and `kargo/bayn`.
 Its native activation hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk
 contracts; image promotion preserves the authored research request.
 

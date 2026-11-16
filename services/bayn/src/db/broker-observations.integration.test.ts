@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, ManagedRuntime, Redacted, Ref, Result } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, Schema, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
+import type { Statement } from 'effect/sql/Statement'
 
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
 import {
@@ -54,6 +55,24 @@ const snapshot = (ticket: BrokerObservationTicket) => observedBrokerSnapshotFixt
 const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
   TestClock.setTime(Date.parse(ticket.startedAt) + delta)
 
+const readWithPendingFences = <A, E>(read: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const spans: Tracer.NativeSpan[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const result = yield* read.pipe(Effect.result, Effect.provideService(Tracer.Tracer, tracer))
+    const fence = spans.find((span) => span.name === 'bayn.broker.observation.fence')
+    const attributes = Object.fromEntries(
+      [...(fence?.attributes ?? [])].filter(([key]) => key.startsWith('bayn.broker.observation.pending.')),
+    )
+    return { result, attributes }
+  })
+
 // Exercise the production projection, health pass and both HTTP readiness decisions.
 // Ledger/cycle/controller probes are healthy fixtures; no broker or ledger I/O is permitted.
 const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeBrokerObservationStore>) =>
@@ -79,7 +98,7 @@ const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeB
       executionEligible: false,
       executionDisabledReason: 'READ_ONLY',
     }
-    const controller = { controllerKey: 'primary', planHash: 'c'.repeat(64) }
+    const controller = { controllerKey: 'a'.repeat(64), planHash: 'c'.repeat(64) }
     const state = yield* Ref.make(
       initialState({
         broker,
@@ -128,17 +147,28 @@ const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeB
         controllerKey: controller.controllerKey,
         read: () =>
           Effect.succeed({
-            schemaVersion: 1,
-            ...controller,
-            active: true,
-            epoch: 1,
-            nextSequence: 2,
-            lastSequence: 1,
-            lastOutcome: ExecutionControllerOutcome.Waiting,
-            lastReceiptHash: 'd'.repeat(64),
-            completedAt: at,
-            nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
-            lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: at },
+            operational: {
+              schemaVersion: 'bayn.execution-controller-health.v1',
+              ...controller,
+              sourceRevision: runtimeConfig.build.sourceRevision,
+              active: true,
+              epoch: 1,
+              nextSequence: 2,
+              nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
+            },
+            status: {
+              schemaVersion: 1,
+              ...controller,
+              active: true,
+              epoch: 1,
+              nextSequence: 2,
+              lastSequence: 1,
+              lastOutcome: ExecutionControllerOutcome.Waiting,
+              lastReceiptHash: 'd'.repeat(64),
+              completedAt: at,
+              nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
+              lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: at },
+            },
           }),
       },
     )
@@ -201,6 +231,74 @@ describePostgres('Durable per-account broker observations', () => {
         return yield* effect(sql, makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache))
       }).pipe(Effect.provide(TestClock.layer())),
     )
+
+  test('a notification after the final history read fences publication and the prior ready cut before owner delivery', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        expect(yield* store.publish(first, snapshot(first), 0)).toBe(true)
+        expect(yield* store.readState).toEqual(observedBrokerState(snapshot(first)))
+
+        // The complete provider history has already been read; ingress arrives before its SQL publication.
+        const second = yield* claim(store)
+        yield* advanceToTicket(second)
+        const capturedBeforeNotification = snapshot(second)
+        const receipt = {
+          eventId: 'd'.repeat(64),
+          receivedAt: utcInstantFromEpochMillis(Date.parse(first.startedAt) - 10_000),
+        }
+        expect(yield* store.recordNotification(receipt)).toEqual({ covered: false })
+        expect(yield* store.publish(second, capturedBeforeNotification, 0)).toBe(false)
+        expect(Result.isFailure(yield* store.readState.pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
+        yield* store.failed(second, 0)
+
+        const next = yield* claim(store)
+        yield* advanceToTicket(next)
+        expect(yield* store.publish(next, snapshot(next), 0)).toBe(true)
+        expect(yield* store.readState).toEqual(observedBrokerState(snapshot(next)))
+        expect(yield* store.recordNotification({ ...receipt, receivedAt: next.startedAt })).toEqual({ covered: true })
+        const retained = yield* sql`SELECT event_id, source_revision,
+          to_char(received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "receivedAt",
+          recorded_at > ${second.startedAt}::timestamptz AS "arrivedDuringCapture"
+          FROM broker_notification_receipts WHERE account_id = ${accountId}`
+        expect(retained).toEqual([
+          {
+            event_id: receipt.eventId,
+            source_revision: revision,
+            receivedAt: receipt.receivedAt,
+            arrivedDuringCapture: true,
+          },
+        ])
+      }),
+    ))
+
+  test('concurrent republication retains one receipt and a foreign account cannot revoke a canonical cut', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        const receipt = { eventId: 'e'.repeat(64), receivedAt: '2026-11-01T00:00:00.000Z' }
+        const records = yield* Effect.all([store.recordNotification(receipt), store.recordNotification(receipt)], {
+          concurrency: 2,
+        })
+        expect(records).toEqual([{ covered: false }, { covered: false }])
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        expect(yield* store.publish(ticket, snapshot(ticket), 0)).toBe(true)
+        const foreign = makeBrokerObservationStore(sql, 'another-account', revision, 60_000, cacheFixture.cache)
+        expect(yield* foreign.recordNotification(receipt)).toEqual({ covered: false })
+        expect(yield* store.readState).toEqual(observedBrokerState(snapshot(ticket)))
+        expect(yield* store.recordNotification(receipt)).toEqual({ covered: true })
+        expect(
+          yield* sql`SELECT account_id, COUNT(*)::integer AS count FROM broker_notification_receipts GROUP BY account_id ORDER BY account_id`,
+        ).toEqual([
+          { account_id: 'another-account', count: 1 },
+          { account_id: accountId, count: 1 },
+        ])
+      }),
+    ))
 
   test('consecutive poll tickets share a generation boundary until a durable invalidation', async () =>
     run((_sql, store) =>
@@ -398,6 +496,110 @@ describePostgres('Durable per-account broker observations', () => {
         ).toHaveLength(1)
       }),
     ))
+
+  test('an early notification cannot start HTTP before the original mutation deadline while the account turn is held', async () =>
+    run((sql, store) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* store.activate(0)
+          const [timing] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([
+              Schema.Struct({
+                occurredAt: Schema.String,
+                deadlineMs: Schema.Number,
+              }),
+            ]),
+          )(
+            yield* sql`WITH timing AS (SELECT clock_timestamp() AS occurred_at)
+          SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "occurredAt",
+            ceil(EXTRACT(EPOCH FROM occurred_at + interval '1 second') * 1000)::double precision AS "deadlineMs"
+          FROM timing`,
+          )
+          yield* reserve(sql, '1'.repeat(64), timing.occurredAt)
+          const released = yield* Deferred.make<void>()
+          let accountCompleted = false
+          const accountTurn = yield* Deferred.await(released).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                accountCompleted = true
+              }),
+            ),
+            Effect.forkScoped,
+          )
+          const until = (afterMs: number) => sql`SELECT pg_sleep(GREATEST(0,
+          EXTRACT(EPOCH FROM ${timing.occurredAt}::timestamptz + ${afterMs} * interval '1 millisecond' - clock_timestamp())))`
+          yield* until(50)
+          yield* store.recordNotification({
+            eventId: '2'.repeat(64),
+            receivedAt: new Date(Date.parse(timing.occurredAt) + 50).toISOString(),
+          })
+          yield* until(150)
+          const captureId = randomUUID()
+          expect(yield* store.begin(captureId, timing.deadlineMs + 180_000)).toEqual({
+            status: BrokerObservationClaimStatus.QuotaWait,
+            nextPollNotBeforeMs: timing.deadlineMs,
+          })
+          yield* until(250)
+          expect(yield* store.begin(captureId, timing.deadlineMs + 180_000)).toEqual({
+            status: BrokerObservationClaimStatus.QuotaWait,
+            nextPollNotBeforeMs: timing.deadlineMs,
+          })
+          expect(accountCompleted).toBe(false)
+          expect(
+            yield* sql`SELECT capture_id FROM broker_observation_captures WHERE account_id = ${accountId}`,
+          ).toEqual([])
+          yield* until(1000)
+          const admitted = yield* store.begin(captureId, timing.deadlineMs + 180_000)
+          if (admitted.status !== BrokerObservationClaimStatus.Reserved)
+            throw new Error('Original mutation deadline did not admit its capture')
+          yield* advanceToTicket(admitted.ticket)
+          expect(yield* store.publish(admitted.ticket, snapshot(admitted.ticket), 0)).toBe(true)
+          expect(yield* store.readState).toEqual(observedBrokerState(snapshot(admitted.ticket)))
+          expect(
+            yield* sql`SELECT capture_id FROM broker_observation_captures WHERE account_id = ${accountId}`,
+          ).toEqual([{ capture_id: captureId }])
+          expect(accountCompleted).toBe(false)
+          yield* Deferred.succeed(released, undefined)
+          yield* Fiber.join(accountTurn)
+          expect(accountCompleted).toBe(true)
+        }),
+      ),
+    ))
+
+  test.each(['quota', 'mutation'] as const)(
+    'capture admission retains the later %s deadline and ignores another account',
+    async (later) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          const [timing] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([
+              Schema.Struct({
+                occurredAt: Schema.String,
+                mutationDeadlineMs: Schema.Number,
+              }),
+            ]),
+          )(
+            yield* sql`WITH timing AS (SELECT clock_timestamp() AS occurred_at)
+        SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "occurredAt",
+          ceil(EXTRACT(EPOCH FROM occurred_at + interval '1 second') * 1000)::double precision AS "mutationDeadlineMs"
+        FROM timing`,
+          )
+          const quotaDeadline = timing.mutationDeadlineMs + (later === 'quota' ? 5_000 : -500)
+          yield* store.activate(quotaDeadline)
+          yield* reserve(sql, '1'.repeat(64), timing.occurredAt)
+          expect(yield* store.begin(randomUUID(), timing.mutationDeadlineMs + 180_000)).toEqual({
+            status: BrokerObservationClaimStatus.QuotaWait,
+            nextPollNotBeforeMs: Math.max(quotaDeadline, timing.mutationDeadlineMs),
+          })
+          expect(
+            yield* sql`SELECT capture_id FROM broker_observation_captures WHERE account_id = ${accountId}`,
+          ).toEqual([])
+          const unrelated = makeBrokerObservationStore(sql, 'unrelated-account', revision, 60_000, cacheFixture.cache)
+          yield* unrelated.activate(0)
+          expect((yield* unrelated.begin(randomUUID(), 0)).status).toBe(BrokerObservationClaimStatus.Reserved)
+        }),
+      ),
+  )
 
   test('a raced invalidation settles only its own quota after completed HTTP', async () =>
     run((sql, store) =>
@@ -624,6 +826,255 @@ describePostgres('Durable per-account broker observations', () => {
         expect(yield* store.read).toEqual(snapshot(third))
       }),
     ))
+  const pendingFixture = (
+    sql: PgClient.PgClient,
+    store: ReturnType<typeof makeBrokerObservationStore>,
+    mask: number,
+    offsetMs = 1,
+  ) =>
+    Effect.gen(function* () {
+      yield* store.activate(0)
+      const ticket = yield* claim(store)
+      yield* advanceToTicket(ticket)
+      expect(yield* store.publish(ticket, snapshot(ticket), 0)).toBe(true)
+      // Give all three fixture boundaries the same exact millisecond. Production
+      // publication continues to use its own independently recorded timestamps.
+      yield* sql`UPDATE broker_observations SET completed_at = ${ticket.startedAt}::timestamptz,
+        notification_fence_at = ${ticket.startedAt}::timestamptz WHERE account_id = ${accountId}`
+      const at = utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + offsetMs)
+      if ((mask & 1) !== 0) yield* reserve(sql, '9'.repeat(64), at)
+      if ((mask & 2) !== 0)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO broker_events (event_id, schema_version, content_hash, event_kind, broker, account_id,
+              source_event_id, source_sequence, occurred_at, observed_at) VALUES (${'7'.repeat(64)}, 'bayn.paper-broker-event.v1',
+              ${'7'.repeat(64)}, 'FILL', 'ALPACA', ${accountId}, 'pending-fill', 1, ${at}, ${at})`
+            yield* sql`INSERT INTO fills (event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id,
+              symbol, side, quantity_atoms, price_atoms, fee_micros, source_timestamp)
+              VALUES (${'7'.repeat(64)}, ${accountId}, 'bayn.fill.v2', 'pending-fill', 'pending-order', 'pending-client',
+              'AAPL', 'BUY', '1000000000', '100000000000', '0', ${at.replace('Z', '000000Z')})`
+          }),
+        )
+      if ((mask & 4) !== 0)
+        yield* sql`INSERT INTO broker_notification_receipts (account_id, event_id, source_revision, received_at, recorded_at)
+          VALUES (${accountId}, ${'8'.repeat(64)}, ${revision}, ${at}::timestamptz, ${at}::timestamptz)`
+      yield* advanceToTicket(ticket, 1000)
+      return ticket
+    })
+
+  test.each([1, 2, 3, 4, 5, 6, 7])(
+    'projects the selected pending cut fence mask %s without admitting it',
+    async (mask) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          yield* pendingFixture(sql, store, mask)
+          const { result, attributes } = yield* readWithPendingFences(store.readState)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result)) {
+            expect(result.failure.kind).toBe(BrokerReadErrorKind.ObservationPending)
+            expect(result.failure.retryable).toBe(true)
+          }
+          expect(attributes).toEqual({
+            'bayn.broker.observation.pending.newer_mutation': (mask & 1) !== 0,
+            'bayn.broker.observation.pending.newer_broker_event': (mask & 2) !== 0,
+            'bayn.broker.observation.pending.newer_notification': (mask & 4) !== 0,
+          })
+        }),
+      ),
+  )
+
+  test.each([
+    [1, -1, false],
+    [1, 0, true],
+    [1, 1, true],
+    [2, -1, false],
+    [2, 0, false],
+    [2, 1, true],
+    [4, -1, false],
+    [4, 0, false],
+    [4, 1, true],
+  ] as const)('retains fence %s boundary %s semantics', async (mask, offsetMs, pending) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* pendingFixture(sql, store, mask, offsetMs)
+        const { result, attributes } = yield* readWithPendingFences(store.readState)
+        expect(Result.isFailure(result)).toBe(pending)
+        if (Result.isFailure(result)) expect(result.failure.kind).toBe(BrokerReadErrorKind.ObservationPending)
+        expect(attributes).toEqual(
+          pending
+            ? {
+                'bayn.broker.observation.pending.newer_mutation': mask === 1,
+                'bayn.broker.observation.pending.newer_broker_event': mask === 2,
+                'bayn.broker.observation.pending.newer_notification': mask === 4,
+              }
+            : {},
+        )
+      }),
+    ),
+  )
+
+  test.each(['future-completion', 'inverted-poll', 'expired', 'foreign-revision'] as const)(
+    'does not label an excluded %s cut with pending fences',
+    async (condition) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          const ticket = yield* pendingFixture(sql, store, 7)
+          if (condition === 'future-completion')
+            yield* sql`UPDATE broker_observations SET completed_at = ${ticket.startedAt}::timestamptz + interval '2 seconds' WHERE account_id = ${accountId}`
+          if (condition === 'inverted-poll')
+            yield* sql`UPDATE broker_observations SET completed_at = ${ticket.startedAt}::timestamptz - interval '1 millisecond' WHERE account_id = ${accountId}`
+          if (condition === 'expired') yield* advanceToTicket(ticket, 60_000)
+          const reader =
+            condition === 'foreign-revision'
+              ? makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
+              : store
+          const { result, attributes } = yield* readWithPendingFences(reader.readState)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result)) {
+            expect(result.failure.kind).toBe(BrokerReadErrorKind.Timeout)
+            expect(result.failure.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+          }
+          expect(attributes).toEqual({})
+        }),
+      ),
+  )
+
+  test.each([1, 4])(
+    'bounds diagnostic query work against the same pending cut with retained history: %s',
+    async (mask) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          const ticket = yield* pendingFixture(sql, store, mask)
+          if (mask === 4)
+            yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(ticket.startedAt) - 60_000))
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              // Migrated indexes and column constraints, isolated from other fixtures.
+              // These tables contain synthetic read-path history, not financial postings.
+              yield* sql`CREATE TEMP TABLE mutation_events (LIKE public.mutation_events INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`INSERT INTO mutation_events SELECT * FROM public.mutation_events`
+              yield* sql`INSERT INTO mutation_events
+              (event_id,schema_version,mutation_id,intent_id,sequence,operation,event_type,request_hash,consistency_delay_ms,occurred_at)
+              SELECT md5('mutation-' || n) || md5(n::text), 'bayn.paper-mutation-event.v1',
+                ${'9'.repeat(64)}, ${'9'.repeat(64)}, n + 1, 'SUBMIT', 'RECOVERY_UNKNOWN', ${'f'.repeat(64)}, 1000,
+                ${ticket.startedAt}::timestamptz - interval '60 seconds'
+              FROM generate_series(1,8192) AS n`
+              yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`CREATE TRIGGER broker_event_projection_hash BEFORE INSERT ON pg_temp.broker_events
+              FOR EACH ROW EXECUTE FUNCTION initialize_broker_event_projection_hash()`
+              yield* sql`INSERT INTO broker_events
+              (event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
+              SELECT md5('event-' || n) || md5(n::text), 'bayn.paper-broker-event.v1', md5(n::text) || md5('content-' || n),
+                'ACCOUNT', 'ALPACA', CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
+                'history-' || n, n, ${ticket.startedAt}::timestamptz - interval '60 seconds',
+                ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END
+              FROM generate_series(1,8192) AS n`
+              yield* sql`CREATE TEMP TABLE broker_notification_receipts (LIKE public.broker_notification_receipts INCLUDING ALL) ON COMMIT DROP`
+              yield* sql`INSERT INTO broker_notification_receipts SELECT * FROM public.broker_notification_receipts`
+              yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at,recorded_at)
+              SELECT CASE WHEN n <= 4096 THEN ${accountId} ELSE 'foreign-account' END,
+                md5('receipt-' || n) || md5(n::text), ${revision},
+                ${ticket.startedAt}::timestamptz - interval '60 seconds',
+                ${ticket.startedAt}::timestamptz + CASE WHEN n <= 4096 THEN interval '-60 seconds' ELSE interval '60 seconds' END
+              FROM generate_series(1,8192) AS n`
+              yield* sql`ANALYZE mutation_events`
+              yield* sql`ANALYZE broker_events`
+              yield* sql`ANALYZE broker_notification_receipts`
+              yield* sql`ANALYZE intents`
+              yield* sql`ANALYZE broker_observations`
+              const reads: Statement<Record<string, unknown>>[] = []
+              const monitored = new Proxy(sql, {
+                apply(target, receiver, argumentsList) {
+                  const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                  reads.push(statement)
+                  return statement
+                },
+              })
+              const reader = makeBrokerObservationStore(monitored, accountId, revision, 60_000, cacheFixture.cache)
+              // Store construction also builds the lazy invalidate statement;
+              // it is not executed by readState and is not part of this read path.
+              reads.length = 0
+              const { result, attributes } = yield* readWithPendingFences(reader.readState)
+              expect(Result.isFailure(result)).toBe(true)
+              if (Result.isFailure(result)) expect(result.failure.kind).toBe(BrokerReadErrorKind.ObservationPending)
+              expect(attributes).toEqual({
+                'bayn.broker.observation.pending.newer_mutation': mask === 1,
+                'bayn.broker.observation.pending.newer_broker_event': false,
+                'bayn.broker.observation.pending.newer_notification': mask === 4,
+              })
+              expect(reads).toHaveLength(2)
+              const pending = reads[1]
+              if (pending === undefined) throw new Error('Expected the existing pending query')
+              const [query, parameters] = pending.compile()
+              // PostgreSQL prunes the three unused diagnostic projections here;
+              // the parameters, predicates, selected row and snapshot stay identical.
+              const baselineQuery = `SELECT snapshot_hash,state_hash,"observedAt" FROM (${query}) AS pending`
+              const decodeCut = Schema.decodeUnknownEffect(
+                Schema.Array(
+                  Schema.Struct({
+                    snapshot_hash: Schema.String,
+                    state_hash: Schema.String,
+                    observedAt: Schema.String,
+                  }),
+                ),
+              )
+              const baselineRows = yield* sql.unsafe(baselineQuery, parameters).pipe(Effect.flatMap(decodeCut))
+              const diagnosticRows = yield* sql.unsafe(query, parameters).pipe(Effect.flatMap(decodeCut))
+              expect(diagnosticRows).toEqual(baselineRows)
+              const explain = (statement: string) =>
+                sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement}`, parameters).pipe(
+                  Effect.flatMap(
+                    Schema.decodeUnknownEffect(
+                      Schema.Array(
+                        Schema.Struct({
+                          'QUERY PLAN': Schema.Array(
+                            Schema.Struct({
+                              Plan: Schema.Record(Schema.String, Schema.Unknown),
+                              'Execution Time': Schema.Number,
+                            }),
+                          ),
+                        }),
+                      ),
+                    ),
+                  ),
+                  Effect.map((rows) => {
+                    const plan = rows[0]?.['QUERY PLAN'][0]
+                    if (plan === undefined) throw new Error('Missing pending-cut query plan')
+                    const blocks = [
+                      'Shared Hit Blocks',
+                      'Shared Read Blocks',
+                      'Local Hit Blocks',
+                      'Local Read Blocks',
+                    ].reduce((sum, key) => sum + Number(plan.Plan[key] ?? 0), 0)
+                    expect(plan.Plan['Actual Rows']).toBe(1)
+                    return { blocks, executionMs: plan['Execution Time'], plan: plan.Plan }
+                  }),
+                )
+              for (const reversed of [false, true, false]) {
+                const first = yield* explain(reversed ? query : baselineQuery)
+                const second = yield* explain(reversed ? baselineQuery : query)
+                const baseline = reversed ? second : first
+                const diagnostic = reversed ? first : second
+                yield* Effect.logInfo('Pending-cut diagnostic query plan sample', {
+                  mask,
+                  historyRowsPerTable: 8192,
+                  diagnosticFirst: reversed,
+                  baselineBlocks: baseline.blocks,
+                  diagnosticBlocks: diagnostic.blocks,
+                  baselineExecutionMs: baseline.executionMs,
+                  diagnosticExecutionMs: diagnostic.executionMs,
+                  plans: JSON.stringify({ baseline: baseline.plan, diagnostic: diagnostic.plan }),
+                })
+                // The extra projection probes are not free. Bound their logical
+                // read amplification without asserting timing on a shared CI host.
+                expect(diagnostic.blocks).toBeLessThanOrEqual(baseline.blocks * 3 + 64)
+              }
+            }),
+          )
+        }),
+      ),
+  )
+
   test('waits for a post-mutation cut only within the lifetime of a successful observation', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
@@ -658,6 +1109,8 @@ describePostgres('Durable per-account broker observations', () => {
         expect(corrupt.kind).toBe(BrokerReadErrorKind.Timeout)
         expect(corrupt.observationFailure).toBeUndefined()
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${Result.getOrThrow(canonicalHashV1Result(snapshot(first)))} WHERE account_id = ${accountId}`
+        yield* sql`SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM
+          ${first.startedAt}::timestamptz + interval '1001 milliseconds' - clock_timestamp())))`
         const second = yield* claim(store)
         yield* store.failed(second, 0)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
@@ -806,6 +1259,8 @@ describePostgres('Durable per-account broker observations', () => {
         yield* store.publish(first, snapshot(first), 0)
         yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
         yield* advanceToTicket(first, 1000)
+        yield* sql`SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM
+          ${first.startedAt}::timestamptz + interval '1001 milliseconds' - clock_timestamp())))`
         const second = { ...(yield* claim(store)), startedAt: first.startedAt }
         yield* store.failed(second, 0)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)

@@ -11,6 +11,7 @@ import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '..
 import { makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
 import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import type { buildMutationShadowCycleDecision } from '../observe-composition/decision-builder'
+import { isBracketProtection } from '../execution/contracts'
 
 export interface TradingEngineInput {
   readonly buildDecision: typeof buildMutationShadowCycleDecision
@@ -49,7 +50,7 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
               Effect.flatMap((stored) =>
                 Option.isSome(stored) &&
                 stored.value.intent.protection !== undefined &&
-                stored.value.intent.protection._tag !== 'Bracket'
+                !isBracketProtection(stored.value.intent.protection)
                   ? Effect.succeed(true)
                   : input.cycle.executionCycleClosureStore.containsIntent(intentId),
               ),

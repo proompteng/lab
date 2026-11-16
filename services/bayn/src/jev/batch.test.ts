@@ -22,6 +22,7 @@ import { prepareEntryInferenceInput } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
+import { shortEntryJudgmentPolicy } from './short-entry-questions'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { evaluationRequestFixture } from './test-support'
 import { entryEvaluationRequestFixture, entryCompletionFixture } from './entry-inference.test-support'
@@ -88,7 +89,7 @@ test('120-bar funded batch admission binds bounded CHART and complete selected-s
           symbol: current.symbol,
           visual: { model: visual.request.model, questions: visual.request.questions },
           staged: { policy: stagedChartQuestionPolicy, inputHash: prepared.requestHash },
-          jev: entryJudgmentPolicy,
+          jev: { ...entryJudgmentPolicy, model: prepared.input.protocol.model, short: shortEntryJudgmentPolicy },
         },
       ]),
     ),

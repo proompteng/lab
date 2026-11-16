@@ -15,10 +15,17 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import { evaluateClaimedEntryInferences } from './entry-inference-batch'
 import { entryHandoffDiagnostic, logCommittedEntryHandoff } from './entry-inference-diagnostics'
 import type { EntryHandoff } from './entry-inference'
-import { entryCompletionFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
+import {
+  entryCompletionFixture,
+  entryEvaluationRequestFixture as currentRequestFixture,
+} from './entry-inference.test-support'
+import { retainedJevProtocolV40Document } from './protocol'
 import { JevEvaluationStore, makeJevDispatch } from './evaluation'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { prepareEntryInferenceInput } from './entry-inference-input'
+
+const entryEvaluationRequestFixture = () =>
+  currentRequestFixture(undefined, undefined, undefined, retainedJevProtocolV40Document)
 
 const noQuantityRequest = () => {
   const original = entryEvaluationRequestFixture()
@@ -110,7 +117,7 @@ test.each([
     claimHash: null,
   },
 ])(
-  'pins current v40 feasibility and identity oracles for $reason',
+  'preserves retained v40 feasibility and identity oracles for $reason',
   ({ fixture, feasible, reason, requestHash, claimHash }) => {
     const request = fixture()
     const prepared = prepare(request)

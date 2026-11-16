@@ -113,6 +113,9 @@ export const matchedCommittedTargetFixture = (
         snapshotContentHash: market.contentHash,
         maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
         maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
+        ...(native.observation.payload.equityShortEligibility === undefined
+          ? {}
+          : { equityShortEntries: native.observation.payload.equityShortEligibility }),
       },
       maximumInputAgeMs: 120_000,
       submissionCutoffAt: cycle.window.submissionCutoffAt,
@@ -174,6 +177,9 @@ export const matchedCommittedTargetFixture = (
             expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
             marketDataObservedAt: market.observedAt,
             entryQuote: compiled.entryQuotes[target.symbol],
+            ...(native.observation.payload.equityShortEligibility?.[target.symbol] === undefined
+              ? {}
+              : { equityShortEligibility: native.observation.payload.equityShortEligibility[target.symbol] }),
             executionSession,
             reservedBuyingPowerMicros: '0',
             evaluatedAt: at,

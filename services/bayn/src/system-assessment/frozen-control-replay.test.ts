@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import protocol from './fixtures/frozen-control-protocol.json'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { frozenControlOrigin, frozenDeployedControlIdentity } from './frozen-control-identity'
-import { testHash } from './fixtures.test-support'
+import { testHash, withRegistrationCommitments } from './fixtures.test-support'
 import { FrozenControlReplaySchema, frozenReplayReplica, prepareFrozenControlReplay } from './frozen-control-replay'
 
 import { frozenControlReplayFixture } from './frozen-control.test-support'
@@ -28,6 +28,42 @@ test('an original single-position control binds its own registered carrier and o
   expect(prepared.engineRunId).toMatch(/^[0-9a-f]{64}$/)
   expect(prepared.runId).toBe(testHash(fixture.input))
   expect(Result.getOrThrow(prepare(fixture.input)).engineRunId).toBe(prepared.engineRunId)
+})
+
+test('the frozen polling engine cannot qualify a streaming runtime by resealing its registration', () => {
+  const original = fixture.input.latencyStress.registration
+  const retained = original.obligations.configuration
+  if (retained.schemaVersion !== 'bayn.qualification-runtime.v1') throw new Error('Expected retained polling runtime')
+  const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = retained
+  const registration = withRegistrationCommitments({
+    ...original,
+    obligations: {
+      ...original.obligations,
+      configuration: {
+        ...common,
+        schemaVersion: 'bayn.qualification-runtime.v2',
+        decisionTrigger: 'streaming',
+      },
+    },
+  })
+  const result = prepare(
+    reseal({
+      ...fixture.input,
+      latencyStress: {
+        ...fixture.input.latencyStress,
+        registration,
+        sourceCut: {
+          ...fixture.input.latencyStress.sourceCut,
+          registrationHash: testHash(registration),
+          runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
+        },
+      },
+    }),
+  )
+  expect(result).toMatchObject({
+    _tag: 'Failure',
+    failure: { message: 'Frozen polling replay cannot establish a streaming runtime registration' },
+  })
 })
 
 test('resealing cannot replace the original policy, registered model, calibration, allocation or carrier', () => {

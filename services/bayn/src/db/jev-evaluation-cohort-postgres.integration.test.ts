@@ -37,7 +37,7 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const replayAccountId = `replay-${'d'.repeat(64)}`
 const fixture = nativeJevFixture(undefined, undefined, replayAccountId, {
   ...defaultJevProtocolDocument,
-  candidateSymbols: ['AAPL', 'AMZN', 'IWM', 'NVDA'],
+  candidateSymbols: ['AAPL', 'AMZN', 'GOOGL', 'NVDA'],
 })
 const observedAt = fixture.observation.payload.observedAt
 const plan = Result.getOrThrow(

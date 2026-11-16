@@ -137,7 +137,7 @@ test.each(['before-projection', 'after-projection', 'before-state', 'before-sche
     }
     const ctx = {
       key: controllerKey,
-      get: async () => state,
+      get: async (key: string) => (key === 'controller' ? state : null),
       set: (_key: string, next: ExecutionControllerState) => {
         if (failOnce && failure === 'before-state') injected()
         expect(next.active).toBe(true)

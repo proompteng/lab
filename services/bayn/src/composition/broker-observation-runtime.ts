@@ -30,6 +30,7 @@ import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '.
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
+import { verifyBrokerNotification } from '../broker/notifications'
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
@@ -142,7 +143,8 @@ export const acquireBrokerObservationRuntime = (
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
-    readonly pollIntervalMs: number
+    readonly maxAgeMs: number
+    readonly freshnessLeadMs: number
   },
   never,
   Scope.Scope | ValkeyCache
@@ -181,7 +183,7 @@ export const acquireBrokerObservationRuntime = (
     })
     const brokerRuntimes = yield* ScopedRef.fromAcquire(acquireBroker)
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
-    const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, config.maxAgeMs - config.pollIntervalMs)
+    const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, Math.floor(config.maxAgeMs / 2))
     const store = Effect.map(PgClient.PgClient, (sql) =>
       makeBrokerObservationStore(
         sql,
@@ -192,8 +194,20 @@ export const acquireBrokerObservationRuntime = (
       ),
     )
     return {
-      pollIntervalMs: config.pollIntervalMs,
+      maxAgeMs: config.maxAgeMs,
+      freshnessLeadMs: captureTimeoutMs,
       runtime: {
+        verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, plan.config.alpaca, nowMs),
+        recordNotification: (signal, receipt) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.recordNotification(receipt)),
+            { signal },
+          ),
+        invalidate: (signal) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.invalidate),
+            { signal },
+          ),
         activate: (signal, nextPollNotBeforeMs) =>
           managed.runPromise(
             Effect.flatMap(store, (value) => value.activate(nextPollNotBeforeMs)),
@@ -292,13 +306,20 @@ export const acquireBrokerObservationRuntime = (
                   }),
                   Effect.onExit((exit) => {
                     if (Exit.isSuccess(exit)) return Effect.void
-                    const retryableReadFailure =
+                    const reusableSessionFailure =
                       exit.cause.reasons.length > 0 &&
-                      exit.cause.reasons.every((reason) => reason._tag === 'Fail' && reason.error.retryable)
-                    // A rejected or timed-out cut already discards its retained history. Keep the verified
-                    // connection for the next quota-paced poll instead of repeating startup preflight.
-                    // Acquisition failures and uncertain exits must still stop their lazy resource scope.
-                    return sessionVerified && retryableReadFailure
+                      exit.cause.reasons.every(
+                        (reason) =>
+                          reason._tag === 'Fail' &&
+                          reason.error.retryable &&
+                          reason.error.kind !== BrokerReadErrorKind.Transport &&
+                          (reason.error.kind !== BrokerReadErrorKind.Timeout ||
+                            reason.error.pollFailureReason === BrokerPollFailureReason.SnapshotRejected),
+                      )
+                    // A rejected snapshot can reuse its verified connection. Exhausted transport/timeouts
+                    // must dispose the old dispatcher so a stuck pool cannot stall the next capture too.
+                    // Reacquisition stays lazy and the next poll repeats account/permission verification.
+                    return sessionVerified && reusableSessionFailure
                       ? Effect.void
                       : ScopedRef.set(brokerRuntimes, acquireBroker)
                   }),
@@ -349,6 +370,7 @@ export const acquireBrokerObservationRuntime = (
                 return {
                   _tag: 'Published',
                   snapshotHash,
+                  observedAt: result.success.observedAt,
                   nextPollNotBeforeMs,
                 } as const
               }),

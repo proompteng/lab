@@ -18,38 +18,40 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
   the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
   socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The
-  `analysis-arm64` set uses the same private-process model through its workflow in `gregkonush/analysis`.
+  Shared ARM workflows use the same private-process model for application image builds.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
-- One `arc-amd64` scale set serves one AMD64 build slot under the existing workflow label, pinned to Ryzen. Each runner
-  reserves 16Gi memory. Excess GitHub jobs queue at the Actions service instead of creating Pending runner Pods or
-  overcommitting Ryzen. `arc-arm64` has eight build slots on Altra; `analysis-arm64` retains its separate one-slot limit.
-- `analysis-arm64` keeps its 20Gi disposable workspace and one worker. Its single runner container reserves two CPUs,
-  4Gi memory and 20Gi ephemeral storage, with limits of ten CPUs, 18Gi memory and 72Gi storage. These preserve the
-  former runner-plus-DinD resource budget. Its workflow starts a private BuildKit OCI worker with build parallelism
-  capped at one. It has no Docker daemon, socket volume, Docker startup wait or Kubernetes container hook.
-- `arc-amd64-publish` reserves one publication runner on Ryzen. Each single-container runner
-  requests one CPU, 2Gi memory and 2Gi ephemeral storage, with limits of four CPUs, 8Gi memory and 32Gi storage. Its
-  workspace is disposable `emptyDir`; it uses the same Kargo-promoted runner image and GitHub credential as the build
-  sets. Registry clients run in an unprivileged container with no Docker or BuildKit daemon, Kubernetes API token,
-  scratch PVC or sidecar. Keep native image builds on the architecture-specific sets so queued builds cannot consume
-  the publication runners.
-- Shared Nix index publication, Agents receipt assembly, and the Tengri, Restate, Temporal, Codex devbox, Buzz and Kata
-  publication jobs use `arc-amd64-publish`. Their native builds keep the existing architecture-specific labels.
+- Lab has two execution queues: `arc-arm64` on Altra (`talos-192-168-1-85`) and `arc-amd64` on Turin.
+  Both have `minRunners: 5` and `maxRunners: 10`. Each worker requests four CPUs and 16Gi memory, with limits
+  of 20 CPUs and 32Gi memory. Required hostname selectors keep workers off Ryzen.
+- Publication jobs use the normal `arc-amd64` queue. They retain their existing manifest/index validation,
+  signatures, receipts and discovery gates, but no longer have reserved workers or a separate scheduling label.
+- External repositories dispatch their workflows into lab to use the common pools. Repository-scoped scale sets
+  cannot serve another repository directly. The shared entry point checks out an immutable source commit and calls
+  application-owned actions; application build details stay in the owning repository.
 - Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
   its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
-- `local-path-ci-amd64` uses Ryzen's local XFS mount only. Other storage classes retain their existing paths. Each
-  runner uses one 45Gi generic ephemeral PVC for `/nix`,
-  `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The init copies the image's Nix tree before the
-  main containers mount it, checks XFS and free capacity, then verifies file bytes, counts and symlinks. The PVC is
-  deleted with the runner Pod. ARM64 and `analysis-arm64` retain their existing `emptyDir` workspaces.
-- The 45Gi value is a PVC request. The local-path provisioner does not configure an XFS project quota, so Kubernetes
-  does not enforce a 45Gi per-runner ceiling. The init requires at least 45Gi free after copying the image tree and
-  cache. A failed scratch bootstrap is a runner admission failure; investigate it before changing the class.
-- Ryzen's local partition shares a physical NVMe with Talos `/var`. Moving builds frees Turin's scratch device and
-  avoids Ceph-volume traffic from Ryzen, but does not prove isolation from Ryzen's etcd or control-plane I/O.
-- The AMD64 scratch init requests 2Gi and is limited to 8Gi of memory. Its full Nix-tree bootstrap exceeded the prior
+- Each AMD64 and normal ARM64 build runner uses one 100Gi generic ephemeral PVC from the existing `rook-ceph-block` StorageClass
+  for `/nix`, `/home/runner/.cache`, `/tmp`, `/var/tmp`, and `/home/runner/_work`. The class provides an ext4 kernel-RBD
+  filesystem in `replicapool`. The init rejects other filesystems, non-RBD devices and the runner root filesystem,
+  then copies the image's Nix tree and cache with the existing byte, file-count, symlink and ownership checks.
+  The PVC is deleted with its runner Pod. Publication and external application builds use the same scratch volume.
+- `/var/tmp` has a separate `var-tmp` subdirectory with explicit mode `01777`; large archive tools can use their
+  normal temporary directory without writing to the runner overlay. Both native build sets expose `CARGO_HOME`
+  and `RUSTUP_HOME` beneath the Ceph-backed cache. The init creates these directories after verifying the seed
+  copy, assigns them to UID 1001 with mode `00700`, and checks the 45Gi free-space reserve afterward.
+- A 100Gi RBD claim has a real filesystem capacity ceiling, unlike the former unbounded local-path directory.
+  The init requires enough space for the seed plus 45Gi and verifies at least 45Gi remains after copying, including
+  filesystem overhead. The claim size is separate from the runner's 100Gi local ephemeral-storage resource limit.
+  A failed bootstrap remains an admission failure; do not weaken the free-space or complete-copy checks.
+- New AMD64 scratch claims never use `local-path-ci-amd64`. Existing busy runners keep their old local claims until
+  their normal Pod lifecycle ends; no data migration or active-job deletion is required. Retain the old local-path
+  mappings for that cleanup. Ceph RBD data uses the existing HDD OSDs and dedicated BlueStore DB NVMe devices,
+  separate from the build nodes' system NVMe and Talos `/var`. ARM64 build scratch no longer uses node-local
+  `emptyDir` or the runner overlay. Image layers, runtime metadata and runner logs still use node
+  storage, so verify system-disk and control-plane latency during representative builds.
+- Each native build scratch init requests 2Gi and is limited to 8Gi of memory. The AMD64 Nix-tree bootstrap exceeded the prior
   512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's 16Gi aggregate
   memory request for the runner, so the init does not increase its scheduling reservation.
 - Tailscale connectivity comes from the Omni-owned node configuration in
@@ -59,45 +61,72 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - ARC runner and listener pods append the tailnet search suffix `ide-newton.ts.net` via `dnsConfig.searches`, so bare tailnet hosts such as `temporal-grpc` resolve from GitHub Actions jobs without hardcoding the full `*.ts.net` name.
 - Generate the `github-token` SealedSecret with `scripts/generate-arc-github-token-secret.sh`. The script reads the token from 1Password via `${ARC_GITHUB_TOKEN_OP_PATH}` (defaults to `op://infra/github personal token/token`) and writes the sealed manifest to `argocd/applications/arc/github-token.yaml`.
 
-## AMD64 capacity
+## Runner capacity and delivery
 
-The single `arc-amd64` scale set has `minRunners: 1` and `maxRunners: 1`. Keep its existing GitHub identity and label.
-Separate ARC sets with a duplicate label do not provide a reliable combined queue, and ARC 0.14.2 does not update an
-existing registered set's labels. Native builds keep that one label; publication has its own `arc-amd64-publish` label.
+Each lab queue keeps five idle runners and grows to ten. At maximum, each host reserves 40 CPUs and 160Gi memory
+for ten workers, with aggregate limits of 200 CPUs and 320Gi memory. Altra and Turin retain their existing node roles,
+networking and application workloads. Ryzen hosts the ARC controller, listeners and CI telemetry, not lab job workers.
+Do not add duplicate ARC scale sets with the same label; ARC 0.14.2 does not update an existing registered set's labels.
 
-Ryzen has 128GiB installed, but its 64GiB GPU reservation leaves about 61.82GiB allocatable. At this migration
-snapshot, 47,144Mi of requests consume 63,249Mi allocatable, leaving 16,105Mi. The one-build/one-publication target
-plus Kafka's planned 8Gi request totals about 57,384Mi, leaving about 5,865Mi for runtime variation. Recheck fresh
-requests, pressure, local scratch capacity and etcd latency before promotion. Each build runner still requests four
-CPUs and 16Gi and permits 20 CPUs and 32Gi. No BIOS or node configuration change is part of this placement.
+Capacity and scratch changes follow the reviewed Git, runner-image, Warehouse/Freight and `arc-runner` Kargo path.
+The Stage updates both native init/runner image pairs together; each init must seed the image its runner executes.
+Publish workflows now use the existing AMD64 label, so delivery does not depend on creating a new queue first.
+Finish accepted jobs normally and let ARC retire old Pods and claims; do not shrink existing PVCs or delete active jobs.
+Older workflow revisions still targeting the retired publication label must finish before retirement or be updated to
+the normal AMD64 label before being run again.
 
-Apply the local storage class and complete the [Ryzen placement rollout](../../../devices/galactic/scheduling/README.md)
-before promoting ARC through Kargo. Verify the provisioner has reloaded the Ryzen CI path map, and exercise an empty
-disposable claim on Ryzen before allowing runner scratch creation. Busy Turin runners must finish normally. Existing
-Pods retain their original claims until ARC retires them. ARM64 placement stays on Altra and its
-normal limit increases from five to eight; its minimum stays one and its existing node-local workspaces remain.
-Check Altra's node filesystem and image filesystem before promotion: its 2026-10-12 disk-pressure event recovered
-through native image reclamation and the kubelet's five-minute transition period. Do not override a pressure taint.
-The Kargo Stage updates the two native build sets, the publication set and the separate analysis set together.
+Verify the promoted Kargo revision, node selectors, min/max settings and `rook-ceph-block` claims. The manual
+`ARC placement acceptance` workflow requires ten distinct ARM64 Pods on Altra and ten distinct AMD64 Pods on Turin,
+each with its own 100Gi ext4 RBD filesystem. It checks the five scratch mounts, Rust cache homes, `RUNNER_TEMP`,
+private BuildKit cache and exact output checksums, then requires at least 45 seconds of common twenty-worker occupancy.
+Run it after the existing build wave clears; its five-minute readiness budget fails if all slots cannot start.
+This proves placement and tooling, not sustained throughput.
 
-Dispatch `.github/workflows/arc-placement-acceptance.yml` from `main` after reconciliation. The single build job
-requests `arc-amd64`, exercises local scratch, Nix and a direct BuildKit build with a local file export, and overlaps
-the single publication job. It requires one runner Pod on Ryzen and checks the publication pool's registry access and
-tooling. Read back memory pressure, etcd latency and NVMe contention
-throughout that window; Ryzen scratch shares its physical NVMe with Talos `/var`.
-
-Deploy new runner pools through the runner-image/Kargo path before changing workflow routing. Otherwise the image
-workflow's own publication job can wait for a pool whose creation depends on that image. Once the new pool is ready,
-migrate publication jobs directly to `arc-amd64-publish`; retain their validation, signatures and discovery gates.
-
-Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. If storage contention
-returns, restore `minRunners: 0` and `maxRunners: 1` through that path. Existing busy runners finish before the count
-falls; the [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
-checks with the Actions service before deleting a runner. Do not delete runner Pods manually.
+The optional `native_qualification` input retains the separate thirty-minute common native-work proof on the ten
+AMD64 builders. It does not establish ARM64 sustained throughput; use representative ARM64 jobs and the storage/control
+plane observations below for that. Preserve pressure taints and existing bootstrap admission checks.
 
 GitHub's [official ARC scale-set documentation](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets#example-jobs-queue-draining)
 documents strict queue draining as setting both `minRunners` and `maxRunners` to `0`. Reserve that mode for an explicitly
-coordinated emergency drain because the ordinary ARC image/Kargo workflow also requires an AMD64 runner.
+coordinated emergency drain because the runner-image/Kargo workflow itself needs the normal build queues.
+
+### Ceph capacity and sustained-load acceptance
+
+The 2026-11-12 incident reproduced under normal AMD64 CI load. Turin's etcd WAL `fdatasync` took 85.048 seconds
+and 27.090 seconds at 09:30 UTC, and API readiness failed its etcd checks. At 09:31 UTC the shared system NVMe
+averaged 78.86 MB/s writes, 116.6 ms per write and a weighted queue of 271.7 over two minutes. Read-only cgroup
+samples from 09:30:59 to 09:32:57 attributed 32.09, 7.63 and 4.79 MB/s to three AMD64 runners, including one
+scratch initializer. The quiet interval before that wave did not establish stability under build load.
+
+Ceph preflight at 09:50 UTC found all six OSDs up/in and all 601 PGs active and clean, including ongoing scrubs.
+`replicapool` retained its two replicas across hosts, with 9.94TiB `MAX AVAIL`; the cluster had 30.01TiB raw free.
+Ten fully written 100Gi claims require 0.98TiB logical and approximately 1.95TiB raw at that replication factor.
+This fits the measured capacity without reducing replication or changing a durable volume. RBD is thin-provisioned;
+the arithmetic does not reserve pool headroom or prove throughput. `HEALTH_WARN` already reported BlueStore slow
+operation indications on OSDs 3 and 5. Keep that warning visible and recheck it; capacity alone is not health proof.
+
+ARM64 builds reproduced the same system-disk contention on Altra later that day. From 13:20:49 to 13:23:35 UTC,
+the active Kata ARM64 runner Pod wrote 19.75 MB/s to Altra's system NVMe, while the device averaged 42.67 MB/s.
+The Pod's workspace was a local XFS `emptyDir`; its Nix and temporary/cache paths were on the overlay.
+Altra's etcd logged 1.459, 2.421 and 1.074-second WAL syncs inside that measured interval. The ARM64 build set now
+uses the same verified Ceph bootstrap, five mounts and Rust cache homes as AMD64, with its five-to-ten
+capacity, ARM64 placement, service account and runner resources. Accepted jobs finish on their existing storage.
+At 13:25 UTC, `replicapool` had 9.66TiB `MAX AVAIL` and the cluster had 29.45TiB raw free, with replication still two.
+The ten AMD64 plus ten ARM64 maximum requires 1.95TiB logical and approximately 3.91TiB raw if every 100Gi
+claim is fully written. Retain the existing BlueStore warning and qualify actual ARM64 builds and all three
+etcd members after rollout; the ten-slot AMD64 workflow alone does not prove ARM64 throughput.
+
+When heavy native CI reproduces system-disk contention, deliver the independently reviewed storage prerequisite
+through its normal CI, runner-image and Kargo path first. Verify the new mounts and a clean control-plane baseline
+before resuming the affected native gates. A cancelled or incomplete run remains unqualified; storage admission
+and a successful runner rollout do not replace native build or sustained-throughput acceptance.
+
+Verify the promoted Kargo revision, both five-to-ten runner configurations, host placement and 100Gi `rook-ceph-block` claims first.
+After the slot/output acceptance succeeds, record a continuous 30-minute representative native-image-build window
+at the intended concurrency with healthy API/etcd readiness, no new slow WAL-sync warnings or recurring
+reconciliation timeouts, and measured system-device write/flush latency and queue depth. Record Ceph slow operations,
+PG state, pool headroom, build duration and errors over the same window. Investigate persistent Ceph latency before
+claiming ten-runner throughput or stability. Preserve existing pool durability and let accepted jobs finish normally.
 
 GitHub can reject an outdated runner binary and ARC then marks its scale set `Outdated`, removes its listener, and
 stops scheduling jobs. A successful controller health check does not prove runner capacity. If every build runner

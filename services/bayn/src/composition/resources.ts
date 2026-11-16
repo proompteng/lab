@@ -1,4 +1,5 @@
-import { equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
+import { DecisionConstructionLive } from '../decision-construction'
+import { currentEquityMarketProfile as equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
 
 import type { MarketSources } from '../market-data/streaming/raw-events'
 import { ValkeyCacheLive } from '../valkey-cache'
@@ -6,6 +7,7 @@ import { BrokerObservationsLive } from '../db/broker-observations'
 import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
+import { JevInferenceWorkStoreLive } from '../db/jev-inference-work-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
@@ -100,7 +102,13 @@ export const WorkerMarketProjectionLive = (
     : Layer.effect(
         KafkaMarketProjection,
         makeThreadedKafkaProjection(
-          projectionWorkerOptions(kafka, plan.config, workerStreamingUniverse(plan), plan.config.build),
+          projectionWorkerOptions(
+            kafka,
+            plan.config,
+            workerStreamingUniverse(plan),
+            plan.config.build,
+            plan.config.alpaca.identity.identityHash,
+          ),
         ).pipe(
           Effect.mapError((cause) =>
             operationalError({
@@ -154,6 +162,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
   const writerFence = WriterFenceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
     JevBatchStoreLive.pipe(Layer.provideMerge(JevEvaluationStoreLive)),
+    JevInferenceWorkStoreLive,
     EntryInferenceJournalLive,
     CandidateObservationStoreLive,
     JevPositionStoreLive,
@@ -166,6 +175,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
+    DecisionConstructionLive,
     plan.config.jevKey === undefined
       ? Layer.succeed(JevClient, {
           evaluate: () =>

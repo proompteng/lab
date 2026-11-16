@@ -7,6 +7,7 @@ import YAML, { isMap, isSeq } from 'yaml'
 const root = resolve(import.meta.dir, '../../../../..')
 
 test.each([
+  ['bayn-backup-alerts.yaml', ['bayn-database-backup.rules']],
   ['platform-alerts.yaml', ['ofz-relay-platform.rules', 'tengri-production.rules']],
   ['restate-alerts.yaml', ['restate-control-plane.rules']],
   ['torghut-registry-alerts.yaml', ['torghut-ws.rules', 'registry.rules']],

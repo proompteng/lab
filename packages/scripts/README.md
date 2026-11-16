@@ -58,7 +58,7 @@ regressions. The scoped `registry-cleanup` CI workflow also runs the real HAProx
 ## Production image delivery
 
 Scripts that build or apply a service are not a production release mechanism. Merge source to `main`, let the owning
-build workflow publish the immutable image, then inspect Kargo's `lab-delivery` Warehouse/Freight/Stage and the Argo
+build workflow publish the immutable image, then inspect Kargo's owning `<project>-release` Warehouse/Freight/Stage and the Argo
 Application in `argocd`. Kargo writes the exact digest and build/provenance metadata to `kargo/<stage>` and Argo
 syncs that branch; no script, SHA bump, deployment PR, release branch, Image Updater, or manual `kubectl apply` is part
 of the normal path. See

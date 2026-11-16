@@ -20,6 +20,9 @@ describe('prospective strategy work schedule', () => {
       },
     })
     const schedule = Result.getOrThrow(registeredSchedule(registration))
+    const configuration = registration.obligations.configuration
+    if (configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+      throw new Error('Expected retained polling runtime')
     const decisions = schedule.filter((o) => o.class === ObligationClass.Decision)
     expect(decisions).toHaveLength(20 * 389)
     expect(decisions[0]).toMatchObject({ dueAt: '2026-11-02T14:31:02.000Z', deadlineAt: '2026-11-02T14:32:02.000Z' })
@@ -29,11 +32,24 @@ describe('prospective strategy work schedule', () => {
         ...registration,
         obligations: {
           ...registration.obligations,
-          configuration: { ...registration.obligations.configuration, cyclePollIntervalMs: poll },
+          configuration: { ...configuration, cyclePollIntervalMs: poll },
         },
       })
       expect(Result.getOrThrow(registeredSchedule(changed))).toEqual(schedule)
     }
+    const { schemaVersion: _version, cyclePollIntervalMs: _poll, ...common } = configuration
+    const streaming = withRegistrationCommitments({
+      ...registration,
+      obligations: {
+        ...registration.obligations,
+        configuration: {
+          ...common,
+          schemaVersion: 'bayn.qualification-runtime.v2',
+          decisionTrigger: 'streaming',
+        },
+      },
+    })
+    expect(Result.getOrThrow(registeredSchedule(streaming))).toEqual(schedule)
     const firstDue = new Date(Date.parse(native.draft.window.executionOpenAt) + 62000).toISOString()
     const pending = jevObservationQuery(
       native.draft,
