@@ -552,4 +552,26 @@ describe('canonical hashing', () => {
     expect(stableU64('run')).toBe(6267951632907394021n)
     expect(stableU64('run')).toBeLessThan(1n << 64n)
   })
+
+  test('preserves UTF-8 hashing and sliced binary input bytes', () => {
+    expect(sha256('é😀\u0000')).toBe('8cf55c5c4856286bfebeedef3662d2f69ffcb06995ea7b996ea99f8c5c4efe47')
+    expect(sha256('\ud800')).toBe('83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097')
+    expect(sha256(new Uint8Array([9, 0, 255, 128, 10, 9]).subarray(1, 5))).toBe(
+      '6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1',
+    )
+  })
+
+  test('preserves identifier prefixes, leading zero bytes, and empty or delimited parts', () => {
+    const cases = [
+      [[], 302652579918965577886386472538583578916n, 11167788843400149284n],
+      [['', 'run', ''], 203297556630472807729896709296947795744n, 13529013134131533600n],
+      [['\u0000', 'é', '😀'], 167810443443146597784475889661378185084n, 15443342425121769340n],
+      [['run', 'a\u001fb'], 283080920921371137441733279798744778907n, 2468675853728024731n],
+      [['leading-zero-182'], 1138895197157255809016834109682278535n, 1646656519654924423n],
+    ] as const
+    for (const [parts, u128, u64] of cases) {
+      expect(stableU128(...parts)).toBe(u128)
+      expect(stableU64(...parts)).toBe(u64)
+    }
+  })
 })

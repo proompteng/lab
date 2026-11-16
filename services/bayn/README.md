@@ -201,9 +201,19 @@ Run it only in a separate research process; it is not part of the live service o
 
 ## Internal APIs
 
+The [accounting-verification benchmark](tools/benchmark-accounting-verification.md) measures complete reconstruction
+of synthetic accounting history. SHA-256 uses the runtime's one-shot function, and ledger identifiers parse the same
+first sixteen digest bytes directly as an integer. Canonical validation, hash bytes, and non-zero identifier rules
+retain their existing behavior.
+
 The [fee-validation benchmark](tools/benchmark-fee-validation.md) measures dated fee and entry-economics work.
 Schema predicates are reused and fill totals are accumulated in one pass; exact fee caps, rounding, and separate
 crypto cash and coin charges retain their existing behavior.
+
+Accounting-history reads combine posted inventory debits only when account, symbol, and the exact PostgreSQL
+effective timestamp match. Every history row still passes full accounting verification on each read. The
+[reconciliation-history measurements](tools/benchmark-reconciliation-history.md) record SQL timing and exact-result
+comparisons, separately from complete reconciliation or trading performance.
 
 Internal functions use a single data-first calling convention. The execution worker uses the recovering native runtime
 adapter, and its tests exercise that same adapter. The current execution model is defined directly in

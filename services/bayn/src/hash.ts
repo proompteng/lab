@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
+import { hash } from 'node:crypto'
 import { types } from 'node:util'
 
 import { pipe, Result } from 'effect'
 
-export const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
+export const sha256 = (value: string | Uint8Array): string => hash('sha256', value, 'hex')
 
 type CanonicalJsonValidationReason =
   | 'cycle'
@@ -187,7 +187,8 @@ const serializeObject = (
   const keys = canonicalObjectKeys(value, path)
 
   ancestors.add(value)
-  const entries: string[] = []
+  let body = '{'
+  let separator = ''
   for (const key of keys) {
     if (!key.isWellFormed()) return validationFailure(path, 'invalid-unicode-key', 'string')
     path.push(key)
@@ -198,13 +199,14 @@ const serializeObject = (
         quotedKey = quoteCanonicalString(key)
         quotedKeys.set(key, quotedKey)
       }
-      entries.push(`${quotedKey}:${nested}`)
+      body += `${separator}${quotedKey}:${nested}`
+      separator = ','
     } finally {
       path.pop()
     }
   }
   ancestors.delete(value)
-  return `{${entries.join(',')}}`
+  return `${body}}`
 }
 
 const serializeCanonicalValue = (
@@ -318,11 +320,7 @@ export const canonicalJsonWithHashV1Result = (value: unknown) =>
   )
 
 export const stableU128 = (...parts: readonly string[]): bigint => {
-  const bytes = createHash('sha256').update(parts.join('\u001f')).digest().subarray(0, 16)
-  let value = 0n
-  for (const byte of bytes) {
-    value = (value << 8n) | BigInt(byte)
-  }
+  const value = BigInt(`0x${sha256(parts.join('\u001f')).slice(0, 32)}`)
   return value === 0n ? 1n : value
 }
 
