@@ -177,6 +177,10 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
+            # The controller and projection worker share this container's 1 GiB.
+            # Node otherwise derives separate heap budgets from the same container limit.
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=256 --max-semi-space-size=16
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
