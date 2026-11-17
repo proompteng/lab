@@ -58,7 +58,8 @@ import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevBatchResult, nativeJevFixture } from '../jev/native.test-support'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
-import { decideJevExit, JevExitReason } from '../jev/exit'
+import { decideJevExit, JevExitReason, JevExitTargetSchema } from '../jev/exit'
+import { makePersistenceDocumentFixture } from '../system-assessment/decision-persistence.test-support'
 import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { jevPricingQuery } from '../jev/runtime'
@@ -1907,7 +1908,9 @@ describe('closing market-data fallback boundaries', () => {
 
   test.each([
     'protective',
+    'short-protective',
     'profit',
+    'short-profit',
     'uncommitted-hold',
     'missing-latch',
     'future-latch',
@@ -1926,29 +1929,60 @@ describe('closing market-data fallback boundaries', () => {
     'missing-mark',
     'expired-lease',
     'invalid-archive',
+    'target-expires-during-reconciliation',
   ] as const)('committed protective exit fallback before the session close window: %s', async (scenario) => {
     const request = await fixture()
+    const short = scenario.startsWith('short-')
+    if (short) {
+      const document = await Effect.runPromise(makePersistenceDocumentFixture(accountId, 1, true))
+      expect(document.bindings.cycleId).toBe(request.cycle.identity.cycleId)
+      expect(document.bindings.strategyProtocolHash).toBe(request.cycle.identity.strategyProtocolHash)
+      request.entryDocument = document
+      request.cycle = {
+        ...request.cycle,
+        bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
+      }
+    }
     const entry = request.entryDocument.strategyDecision
     if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
     const managed = activeNativeFixture(JevPurpose.Manage).portfolio
     if (managed.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
     const plan = entry.exitPolicy.plans['AAPL']
     const fill = managed.entryFills[0]
-    if (plan === undefined || plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4' || fill === undefined)
-      throw new Error('Expected an entry-bound long plan and fill')
+    if (plan === undefined || fill === undefined) throw new Error('Expected an entry-bound plan and fill')
     const quantityAtoms = plan.maximumQuantityAtoms
-    const priceAtoms = String(BigInt(plan.levels.maximumEntryPriceMicros) * 1000n)
-    const costBasisMicros = String((BigInt(quantityAtoms) * BigInt(priceAtoms)) / 1_000_000_000_000n)
+    const priceMicros =
+      plan.levels.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1'
+        ? plan.levels.minimumEntryPriceMicros
+        : plan.levels.maximumEntryPriceMicros
+    const priceAtoms = String(BigInt(priceMicros) * 1000n)
+    const signedQuantity = short ? -BigInt(quantityAtoms) : BigInt(quantityAtoms)
+    const costBasisMicros = String((signedQuantity * BigInt(priceAtoms)) / 1_000_000_000_000n)
     const observedAt = new Date(Date.parse(at) + (scenario === 'uncommitted-hold' ? 901_000 : 60_000)).toISOString()
     const facts = factsAt(observedAt, true)
     const state = {
       ...facts.brokerState,
+      account: {
+        ...facts.brokerState.account,
+        ...(short
+          ? { cashMicros: String(BigInt(facts.brokerState.account.equityMicros) - BigInt(costBasisMicros)) }
+          : {}),
+      },
       orders: facts.brokerState.orders.map((order) => ({
         ...order,
+        side: short ? OrderSide.Sell : OrderSide.Buy,
         quantityAtoms: String(BigInt(quantityAtoms) + 1n),
         filledQuantityAtoms: quantityAtoms,
       })),
-      positions: facts.brokerState.positions.map((position) => ({ ...position, quantityAtoms, costBasisMicros })),
+      positions: facts.brokerState.positions.map((position) => ({
+        ...position,
+        quantityAtoms: String(signedQuantity),
+        averageEntryPriceMicros: priceMicros,
+        marketPriceMicros: priceMicros,
+        marketValueMicros: costBasisMicros,
+        unrealizedPnlMicros: '0',
+        costBasisMicros,
+      })),
     }
     const stateHash = Result.getOrThrow(reconciledStateHash(state))
     const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
@@ -1966,10 +2000,12 @@ describe('closing market-data fallback boundaries', () => {
           ...managed,
           entryDecisionHash: request.entryDocument.contentHash,
           exitPolicy: entry.exitPolicy,
-          entryFills: [{ ...fill, quantityAtoms, priceAtoms, occurredAt: at }],
+          entryFills: [
+            { ...fill, side: short ? OrderSide.Sell : OrderSide.Buy, quantityAtoms, priceAtoms, occurredAt: at },
+          ],
           exitRequestedAt:
             scenario === 'uncommitted-hold' ? null : new Date(Date.parse(observedAt) - 1_000).toISOString(),
-          profitExitRequested: scenario === 'profit',
+          profitExitRequested: scenario === 'profit' || scenario === 'short-profit',
           brokerState: heldFacts.brokerState,
         },
         observedAt,
@@ -1983,8 +2019,30 @@ describe('closing market-data fallback boundaries', () => {
     if (scenario === 'future-latch')
       Object.assign(exitTarget.evidence.portfolio, { exitRequestedAt: '2099-01-01T00:00:00.000Z' })
     if (scenario === 'future-target') Object.assign(exitTarget, { observedAt: '2099-01-01T00:00:00.000Z' })
-    if (scenario === 'foreign-cycle') Object.assign(exitTarget, { cycleId: 'f'.repeat(64) })
-    if (scenario === 'foreign-entry') Object.assign(exitTarget, { entryDecisionHash: 'f'.repeat(64) })
+    if (scenario === 'foreign-cycle')
+      Object.assign(
+        exitTarget,
+        Result.getOrThrow(
+          decideJevExit({
+            ...exitTarget.evidence,
+            cycleId: 'f'.repeat(64),
+          }),
+        ),
+      )
+    if (scenario === 'foreign-entry')
+      Object.assign(
+        exitTarget,
+        Result.getOrThrow(
+          decideJevExit({
+            ...exitTarget.evidence,
+            portfolio: { ...exitTarget.evidence.portfolio, entryDecisionHash: 'f'.repeat(64) },
+          }),
+        ),
+      )
+    if (scenario === 'foreign-cycle' || scenario === 'foreign-entry')
+      expect(Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(exitTarget))).toBe(
+        true,
+      )
     if (scenario === 'foreign-account')
       Object.assign(exitTarget.evidence.portfolio.brokerState.account, { accountId: 'foreign-account' })
     if (scenario === 'altered-policy')
@@ -2021,6 +2079,8 @@ describe('closing market-data fallback boundaries', () => {
       },
       riskContext: { ...heldFacts.riskContext, unknownMutationCount: scenario === 'unknown-mutation' ? 1 : 0 },
     }
+    let latestFacts = currentFacts
+    let recheckedAt = observedAt
     let reads = 0
     const result = await runWithConstruction(
       Effect.gen(function* () {
@@ -2046,16 +2106,76 @@ describe('closing market-data fallback boundaries', () => {
                   : Effect.fail(marketFailure),
             },
           },
-          reconcile: Effect.sync(() => {
+          reconcile: Effect.gen(function* () {
             reads += 1
-            return currentFacts
+            if (scenario === 'target-expires-during-reconciliation' && reads === 2) {
+              yield* TestClock.adjust(native.protocol.maximumQuoteAgeMs + 1)
+              recheckedAt = yield* currentUtcInstant
+              const refreshedState = {
+                ...currentState,
+                account: { ...currentState.account, observedAt: recheckedAt },
+                positions: currentState.positions.map((position) => ({ ...position, observedAt: recheckedAt })),
+                orders: currentState.orders.map((order) => ({ ...order, observedAt: recheckedAt })),
+                positionsObservedAt: recheckedAt,
+                ordersObservedAt: recheckedAt,
+              }
+              const refreshedHash = Result.getOrThrow(reconciledStateHash(refreshedState))
+              const refreshedReconciliation = {
+                ...currentReconciliation,
+                reconciledAt: recheckedAt,
+                expectedHash: refreshedHash,
+                observedHash: refreshedHash,
+              }
+              latestFacts = {
+                ...currentFacts,
+                brokerState: { ...refreshedState, reconciliation: refreshedReconciliation },
+                report: { ...currentFacts.report, reconciliation: refreshedReconciliation },
+              }
+            }
+            return latestFacts
           }),
         })
       }).pipe(Effect.exit, Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
-    if (scenario !== 'protective') {
+    if (scenario === 'target-expires-during-reconciliation') {
+      expect(Exit.isFailure(result)).toBe(true)
+      expect(reads).toBe(2)
+      const renewedTarget = Result.getOrThrow(
+        decideJevExit({
+          ...exitTarget.evidence,
+          portfolio: { ...exitTarget.evidence.portfolio, brokerState: latestFacts.brokerState },
+          observedAt: recheckedAt,
+        }),
+      )
+      const renewed = await runWithConstruction(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(recheckedAt))
+          return yield* prepareClosingExecutionCycleDecision({
+            ...request,
+            exitTarget: renewedTarget,
+            reconcile: Effect.succeed(latestFacts),
+            input: {
+              ...request.input,
+              intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) },
+            },
+          })
+        }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+      )
+      expect(renewedTarget.observedAt).toBe(recheckedAt)
+      expect(renewedTarget.commitDeadlineAt > exitTarget.commitDeadlineAt).toBe(true)
+      expect(renewed.document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+      return
+    }
+    if (scenario !== 'protective' && scenario !== 'short-protective') {
       expect(Exit.isFailure(result) || result.value.document.targetPlan.status !== TargetPlanStatus.Planned).toBe(true)
-      if (scenario === 'profit' || scenario === 'uncommitted-hold' || scenario === 'invalid-archive')
+      if (
+        scenario === 'profit' ||
+        scenario === 'short-profit' ||
+        scenario === 'uncommitted-hold' ||
+        scenario === 'invalid-archive' ||
+        scenario === 'foreign-entry' ||
+        scenario === 'foreign-cycle'
+      )
         expect(reads).toBe(1)
       return
     }
@@ -2074,7 +2194,8 @@ describe('closing market-data fallback boundaries', () => {
       priceReference: 'reconciled-broker-position-mark',
     })
     expect(prepared.document.targetPlan.intentTargets).toHaveLength(1)
-    expect(prepared.document.targetPlan.intentTargets[0]?.side).toBe(OrderSide.Sell)
+    expect(prepared.document.targetPlan.intentTargets[0]?.side).toBe(short ? OrderSide.Buy : OrderSide.Sell)
+    expect(prepared.document.targetPlan.intentTargets[0]?.quantityAtoms).toBe(quantityAtoms)
   })
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
