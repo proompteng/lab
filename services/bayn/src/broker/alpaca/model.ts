@@ -220,6 +220,12 @@ export enum TradeActivityType {
   PartialFill = 'partial_fill',
 }
 
+export enum FillActivitySide {
+  Buy = 'buy',
+  Sell = 'sell',
+  SellShort = 'sell_short',
+}
+
 export interface ProxyDispatcherDependencies {
   readonly create: (url: URL) => InstanceType<typeof Undici.Dispatcher>
   readonly destroy: (dispatcher: InstanceType<typeof Undici.Dispatcher>) => Promise<void>
@@ -669,7 +675,7 @@ export const FillActivityResponseSchema = Schema.Struct({
   leaves_qty: Decimal,
   price: Decimal,
   qty: Decimal,
-  side: Schema.Enum(OrderSide),
+  side: Schema.Enum(FillActivitySide),
   symbol: ResponseSymbol,
   transaction_time: Timestamp,
   order_id: Uuid,
