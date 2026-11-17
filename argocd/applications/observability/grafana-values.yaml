@@ -36,6 +36,14 @@ deploymentStrategy:
   rollingUpdate:
     maxSurge: 0
     maxUnavailable: 1
+# Allow bounded plugin initialization before the existing liveness checks begin.
+startupProbe:
+  httpGet:
+    path: /api/health
+    port: grafana
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 60
 service:
   type: ClusterIP
 persistence:
