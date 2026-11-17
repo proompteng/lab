@@ -1,6 +1,10 @@
 adminUser: admin
 adminPassword: changeme
 grafana.ini:
+  database:
+    # Reduce reader/writer contention and bound retries for transient SQLite locks.
+    wal: true
+    query_retries: 5
   users:
     home_page: /d/ci-build-performance
   auth.anonymous:
