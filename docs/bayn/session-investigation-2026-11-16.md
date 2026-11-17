@@ -87,6 +87,36 @@ Missing invoices, unsettled fee cuts and conditional references cannot be repair
 weakening qualification. Natural-session stability, complete costs and all-in profitability remain distinct
 from the source repairs and synthetic regressions.
 
+## November 17 release checks and ARM follow-up
+
+The repairs in #15959 and the decision JSON transport in #15961 were published through the normal image cohort
+and GitOps path. Source `a662aa567f740144f9c0ca75869810795ac5788f`, publication `43985005179`, was activated by
+Argo revision `1c3602dd9bfdef72c0ec95dccd442f83bdf30565`. The native activation hook succeeded. Fresh controller
+pass 287016 and status readback retained PAPER/CLEAR, EXACT reconciliation through the latest mutation, flat
+positions, zero unresolved mutations and exact accounting. The concurrent recovery change #15960 retained the
+192/16 MiB isolate flags and increased controller memory request/limit to 1/2 GiB. Both replicas had zero restarts
+at the initial check; the market was closed, so full-session memory stability remains unproven.
+
+The same retained 196-transaction report completed on packaged x64 in 23,408 ms wall time, with 22,084 ms measured
+work and 1,538,828 KiB peak RSS. Packaged ARM still failed the original 30-second execution/capture deadline:
+32,300 ms wall time, 28,901 ms measured work, 2,390,800 KiB peak RSS and zero stdout. The resource timer excludes
+runtime acquisition and outer shutdown. A longer diagnostic run succeeded with identical financial totals and
+receipt hash `c4b8d3447f3ed3131b6355dadf70f6d1863b2ab9a1124a9175d74ba5fdcb0f16`; it is not deadline acceptance.
+The ClickHouse privilege warning during the interrupted run came from the adapter's secondary cancellation
+command; it does not establish the cause of the missed deadline. No privileges or deadline were changed.
+
+A packaged task trace placed the first decision job at 10,333 ms and the last of 83 at 21,941 ms after child
+startup. Archive and expense work followed. Market-volume bindings transferred 61.7 MiB across 60 rows before
+those workers started. Their database capture can finish after the decision cursor closes while outstanding
+verification jobs continue, preserving the same transaction, bounded lookahead and ordered projection.
+
+Bounded read-only PostgreSQL plans also found a repeated decision-JSON subplan in unfinished-cycle counting.
+Checking the existing exact intent binding first and rejecting a null decision hash before that subplan reduced
+the query from 1,551.4 to 56.7 ms with identical 127-row membership. Correlating every decision lookup regressed
+terminal-cycle reads and was rejected. Larger young heaps did not meet the report deadline; array serialization
+and lazy-supervisor prototypes also lacked a useful measured improvement and were discarded. Packaged ARM
+acceptance at the unchanged deadline remains required after the capture-scheduling repair is released.
+
 ## Reproduction
 
 Use a bounded read-only transaction against the financial database. Never run report commands in execution
