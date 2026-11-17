@@ -589,6 +589,11 @@ without treating replayed bytes as a new live capture. Before binding or transmi
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
 
+Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
+its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
+fresh reads that cannot replace the committed source. Final short submission still checks current account, configuration,
+asset eligibility and borrow flags through the existing mutation authority.
+
 Only domain deadlines schedule a timer: source eligibility, original admission or inference expiry, position protection,
 maximum hold, session close, broker consistency, quota, financial freshness and explicit recovery. An actual state-machine
 transition can schedule one immediate continuation. Source and pending-inference discovery wait for events plus the original
