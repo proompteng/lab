@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
@@ -10,7 +12,7 @@ import { EntryInferenceJournal } from '../jev/entry-inference'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
 import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
 
@@ -55,7 +57,7 @@ import {
   type ExecutionControllerStatus,
 } from '../execution/controller-status'
 import type { AdvanceExecutionCommand } from '../execution/advance'
-import { executionControllerPlanHash } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
@@ -74,7 +76,7 @@ import { JevPositionStore } from '../jev/portfolio'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
-import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { nativeSimulationFixture as simulationFixture } from '../testing/simulated-streaming-fixture'
 import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
@@ -1231,6 +1233,7 @@ durableTest.each(
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           if (scenario === 'missing-candidate') {
+            expect(schedule.passCount).toBeGreaterThanOrEqual(5)
             expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
             expect(
               yield* sql`SELECT
@@ -1300,6 +1303,10 @@ durableTest.each(
           const readAuthority = store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
           const resources = Context.make(BrokerRead, broker.read).pipe(
+            Context.add(DecisionConstruction, {
+              observe: constructObserveShadowDecision,
+              execution: constructExecutionDecision,
+            }),
             Context.add(CycleStore, runtime.cycleStore),
             Context.add(BrokerEventStore, store.events),
             Context.add(FillAccountingStore, store.accounting),
@@ -1443,7 +1450,6 @@ durableTest.each(
                   intradayMarketData: runtime.marketData,
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
-                  pollIntervalMs: 1000,
                   reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
                   reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
                 },
@@ -2024,16 +2030,26 @@ durableTest.each(
           partialEntryReentry
         ) {
           const initialState = yield* broker.snapshot
-          expect(
-            initialState.fills.map((fill) => fill.side),
-            JSON.stringify(
-              initialState.orders.map(({ order, executions }) => ({
-                symbol: order.symbol,
-                submittedAt: order.submittedAt,
-                lastExecution: executions.at(-1),
-              })),
-            ),
-          ).toEqual([OrderSide.Buy])
+          if (partialEntryReentry) {
+            expect(initialState.fills.length).toBeGreaterThan(0)
+            expect(initialState.fills.every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+            expect(new Set(initialState.fills.map((fill) => fill.brokerOrderId)).size).toBe(1)
+            const parent = initialState.orders[0]?.order
+            if (parent === undefined) throw new Error('Missing partial entry parent')
+            const filled = initialState.fills.reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(filled).toBe(BigInt(parent.filledQuantityAtoms))
+            expect(filled).toBeLessThan(BigInt(parent.quantityAtoms!))
+          } else
+            expect(
+              initialState.fills.map((fill) => fill.side),
+              JSON.stringify(
+                initialState.orders.map(({ order, executions }) => ({
+                  symbol: order.symbol,
+                  submittedAt: order.submittedAt,
+                  lastExecution: executions.at(-1),
+                })),
+              ),
+            ).toEqual([OrderSide.Buy])
           for (let attempt = 0; attempt < 40; attempt++) {
             const advanced = yield* runtime.advance
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
@@ -2043,11 +2059,13 @@ durableTest.each(
           const state = yield* broker.snapshot
           expect(managementCalls).toBe(0)
           expect(state.fills[0]?.side).toBe(OrderSide.Buy)
-          expect(state.fills.slice(1).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
+          const firstCover = state.fills.findIndex((fill) => fill.side === OrderSide.Sell)
+          expect(firstCover).toBeGreaterThan(0)
+          expect(state.fills.slice(0, firstCover).every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          expect(state.fills.slice(firstCover).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
           expect(state.fills.length).toBeGreaterThanOrEqual(scenario === 'partial-exit-reentry' ? 3 : 2)
           expect(state.ledger.positions).toHaveLength(0)
-          expect(
-            yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason,
+          const closures = yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason,
                 (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz = (
                   SELECT min(t.occurred_at) FROM accounting_transactions t
                   JOIN accounting_receipts r ON r.broker_event_id = t.broker_event_id AND r.intent_id = t.intent_id
@@ -2055,10 +2073,20 @@ durableTest.each(
                   WHERE i.cycle_id = cycle.cycle_id AND i.protection IS NOT NULL AND t.side = 'SELL'
                 ) AS "boundToProtectiveFill"
               FROM autonomous_cycle_paper_closures AS closure
-              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`,
-          ).toEqual(
-            scenario === 'partial-exit-reentry' ? [{ reason: 'PROTECTION_RELEASED', boundToProtectiveFill: true }] : [],
-          )
+              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`
+          if (partialEntryReentry) {
+            // Processing time determines whether cancellation/re-protection needs a durable close decision.
+            // Every such decision must retain the actual protective fill witness and cannot duplicate closure.
+            expect(closures.length).toBeLessThanOrEqual(1)
+            expect(
+              closures.every((row) => row['reason'] === 'PROTECTION_RELEASED' && row['boundToProtectiveFill'] === true),
+            ).toBe(true)
+          } else
+            expect(closures).toEqual(
+              scenario === 'partial-exit-reentry'
+                ? [{ reason: 'PROTECTION_RELEASED', boundToProtectiveFill: true }]
+                : [],
+            )
           const reconciliation = yield* runtime.reconcile
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
@@ -2086,7 +2114,15 @@ durableTest.each(
           ])
           if (partialEntryReentry) {
             expect(state.orders.some(({ order }) => order.nativeProtection?._tag === 'Oco')).toBe(true)
-            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['10000000000', '10000000000'])
+            const entryQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Buy)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            const exitQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Sell)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(entryQuantity).toBeGreaterThan(0n)
+            expect(entryQuantity).toBeLessThan(BigInt(entryRoot.quantityAtoms!))
+            expect(exitQuantity).toBe(entryQuantity)
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
             yield* advanceMarketTo(reentryAtMs)
@@ -2096,12 +2132,11 @@ durableTest.each(
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
             }
             const repeated = yield* broker.snapshot
-            expect(repeated.fills.map((fill) => fill.side)).toEqual([
-              OrderSide.Buy,
-              OrderSide.Sell,
-              OrderSide.Buy,
-              OrderSide.Sell,
-            ])
+            expect(
+              repeated.fills
+                .filter((fill, index, fills) => index === 0 || fills[index - 1]?.side !== fill.side)
+                .map((fill) => fill.side),
+            ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
             expect(repeated.ledger.positions).toHaveLength(0)
             expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
             expect(
@@ -2319,7 +2354,7 @@ durableTest.each(
           const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
             count(*)::int AS count,
             bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
-            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v40') AS current_protocol
+            bool_and(payload #>> '{protocol,schemaVersion}' = ${fixture.protocol.schemaVersion}) AS current_protocol
             FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
           expect(source?.count).toBeGreaterThan(0)
           expect(source?.candidate_only).toBe(true)
@@ -2437,6 +2472,10 @@ durableTest.each(
           ),
         ),
         Effect.provide(stores),
+        Effect.provideService(DecisionConstruction, {
+          observe: constructObserveShadowDecision,
+          execution: constructExecutionDecision,
+        }),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
         Effect.timeout('60 seconds'),

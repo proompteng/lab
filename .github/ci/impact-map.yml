@@ -236,6 +236,8 @@ targets:
       - flake.nix
       - nix/images/agents.nix
       - nix/images/bun-workspace-service.nix
+      - nix/images/relativize-bun-cache.sh
+      - patches/effect@4.1.4.patch
       - nix/images/openai-codex-cli.nix
       - nix/images/agentrun-tools.nix
       - nix/packages.nix
@@ -280,6 +282,10 @@ targets:
       - services/agents/src/**/*.generated.ts
       - services/agents/src/**/*.generated.tsx
     paths:
+      - packages/temporal-bun-sdk/src/**
+      - packages/temporal-bun-sdk/package.json
+      - packages/temporal-bun-sdk/tsconfig.json
+      - patches/effect@4.1.4.patch
       - services/jangar/**
       - services/agents/src/app-routes/**
       - services/agents/src/components/control-plane/**
@@ -373,6 +379,7 @@ targets:
     kind: delegated
     workflow: symphony-ci
     paths:
+      - patches/effect@4.1.4.patch
       - services/symphony/**
       - packages/scripts/src/symphony/**
       - argocd/applications/symphony/**

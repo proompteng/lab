@@ -9,6 +9,11 @@ spec:
         - name: lovely-plugin
           # Choose your image here - see https://github.com/crumbhole/argocd-lovely-plugin/blob/main/doc/variations.md
           image: ghcr.io/crumbhole/lovely:1.2.5
+          resources:
+            requests:
+              memory: 12Gi
+            limits:
+              memory: 12Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -30,5 +35,7 @@ spec:
               name: lovely-tmp
       volumes:
         # A temporary directory for the tool to work in.
-        - emptyDir: {}
-          name: lovely-tmp
+        - name: lovely-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

@@ -27,7 +27,7 @@ through two SDK processes, lost GitHub responses, SDK process crashes, an abrupt
 Restate restart, and readiness changes after draft creation. These tests use a
 real isolated Restate 1.8.1 server and a local GitHub fixture.
 
-Froussard uses Effect 4.1.2 for services, schemas, concurrency, and resource lifetimes. Its
+Froussard uses Effect 4.1.4 for services, schemas, concurrency, and resource lifetimes. Its
 Agents client uses the same version. There is no Effect 3 adapter in the runtime.
 
 Telemetry uses Effect's native `OtlpTracer` and `OtlpMetrics` in the application's managed

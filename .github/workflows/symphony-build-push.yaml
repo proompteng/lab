@@ -9,6 +9,7 @@ on:
       - main
     paths:
       - 'services/symphony/**'
+      - 'patches/effect@4.1.4.patch'
       - 'nix/images/symphony.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'argocd/applications/symphony/**'

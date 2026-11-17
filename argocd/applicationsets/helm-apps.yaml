@@ -21,7 +21,7 @@ spec:
                   namespace: kargo
                   repoUrl: ghcr.io/akuity/kargo-charts
                   chart: kargo
-                  version: 1.11.4
+                  version: 1.12.5
                   releaseName: kargo
                   enabled: "true"
                   managedNamespaceMetadata:
@@ -50,15 +50,13 @@ spec:
                         urls:
                           "": https://argocd.proompteng.ai
                       rollouts:
-                        integrationEnabled: false
+                        integrationEnabled: true
                       tls:
                         enabled: false
                         terminatedUpstream: true
                     externalWebhooksServer:
                       enabled: false
                     global:
-                      clusterSecretsNamespace: kargo
-                      createClusterSecretsNamespace: false
                       systemResources:
                         namespace: kargo
                         createNamespace: false
@@ -69,6 +67,23 @@ spec:
                       env:
                         - name: GIT_TERMINAL_PROMPT
                           value: "0"
+                        - name: TMPDIR
+                          value: /gitops-tmp
+                      # Requeued promotions retain workspaces; budget for the current
+                      # Stage fleet as well as the four concurrent discovery workers.
+                      volumes:
+                        - name: gitops-tmp
+                          emptyDir:
+                            medium: Memory
+                            sizeLimit: 32Gi
+                      volumeMounts:
+                        - name: gitops-tmp
+                          mountPath: /gitops-tmp
+                      resources:
+                        requests:
+                          memory: 40Gi
+                        limits:
+                          memory: 40Gi
                       reconcilers:
                         warehouses:
                           minReconciliationInterval: 1m0s
@@ -77,7 +92,7 @@ spec:
                         namespace: argocd
                         watchArgocdNamespaceOnly: true
                       rollouts:
-                        integrationEnabled: false
+                        integrationEnabled: true
                     extraObjects:
                       - apiVersion: networking.k8s.io/v1
                         kind: Ingress

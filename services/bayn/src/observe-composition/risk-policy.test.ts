@@ -5,6 +5,7 @@ import { BrokerEnvironment } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
 import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
+import { retainedJevProtocolV40Document } from '../jev/protocol'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { strategyExecutionRiskPolicy } from '../execution/risk-policy'
 import { accountEntryProtectionReasons, accountLossMicros, PolicySchema, Reason } from '../risk'
@@ -12,9 +13,9 @@ import { accountEntryProtectionReasons, accountLossMicros, PolicySchema, Reason 
 test('removes sandbox turnover cap while preserving the complete live policy and other sandbox limits', () => {
   const [legacy, live, paper] = Result.getOrThrow(
     Result.all([
-      makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe),
-      makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe, BrokerEnvironment.Live),
-      makeExecutionRiskPolicy('build-contract', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
+      makeExecutionRiskPolicy('build-contract', retainedJevProtocolV40Document.universe),
+      makeExecutionRiskPolicy('build-contract', retainedJevProtocolV40Document.universe, BrokerEnvironment.Live),
+      makeExecutionRiskPolicy('build-contract', retainedJevProtocolV40Document.universe, BrokerEnvironment.Sandbox),
     ]),
   )
   expect(live).toEqual(legacy)

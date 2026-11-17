@@ -58,7 +58,7 @@ regressions. The scoped `registry-cleanup` CI workflow also runs the real HAProx
 ## Production image delivery
 
 Scripts that build or apply a service are not a production release mechanism. Merge source to `main`, let the owning
-build workflow publish the immutable image, then inspect Kargo's `lab-delivery` Warehouse/Freight/Stage and the Argo
+build workflow publish the immutable image, then inspect Kargo's owning `<project>-release` Warehouse/Freight/Stage and the Argo
 Application in `argocd`. Kargo writes the exact digest and build/provenance metadata to `kargo/<stage>` and Argo
 syncs that branch; no script, SHA bump, deployment PR, release branch, Image Updater, or manual `kubectl apply` is part
 of the normal path. See
@@ -96,6 +96,14 @@ GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
 service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
+
+Agents' existing Kind smoke job forces a rebuild of its shared dependency closure only when its Nix dependency
+inputs, installed workspace manifests or the installed Effect patch change. Ordinary runtime edits reuse the cache;
+test-only edits retain the unit tier. All workspaces pin Effect 4.1.4. The shared core patch exposes the SQL transaction
+semaphore used by Bayn; Agents' publication and Kargo discovery include that installed dependency input.
+A successful warm substitution does not prove a pinned fixed-output hash is current; the forced check catches drift.
+The shared verifier's own changes use its behavioral regressions and App's existing two native checks. Other services
+retain their native checks for dependency changes without repeating the same shared-script validation.
 
 The root-scripts job uses the same impact router with `.github/ci/root-script-map.yml` to select owned suites.
 Changes to the router or its configuration run all six suites; a Tengri NetworkPolicy change runs kube-router only.

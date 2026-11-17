@@ -1,0 +1,209 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperless-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  PAPERLESS_URL: https://paperless.ide-newton.ts.net
+  PAPERLESS_DBENGINE: postgresql
+  PAPERLESS_DBHOST: paperless-db-rw.paperless.svc.cluster.local
+  PAPERLESS_DBNAME: paperless
+  PAPERLESS_DBPORT: "5432"
+  PAPERLESS_PORT: "8000"
+  PAPERLESS_ADMIN_USER: greg
+  PAPERLESS_ADMIN_MAIL: admin@paperless.local
+  PAPERLESS_TIME_ZONE: America/Los_Angeles
+  PAPERLESS_TASK_WORKERS: "2"
+  PAPERLESS_THREADS_PER_WORKER: "2"
+  PAPERLESS_WEBSERVER_WORKERS: "1"
+  PAPERLESS_CONSUMER_POLLING_INTERVAL: "30"
+  PAPERLESS_TIKA_ENABLED: "true"
+  PAPERLESS_TIKA_ENDPOINT: http://paperless-tika.paperless.svc.cluster.local:9998
+  PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://paperless-gotenberg.paperless.svc.cluster.local:3000
+  # Flamingo serves text generation; document embeddings stay local to Paperless.
+  PAPERLESS_AI_ENABLED: "true"
+  PAPERLESS_AI_LLM_BACKEND: openai-like
+  PAPERLESS_AI_LLM_ENDPOINT: http://flamingo.flamingo.svc.cluster.local/v1
+  PAPERLESS_AI_LLM_MODEL: qwen38-flamingo
+  PAPERLESS_AI_LLM_API_KEY: flamingo-local
+  PAPERLESS_AI_LLM_REQUEST_TIMEOUT: "180"
+  PAPERLESS_AI_LLM_CONTEXT_SIZE: "8192"
+  PAPERLESS_AI_LLM_EMBEDDING_BACKEND: huggingface
+  PAPERLESS_AI_LLM_EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-media
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-data
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-consume
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 2400
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paperless
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paperless
+    spec:
+      automountServiceAccountToken: false
+      # Kubernetes Service links inject PAPERLESS_PORT=tcp://... when this
+      # Service is named paperless, but Granian requires a numeric port.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: paperless
+          image: ghcr.io/paperless-ngx/paperless-ngx:3.4.2@sha256:d704e84f88300eb6ab001ab15720a2330ff99169cf9f94d6b8fcc44b63a84c84
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: paperless-config
+          env:
+            - name: PAPERLESS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-runtime
+                  key: PAPERLESS_SECRET_KEY
+            - name: PAPERLESS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-runtime
+                  key: PAPERLESS_ADMIN_PASSWORD
+            - name: PAPERLESS_REDIS
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-runtime
+                  key: PAPERLESS_REDIS
+            - name: PAPERLESS_DBUSER
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-db-app
+                  key: username
+            - name: PAPERLESS_DBPASS
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-db-app
+                  key: password
+          ports:
+            - name: http
+              containerPort: 8000
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+              ephemeral-storage: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+              ephemeral-storage: 20Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: media
+              mountPath: /usr/src/paperless/media
+            - name: data
+              mountPath: /usr/src/paperless/data
+            - name: consume
+              mountPath: /usr/src/paperless/consume
+            - name: export
+              mountPath: /usr/src/paperless/export
+            - name: temp
+              mountPath: /tmp
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: paperless-media
+        - name: data
+          persistentVolumeClaim:
+            claimName: paperless-data
+        - name: consume
+          persistentVolumeClaim:
+            claimName: paperless-consume
+        - name: export
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: temp
+          emptyDir:
+            sizeLimit: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless
+spec:
+  selector:
+    app.kubernetes.io/name: paperless
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

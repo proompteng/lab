@@ -320,7 +320,10 @@ export const readStagedInferenceCostEvidence = (row: {
     if (expiredUndispatched && checkpoint.claims.length !== 0)
       return yield* invalid('Undispatched receipt omits a committed staged provider claim')
     const stageNames: readonly ('CHART' | 'BASE_START')[] =
-      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' ? ['CHART'] : ['CHART', 'BASE_START']
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+        ? ['CHART']
+        : ['CHART', 'BASE_START']
     const visualStages = stageNames.map((stage): VisualCostStage => {
       const claim = checkpoint.claims.find((value) => value.stage === stage)
       const terminal = checkpoint.terminals.find((value) => value.stage === stage)

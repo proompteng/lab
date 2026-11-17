@@ -1,7 +1,7 @@
 import { registeredReplayInferenceTariff } from './inference-costs'
 import { InferenceRateCardSchema } from '../inference-costs'
 import { ReplayInstrumentsSchema } from './execution-core'
-import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { jevInstructions } from '../jev/instructions'
 import { decodeJevBatchPlan, decodeJevBatchResult } from '../jev/batch'
@@ -157,6 +157,15 @@ export const BacktestInputSchema = Schema.Struct({
   source: BacktestSourceManifestSchema,
   openingCashMicros: PositiveMicrosSchema,
   fractionalTrading: Schema.Boolean,
+  equityShortAccount: Schema.optionalKey(
+    Schema.Struct({
+      shortingEnabled: Schema.Boolean,
+      noShorting: Schema.Boolean,
+      observedAt: UtcInstantSchema,
+      sourceHash: Sha256Schema,
+      policy: Schema.Literals(['retained-as-of-session', 'counterfactual-current-account-eligibility']),
+    }),
+  ),
   calendar: MarketCalendarResponseSchema,
   assets: Schema.Array(AssetResponseSchema).check(Schema.isMinLength(1)),
   assetObservationAt: UtcInstantSchema,
@@ -270,7 +279,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const protocol = baselineProtocol
     const parameterHash = policyIdentity.strategy.parameterHash
     for (const source of decoded.source.marketSources) {
-      const profile = jevMarketProfiles.find((profile) => profile.universeId === source.universeId)
+      const profile = protocol.marketProfiles.find((profile) => profile.universeId === source.universeId)
       if (profile === undefined)
         return yield* Result.fail(new ReplayBrokerFailure({ message: 'Replay source market is outside the strategy' }))
       const universe = {
@@ -320,6 +329,13 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     if (decoded.assetObservationPolicy === 'retained-as-of-session' && Date.parse(decoded.assetObservationAt) > openMs)
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Retained asset observation was not available at market open' }),
+      )
+    if (
+      decoded.equityShortAccount?.policy === 'retained-as-of-session' &&
+      Date.parse(decoded.equityShortAccount.observedAt) > openMs
+    )
+      return yield* Result.fail(
+        new ReplayBrokerFailure({ message: 'Retained short account observation was not available at market open' }),
       )
     if (decoded.source.coverageStartMs > openMs || decoded.source.coverageEndMs < closeMs)
       return yield* Result.fail(
@@ -418,6 +434,12 @@ export const backtestBrokerEvidenceConfig = (prepared: PreparedBacktest) =>
         },
         assumptions: prepared.input.assumptions,
         fractionalTrading: prepared.input.fractionalTrading,
+        ...(prepared.input.equityShortAccount === undefined
+          ? {}
+          : {
+              shortingEnabled:
+                prepared.input.equityShortAccount.shortingEnabled && !prepared.input.equityShortAccount.noShorting,
+            }),
         assets: prepared.assets,
         calendar: prepared.input.calendar,
       }),
@@ -458,7 +480,9 @@ export type BacktestPass = Parameters<RecordAutonomousCyclePass>[0] & {
 }
 
 export const qualifiesReplayValuation = (valuation: ReplayValuationEvidence) =>
-  valuation.marks.every((mark) => !mark.staleForExecution && mark.bidLiquidityAvailable)
+  valuation.marks.every(
+    (mark) => !mark.staleForExecution && (mark.coverLiquidityAvailable ?? mark.bidLiquidityAvailable),
+  )
 
 /** One engine, broker, portfolio, and durable account span every declared calendar session. */
 export const runBacktest = (

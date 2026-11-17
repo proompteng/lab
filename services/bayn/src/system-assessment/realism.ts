@@ -46,8 +46,16 @@ export const ExecutionPricingSchema = Schema.TaggedUnion({
     availableAt: UtcSourceTimestampSchema,
     freshUntil: UtcSourceTimestampSchema,
   },
-  NativeProtection: { sourceHash: Sha256Schema, availableAt: UtcSourceTimestampSchema },
-  ReconciledLiquidation: { sourceHash: Sha256Schema, availableAt: UtcSourceTimestampSchema },
+  NativeProtection: {
+    sourceHash: Sha256Schema,
+    availableAt: UtcSourceTimestampSchema,
+    positionSide: Schema.optionalKey(Schema.Literal('SHORT')),
+  },
+  ReconciledLiquidation: {
+    sourceHash: Sha256Schema,
+    availableAt: UtcSourceTimestampSchema,
+    positionSide: Schema.optionalKey(Schema.Literal('SHORT')),
+  },
 })
 
 export const FillRealismSchema = Schema.Struct({
@@ -135,7 +143,8 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
           requireSource(fill.pricing.sourceHash)
           if (
             fill.pricing._tag !== 'SpotQuote' &&
-            (fill.kind !== ExecutionEvidenceKind.Broker || fill.side !== OrderSide.Sell)
+            (fill.kind !== ExecutionEvidenceKind.Broker ||
+              fill.side !== (fill.pricing.positionSide === 'SHORT' ? OrderSide.Buy : OrderSide.Sell))
           )
             violations.push(`UNSUPPORTED_EXECUTION_PRICING:${fill.fillId}`)
           const decision = decisions.get(fill.decisionId)
@@ -158,6 +167,9 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
             prior !== undefined &&
             (prior.pricing._tag !== fill.pricing._tag ||
               (prior.pricing._tag !== 'SpotQuote' && prior.pricing.sourceHash !== fill.pricing.sourceHash) ||
+              (prior.pricing._tag !== 'SpotQuote' &&
+                fill.pricing._tag !== 'SpotQuote' &&
+                prior.pricing.positionSide !== fill.pricing.positionSide) ||
               prior.intentId !== fill.intentId ||
               prior.decisionId !== fill.decisionId ||
               prior.side !== fill.side ||

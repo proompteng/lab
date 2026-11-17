@@ -123,7 +123,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 164 control-plane source files, 50308 LOC across 6 current boundaries.
+Summary: 164 control-plane source files, 50314 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -225,7 +225,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/env-config.ts`              |   78 |
 | `services/agents/src/server/agents-controller/immutable-spec.ts`          |   27 |
 | `services/agents/src/server/agents-controller/implementation-contract.ts` |  265 |
-| `services/agents/src/server/agents-controller/index.ts`                   | 1624 |
+| `services/agents/src/server/agents-controller/index.ts`                   | 1626 |
 | `services/agents/src/server/agents-controller/job-runtime.ts`             | 1111 |
 | `services/agents/src/server/agents-controller/job-status.ts`              |   31 |
 | `services/agents/src/server/agents-controller/lifecycle-machine.ts`       |   69 |
@@ -270,7 +270,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/ready.ts`                                     |  207 |
 | `services/agents/src/server/start-runtime.ts`                             |   16 |
 | `services/agents/src/server/supporting-primitives-controller.ts`          | 1098 |
-| `services/agents/src/server/v1/control-plane-events.ts`                   |  214 |
+| `services/agents/src/server/v1/control-plane-events.ts`                   |  218 |
 | `services/agents/src/server/v1/control-plane-execution-trust.ts`          |   73 |
 | `services/agents/src/server/v1/control-plane-status.ts`                   |   41 |
 | `services/agents/src/server/v1/control-plane-stream.ts`                   |  301 |

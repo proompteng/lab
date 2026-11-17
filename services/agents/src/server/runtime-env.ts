@@ -13,7 +13,9 @@ export type AgentsRuntimeEnvService = {
   readRaw: (name: string) => Effect.Effect<string | undefined>
 }
 
-export class AgentsRuntimeEnv extends Context.Tag('AgentsRuntimeEnv')<AgentsRuntimeEnv, AgentsRuntimeEnvService>() {}
+export class AgentsRuntimeEnv extends Context.Service<AgentsRuntimeEnv, AgentsRuntimeEnvService>()(
+  'AgentsRuntimeEnv',
+) {}
 
 export const normalizeEnvValue = (value: string | undefined | null) => {
   const normalized = value?.trim()

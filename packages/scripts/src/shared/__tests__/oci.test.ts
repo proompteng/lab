@@ -913,13 +913,11 @@ describe('native OCI build workflows', () => {
         'nix/images/bun-workspace-service.nix',
         'nix/images/bun-workspace-deps-source.nix',
         'nix/images/bun-workspace-deps-source.test.sh',
-        'nix/check-bun-dependency-closure.sh',
         '.github/workflows/nix-bun-dependency-closure.yml',
       ]) {
-        expect(triggers.split(`- '${input}'`)).toHaveLength(
-          input.startsWith('.github/') || input === 'nix/check-bun-dependency-closure.sh' ? 2 : 3,
-        )
+        expect(triggers.split(`- '${input}'`)).toHaveLength(input.startsWith('.github/') ? 2 : 3)
       }
+      expect(triggers).not.toContain("- 'nix/check-bun-dependency-closure.sh'")
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
       expect(workflow).toMatch(/needs: (dependency-closure|\[dependency-closure, test\])/)
     }
@@ -1197,11 +1195,15 @@ describe('native OCI build workflows', () => {
     expect(jangarImageModule).toContain('dependencyClosure = "bunCache";')
     expect(jangarImageModule).toContain('"@proompteng/jangar"')
     expect(jangarImageModule).toContain('"@proompteng/cx-tools"')
-    expect(jangarImageModule).toContain('for package in agent-contracts codex cx-tools design discord otel')
+    expect(jangarImageModule).toContain('"@proompteng/temporal-bun-sdk"')
+    expect(jangarImageModule).toContain('"packages/temporal-bun-sdk"')
+    expect(jangarImageModule).toContain('"bun --cwd=packages/temporal-bun-sdk run build"')
+    expect(jangarImageModule).toContain(
+      'for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk',
+    )
     expect(jangarImageModule).toContain('cp -R "$TMPDIR/work/services/jangar/node_modules"')
     expect(jangarImageModule).toContain('services/bumba/scripts/verify-temporal-runtime.ts')
     expect(jangarImageModule).not.toContain('ln -s /app/node_modules "$out/app/services/bumba/node_modules"')
-    expect(jangarImageModule).not.toContain('"packages/temporal-bun-sdk"')
     expect(jangarImageModule).toContain('node-gyp rebuild')
     expect(jangarImageModule).toContain('test -f build/Release/pty.node')
     expect(jangarImageModule).toContain('rm -rf build')

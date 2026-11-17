@@ -235,7 +235,7 @@ const readOptionalFile = (filePath: string) =>
     catch: (error) => new OrchestratorError('leader_election_error', `failed to read ${filePath}`, error),
   }).pipe(
     Effect.map((value) => value.trim()),
-    Effect.catchAll(() => Effect.succeed<string | null>(null)),
+    Effect.catch(() => Effect.succeed<string | null>(null)),
   )
 
 const resolveLeaderElectionConfig = (
@@ -294,10 +294,9 @@ export interface LeaderElectionServiceDefinition {
   readonly changes: Stream.Stream<LeaderSnapshot>
 }
 
-export class LeaderElectionService extends Context.Tag('symphony/LeaderElectionService')<
-  LeaderElectionService,
-  LeaderElectionServiceDefinition
->() {}
+export class LeaderElectionService extends Context.Service<LeaderElectionService, LeaderElectionServiceDefinition>()(
+  'symphony/LeaderElectionService',
+) {}
 
 export const makeLeaderElectionLayer = (
   logger: Logger,
@@ -331,7 +330,7 @@ export const makeLeaderElectionLayer = (
 
       const statusRef = yield* SubscriptionRef.make(initialStatus)
       const startedRef = yield* Ref.make(false)
-      const fiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
+      const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null)
       const lastSuccessMsRef = yield* Ref.make<number>(0)
 
       const updateStatus = (patch: Partial<LeaderSnapshot>) =>
@@ -429,37 +428,37 @@ export const makeLeaderElectionLayer = (
 
         yield* updateStatus({ lastAttemptAt: nowIso() })
 
-        const leaseEither = yield* Effect.either(readLease)
+        const leaseEither = yield* Effect.result(readLease)
         let lease: KubernetesLease | null = null
-        if (leaseEither._tag === 'Right') {
-          lease = leaseEither.right
-        } else if (leaseEither.left.message === 'lease not found') {
-          const createdEither = yield* Effect.either(createLeaseIfMissing)
-          if (createdEither._tag === 'Right') {
-            lease = createdEither.right
+        if (leaseEither._tag === 'Success') {
+          lease = leaseEither.success
+        } else if (leaseEither.failure.message === 'lease not found') {
+          const createdEither = yield* Effect.result(createLeaseIfMissing)
+          if (createdEither._tag === 'Success') {
+            lease = createdEither.success
           } else {
-            const responseText = safeString(createdEither.left.causeValue)
+            const responseText = safeString(createdEither.failure.causeValue)
             if (responseText.includes('already exists')) {
-              const fallback = yield* Effect.either(readLease)
-              if (fallback._tag === 'Right') {
-                lease = fallback.right
+              const fallback = yield* Effect.result(readLease)
+              if (fallback._tag === 'Success') {
+                lease = fallback.success
               } else {
                 yield* updateStatus({
                   isLeader: false,
-                  lastError: fallback.left.message,
+                  lastError: fallback.failure.message,
                 })
                 return
               }
             } else {
               yield* updateStatus({
                 isLeader: false,
-                lastError: createdEither.left.message,
+                lastError: createdEither.failure.message,
               })
               return
             }
           }
         } else {
-          const error = leaseEither.left
+          const error = leaseEither.failure
           const conflict = typeof error.causeValue === 'string' && error.causeValue.includes('409')
           yield* updateStatus({
             isLeader: false,
@@ -485,9 +484,9 @@ export const makeLeaderElectionLayer = (
           return
         }
 
-        const replaceEither = yield* Effect.either(replaceLease(updateLease(lease, config, identity)))
-        if (replaceEither._tag === 'Left') {
-          const error = replaceEither.left
+        const replaceEither = yield* Effect.result(replaceLease(updateLease(lease, config, identity)))
+        if (replaceEither._tag === 'Failure') {
+          const error = replaceEither.failure
           const causeText = safeString(error.causeValue)
           yield* updateStatus({
             isLeader: false,
@@ -506,7 +505,7 @@ export const makeLeaderElectionLayer = (
 
       const loop = Effect.forever(
         tick.pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Ref.get(lastSuccessMsRef).pipe(
               Effect.flatMap((lastSuccessMs) =>
                 lastSuccessMs > 0 && Date.now() - lastSuccessMs > config.renewDeadlineSeconds * 1_000
@@ -518,7 +517,7 @@ export const makeLeaderElectionLayer = (
               ),
             ),
           ),
-          Effect.zipRight(Effect.sleep(Duration.seconds(config.retryPeriodSeconds))),
+          Effect.andThen(Effect.sleep(Duration.seconds(config.retryPeriodSeconds))),
         ),
       )
 
@@ -527,13 +526,13 @@ export const makeLeaderElectionLayer = (
         const current = yield* SubscriptionRef.get(statusRef)
         if (!current.isLeader) return
 
-        const lease = yield* Effect.either(readLease)
-        if (lease._tag === 'Left') return
-        const holderIdentity = (lease.right.spec?.holderIdentity ?? '').trim()
+        const lease = yield* Effect.result(readLease)
+        if (lease._tag === 'Failure') return
+        const holderIdentity = (lease.success.spec?.holderIdentity ?? '').trim()
         if (holderIdentity !== identity) return
 
-        yield* replaceLease(clearLeaseHolder(lease.right, config)).pipe(
-          Effect.catchAll(() => Effect.void),
+        yield* replaceLease(clearLeaseHolder(lease.success, config)).pipe(
+          Effect.catch(() => Effect.void),
           Effect.asVoid,
         )
       })
@@ -545,9 +544,9 @@ export const makeLeaderElectionLayer = (
               ? Effect.void
               : config.required
                 ? loop.pipe(
-                    Effect.forkDaemon,
+                    Effect.forkDetach,
                     Effect.flatMap((fiber) => Ref.set(fiberRef, fiber)),
-                    Effect.zipRight(Ref.set(startedRef, true)),
+                    Effect.andThen(Ref.set(startedRef, true)),
                     Effect.tap(() =>
                       Effect.sync(() => {
                         leaderLogger.log('info', 'leader_election_started', {
@@ -558,17 +557,19 @@ export const makeLeaderElectionLayer = (
                       }),
                     ),
                   )
-                : updateStatus({ isLeader: true, lastError: null }).pipe(Effect.zipRight(Ref.set(startedRef, true))),
+                : updateStatus({ isLeader: true, lastError: null }).pipe(Effect.andThen(Ref.set(startedRef, true))),
           ),
         ),
         stop: Ref.get(fiberRef).pipe(
-          Effect.flatMap((fiber) => (fiber ? Fiber.interruptFork(fiber) : Effect.void)),
-          Effect.zipRight(releaseLease),
-          Effect.zipRight(Ref.set(startedRef, false)),
-          Effect.zipRight(updateStatus({ isLeader: !config.required, lastError: null })),
+          Effect.flatMap((fiber) =>
+            fiber ? Effect.forkDetach(Fiber.interrupt(fiber)).pipe(Effect.asVoid) : Effect.void,
+          ),
+          Effect.andThen(releaseLease),
+          Effect.andThen(Ref.set(startedRef, false)),
+          Effect.andThen(updateStatus({ isLeader: !config.required, lastError: null })),
         ),
         status: SubscriptionRef.get(statusRef),
-        changes: statusRef.changes,
+        changes: SubscriptionRef.changes(statusRef),
       } satisfies LeaderElectionServiceDefinition
     }),
   )

@@ -2,12 +2,9 @@ import { Data, Result, Schema } from 'effect'
 
 import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
+import { JevInferenceJobSchema } from '../jev/inference-work'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { sha256 } from '../hash'
-
-/** The orchestration protocol identity is independent of each physical worker revision. */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 const EpochSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
@@ -91,12 +88,24 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   nextSequence: CounterSchema,
   lastCompletion: Schema.optionalKey(CompletionSchema),
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
+  marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
+  marketDataWakeSuppressed: Schema.optionalKey(Schema.Literal(true)),
+  wakeScheduledSequence: Schema.optionalKey(CounterSchema),
+  wakeAcceptedAt: Schema.optionalKey(UtcInstantSchema),
+  marketFrontier: Schema.optionalKey(
+    Schema.Struct({
+      producerId: Schema.String.check(Schema.isUUID(4)),
+      sequence: EpochSchema,
+    }),
+  ),
+  lastBrokerSnapshotHash: Schema.optionalKey(Sha256Schema),
 })
 export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Type
 
 export const ExecutionAdvanceStepResultSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
   observation: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
+  inferenceJobs: Schema.optionalKey(Schema.Array(JevInferenceJobSchema)),
   outcome: Schema.Struct({
     _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
@@ -266,15 +275,15 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerReconciliationRetry =
+    result.outcome._tag === ExecutionControllerOutcome.Blocked &&
+    result.observation?.result === 'FAILURE' &&
+    result.observation.operation === 'reconcile' &&
+    result.observation.failure === 'market-data'
   const nextDueAt = Result.try({
     try: () => {
-      const completedAt = Date.parse(result.completedAt)
-      const pollingDueAt = completedAt + result.outcome.nextDelayMs
-      return new Date(
-        result.outcome.nextWakeAt === undefined
-          ? pollingDueAt
-          : Math.min(pollingDueAt, Math.max(completedAt + 1, Date.parse(result.outcome.nextWakeAt))),
-      ).toISOString()
+      if (result.outcome.nextWakeAt === undefined) return undefined
+      return new Date(Date.parse(result.outcome.nextWakeAt)).toISOString()
     },
     catch: () =>
       new ExecutionControllerDecisionError({
@@ -284,7 +293,8 @@ export const completeExecutionControllerTick = (
       }),
   })
   if (Result.isFailure(nextDueAt)) return Result.fail(nextDueAt.failure)
-  const decodedNextDueAt = decodeUtcInstant(nextDueAt.success)
+  const decodedNextDueAt =
+    nextDueAt.success === undefined ? Result.succeed(undefined) : decodeUtcInstant(nextDueAt.success)
   if (Result.isFailure(decodedNextDueAt)) {
     return Result.fail(
       new ExecutionControllerDecisionError({
@@ -294,8 +304,39 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerObservationPending =
+    result.observation?.result === 'SUCCESS' && result.observation.waitReason === 'BROKER_OBSERVATION_PENDING'
+  // An early broker wake can revalidate and still wait. Keep its existing future obligation instead
+  // of restarting the backoff; a pass completing at or after that deadline establishes a new one.
+  const dueAt =
+    (brokerReconciliationRetry || brokerObservationPending) &&
+    state.nextDueAt !== undefined &&
+    state.nextDueAt > result.completedAt &&
+    decodedNextDueAt.success !== undefined &&
+    state.nextDueAt < decodedNextDueAt.success
+      ? state.nextDueAt
+      : decodedNextDueAt.success
+  const {
+    nextDueAt: _previousDeadline,
+    marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
+    wakeScheduledSequence: _previousWake,
+    wakeAcceptedAt: _previousWakeAcceptedAt,
+    ...completedState
+  } = state
+  // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
+  // without inventing polling from a legacy delay; broker observations can still wake promptly.
+  const availableAt = brokerReconciliationRetry
+    ? dueAt
+    : result.observation?.result !== 'SUCCESS'
+      ? undefined
+      : result.observation.outcome === 'WINDOW_CLOSED' ||
+          result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
+        ? dueAt
+        : result.observation.readiness?.availableAt
   return Result.succeed({
-    ...state,
+    ...completedState,
     nextSequence: state.nextSequence + 1,
     lastCompletion: {
       sequence: tick.sequence,
@@ -303,7 +344,13 @@ export const completeExecutionControllerTick = (
       receiptHash: result.outcome.receiptHash,
       completedAt: result.completedAt,
     },
-    nextDueAt: decodedNextDueAt.success,
+    ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
+    ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
+    ...(result.observation?.result === 'SUCCESS' &&
+    result.observation.outcome === 'WINDOW_CLOSED' &&
+    decodedNextDueAt.success === undefined
+      ? { marketDataWakeSuppressed: true as const }
+      : {}),
   })
 }
 
@@ -421,5 +468,5 @@ export const executionControllerSuccessorPassCompleted = (
   state.planHash === activation.planHash &&
   state.sourceRevision === activation.sourceRevision &&
   state.lastCompletion !== undefined &&
-  state.lastCompletion.sequence > activation.firstSequence &&
+  state.lastCompletion.sequence >= activation.firstSequence &&
   state.nextSequence === state.lastCompletion.sequence + 1

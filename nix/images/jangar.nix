@@ -64,8 +64,8 @@ import ./bun-workspace-service.nix {
   serviceName = "jangar";
   packageName = "@proompteng/jangar";
   depsHash = {
-    x86_64-linux = "sha256-HpHFIAcLw9WWdSPL4D0r8z6nFuFSawJCTqXEmvOjfXk=";
-    aarch64-linux = "sha256-4meeXoeW3rYpPaLyxY0n5906b8Y5/Ps4o9GBx8aw6As=";
+    x86_64-linux = "sha256-GBAgn3hcZtN3prDRTMcbXJDqwM6Y1IkgjMhGA7s+Exg=";
+    aarch64-linux = "sha256-o95b3l3DY8ekb3tdx8K5d5gvu5gpsz3/ErzrXArqay4=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -77,6 +77,7 @@ import ./bun-workspace-service.nix {
     "@proompteng/discord"
     "@proompteng/jangar"
     "@proompteng/otel"
+    "@proompteng/temporal-bun-sdk"
   ];
   sourcePaths = [
     "packages/agent-contracts"
@@ -85,6 +86,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
     "packages/discord"
     "packages/otel"
+    "packages/temporal-bun-sdk"
     "services/bumba"
     "services/jangar"
   ];
@@ -124,6 +126,8 @@ import ./bun-workspace-service.nix {
     "bun --cwd=packages/codex run build"
     "bun --cwd=packages/otel run build"
     "bun --cwd=packages/cx-tools run build"
+    "bun --cwd=packages/discord run build"
+    "bun --cwd=packages/temporal-bun-sdk run build"
     "NODE_OPTIONS=--max-old-space-size=4096 CI=true JANGAR_BUILD_MINIFY=0 JANGAR_BUILD_SOURCEMAP=0 JANGAR_BUILD_LOG_LEVEL=warn bun --cwd=services/jangar run build"
   ];
   runtimeInstallPhase = ''
@@ -131,7 +135,7 @@ import ./bun-workspace-service.nix {
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
 
-    for package in agent-contracts codex cx-tools design discord otel; do
+    for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
     done
 

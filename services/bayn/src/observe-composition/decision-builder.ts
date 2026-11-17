@@ -1,12 +1,15 @@
-import { buildExecutionDecision, buildObserveShadowDecision } from '../decision-construction'
+import { buildExecutionDecision, buildObserveShadowDecision, type DecisionConstruction } from '../decision-construction'
 import { observeNativeEntry, type EntryObservation } from './entry-observation'
 import {
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
   protectedEntryBuyPriceCeilings,
+  protectedEntrySellPriceFloors,
+  protectedEntryShortEligibility,
   type ProtectedEntryTarget,
 } from '../strategy/runtime-decision'
 import { jevEntryPriceAllowances } from '../jev/entry-economics'
+import type { EquityShortEligibility } from '../execution/equity-short'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
@@ -17,7 +20,13 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
+import {
+  JevExitReason,
+  JevExitTargetSchema,
+  jevProfitTargetLimitFloors,
+  jevProfitTargetLimitCeilings,
+  type JevExitTarget,
+} from '../jev/exit'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -48,7 +57,7 @@ import {
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { type PersistedIntradaySnapshotRows } from '../market-data/intraday/verification'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
@@ -831,6 +840,7 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
 }
 
 type JevDecisionServices =
+  | BrokerRead
   | CandidateObservationStore
   | JevBatchStore
   | JevEvaluationStore
@@ -1129,6 +1139,9 @@ export const prepareObservePlanner = <R>(
               snapshotContentHash: compiled.executionMarketData.contentHash,
               maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
               maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
+              ...(Object.keys(protectedEntryShortEligibility(compiled.decision)).length === 0
+                ? {}
+                : { equityShortEntries: protectedEntryShortEligibility(compiled.decision) }),
             },
           }
           return Result.succeed({
@@ -1152,6 +1165,7 @@ const executionRiskContext = (
 })
 
 type RiskInputPreparation = {
+  readonly equityShortEntries?: Readonly<Record<string, EquityShortEligibility>>
   readonly limitSlippageBps: number
   readonly maximumBuyPriceMicros?: Readonly<Record<string, bigint>>
   readonly minimumSellPriceMicros?: Readonly<Record<string, bigint>>
@@ -1237,6 +1251,9 @@ const reduceRiskInputs = (
               expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               marketDataObservedAt: input.executionMarketData?.observedAt ?? input.evaluatedAt,
               ...(entryQuote === undefined ? {} : { entryQuote }),
+              ...(input.equityShortEntries?.[target.symbol] === undefined
+                ? {}
+                : { equityShortEligibility: input.equityShortEntries[target.symbol] }),
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: input.evaluatedAt,
@@ -1272,11 +1289,15 @@ const reduceObserveRiskInputs = <R>(
   closeOnlyExpiresAt?: string,
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
   maximumBuyPriceMicros?: Readonly<Record<string, bigint>>,
+  minimumSellPriceMicros?: Readonly<Record<string, bigint>>,
+  equityShortEntries?: Readonly<Record<string, EquityShortEligibility>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
     limitSlippageBps: entryLimitSlippageBps,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
     ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
+    ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+    ...(equityShortEntries === undefined ? {} : { equityShortEntries }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1290,7 +1311,11 @@ const reduceObserveRiskInputs = <R>(
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
+): Effect.Effect<
+  ObserveShadowDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+> =>
   buildStrategyCycleDecision(input, {
     authorityRequirement: Authority.Observe,
     documentMode: Authority.Observe,
@@ -1309,7 +1334,11 @@ export function buildStrategyCycleDecision<R>(
     readonly authorityRequirement: Authority.Observe
     readonly documentMode: Authority.Observe
   },
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
+): Effect.Effect<
+  ObserveShadowDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+>
 export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: {
@@ -1317,11 +1346,19 @@ export function buildStrategyCycleDecision<R>(
     readonly authorityRequirement: Authority.Execution
     readonly documentMode: Authority.Execution
   },
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
+): Effect.Effect<
+  ExecutionDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+>
 export function buildStrategyCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: CycleDecisionRequirements,
-): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> {
+): Effect.Effect<
+  CycleDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
     const { facts: initialFacts, portfolio } = yield* readObserveDecisionFacts(
@@ -1348,6 +1385,11 @@ export function buildStrategyCycleDecision<R>(
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const planningTargetWeights = compiled.planningTargetWeights ?? compiled.decision.targetWeights
+    // Capital and turnover caps bound absolute notionals. Direction and short eligibility remain
+    // bound to the signed native target in the planner and independent final broker checks.
+    const allocationTargetWeights = Object.fromEntries(
+      Object.entries(planningTargetWeights).map(([symbol, weight]) => [symbol, Math.abs(weight)]),
+    )
     const allowedSymbols = new Set(input.policy.allowedSymbols)
     const hasExternalPosition = facts.reconciliation.brokerState.positions.some(
       ({ symbol, quantityAtoms }) => BigInt(quantityAtoms) !== 0n && !allowedSymbols.has(symbol),
@@ -1368,7 +1410,7 @@ export function buildStrategyCycleDecision<R>(
                     ? null
                     : BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
-                targetWeights: planningTargetWeights,
+                targetWeights: allocationTargetWeights,
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
@@ -1379,7 +1421,7 @@ export function buildStrategyCycleDecision<R>(
                       maxOrderNotionalMicros: BigInt(input.policy.maxOrderNotionalMicros),
                       maxSymbolExposureMicros: BigInt(input.policy.maxSymbolExposureMicros),
                       maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
-                      targetWeights: planningTargetWeights,
+                      targetWeights: allocationTargetWeights,
                     })
                   : Result.succeed(capitalMicros),
             ),
@@ -1436,6 +1478,8 @@ export function buildStrategyCycleDecision<R>(
         undefined,
         compiled.entryQuotes,
         protectedEntryBuyPriceCeilings(entryDecision),
+        protectedEntrySellPriceFloors(entryDecision),
+        protectedEntryShortEligibility(entryDecision),
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
@@ -1487,7 +1531,11 @@ export function buildStrategyCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
+): Effect.Effect<
+  ExecutionDecisionDocument,
+  ObserveDecisionFailure,
+  BrokerRead | DecisionConstruction | JevDecisionServices | R
+> =>
   buildStrategyCycleDecision(input, {
     authorityRequirement: Authority.Execution,
     documentMode: Authority.Execution,
@@ -1586,7 +1634,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
 ): Effect.Effect<
   { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
   CycleRunnerError | ExecutionCloseAwaitingMarketData | ExecutionCloseAwaitingReconciliation,
-  R
+  R | DecisionConstruction
 > => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
@@ -1600,10 +1648,29 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const target = request.exitTarget
+    const releasedExit =
+      source === 'reconciled-position' &&
+      target?.reason === JevExitReason.ProtectionReleased &&
+      Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(target)) &&
+      target.evidence.portfolio.purpose === JevPurpose.Manage &&
+      target.evidence.portfolio.exitRequestedAt !== null &&
+      !target.evidence.portfolio.profitExitRequested &&
+      target.cycleId === cycle.identity.cycleId &&
+      target.entryDecisionHash === entryDocument.contentHash &&
+      target.sessionDate === cycle.identity.executionSessionDate &&
+      target.evidence.portfolio.brokerState.account.accountId === cycle.identity.accountId &&
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
+      canonicalJsonEqualV1(target.evidence.portfolio.exitPolicy, entryDocument.strategyDecision.exitPolicy)
+        ? target
+        : undefined
     const requireFallbackWindow = (observedAt: string) => {
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
-      return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
+      // Cancellation/rejection/accounted protection latched this reducing exit before the archive failed.
+      // A profit latch still needs quote evidence: a broker mark must not create a new stop trigger.
+      const resumeReleasedExit = releasedExit !== undefined && releasedExit.observedAt <= observedAt
+      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeReleasedExit) &&
         (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
           observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
@@ -1615,8 +1682,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             }),
           )
     }
-    // Sample after the archive attempt: it may have crossed into the close window. Outside that
-    // window a second reconciliation cannot authorize this fallback and only delays the next pass.
+    // Sample after the archive attempt. Only the close window or an already committed non-profit exit
+    // can authorize a fresh position-mark fallback; neither can authorize a new entry or price trigger.
     if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
     const reconciliation = yield* (
       source === 'archive' && request.initialReconciliation !== undefined
@@ -1888,10 +1955,14 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const minimumSellPriceMicros = yield* Effect.fromResult(
       jevProfitTargetLimitFloors(request.exitTarget, evaluatedAt, targetPlan.targets),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const maximumBuyPriceMicros = yield* Effect.fromResult(
+      jevProfitTargetLimitCeilings(request.exitTarget, evaluatedAt, targetPlan.targets),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
         limitSlippageBps: closeLimitSlippageBps,
         minimumSellPriceMicros,
+        maximumBuyPriceMicros,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,

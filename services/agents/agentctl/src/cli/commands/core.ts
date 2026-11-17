@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { Args, CliConfig, Command, HelpDoc, Options } from '@effect/cli'
+import { Argument, CliError, Command, Completions, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { loadConfig, resolveConfigPath, saveConfig } from '../../config'
@@ -17,34 +17,27 @@ import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { renderExamples } from '../examples'
-import { renderGlobalFlags, renderShortHelp, renderTopicHelp } from '../help'
+import { renderShortHelp, renderTopicHelp } from '../help'
 import { promptConfirm, promptText } from '../prompt'
 
 const formatConfig = (config: Record<string, unknown>) => JSON.stringify(config, null, 2)
 
-export const makeHelpCommand = (getRoot: () => Command.Command<unknown, unknown, unknown, unknown>) => {
-  const topicArg = Args.optional(Args.text({ name: 'topic' }))
+export const makeHelpCommand = () => {
+  const topicArg = Argument.optional(Argument.String('topic'))
   return Command.make('help', { topic: topicArg }, ({ topic }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const value = Option.getOrUndefined(topic) ?? ''
       if (value.toLowerCase() === 'all') {
-        const helpDoc = Command.getHelp(getRoot(), CliConfig.defaultConfig)
-        console.log(HelpDoc.toAnsiText(helpDoc))
-        console.log(renderGlobalFlags())
-        return
+        return yield* new CliError.ShowHelp({ commandPath: ['agentctl'], errors: [] })
       }
       const topicHelp = renderTopicHelp(value)
-      if (topicHelp) {
-        console.log(topicHelp)
-        return
-      }
-      console.log(renderShortHelp(getVersion()))
+      console.log(topicHelp ?? renderShortHelp(getVersion()))
     }),
   )
 }
 
 export const makeExamplesCommand = () => {
-  const topicArg = Args.optional(Args.text({ name: 'topic' }))
+  const topicArg = Argument.optional(Argument.String('topic'))
   return Command.make('examples', { topic: topicArg }, ({ topic }) =>
     Effect.sync(() => {
       console.log(renderExamples(Option.getOrUndefined(topic)))
@@ -61,50 +54,41 @@ export const makeQuickstartCommand = () =>
     }),
   )
 
-export const makeCompletionCommand = (getRoot: () => Command.Command<unknown, unknown, unknown, unknown>) => {
-  const shellArg = Args.text({ name: 'shell' })
+export const makeCompletionCommand = (getRoot: () => Command.Command.Any) => {
+  const shellArg = Argument.String('shell')
+  const generateCompletion = (shell: string) => {
+    const normalized = shell.trim().toLowerCase()
+    if (normalized !== 'bash' && normalized !== 'zsh' && normalized !== 'fish') {
+      throw new Error(`Unsupported shell: ${shell}`)
+    }
+    return {
+      shell: normalized,
+      script: Completions.generate('agentctl', normalized, Completions.fromCommand(getRoot())),
+    }
+  }
 
   const printCompletion = Command.make('completion', { shell: shellArg }, ({ shell }) =>
-    Effect.gen(function* () {
-      const command = getRoot()
-      const normalized = shell.trim().toLowerCase()
-      if (normalized === 'bash') {
-        const lines = yield* Command.getBashCompletions(command, 'agentctl')
-        console.log(lines.join('\n'))
-        return
-      }
-      if (normalized === 'zsh') {
-        const lines = yield* Command.getZshCompletions(command, 'agentctl')
-        console.log(lines.join('\n'))
-        return
-      }
-      if (normalized === 'fish') {
-        const lines = yield* Command.getFishCompletions(command, 'agentctl')
-        console.log(lines.join('\n'))
-        return
-      }
-      throw new Error(`Unsupported shell: ${shell}`)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, 'ValidationError'))),
+    Effect.try({
+      try: () => generateCompletion(shell),
+      catch: (error) => asAgentctlError(error, 'ValidationError'),
+    }).pipe(Effect.tap(({ script }) => Effect.sync(() => console.log(script)))),
   )
 
   const install = Command.make('install', { shell: shellArg }, ({ shell }) =>
     Effect.gen(function* () {
-      const command = getRoot()
-      const normalized = shell.trim().toLowerCase()
-      let lines: string[] = []
-      if (normalized === 'bash') {
-        lines = yield* Command.getBashCompletions(command, 'agentctl')
-      } else if (normalized === 'zsh') {
-        lines = yield* Command.getZshCompletions(command, 'agentctl')
-      } else if (normalized === 'fish') {
-        lines = yield* Command.getFishCompletions(command, 'agentctl')
-      } else {
-        throw new Error(`Unsupported shell: ${shell}`)
-      }
+      const { shell: normalized, script } = yield* Effect.try({
+        try: () => generateCompletion(shell),
+        catch: (error) => asAgentctlError(error, 'ValidationError'),
+      })
       const base = process.env.XDG_CONFIG_HOME?.trim() || `${process.env.HOME}/.config`
       const filePath = `${base}/agentctl/completions/agentctl.${normalized}`
-      yield* Effect.promise(() => mkdir(dirname(filePath), { recursive: true }))
-      yield* Effect.promise(() => writeFile(filePath, `${lines.join('\n')}\n`, 'utf8'))
+      yield* Effect.tryPromise({
+        try: async () => {
+          await mkdir(dirname(filePath), { recursive: true })
+          await writeFile(filePath, `${script}\n`, 'utf8')
+        },
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
       console.log(`Wrote ${filePath}`)
       if (normalized === 'fish') {
         console.log(`Run: set -U fish_complete_path $fish_complete_path ${base}/agentctl/completions`)
@@ -113,14 +97,14 @@ export const makeCompletionCommand = (getRoot: () => Command.Command<unknown, un
       } else {
         console.log(`Add to ~/.bashrc: source ${filePath}`)
       }
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
+    }),
   )
 
   return Command.withSubcommands(printCompletion, [install])
 }
 
 export const makeConfigCommand = () => {
-  const showSecrets = Options.boolean('show-secrets')
+  const showSecrets = Flag.Boolean('show-secrets').pipe(Flag.withDefault(false))
   const view = Command.make('view', { showSecrets }, ({ showSecrets }) =>
     Effect.gen(function* () {
       const config = yield* Effect.promise(() => loadConfig())
@@ -131,13 +115,13 @@ export const makeConfigCommand = () => {
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
   )
 
-  const namespace = Options.optional(Options.text('namespace'))
-  const server = Options.optional(Options.text('server'))
-  const address = Options.optional(Options.text('address'))
-  const token = Options.optional(Options.text('token'))
-  const kubeconfig = Options.optional(Options.text('kubeconfig'))
-  const context = Options.optional(Options.text('context'))
-  const tls = Options.boolean('tls', { negationNames: ['no-tls'] })
+  const namespace = Flag.optional(Flag.String('namespace'))
+  const server = Flag.optional(Flag.String('server'))
+  const address = Flag.optional(Flag.String('address'))
+  const token = Flag.optional(Flag.String('token'))
+  const kubeconfig = Flag.optional(Flag.String('kubeconfig'))
+  const context = Flag.optional(Flag.String('context'))
+  const tls = Flag.Boolean('tls').pipe(Flag.withDefault(false))
 
   const set = Command.make(
     'set',
@@ -261,7 +245,7 @@ export const makeConfigCommand = () => {
 export const makeVersionCommand = () =>
   Command.make(
     'version',
-    { clientOnly: Options.boolean('client').pipe(Options.withAlias('client-only')) },
+    { clientOnly: Flag.Boolean('client').pipe(Flag.withDefault(false)).pipe(Flag.withAlias('client-only')) },
     ({ clientOnly }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext

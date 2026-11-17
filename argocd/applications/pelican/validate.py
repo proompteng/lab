@@ -44,6 +44,7 @@ def main() -> None:
     assert wings["token_id"] == config["WINGS_TOKEN_ID"]
     assert len(wings["token_id"]) == 16
     assert wings["token"] == "{{ .wings_token }}"
+    assert wings["docker"]["network"]["network_mtu"] == 1400
     subprocess.run(
         ["bash", "-n"],
         input=files["/usr/local/sbin/install-pelican-wings"]["content"],

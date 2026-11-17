@@ -34,10 +34,9 @@ type KubeGatewayClientService = {
   client: KubernetesClient
 }
 
-export class KubeGatewayClient extends Context.Tag('KubeGatewayClient')<
-  KubeGatewayClient,
-  KubeGatewayClientService
->() {}
+export class KubeGatewayClient extends Context.Service<KubeGatewayClient, KubeGatewayClientService>()(
+  'KubeGatewayClient',
+) {}
 
 export const KubeGatewayClientLive = (client: KubernetesClient) => Layer.succeed(KubeGatewayClient, { client })
 
@@ -290,11 +289,11 @@ const runKubeGatewayEffect = <T>(
   client: KubernetesClient,
   effect: Effect.Effect<T, KubeGatewayEffectError, KubeGatewayClient>,
 ) =>
-  Effect.runPromise(effect.pipe(Effect.provide(KubeGatewayClientLive(client)), Effect.either)).then((result) => {
-    if (result._tag === 'Left') {
-      throw toKubeGatewayError(result.left)
+  Effect.runPromise(effect.pipe(Effect.provide(KubeGatewayClientLive(client)), Effect.result)).then((result) => {
+    if (result._tag === 'Failure') {
+      throw toKubeGatewayError(result.failure)
     }
-    return result.right
+    return result.success
   })
 
 const clientListEffect = (resource: string, namespace: string, labelSelector: string | undefined, context: string) =>
@@ -385,7 +384,7 @@ const getLeaseEffect = (namespace: string, name: string) =>
       try: () => service.client.get('lease', name, namespace) as Promise<V1Lease | null>,
       catch: (cause) => cause,
     }).pipe(
-      Effect.catchAll((cause) =>
+      Effect.catch((cause) =>
         isNotFoundError(cause)
           ? Effect.succeed(null)
           : Effect.fail(new KubeGatewayTransportError({ context: 'kube lease get failed', cause })),

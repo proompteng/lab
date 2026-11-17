@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
@@ -6,6 +8,16 @@ import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
+
+const runWithConstruction = <A, E>(program: Effect.Effect<A, E, DecisionConstruction>) =>
+  Effect.runPromise(
+    program.pipe(
+      Effect.provideService(DecisionConstruction, {
+        observe: constructObserveShadowDecision,
+        execution: constructExecutionDecision,
+      }),
+    ),
+  )
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
@@ -46,7 +58,8 @@ import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevBatchResult, nativeJevFixture } from '../jev/native.test-support'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
-import { decideJevExit, JevExitReason } from '../jev/exit'
+import { decideJevExit, JevExitReason, JevExitTargetSchema } from '../jev/exit'
+import { makePersistenceDocumentFixture } from '../system-assessment/decision-persistence.test-support'
 import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { jevPricingQuery } from '../jev/runtime'
@@ -61,6 +74,7 @@ import { makeJevMarketTestSnapshot as makeIntradayMomentumTestSnapshot } from '.
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { currentUtcInstant } from '../time'
+import { TargetPlanStatus } from '../target-planner/model'
 import { CandidateObservationStore } from './candidate-observation'
 import {
   checkAdvancedMarketProjection,
@@ -199,12 +213,10 @@ const fixture = async (source = native) => {
     intradayMarketData: freshMarket,
   }
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
-  const policy = await Effect.runPromise(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
+  const policy = await runWithConstruction(Effect.fromResult(strategyExecutionRiskPolicy(accountId, fixtureRuntime)))
   const unused = Effect.die(new Error('Unexpected fixture I/O'))
   const broker: BrokerReadShape = {
-    account: unused,
-    accountConfiguration: unused,
-    assetBySymbol: () => unused,
+    ...longEntryBrokerReads(source.portfolio.brokerState.account, at),
     positions: unused,
     orders: () => unused,
     orderById: () => unused,
@@ -222,7 +234,7 @@ const fixture = async (source = native) => {
         },
       }),
   }
-  const document = await Effect.runPromise(
+  const document = await runWithConstruction(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(at))
       return yield* buildMutationShadowCycleDecision({
@@ -315,7 +327,8 @@ describe('closing market-data fallback boundaries', () => {
     const entry = request.entryDocument.strategyDecision
     if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
     const plan = entry.exitPolicy.plans['AAPL']
-    if (plan === undefined) throw new Error('Expected an entry-bound plan')
+    if (plan === undefined || plan.levels.schemaVersion !== 'bayn.jev-strategy-exit-plan.v4')
+      throw new Error('Expected an entry-bound long plan')
     const floor = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
     const pending = scenario.startsWith('pending-') || scenario.startsWith('partial-')
     const observedAt = new Date(
@@ -430,7 +443,7 @@ describe('closing market-data fallback boundaries', () => {
         ? new Date(Date.parse(at) + native.protocol.maximumHoldingMinutes * 60_000).toISOString()
         : observedAt
     const bid = scenario === 'stop' || scenario === 'pending-stop-nonprofit' ? stopBid : floor - 0.01
-    const result = await Effect.runPromise(
+    const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(buildAt))
         return yield* prepareClosingExecutionCycleDecision({
@@ -471,7 +484,7 @@ describe('closing market-data fallback boundaries', () => {
     if (!pending) return
     const authority = heldFacts.riskContext.authority
     if (authority === null) throw new Error('Expected close authority')
-    const intent = await Effect.runPromise(
+    const intent = await runWithConstruction(
       planExecutionIntent(
         {
           schemaVersion: 'bayn.intent-plan.v3',
@@ -572,7 +585,7 @@ describe('closing market-data fallback boundaries', () => {
             )
           }),
       }
-      const outcome = await Effect.runPromise(
+      const outcome = await runWithConstruction(
         prepareMutationIntent(
           {
             ...request.input,
@@ -710,7 +723,7 @@ describe('closing market-data fallback boundaries', () => {
         }),
       containsIntent: () => Effect.succeed(true),
     }
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(reboundAt))
         const reconcile = Effect.suspend(() => Effect.succeed(settled ? recovered : reconciliation))
@@ -793,7 +806,7 @@ describe('closing market-data fallback boundaries', () => {
     }
     const stateHash = Result.getOrThrow(reconciledStateHash(state))
     const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
-    const result = await Effect.runPromise(
+    const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* prepareClosingExecutionCycleDecision({
@@ -844,7 +857,7 @@ describe('closing market-data fallback boundaries', () => {
     const observedAt = new Date(Date.parse(request.cycle.window.executionCloseAt) + 60_000).toISOString()
     const expiry = executionCloseRecoveryExpiry(calendar, observedAt)
     if (expiry === null) throw new Error('Expected broker extended hours')
-    const closed = await Effect.runPromise(
+    const closed = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* prepareClosingExecutionCycleDecision({
@@ -912,7 +925,7 @@ describe('closing market-data fallback boundaries', () => {
             }).pipe(Effect.andThen(freshMarket.loadSnapshot(query))),
         },
       }
-      await Effect.runPromise(
+      await runWithConstruction(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
           const at = yield* currentUtcInstant
@@ -1059,7 +1072,7 @@ describe('closing market-data fallback boundaries', () => {
         }),
       containsIntent: () => Effect.succeed(true),
     }
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
         const before = yield* currentUtcInstant
@@ -1238,7 +1251,7 @@ describe('closing market-data fallback boundaries', () => {
                   30_000,
                   result.value.observedAt,
                 ),
-              ).toBe(pending ? 1_000 : undefined)
+              ).toBeUndefined()
             }
           }
           expect(freshReads).toBe(
@@ -1323,7 +1336,7 @@ describe('closing market-data fallback boundaries', () => {
           [...(closure?.document.orderedIntentIds ?? []), ...(replan?.document.orderedIntentIds ?? [])].includes(id),
         ),
     }
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
         const reconcile = Effect.gen(function* () {
@@ -1616,7 +1629,7 @@ describe('closing market-data fallback boundaries', () => {
           })
         },
       )
-      const outcome = await Effect.runPromise(
+      const outcome = await runWithConstruction(
         advanceExecutionOnce(
           {
             controllerKey: 'a'.repeat(64),
@@ -1650,7 +1663,7 @@ describe('closing market-data fallback boundaries', () => {
       nextDelayMs: 1_000,
     }
     expect(
-      await Effect.runPromise(
+      await runWithConstruction(
         checkAdvancedMarketProjection(advanced, Effect.void, () =>
           Effect.die(new Error('successful health check cannot report a failure')),
         ),
@@ -1681,7 +1694,7 @@ describe('closing market-data fallback boundaries', () => {
         at,
       ),
     ).toBeUndefined()
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(close - 1)
         yield* checkAdvancedMarketProjection(
@@ -1697,7 +1710,7 @@ describe('closing market-data fallback boundaries', () => {
     )
   })
 
-  test('a short durable continuation catches a delayed quote that expires during the ordinary idle interval', async () => {
+  test('the protection deadline catches a delayed close quote inside its original validity', async () => {
     const request = await fixture()
     const start = Date.parse(at) + 16 * 60_000 + 24_000
     const quoteEventAt = new Date(start + 3_100).toISOString()
@@ -1737,7 +1750,7 @@ describe('closing market-data fallback boundaries', () => {
       yield* TestClock.adjust(3_000)
       return factsAt(yield* currentUtcInstant, true)
     })
-    await Effect.runPromise(
+    await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(start)
         const close = prepareClosingExecutionCycleDecision({
@@ -1755,7 +1768,7 @@ describe('closing market-data fallback boundaries', () => {
           cycle: request.cycle,
         } as const
         const nextDelayMs = executionEvidenceContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
-        expect(nextDelayMs).toBe(1_000)
+        expect(nextDelayMs).toBe(5_000)
         const command = {
           controllerKey: 'a'.repeat(64),
           epoch: 1,
@@ -1773,7 +1786,9 @@ describe('closing market-data fallback boundaries', () => {
               observedAt: result.observedAt,
               waitReason: 'CLOSE_QUOTE_PENDING',
             },
-            ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+            ...(nextDelayMs === undefined
+              ? {}
+              : { nextDelayMs, nextWakeAt: new Date(start + 3_000 + nextDelayMs).toISOString() }),
           }),
           nextDelayMs: 30_000,
         })
@@ -1798,13 +1813,14 @@ describe('closing market-data fallback boundaries', () => {
                 _tag: ExecutionControllerOutcome.Waiting,
                 receiptHash: outcome.receiptHash,
                 nextDelayMs: outcome.nextDelayMs,
+                ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
               },
             },
             command.sourceRevision,
           ),
         )
         const restarted = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(completed))))
-        expect(restarted.nextDueAt).toBe(new Date(start + 4_000).toISOString())
+        expect(restarted.nextDueAt).toBe(new Date(start + 8_000).toISOString())
         expect(
           Result.getOrThrow(
             decideExecutionControllerTick(
@@ -1815,8 +1831,6 @@ describe('closing market-data fallback boundaries', () => {
             ),
           )._tag,
         ).toBe('Ignored')
-        yield* TestClock.adjust(nextDelayMs ?? 30_000)
-        expect(yield* Effect.flip(close)).toMatchObject({ quotePending: true })
         yield* TestClock.adjust(nextDelayMs ?? 30_000)
         const ready = yield* close
         expect(ready.document.dispatchable).toBe(true)
@@ -1851,7 +1865,7 @@ describe('closing market-data fallback boundaries', () => {
   })
 
   test.each(['BROKER_OBSERVATION_PENDING', 'JEV_POSITION_AWAITING_RECONCILIATION'] as const)(
-    'pending broker evidence %s uses a short continuation within the close deadline',
+    'pending broker evidence %s preserves only a protection deadline',
     (waitReason) => {
       const waiting = {
         outcome: 'RECOVERED',
@@ -1860,10 +1874,16 @@ describe('closing market-data fallback boundaries', () => {
         observedAt: at,
         cycle: activeCycle,
       } as const
-      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
-      expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(500)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(
+        waitReason === 'JEV_POSITION_AWAITING_RECONCILIATION' ? 5_000 : undefined,
+      )
+      expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(
+        waitReason === 'JEV_POSITION_AWAITING_RECONCILIATION' ? 500 : undefined,
+      )
       const close = Date.parse(activeCycle.window.executionCloseAt)
-      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(
+        waitReason === 'JEV_POSITION_AWAITING_RECONCILIATION' ? 250 : undefined,
+      )
       expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
       expect(
         executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
@@ -1886,10 +1906,302 @@ describe('closing market-data fallback boundaries', () => {
     expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
   })
 
+  test.each([
+    'protective',
+    'short-protective',
+    'profit',
+    'short-profit',
+    'uncommitted-hold',
+    'missing-latch',
+    'future-latch',
+    'future-target',
+    'foreign-cycle',
+    'foreign-entry',
+    'foreign-account',
+    'altered-policy',
+    'malformed-target',
+    'unknown-order',
+    'unknown-mutation',
+    'open-protection',
+    'stale-position',
+    'inexact-reconciliation',
+    'inexact-accounting',
+    'missing-mark',
+    'expired-lease',
+    'invalid-archive',
+    'target-expires-during-reconciliation',
+  ] as const)('committed protective exit fallback before the session close window: %s', async (scenario) => {
+    const request = await fixture()
+    const short = scenario.startsWith('short-')
+    if (short) {
+      const document = await Effect.runPromise(makePersistenceDocumentFixture(accountId, 1, true))
+      expect(document.bindings.cycleId).toBe(request.cycle.identity.cycleId)
+      expect(document.bindings.strategyProtocolHash).toBe(request.cycle.identity.strategyProtocolHash)
+      request.entryDocument = document
+      request.cycle = {
+        ...request.cycle,
+        bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
+      }
+    }
+    const entry = request.entryDocument.strategyDecision
+    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
+    const managed = activeNativeFixture(JevPurpose.Manage).portfolio
+    if (managed.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
+    const plan = entry.exitPolicy.plans['AAPL']
+    const fill = managed.entryFills[0]
+    if (plan === undefined || fill === undefined) throw new Error('Expected an entry-bound plan and fill')
+    const quantityAtoms = plan.maximumQuantityAtoms
+    const priceMicros =
+      plan.levels.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1'
+        ? plan.levels.minimumEntryPriceMicros
+        : plan.levels.maximumEntryPriceMicros
+    const priceAtoms = String(BigInt(priceMicros) * 1000n)
+    const signedQuantity = short ? -BigInt(quantityAtoms) : BigInt(quantityAtoms)
+    const costBasisMicros = String((signedQuantity * BigInt(priceAtoms)) / 1_000_000_000_000n)
+    const observedAt = new Date(Date.parse(at) + (scenario === 'uncommitted-hold' ? 901_000 : 60_000)).toISOString()
+    const facts = factsAt(observedAt, true)
+    const state = {
+      ...facts.brokerState,
+      account: {
+        ...facts.brokerState.account,
+        ...(short
+          ? { cashMicros: String(BigInt(facts.brokerState.account.equityMicros) - BigInt(costBasisMicros)) }
+          : {}),
+      },
+      orders: facts.brokerState.orders.map((order) => ({
+        ...order,
+        side: short ? OrderSide.Sell : OrderSide.Buy,
+        quantityAtoms: String(BigInt(quantityAtoms) + 1n),
+        filledQuantityAtoms: quantityAtoms,
+      })),
+      positions: facts.brokerState.positions.map((position) => ({
+        ...position,
+        quantityAtoms: String(signedQuantity),
+        averageEntryPriceMicros: priceMicros,
+        marketPriceMicros: priceMicros,
+        marketValueMicros: costBasisMicros,
+        unrealizedPnlMicros: '0',
+        costBasisMicros,
+      })),
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(state))
+    const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
+    const heldFacts = {
+      ...facts,
+      brokerState: { ...state, reconciliation },
+      report: { ...facts.report, reconciliation },
+    }
+    const exitTarget = Result.getOrThrow(
+      decideJevExit({
+        cycleId: request.cycle.identity.cycleId,
+        sessionDate: request.cycle.identity.executionSessionDate,
+        protocol: native.protocol,
+        portfolio: {
+          ...managed,
+          entryDecisionHash: request.entryDocument.contentHash,
+          exitPolicy: entry.exitPolicy,
+          entryFills: [
+            { ...fill, side: short ? OrderSide.Sell : OrderSide.Buy, quantityAtoms, priceAtoms, occurredAt: at },
+          ],
+          exitRequestedAt:
+            scenario === 'uncommitted-hold' ? null : new Date(Date.parse(observedAt) - 1_000).toISOString(),
+          profitExitRequested: scenario === 'profit' || scenario === 'short-profit',
+          brokerState: heldFacts.brokerState,
+        },
+        observedAt,
+        trigger: {
+          reason: scenario === 'uncommitted-hold' ? JevExitReason.MaximumHold : JevExitReason.ProtectionReleased,
+        },
+      }),
+    )
+    if (exitTarget.evidence.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected managed exit evidence')
+    if (scenario === 'missing-latch') Object.assign(exitTarget.evidence.portfolio, { exitRequestedAt: null })
+    if (scenario === 'future-latch')
+      Object.assign(exitTarget.evidence.portfolio, { exitRequestedAt: '2099-01-01T00:00:00.000Z' })
+    if (scenario === 'future-target') Object.assign(exitTarget, { observedAt: '2099-01-01T00:00:00.000Z' })
+    if (scenario === 'foreign-cycle')
+      Object.assign(
+        exitTarget,
+        Result.getOrThrow(
+          decideJevExit({
+            ...exitTarget.evidence,
+            cycleId: 'f'.repeat(64),
+          }),
+        ),
+      )
+    if (scenario === 'foreign-entry')
+      Object.assign(
+        exitTarget,
+        Result.getOrThrow(
+          decideJevExit({
+            ...exitTarget.evidence,
+            portfolio: { ...exitTarget.evidence.portfolio, entryDecisionHash: 'f'.repeat(64) },
+          }),
+        ),
+      )
+    if (scenario === 'foreign-cycle' || scenario === 'foreign-entry')
+      expect(Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(exitTarget))).toBe(
+        true,
+      )
+    if (scenario === 'foreign-account')
+      Object.assign(exitTarget.evidence.portfolio.brokerState.account, { accountId: 'foreign-account' })
+    if (scenario === 'altered-policy')
+      Object.assign(exitTarget.evidence.portfolio.exitPolicy, { maximumHoldingMinutes: 14 })
+    if (scenario === 'malformed-target') Object.assign(exitTarget, { commitDeadlineAt: 'not-an-instant' })
+    const staleAt = new Date(Date.parse(observedAt) - request.policy.maxBrokerStateAgeMs - 1).toISOString()
+    const currentState = {
+      ...heldFacts.brokerState,
+      unknownOrderCount: scenario === 'unknown-order' ? 1 : 0,
+      orders: heldFacts.brokerState.orders.map((order) =>
+        scenario === 'open-protection' ? { ...order, status: OrderStatus.New, filledQuantityAtoms: '0' } : order,
+      ),
+      positions: heldFacts.brokerState.positions.map((position) => ({
+        ...position,
+        ...(scenario === 'stale-position' ? { observedAt: staleAt } : {}),
+        ...(scenario === 'missing-mark' ? { marketPriceMicros: '0' } : {}),
+      })),
+      positionsObservedAt: scenario === 'stale-position' ? staleAt : observedAt,
+    }
+    const currentHash = Result.getOrThrow(reconciledStateHash(currentState))
+    const currentReconciliation = {
+      ...reconciliation,
+      expectedHash: currentHash,
+      observedHash: currentHash,
+      status: scenario === 'inexact-reconciliation' ? ReconciliationStatus.Discrepancy : ReconciliationStatus.Exact,
+    }
+    const currentFacts = {
+      ...heldFacts,
+      brokerState: { ...currentState, reconciliation: currentReconciliation },
+      report: {
+        ...heldFacts.report,
+        reconciliation: currentReconciliation,
+        metrics: { ...heldFacts.report.metrics, accountingExact: scenario !== 'inexact-accounting' },
+      },
+      riskContext: { ...heldFacts.riskContext, unknownMutationCount: scenario === 'unknown-mutation' ? 1 : 0 },
+    }
+    let latestFacts = currentFacts
+    let recheckedAt = observedAt
+    let reads = 0
+    const result = await runWithConstruction(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(scenario === 'expired-lease' ? request.closeExpiresAt : observedAt))
+        return yield* prepareClosingExecutionCycleDecision({
+          ...request,
+          exitTarget,
+          input: {
+            ...request.input,
+            intradayMarketData: {
+              ...freshMarket,
+              loadSnapshot: () =>
+                scenario === 'invalid-archive'
+                  ? Effect.fail(
+                      new OperationalError({
+                        component: 'market-data',
+                        operation: 'snapshot',
+                        message: 'Invalid archive contract',
+                        retryable: false,
+                        cause: new Error('Invalid source'),
+                      }),
+                    )
+                  : Effect.fail(marketFailure),
+            },
+          },
+          reconcile: Effect.gen(function* () {
+            reads += 1
+            if (scenario === 'target-expires-during-reconciliation' && reads === 2) {
+              yield* TestClock.adjust(native.protocol.maximumQuoteAgeMs + 1)
+              recheckedAt = yield* currentUtcInstant
+              const refreshedState = {
+                ...currentState,
+                account: { ...currentState.account, observedAt: recheckedAt },
+                positions: currentState.positions.map((position) => ({ ...position, observedAt: recheckedAt })),
+                orders: currentState.orders.map((order) => ({ ...order, observedAt: recheckedAt })),
+                positionsObservedAt: recheckedAt,
+                ordersObservedAt: recheckedAt,
+              }
+              const refreshedHash = Result.getOrThrow(reconciledStateHash(refreshedState))
+              const refreshedReconciliation = {
+                ...currentReconciliation,
+                reconciledAt: recheckedAt,
+                expectedHash: refreshedHash,
+                observedHash: refreshedHash,
+              }
+              latestFacts = {
+                ...currentFacts,
+                brokerState: { ...refreshedState, reconciliation: refreshedReconciliation },
+                report: { ...currentFacts.report, reconciliation: refreshedReconciliation },
+              }
+            }
+            return latestFacts
+          }),
+        })
+      }).pipe(Effect.exit, Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+    )
+    if (scenario === 'target-expires-during-reconciliation') {
+      expect(Exit.isFailure(result)).toBe(true)
+      expect(reads).toBe(2)
+      const renewedTarget = Result.getOrThrow(
+        decideJevExit({
+          ...exitTarget.evidence,
+          portfolio: { ...exitTarget.evidence.portfolio, brokerState: latestFacts.brokerState },
+          observedAt: recheckedAt,
+        }),
+      )
+      const renewed = await runWithConstruction(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(recheckedAt))
+          return yield* prepareClosingExecutionCycleDecision({
+            ...request,
+            exitTarget: renewedTarget,
+            reconcile: Effect.succeed(latestFacts),
+            input: {
+              ...request.input,
+              intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) },
+            },
+          })
+        }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
+      )
+      expect(renewedTarget.observedAt).toBe(recheckedAt)
+      expect(renewedTarget.commitDeadlineAt > exitTarget.commitDeadlineAt).toBe(true)
+      expect(renewed.document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+      return
+    }
+    if (scenario !== 'protective' && scenario !== 'short-protective') {
+      expect(Exit.isFailure(result) || result.value.document.targetPlan.status !== TargetPlanStatus.Planned).toBe(true)
+      if (
+        scenario === 'profit' ||
+        scenario === 'short-profit' ||
+        scenario === 'uncommitted-hold' ||
+        scenario === 'invalid-archive' ||
+        scenario === 'foreign-entry' ||
+        scenario === 'foreign-cycle'
+      )
+        expect(reads).toBe(1)
+      return
+    }
+    if (Exit.isFailure(result)) throw result.cause
+    const prepared = result.value
+    expect(reads).toBe(2)
+    expect(prepared.document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+    expect(prepared.document.strategyDecision).toEqual(exitTarget)
+    expect(prepared.document.bindings.executionMarketData).toMatchObject({
+      source: 'alpaca-v2-positions',
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      observedAt,
+    })
+    expect(prepared.document.targetPlan.executionTerms).toMatchObject({
+      executionPurpose: 'forced-close',
+      priceReference: 'reconciled-broker-position-mark',
+    })
+    expect(prepared.document.targetPlan.intentTargets).toHaveLength(1)
+    expect(prepared.document.targetPlan.intentTargets[0]?.side).toBe(short ? OrderSide.Buy : OrderSide.Sell)
+    expect(prepared.document.targetPlan.intentTargets[0]?.quantityAtoms).toBe(quantityAtoms)
+  })
+
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
     const request = await fixture()
     let reads = 0
-    const failure = await Effect.runPromise(
+    const failure = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(at) + 60_000)
         return yield* Effect.flip(
@@ -1926,7 +2238,7 @@ describe('closing market-data fallback boundaries', () => {
 
   test('an absent executable quote never receives the stale-quote continuation', async () => {
     const request = await fixture()
-    const failure = await Effect.runPromise(
+    const failure = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(at) + 60_000)
         return yield* Effect.flip(
@@ -1959,7 +2271,7 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     let reads = 0
     const start = Date.parse(request.cycle.window.executionCloseAt) - native.protocol.flattenBeforeCloseMinutes * 60_000
-    const result = await Effect.runPromise(
+    const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(start + offset)
         return yield* prepareClosingExecutionCycleDecision({
@@ -1995,7 +2307,7 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     let reads = 0
     const close = Date.parse(request.closeExpiresAt)
-    const failure = await Effect.runPromise(
+    const failure = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(close - 1)
         return yield* Effect.flip(
@@ -2019,3 +2331,4 @@ describe('closing market-data fallback boundaries', () => {
     expect(failure.message).toBe(marketFailure.message)
   })
 })
+import { longEntryBrokerReads } from '../testing/entry-broker-reads.test-support'

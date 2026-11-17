@@ -159,7 +159,7 @@ describePostgres('PostgreSQL consumed Jev window lookup', () => {
               { cycle_id: '4'.repeat(64), ...scope, account_id: 'empty-account' },
               ...foreignScopes,
               ...rolling.map((r) => r.scope),
-            ]
+            ] as const
             yield* sql`INSERT INTO autonomous_cycles ${sql.insert(cycles)}`
             const rows = [
               [cycleId, JevPurpose.Entry, '2026-09-04T14:30:00.000Z', '2026-09-04T14:31:00.000Z'],

@@ -20,6 +20,18 @@ const failedResponseUsageSchema = Schema.Struct({
   usage: JevResponseSchema.fields.usage,
 })
 const maximumFailureBodyBytes = 8192
+const inferenceTraceHeaders = new Set([
+  'retry-after',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
+  'x-ratelimit-limit-requests',
+  'x-ratelimit-remaining-requests',
+  'x-ratelimit-reset-requests',
+  'x-ratelimit-limit-tokens',
+  'x-ratelimit-remaining-tokens',
+  'x-ratelimit-reset-tokens',
+])
 
 export class JevError extends Data.TaggedError('JevError')<{
   readonly failure: JevFailure
@@ -85,11 +97,18 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
               HttpClientRequest.bodyText(prepared.body, 'application/json'),
               HttpClientRequest.acceptJson,
             )
-            const response = yield* http.execute(
-              prepared.request.assets === undefined
-                ? request
-                : HttpClientRequest.setHeader(request, 'TypeSafe-Danger-Zone-Images', 'true'),
-            )
+            const response = yield* http
+              .execute(
+                prepared.request.assets === undefined
+                  ? request
+                  : HttpClientRequest.setHeader(request, 'TypeSafe-Danger-Zone-Images', 'true'),
+              )
+              .pipe(
+                Effect.provideService(
+                  HttpClient.TracerHeaderFilter,
+                  (name, phase) => phase === 'response' && inferenceTraceHeaders.has(name),
+                ),
+              )
             if (response.status !== 200) {
               failureHttpStatus = response.status
               providerDiagnostics = projectJevProviderDiagnostics(response.headers, undefined, Redacted.value(key))

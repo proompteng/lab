@@ -46,16 +46,20 @@ const transport = platformaticProjectionTransport(
 )
 const positions = [{ topic: 'bars', partition: 0, offset: '0' }]
 const failures = []
+let progress = 0
+const progressed = () => {
+  progress++
+}
 if (mode === 'closed') {
   await transport.close()
   await assert.rejects(
-    transport.consume(positions, (cause) => failures.push(cause)),
+    transport.consume(positions, (cause) => failures.push(cause), progressed),
     /closed/i,
   )
   assert.equal(finishJoin, undefined)
 } else if (mode === 'late') {
   const rejected = assert.rejects(
-    transport.consume(positions, (cause) => failures.push(cause)),
+    transport.consume(positions, (cause) => failures.push(cause), progressed),
     /closed/i,
   )
   const closing = transport.close()
@@ -121,7 +125,7 @@ if (mode === 'closed') {
       ),
     )
   }
-  const attempt = transport.consume(positions, (cause) => failures.push(cause))
+  const attempt = transport.consume(positions, (cause) => failures.push(cause), progressed)
   setImmediate(() => finishJoin())
   const stream = await attempt
   if (mode === 'construct') {
@@ -131,6 +135,7 @@ if (mode === 'closed') {
     const records = []
     for await (const record of stream) records.push(record)
     assert.equal(records.length, payloads.length)
+    assert.ok(progress >= payloads.length)
     payloads.forEach((bytes, index) => {
       assert.equal(records[index].offset, String(index))
       assert.equal(records[index].value, bytes.toString('utf-8'))

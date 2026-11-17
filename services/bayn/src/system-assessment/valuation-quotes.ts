@@ -9,7 +9,7 @@ import { decodeRawMarketRecord, marketSourceForTopic, RawMarketEventKind } from 
 import { compareCurrentMarketRecord, type ObservedMarketValue } from '../market-data/streaming/projection'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { replayQuoteRejection } from '../intraday-replay/broker-execution-evidence'
-import { jevMarketForSymbol } from '../jev/markets'
+import type { JevMarketProfile } from '../jev/markets'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { quantityFromNumber } from '../quantity'
 import { Sha256Schema } from '../schemas'
@@ -20,14 +20,20 @@ interface ValuationQuote extends ObservedMarketValue<IntradayQuote> {
   readonly source: { readonly epoch: NativeArrivalEpoch; readonly chunk: string; readonly arrival: NativeArrival }
 }
 
-export const executableBid = (
+export const executableValuationQuote = (
   quote: ObservedMarketValue<IntradayQuote> | undefined,
   symbol: string,
   at: string,
   maximumQuoteAgeMs: number,
+  market: JevMarketProfile | undefined,
+  quantityAtoms: string,
 ) => {
-  const market = jevMarketForSymbol(symbol)
+  const short = BigInt(quantityAtoms) < 0n
   if (
+    market === undefined ||
+    !market.universe.some((member) => member === symbol) ||
+    BigInt(quantityAtoms) === 0n ||
+    (short && symbol.includes('/')) ||
     quote === undefined ||
     quote.value.universeId !== market.universeId ||
     quote.value.universeSymbolHash !== market.universeSymbolHash ||
@@ -35,10 +41,16 @@ export const executableBid = (
     replayQuoteRejection(quote, symbol, Date.parse(at), { ...market, maximumQuoteAgeMs }) !== null
   )
     return null
-  const bid = priceNumberToMicros(quote.value.bidPrice, 'valuation.bid', 'DOWN')
-  const size = quantityFromNumber(quote.value.bidSize)
-  if (Result.isFailure(bid) || Result.isFailure(size) || bid.success <= 0n || size.success <= 0n) return null
-  return { bidPriceMicros: bid.success.toString(), quoteSourceHash: quote.recordHash }
+  const price = priceNumberToMicros(
+    short ? quote.value.askPrice : quote.value.bidPrice,
+    'valuation.liquidation',
+    short ? 'UP' : 'DOWN',
+  )
+  const size = quantityFromNumber(short ? quote.value.askSize : quote.value.bidSize)
+  if (Result.isFailure(price) || Result.isFailure(size) || price.success <= 0n || size.success <= 0n) return null
+  return short
+    ? { askPriceMicros: price.success.toString(), quoteSourceHash: quote.recordHash }
+    : { bidPriceMicros: price.success.toString(), quoteSourceHash: quote.recordHash }
 }
 
 /** Retain the latest native quote at each observation, paging the original immutable journal. */

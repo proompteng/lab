@@ -21,17 +21,17 @@ export const buildControlPlaneStatusResponse = async (
     getAgentsControlPlaneStatusEffect({
       namespace,
       service: 'agents',
-    }).pipe(Effect.provide(makeAgentsControlPlaneStatusLayer(deps)), Effect.either),
+    }).pipe(Effect.provide(makeAgentsControlPlaneStatusLayer(deps)), Effect.result),
   )
 
-  if (result._tag === 'Right') {
-    return okResponse(result.right)
+  if (result._tag === 'Success') {
+    return okResponse(result.success)
   }
 
   return errorResponse(
-    describeAgentsControlPlaneStatusError(result.left),
+    describeAgentsControlPlaneStatusError(result.failure),
     500,
-    agentsControlPlaneStatusErrorDetails(result.left, {
+    agentsControlPlaneStatusErrorDetails(result.failure, {
       namespace,
     }),
   )

@@ -1,7 +1,6 @@
 import { defineWorkflow, log, WorkflowBlockedError } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Cause from 'effect/Cause'
-import * as Chunk from 'effect/Chunk'
 import * as Schema from 'effect/Schema'
 
 import type { ReconcileAtlasRepositoryInput, ReconcileAtlasRepositoryOutput } from '../activities/index'
@@ -27,15 +26,12 @@ const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
 }
 
 const getCauseError = (cause: Cause.Cause<unknown>): Error | undefined => {
-  const failure = Cause.failureOption(cause)
+  const failure = Cause.findErrorOption(cause)
   if (failure._tag === 'Some' && failure.value instanceof Error) {
     return failure.value
   }
-  const defects = Cause.defects(cause)
-  if (Chunk.isNonEmpty(defects)) {
-    const defect = Chunk.unsafeHead(defects)
-    if (defect instanceof Error) return defect
-  }
+  const defect = Cause.findDefect(cause)
+  if (defect._tag === 'Success' && defect.success instanceof Error) return defect.success
   return undefined
 }
 
@@ -52,9 +48,9 @@ const MainMergeMemoryNoteWorkflowInput = Schema.Struct({
 const ReconcileAtlasRepositoryWorkflowInput = Schema.Struct({
   repoRoot: Schema.String,
   repository: Schema.String,
-  ref: Schema.optional(Schema.String),
-  commit: Schema.optional(Schema.String),
-  eventDeliveryId: Schema.optional(Schema.String),
+  ref: Schema.optionalKey(Schema.String),
+  commit: Schema.optionalKey(Schema.String),
+  eventDeliveryId: Schema.optionalKey(Schema.String),
 })
 
 export const workflows = [
@@ -136,7 +132,7 @@ export const workflows = [
               ).pipe(Effect.flatMap(([outcome]) => outcome))
             : reconcile
 
-        const result = yield* Effect.catchAllCause(reconcileWithLegacyHistory, (cause) =>
+        const result = yield* Effect.catchCause(reconcileWithLegacyHistory, (cause) =>
           Effect.gen(function* () {
             const workflowBlocked = isWorkflowBlocked(cause)
             if (preservePendingReconciliation && workflowBlocked) {

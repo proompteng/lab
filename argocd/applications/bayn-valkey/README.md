@@ -31,6 +31,13 @@ alone does not guarantee automatic HA across two hosts.
 Automatic failover requires independent voters; this deployment does not place
 workloads on the reserved compute host or change its taints.
 
+For a planned operator-managed role transfer, follow the verified preference and coordinated `FAILOVER` sequence in
+the [NVMe handoff runbook](../../../docs/bayn/unified-nvme-migration.md). The operator reads the preferred primary from
+ConfigMap `rf-ha-repl-bayn-valkey`, key `master`; changing the native role alone is reverted. Verify the current
+primary, caught-up replica, ConfigMap identity and read/write Service endpoint before a transfer. After recovery,
+require two healthy copies, the existing publication-sized acceptance checks and a fresh canonical broker poll.
+Promoting one surviving copy does not satisfy Bayn's unchanged `WAIT 1` publication requirement by itself.
+
 ## Connection and access
 
 - Primary: `rfr-bayn-valkey-readwrite.bayn.svc.cluster.local:6379`.

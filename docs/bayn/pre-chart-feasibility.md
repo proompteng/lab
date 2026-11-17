@@ -75,7 +75,7 @@ missing-checkpoint rejection, authenticated undispatched costs, and retained fin
 
 ## Rollout and recovery
 
-Use the normal immutable Bayn build and `lab-delivery/bayn` Kargo promotion through `kargo/bayn` and Argo. The gate changes
+Use the normal immutable Bayn build and `bayn-release/bayn` Kargo promotion through `kargo/bayn` and Argo. The gate changes
 provider dispatch and evidence, not the economic acceptance policy. The original feasibility-only change required no
 mandate or database migration. The funded-anchor migration uses input v4, handoff v3 and migration 152, retaining
 `SOURCE_INFEASIBLE`, the native OBSERVE cutover and a new reviewed same-account mandate for the revised question policy.

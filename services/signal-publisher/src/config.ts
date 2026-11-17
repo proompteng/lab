@@ -92,7 +92,7 @@ const rawConfig = Config.all({
   ),
   alpacaKey: secretString('APCA_API_KEY_ID'),
   alpacaSecret: secretString('APCA_API_SECRET_KEY'),
-  feed: Config.literals(['iex', 'sip'], 'SIGNAL_ALPACA_FEED').pipe(Config.withDefault('sip')),
+  feed: Config.Literals(['iex', 'sip'], 'SIGNAL_ALPACA_FEED').pipe(Config.withDefault('sip')),
   symbols: Config.schema(SymbolList, 'SIGNAL_SYMBOLS'),
   universeId: Config.schema(UniverseId, 'SIGNAL_UNIVERSE_ID'),
   universeSymbolHash: Config.schema(SymbolHash, 'SIGNAL_UNIVERSE_SYMBOL_HASH'),

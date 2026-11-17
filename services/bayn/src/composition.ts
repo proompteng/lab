@@ -7,7 +7,8 @@ import { PostgresClientLive } from './db/postgres-client'
 import { ExecutionControllerStatusStoreLive } from './db/execution-controller-status-postgres'
 import { CycleObservabilityLive } from './cycle/store/observability'
 import { JournalLive } from './ledger'
-import { live as BrokerReadOnlyResourcesLive } from './broker/alpaca/session'
+import { projectedReadLayer } from './broker/alpaca/session'
+import { alpacaHttpLayer } from './broker/alpaca/http'
 import { brokerSnapshotCacheConfig } from './broker/alpaca/snapshot-cache'
 import { BrokerObservationsLive } from './db/broker-observations'
 import { ValkeyCacheLive } from './valkey-cache'
@@ -25,7 +26,11 @@ export const runApplicationPlan = (plan: ApplicationPlan) => {
     ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres)),
     CycleObservabilityLive.pipe(Layer.provide(postgres)),
     JournalLive(plan.config),
-    BrokerReadOnlyResourcesLive(plan.config.alpaca).pipe(Layer.provide(observations), Layer.provide(postgres)),
+    projectedReadLayer(plan.config.alpaca).pipe(
+      Layer.provide(alpacaHttpLayer(plan.config.alpaca)),
+      Layer.provide(observations),
+      Layer.provide(postgres),
+    ),
   ).pipe(
     Layer.provideMerge(ValkeyCacheLive),
     Layer.provideMerge(Layer.mergeAll(HttpServerLive(plan.config), NodeServices.layer, NodeHttpClient.layerNodeHttp)),

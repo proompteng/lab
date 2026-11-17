@@ -12,6 +12,8 @@ import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-perfor
 import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 import { runForwardPerformanceWithinDeadline } from './forward-performance-deadline'
+import { ReportVerificationLive } from './forward-performance/verification'
+import { reportingLogger, requireReportingRuntime, withReportResourceMeasurement } from './reporting-runtime'
 
 export const FORWARD_PERFORMANCE_COMMAND_USAGE =
   'Usage: bayn-forward-performance --authority-generation <sha256> [--assessment <sha256>] [--persist-receipt | --deadline-ms <milliseconds>] | --help'
@@ -120,7 +122,14 @@ const runProof = (options: {
         return yield* runForwardPerformanceReport(config, undefined, options)
       }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
-        Effect.provide(WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))),
+        Effect.provide(
+          options.persistReceipt === true
+            ? WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))
+            : Layer.mergeAll(
+                WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config))),
+                ReportVerificationLive,
+              ),
+        ),
       )
       const output = yield* Effect.fromResult(canonicalJsonV1Result(report)).pipe(
         Effect.mapError(
@@ -137,10 +146,15 @@ const runProof = (options: {
     }),
   ).pipe(withObservedSpan('bayn.forward-performance.prove'))
 
-const runtime = Layer.mergeAll(makeConfiguredTelemetryRuntimeLayer('bayn-forward-performance'), NodeServices.layer)
+const runtime = Layer.mergeAll(
+  makeConfiguredTelemetryRuntimeLayer('bayn-forward-performance'),
+  NodeServices.layer,
+  reportingLogger,
+)
 const main = Effect.gen(function* () {
   const command = yield* Effect.fromResult(parseForwardPerformanceCommandArgs(process.argv.slice(2)))
   if (command._tag === 'Help') return yield* printUsage
+  yield* requireReportingRuntime
   if (command._tag === 'Supervised')
     return yield* runForwardPerformanceWithinDeadline(
       process.execPath,
@@ -153,7 +167,7 @@ const main = Effect.gen(function* () {
       ],
       command.deadlineMs,
     )
-  return yield* runProof(command.options)
+  return yield* withReportResourceMeasurement('forward-performance', runProof(command.options))
 })
 const deadlineRequested = process.argv.slice(2).includes('--deadline-ms')
 const program = deadlineRequested

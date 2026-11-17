@@ -26,7 +26,6 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
       - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/check-bun-dependency-closure.sh'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/bun-workspace-deps-source.nix'
       - 'nix/images/bun-workspace-deps-source.test.sh'

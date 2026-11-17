@@ -119,30 +119,30 @@ type OrchestrationIdGeneratorServiceDefinition = {
   readonly next: Effect.Effect<string>
 }
 
-export class OrchestrationStoreService extends Context.Tag('agents/OrchestrationStoreService')<
+export class OrchestrationStoreService extends Context.Service<
   OrchestrationStoreService,
   OrchestrationStoreServiceDefinition
->() {}
+>()('agents/OrchestrationStoreService') {}
 
-export class OrchestrationKubernetesService extends Context.Tag('agents/OrchestrationKubernetesService')<
+export class OrchestrationKubernetesService extends Context.Service<
   OrchestrationKubernetesService,
   OrchestrationKubernetesServiceDefinition
->() {}
+>()('agents/OrchestrationKubernetesService') {}
 
-export class OrchestrationPolicyService extends Context.Tag('agents/OrchestrationPolicyService')<
+export class OrchestrationPolicyService extends Context.Service<
   OrchestrationPolicyService,
   OrchestrationPolicyServiceDefinition
->() {}
+>()('agents/OrchestrationPolicyService') {}
 
-export class OrchestrationAuditContextService extends Context.Tag('agents/OrchestrationAuditContextService')<
+export class OrchestrationAuditContextService extends Context.Service<
   OrchestrationAuditContextService,
   OrchestrationAuditContextServiceDefinition
->() {}
+>()('agents/OrchestrationAuditContextService') {}
 
-export class OrchestrationIdGeneratorService extends Context.Tag('agents/OrchestrationIdGeneratorService')<
+export class OrchestrationIdGeneratorService extends Context.Service<
   OrchestrationIdGeneratorService,
   OrchestrationIdGeneratorServiceDefinition
->() {}
+>()('agents/OrchestrationIdGeneratorService') {}
 
 type OrchestrationResourceSubmitServices =
   | OrchestrationStoreService
@@ -216,7 +216,7 @@ const closeStoreEffect = (store: OrchestrationsApiStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 const makeOrchestrationStoreService = (
   storeFactory: OrchestrationsApiDependencies['storeFactory'],
@@ -329,9 +329,9 @@ export const submitOrchestrationResourceWithServicesEffect = (
 
           yield* stores.ready(activeStore)
           const kube = yield* kubernetes.client(parsed.namespace)
-          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.either)
+          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.result)
 
-          if (policyDecision._tag === 'Left') {
+          if (policyDecision._tag === 'Failure') {
             const auditEventId = yield* ids.next
             yield* stores
               .createAuditEvent(activeStore, {
@@ -342,11 +342,11 @@ export const submitOrchestrationResourceWithServicesEffect = (
                 details: {
                   subject: policyChecks.subject,
                   checks: policyChecks,
-                  reason: describeOrchestrationResourceSubmitError(policyDecision.left),
+                  reason: describeOrchestrationResourceSubmitError(policyDecision.failure),
                 },
               })
-              .pipe(Effect.catchAll(() => Effect.void))
-            return yield* Effect.fail(policyDecision.left)
+              .pipe(Effect.catch(() => Effect.void))
+            return yield* Effect.fail(policyDecision.failure)
           }
 
           const auditEventId = yield* ids.next
@@ -386,12 +386,12 @@ export const postOrchestrationsHandler = async (request: Request, deps: Orchestr
   const leaderResponse = deps.requireLeaderForMutation?.()
   if (leaderResponse) return leaderResponse
 
-  const result = await Effect.runPromise(submitOrchestrationResourceEffect(request, deps).pipe(Effect.either))
-  if (result._tag === 'Left') {
+  const result = await Effect.runPromise(submitOrchestrationResourceEffect(request, deps).pipe(Effect.result))
+  if (result._tag === 'Failure') {
     return errorResponse(
-      describeOrchestrationResourceSubmitError(result.left),
-      orchestrationResourceSubmitStatus(result.left),
+      describeOrchestrationResourceSubmitError(result.failure),
+      orchestrationResourceSubmitStatus(result.failure),
     )
   }
-  return okResponse(result.right.body, result.right.status)
+  return okResponse(result.success.body, result.success.status)
 }

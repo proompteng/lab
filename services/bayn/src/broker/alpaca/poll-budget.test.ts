@@ -24,23 +24,26 @@ const transport = (
 }
 
 describe('broker observation HTTP budget', () => {
-  test.each([14, 34, 52])('charges every attempt in a %s-call paginated capture to its next poll', async (count) => {
-    await run(
-      Effect.gen(function* () {
-        const budget = yield* makeBrokerObservationBudget
-        const source = transport()
-        const client = budget.decorate(source.client)
-        const pending = yield* Effect.all(
-          Array.from({ length: count }, () => client.get(url)),
-          { concurrency: 2 },
-        ).pipe(Effect.forkChild({ startImmediately: true }))
-        yield* TestClock.adjust(count * 600)
-        yield* Fiber.join(pending)
-        expect(source.starts).toEqual(Array.from({ length: count }, () => 0))
-        expect(yield* budget.nextPollNotBeforeMs).toBe(count * 600)
-      }),
-    )
-  })
+  test.each([14, 33, 34, 52, 60, 62])(
+    'charges every attempt in a %s-call paginated capture to its next poll',
+    async (count) => {
+      await run(
+        Effect.gen(function* () {
+          const budget = yield* makeBrokerObservationBudget
+          const source = transport()
+          const client = budget.decorate(source.client)
+          const pending = yield* Effect.all(
+            Array.from({ length: count }, () => client.get(url)),
+            { concurrency: 2 },
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* TestClock.adjust(count * 600)
+          yield* Fiber.join(pending)
+          expect(source.starts).toEqual(Array.from({ length: count }, () => 0))
+          expect(yield* budget.nextPollNotBeforeMs).toBe(count * 600)
+        }),
+      )
+    },
+  )
   test('preserves unpaid request cost across captures and starts a new budget after it elapses', async () => {
     await run(
       Effect.gen(function* () {

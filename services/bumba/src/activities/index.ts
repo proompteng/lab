@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import { SQL } from 'bun'
 import { Effect } from 'effect'
-import * as TSemaphore from 'effect/TSemaphore'
+import * as Semaphore from 'effect/Semaphore'
 import { Language, Parser, type Tree } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
@@ -1189,14 +1189,11 @@ const embeddingConcurrency = clampNumber(
   Number.parseInt(process.env.BUMBA_EMBEDDING_CONCURRENCY ?? '', 10),
   clampNumber(Number.parseInt(process.env.BUMBA_MODEL_CONCURRENCY ?? '', 10), DEFAULT_MODEL_CONCURRENCY),
 )
-const completionSemaphore = TSemaphore.unsafeMake(completionConcurrency)
-const embeddingSemaphore = TSemaphore.unsafeMake(embeddingConcurrency)
+const completionSemaphore = Semaphore.makeUnsafe(completionConcurrency)
+const embeddingSemaphore = Semaphore.makeUnsafe(embeddingConcurrency)
 const withCompletionConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   await Effect.runPromise(
-    TSemaphore.withPermits(
-      completionSemaphore,
-      1,
-    )(
+    completionSemaphore.withPermits(1)(
       Effect.tryPromise({
         try: fn,
         catch: (error) => toError(error),
@@ -1205,10 +1202,7 @@ const withCompletionConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   )
 const withEmbeddingConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   await Effect.runPromise(
-    TSemaphore.withPermits(
-      embeddingSemaphore,
-      1,
-    )(
+    embeddingSemaphore.withPermits(1)(
       Effect.tryPromise({
         try: fn,
         catch: (error) => toError(error),

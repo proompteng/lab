@@ -112,4 +112,4 @@ jobs:
           nix develop -c kustomize build --enable-helm argocd/applications/torghut/notebooks > "${second}"
           cmp "${first}" "${second}"
           services/torghut/.venv/bin/python services/torghut/scripts/validate_notebook_render.py "${first}"
-          nix develop -c scripts/kubeconform.sh "${first}"
+          nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${first}"

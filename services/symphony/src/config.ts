@@ -1,8 +1,6 @@
 import path from 'node:path'
 
-import type * as ParseResult from '@effect/schema/ParseResult'
-import * as Schema from '@effect/schema/Schema'
-import * as TreeFormatter from '@effect/schema/TreeFormatter'
+import * as Schema from 'effect/Schema'
 import { Effect } from 'effect'
 
 import { ConfigError } from './errors'
@@ -24,128 +22,136 @@ const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate',
 const DEFAULT_BLOCKED_LABELS = ['manual-only', 'secret-rotation', 'cluster-recovery', 'cross-repo', 'db-migration']
 
 const RawSectionSchema = Schema.Struct({
-  tracker: Schema.optionalWith(
-    Schema.Struct({
-      kind: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      endpoint: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      api_key: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      project_slug: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      active_states: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      terminal_states: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      handoff_state: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  tracker: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        kind: Schema.optional(Schema.Unknown),
+        endpoint: Schema.optional(Schema.Unknown),
+        api_key: Schema.optional(Schema.Unknown),
+        project_slug: Schema.optional(Schema.Unknown),
+        active_states: Schema.optional(Schema.Unknown),
+        terminal_states: Schema.optional(Schema.Unknown),
+        handoff_state: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  polling: Schema.optionalWith(
-    Schema.Struct({
-      interval_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  polling: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        interval_ms: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  workspace: Schema.optionalWith(
-    Schema.Struct({
-      root: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  workspace: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        root: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  hooks: Schema.optionalWith(
-    Schema.Struct({
-      after_create: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      before_run: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      after_run: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      before_remove: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  hooks: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        after_create: Schema.optional(Schema.Unknown),
+        before_run: Schema.optional(Schema.Unknown),
+        after_run: Schema.optional(Schema.Unknown),
+        before_remove: Schema.optional(Schema.Unknown),
+        timeout_ms: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  worker: Schema.optionalWith(
-    Schema.Struct({
-      ssh_hosts: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      max_concurrent_agents_per_host: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  worker: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        ssh_hosts: Schema.optional(Schema.Unknown),
+        max_concurrent_agents_per_host: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  agent: Schema.optionalWith(
-    Schema.Struct({
-      max_concurrent_agents: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      max_concurrent_agents_by_state: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      max_retry_backoff_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      max_turns: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  agent: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        max_concurrent_agents: Schema.optional(Schema.Unknown),
+        max_concurrent_agents_by_state: Schema.optional(Schema.Unknown),
+        max_retry_backoff_ms: Schema.optional(Schema.Unknown),
+        max_turns: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  codex: Schema.optionalWith(
-    Schema.Struct({
-      command: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      model: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      approval_policy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      thread_sandbox: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      turn_sandbox_policy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      turn_timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      read_timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      stall_timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  codex: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        command: Schema.optional(Schema.Unknown),
+        model: Schema.optional(Schema.Unknown),
+        approval_policy: Schema.optional(Schema.Unknown),
+        thread_sandbox: Schema.optional(Schema.Unknown),
+        turn_sandbox_policy: Schema.optional(Schema.Unknown),
+        turn_timeout_ms: Schema.optional(Schema.Unknown),
+        read_timeout_ms: Schema.optional(Schema.Unknown),
+        stall_timeout_ms: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  server: Schema.optionalWith(
-    Schema.Struct({
-      host: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      port: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  server: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        host: Schema.optional(Schema.Unknown),
+        port: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  instance: Schema.optionalWith(
-    Schema.Struct({
-      name: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      namespace: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      argocd_application: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  instance: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        name: Schema.optional(Schema.Unknown),
+        namespace: Schema.optional(Schema.Unknown),
+        argocd_application: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  target: Schema.optionalWith(
-    Schema.Struct({
-      name: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      namespace: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      argocd_application: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      repo: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      default_branch: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  target: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        name: Schema.optional(Schema.Unknown),
+        namespace: Schema.optional(Schema.Unknown),
+        argocd_application: Schema.optional(Schema.Unknown),
+        repo: Schema.optional(Schema.Unknown),
+        default_branch: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  release: Schema.optionalWith(
-    Schema.Struct({
-      mode: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      promotion_authority: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      required_checks_source: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      promotion_branch_prefix: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      kargo_project: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      kargo_warehouse: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      kargo_branch: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      kargo_stages: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      blocked_labels: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      deployables: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  release: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        mode: Schema.optional(Schema.Unknown),
+        promotion_authority: Schema.optional(Schema.Unknown),
+        required_checks_source: Schema.optional(Schema.Unknown),
+        promotion_branch_prefix: Schema.optional(Schema.Unknown),
+        kargo_project: Schema.optional(Schema.Unknown),
+        kargo_warehouse: Schema.optional(Schema.Unknown),
+        kargo_branch: Schema.optional(Schema.Unknown),
+        kargo_stages: Schema.optional(Schema.Unknown),
+        blocked_labels: Schema.optional(Schema.Unknown),
+        deployables: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
-  health: Schema.optionalWith(
-    Schema.Struct({
-      pre_dispatch: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-      post_deploy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
-    }),
-    { nullable: true },
+  health: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        pre_dispatch: Schema.optional(Schema.Unknown),
+        post_deploy: Schema.optional(Schema.Unknown),
+      }),
+    ),
   ),
 })
 
 type RawConfigSections = typeof RawSectionSchema.Type
 
-const decodeRawSections = Schema.decodeUnknown(RawSectionSchema)
+const decodeRawSections = Schema.decodeUnknownEffect(RawSectionSchema)
 
-const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
-
-const mapSchemaError = <A>(
-  effect: Effect.Effect<A, ParseResult.ParseError, never>,
-): Effect.Effect<A, ConfigError, never> =>
-  effect.pipe(Effect.mapError((error) => new ConfigError('workflow_parse_error', formatSchemaError(error), error)))
+const mapSchemaError = <A>(effect: Effect.Effect<A, Schema.SchemaError, never>): Effect.Effect<A, ConfigError, never> =>
+  effect.pipe(Effect.mapError((error) => new ConfigError('workflow_parse_error', error.message, error)))
 
 const resolveMaybeEnvToken = (
   value: unknown,
@@ -463,8 +469,8 @@ export const validateDispatchConfigEffect = (config: SymphonyConfig): Effect.Eff
   })
 
 export const validateDispatchConfig = (config: SymphonyConfig): void => {
-  const result = Effect.runSync(Effect.either(validateDispatchConfigEffect(config)))
-  if (result._tag === 'Left') {
-    throw result.left
+  const result = Effect.runSync(Effect.result(validateDispatchConfigEffect(config)))
+  if (result._tag === 'Failure') {
+    throw result.failure
   }
 }

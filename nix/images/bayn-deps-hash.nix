@@ -1,4 +1,4 @@
 {
-  x86_64-linux = "sha256-k1HEA8d724+SrtsGaEDGFYL2KfA9zhLO3JcH3XqRTpc=";
-  aarch64-linux = "sha256-rJbbAlK/MdFZBOfkrGY0Qb97gXoZfm8TXkrV94ZinZg=";
+  x86_64-linux = "sha256-WHIrU1WYy/5u1EzjD95VHu/cvORQbLM5vEFUSqtNAs0=";
+  aarch64-linux = "sha256-sATsE6C7C4qvL64LDDP1+qN5nw6++LYf498ABOdhUwk=";
 }

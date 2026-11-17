@@ -1,6 +1,6 @@
 # Upgrade to Effect 4
 
-The SDK's Effect 4 release uses **Effect 4.0.0**. Version **0.11.5 uses
+The SDK's Effect 4 release uses **Effect 4.1.4**. Version **0.11.5 uses
 Effect 3.22.1** and remains available for existing workers. The public Effect,
 Schema, Context and Layer types change with this release. Promise-facing client
 calls keep their existing shapes.
@@ -35,10 +35,11 @@ including suspended updates, timers, Nexus operations and worker restarts.
 5. Do not assume continue-as-new or a canary pod is isolated. Verify their routing
    explicitly. The repository's Bumba/Jangar startup alignment can promote Current.
 
-The repository intentionally retains Bumba and Jangar's production workflow
-runtime on the verified 0.11.5 npm tarball. The SDK workspace and example use
-Effect 4. The service package pins, TypeScript resolution and image smoke checks
-must change together when a separately validated application migration is ready.
+The repository's Bumba and Jangar services use the SDK workspace and Effect
+4.1.4. Their package pins, TypeScript resolution and image smoke checks share
+that runtime. Existing Effect 3 executions still require the immutable worker
+build that created them; upgrading repository dependencies does not migrate
+their recorded histories.
 
 ## Source migration
 
@@ -48,11 +49,10 @@ across its API. Do not pass Effect 3 values to an Effect 4 worker. Applications
 that only use the Promise client may keep a separate Effect version behind that
 Promise boundary.
 
-Bundlers must preserve each package's Effect resolution at that boundary. Vite SSR
-externalizes dependencies by default, which can make bundled SDK code resolve an
-application's different Effect major. The repository's Agents build uses the
-documented `ssr.noExternal: ['effect']` option to retain both versions and verifies
-the final Nitro server over HTTP. Test the built artifact, not only source imports.
+Every repository workspace pins Effect 4.1.4. Agents, agent contracts, Bumba,
+Jangar, the SDK workspace and example share Effect values directly and require
+no cross-major bundler override. Test built artifacts as well as source imports
+when changing dependency resolution.
 
 Common changes include:
 
@@ -69,8 +69,8 @@ Common changes include:
   when the workflow's persisted input is an ISO string; do not change wire formats
   accidentally while renaming APIs
 
-See the [official migration guide](https://github.com/Effect-TS/effect/blob/effect%404.0.0/MIGRATION.md)
-and [schema migration guide](https://github.com/Effect-TS/effect/blob/effect%404.0.0/migration/schema.md).
+See the [official migration guide](https://github.com/Effect-TS/effect/blob/effect%404.1.4/MIGRATION.md)
+and [schema migration guide](https://github.com/Effect-TS/effect/blob/effect%404.1.4/migration/schema.md).
 
 ## Workflow runtime contract
 

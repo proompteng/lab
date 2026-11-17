@@ -1,10 +1,10 @@
+import { makePostgresFixture } from '../testing/postgres-fixture.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { expect, spyOn, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Exit, Logger, References, Result } from 'effect'
 import { Reactivity } from 'effect/reactivity'
-import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
@@ -67,7 +67,7 @@ test.each(['success', 'validation', 'lock', 'receipts', 'evidence', 'result'])(
       const exit = await Effect.runPromiseExit(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* SqlClient.make({
+            const client = yield* makePostgresFixture({
               acquirer: Effect.die('Completion phase test must not connect to PostgreSQL'),
               compiler: PgClient.makeCompiler(undefined, false),
               spanAttributes: [],
@@ -95,7 +95,7 @@ test.each(['success', 'validation', 'lock', 'receipts', 'evidence', 'result'])(
                 if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
                 return Reflect.get(target, property, receiver)
               },
-            }) as PgClient.PgClient
+            })
             const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
             return yield* store.complete(
               plan,
@@ -173,7 +173,7 @@ test.each([
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const client = yield* SqlClient.make({
+          const client = yield* makePostgresFixture({
             acquirer: Effect.die('The finalization contract must not connect to PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
@@ -219,7 +219,7 @@ test.each([
               if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
               return Reflect.get(target, property, receiver)
             },
-          }) as PgClient.PgClient
+          })
           yield* TestClock.setTime(observed + 9000)
           const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
           const finalized = yield* store.finish(plan.batchId).pipe(Effect.result)
@@ -283,7 +283,7 @@ test.each([
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const client = yield* SqlClient.make({
+          const client = yield* makePostgresFixture({
             acquirer: Effect.die('Admission contract must not connect to PostgreSQL'),
             compiler: PgClient.makeCompiler(undefined, false),
             spanAttributes: [],
@@ -343,7 +343,7 @@ test.each([
               if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
               return Reflect.get(target, property, receiver)
             },
-          }) as PgClient.PgClient
+          })
           yield* TestClock.setTime(observed)
           const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
           const saved = yield* store.begin(plan, suppliedObservation).pipe(Effect.result)
@@ -399,7 +399,7 @@ test.each([
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* SqlClient.make({
+        const client = yield* makePostgresFixture({
           acquirer: Effect.die('Admission must not connect to PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -420,7 +420,7 @@ test.each([
             if (query.includes('SELECT plan.payload AS plan')) return Effect.succeed([])
             throw new Error(`Unexpected admission query: ${query}`)
           },
-        }) as PgClient.PgClient
+        })
         yield* TestClock.setTime(observed + scenario.elapsedMs)
         const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
         const result = yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(
@@ -483,7 +483,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* SqlClient.make({
+        const client = yield* makePostgresFixture({
           acquirer: Effect.die('The query contract test must never connect to PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -513,7 +513,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
             if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
             return Reflect.get(target, property, receiver)
           },
-        }) as PgClient.PgClient
+        })
         yield* TestClock.setTime(observed)
         const store = yield* makeJevBatchStore.pipe(
           Effect.provideService(PgClient.PgClient, sql),
@@ -589,7 +589,7 @@ test('terminal settlement walks past a full page of unexpired batches', async ()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* SqlClient.make({
+        const client = yield* makePostgresFixture({
           acquirer: Effect.die('Fairness test must not connect to PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -639,7 +639,7 @@ test('terminal settlement walks past a full page of unexpired batches', async ()
             if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
             return Reflect.get(target, property, receiver)
           },
-        }) as PgClient.PgClient
+        })
         yield* TestClock.setTime(Date.parse(source.observedAt) + 5_000)
         const summary = yield* settleExpiredTerminalJevBatches(sql, 'fairness-account')
         expect(summary).toEqual({ candidates: 65, sealed: 1, pending: 64, failed: 0 })
@@ -710,7 +710,7 @@ test('terminal settlement carries bounded progress across passes and retries aft
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* SqlClient.make({
+        const client = yield* makePostgresFixture({
           acquirer: Effect.die('Cursor fairness test must not connect to PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -760,7 +760,7 @@ test('terminal settlement carries bounded progress across passes and retries aft
             if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
             return Reflect.get(target, property, receiver)
           },
-        }) as PgClient.PgClient
+        })
         yield* TestClock.setTime(observed + 5_000)
         expect(yield* settleExpiredTerminalJevBatches(sql, accountId, cursor)).toEqual({
           candidates: 256,
@@ -835,7 +835,7 @@ test('terminal settlement progress is isolated by account', async () => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* SqlClient.make({
+        const client = yield* makePostgresFixture({
           acquirer: Effect.die('Account cursor isolation test must not connect to PostgreSQL'),
           compiler: PgClient.makeCompiler(undefined, false),
           spanAttributes: [],
@@ -857,7 +857,7 @@ test('terminal settlement progress is isolated by account', async () => {
             if (query.includes('SELECT plan.payload AS plan')) return Effect.succeed([])
             throw new Error(`Unexpected account isolation query: ${query}`)
           },
-        }) as PgClient.PgClient
+        })
         yield* TestClock.setTime(observed + 5_000)
         expect(yield* settleExpiredTerminalJevBatches(sql, accountA, cursorA)).toEqual({
           candidates: 1,
