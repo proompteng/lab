@@ -117,7 +117,19 @@ const dataProperty = (
   path: CanonicalJsonPath,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
 ): unknown => {
-  const descriptor = inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key))
+  let descriptor: PropertyDescriptor | undefined
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key)
+  } catch (cause) {
+    throw new CanonicalJsonError({
+      _tag: 'CanonicalJsonFailure',
+      path: renderCanonicalJsonPath(path),
+      reason: 'introspection-failed',
+      actualType,
+      operation: 'property-descriptor',
+      cause,
+    })
+  }
   return descriptor?.enumerable === true && 'value' in descriptor
     ? descriptor.value
     : validationFailure(path, 'non-data-property', `${actualType}-property`)
