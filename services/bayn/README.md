@@ -319,6 +319,13 @@ rechecks PostgreSQL fences, account binding, original times and content identity
 Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
 PostgreSQL payload fallback or cache-disable mode.
 
+Each generation runtime may retain one privately frozen full-snapshot decoding of at most eight MiB of encoded bytes.
+An admitted read still fetches Valkey and reuses that decoding only when both the expected hash and the complete
+encoded bytes match. Every caller receives detached evidence; changed bytes take full strict decoding and canonical
+hash verification, and oversized payloads validate without retention. Account, chronology, age, PostgreSQL mutation
+and notification fences, and all reconciliation and ledger checks remain fresh. Compact submission state is always
+decoded and verified. The materialization span records `bayn.broker.payload_decode_reused` without payload contents.
+
 A retryable snapshot rejection or read timeout discards the cut and its retained history,
 then waits for the existing quota boundary before polling again. The already verified
 broker session stays open, so transient fill convergence does not repeat startup preflight.
