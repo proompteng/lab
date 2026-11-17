@@ -340,6 +340,13 @@ native Effect metrics to the existing Mimir gateway. The runbook includes a read
 
 ## Broker observation owner
 
+Alpaca trade activities have a separate side vocabulary from orders: `buy`, `sell`, and `sell_short`.
+The read boundary normalizes `sell_short` to the existing sell direction for signed position accounting,
+while the raw response hash retains the provider's original side. Order requests and responses still accept
+only `buy` and `sell`; unsupported activity sides fail decoding. See Alpaca's
+[activity reference](https://docs.alpaca.markets/us/reference/getaccountactivitiesbytype) and
+[October 20 schema clarification](https://docs.alpaca.markets/us/changelog/2026-10-20-order-side-df66f83).
+
 Stable history compares broker order facts before and after the account read. It excludes
 the local `observedAt` timestamp on both parent orders and bracket children, because each
 HTTP read assigns a new timestamp. Child execution facts, including status, prices,

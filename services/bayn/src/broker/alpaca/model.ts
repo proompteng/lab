@@ -174,6 +174,12 @@ export enum OrderSide {
   Sell = 'sell',
 }
 
+export enum TradeActivitySide {
+  Buy = 'buy',
+  Sell = 'sell',
+  SellShort = 'sell_short',
+}
+
 export enum TimeInForce {
   Day = 'day',
   GoodUntilCanceled = 'gtc',
@@ -669,7 +675,7 @@ export const FillActivityResponseSchema = Schema.Struct({
   leaves_qty: Decimal,
   price: Decimal,
   qty: Decimal,
-  side: Schema.Enum(OrderSide),
+  side: Schema.Enum(TradeActivitySide),
   symbol: ResponseSymbol,
   transaction_time: Timestamp,
   order_id: Uuid,
