@@ -156,9 +156,22 @@ decision worker and native buffers. This provides headroom above the measured No
 it does not establish a fixed leak or a complete-session upper bound. Both eligible nodes had sufficient allocated
 memory headroom when this mitigation was selected. Reporting remains isolated from execution workers.
 
-The main process and both workers inherit `--max-old-space-size=192 --max-semi-space-size=16` through
-`NODE_OPTIONS`. These per-isolate V8 allowances are separate from the shared container limit and do not bound
-native buffers or process RSS; live isolate and process measurements remain necessary for acceptance.
+The main process and both workers inherit `--max-old-space-size=384 --max-semi-space-size=16` through
+`NODE_OPTIONS`. Three V8 heaps can reserve 1,296 MiB (384 MiB old generation plus three 16 MiB semi-spaces
+per isolate), leaving 752 MiB of the 2 GiB container budget for native memory and buffers. These allowances
+do not bound process RSS; live isolate and process measurements remain necessary for acceptance.
+
+On November 17 at 17:59:33 UTC, the active ARM64 controller exhausted its previous 192 MiB old-generation
+allowance and exited with code 133. The final GC reported allocation failure near 189 MiB. The preceding
+eight-hour telemetry peaked at 190.9 MiB of main-isolate used heap and 708.3 MiB of process RSS, establishing
+isolate heap pressure well below the container limit. The larger bounded heap addresses that mismatch;
+it does not establish a leak-free runtime or a complete-session upper bound.
+
+The shared process has a four-core burst limit with its existing 250m request. At 18:42 UTC on November 17,
+the previous two-core limit throttled 34.9% of periods on Turin and 21.2% on ARM64, with 0.30 and 0.20 throttled
+seconds per second respectively. Node CPU utilization was 4.6% and 21.0%. The larger burst limit lets the owner,
+projection, decision worker and V8 GC progress together. Measure actual throttling and stage latency after rollout;
+the combined resource correction does not isolate the contribution of either change.
 
 The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.
