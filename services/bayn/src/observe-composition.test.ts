@@ -8429,11 +8429,13 @@ test.each([
         )
         expect(reads).toBe(1)
         expect(cyclePasses).toBe(0)
-        expect(unavailable.nextDelayMs).toBe(30_000)
+        const retryDelayMs = scenario.kind === BrokerReadErrorKind.ObservationPending ? 1_000 : 30_000
+        expect(unavailable.nextDelayMs).toBe(retryDelayMs)
+        expect(unavailable.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + retryDelayMs))
 
-        // The externally admitted publication arrives before the failed attempt's recovery deadline.
+        // The publication precedes even the shorter pending-cut deadline; admission still revalidates evidence.
         published = true
-        yield* TestClock.adjust(12_000)
+        yield* TestClock.adjust(500)
         const freshWake = yield* driver.advance
         expect(reads).toBe(scenario.refreshesEarly ? 2 : 1)
         expect(cyclePasses).toBe(scenario.refreshesEarly ? 1 : 0)
@@ -8441,7 +8443,7 @@ test.each([
           expect(freshWake.observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
         } else {
           expect(freshWake.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
-          yield* TestClock.adjust(18_000)
+          yield* TestClock.adjust(29_500)
           const due = yield* driver.advance
           expect(due.observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
           expect(reads).toBe(2)
@@ -8550,23 +8552,26 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
         waitReason: 'BROKER_OBSERVATION_PENDING',
       })
       expect('result' in first).toBe(false)
-      expect(first.nextDelayMs).toBe(30_000)
-      expect(first.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 30_000))
-      // A broker publication may wake the owner earlier; this is its named financial freshness deadline.
+      expect(first.nextDelayMs).toBe(1_000)
+      expect(first.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 1_000))
+      // This retains the pending cut's one-shot continuation without authorizing unreconciled cycle work.
       yield* TestClock.adjust(first.nextDelayMs ?? driver.nextDelayMs)
       const second = yield* driver.advance
       expect(reads).toBe(2)
-      expect(second.nextDelayMs).toBe(30_000)
+      expect(second.nextDelayMs).toBe(1_000)
+      expect(second.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 2_000))
       kind = BrokerReadErrorKind.Timeout
       const expired = yield* driver.advance
       expect(expired.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
       expect(expired.nextDelayMs).toBe(30_000)
+      expect(expired.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 31_000))
       expect(reads).toBe(3)
       kind = BrokerReadErrorKind.RateLimited
       yield* TestClock.adjust(30_000)
       const rateLimited = yield* driver.advance
       expect(rateLimited.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
       expect(rateLimited.nextDelayMs).toBe(30_000)
+      expect(rateLimited.nextWakeAt).toBe(utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 61_000))
       expect(passes).toEqual([first.observation, second.observation, expired.observation, rateLimited.observation])
     }).pipe(
       Effect.provideService(BrokerRead, {
