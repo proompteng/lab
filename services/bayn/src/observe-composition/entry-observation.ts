@@ -53,6 +53,11 @@ export type EntryObservation = (
 export const observeChartEntry = (
   context: EntryObservationContext,
   version: JevBatchPlanVersion.V8 | JevBatchPlanVersion.Ablation,
+  loadEligibility?: Effect.Effect<
+    EntryObservationContext['observation']['equityShortEligibility'],
+    OperationalError,
+    BrokerRead
+  >,
 ) =>
   Effect.gen(function* () {
     const strategy = context.strategy
@@ -62,12 +67,16 @@ export const observeChartEntry = (
         operation: 'current-decision',
         message: 'Chart entry requires a chart strategy',
       })
-    const evaluated = yield* evaluateJevObservationFromSnapshot(
+    const evaluated = yield* evaluateJevObservationFromSnapshot<
+      OperationalError | ObserveDecisionAwaitingSignal,
+      CandidateObservationStore | BrokerRead
+    >(
       context.observation,
       context.query.rangeEndAt,
       context.loadSnapshot(context.query),
       version,
       { admissionDeadlineAt: context.admissionExpiresAt },
+      loadEligibility,
     )
     const evidence = yield* Effect.fromResult(
       Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
@@ -83,34 +92,26 @@ export const observeChartEntry = (
 
 export const observeNativeEntry = (context: EntryObservationContext) =>
   context.strategy.definition.parameters.schemaVersion === defaultJevProtocolDocument.schemaVersion
-    ? Effect.gen(function* () {
-        const eligibility =
-          context.query.feed === 'iex' && equityClockSession(context.observedAt) === 'regular'
-            ? yield* readEquityShortEligibility(context.query.candidateSymbols ?? []).pipe(
-                Effect.mapError((cause) =>
-                  operationalError({
-                    component: 'strategy',
-                    operation: 'current-decision',
-                    message: 'Native entry broker eligibility could not be observed',
-                    cause,
-                  }),
-                ),
-              )
-            : undefined
-        const observedAt = yield* currentUtcInstant
-        return yield* observeChartEntry(
-          {
-            ...context,
-            observedAt,
-            query: { ...context.query, observedAt },
-            observation: {
-              ...context.observation,
-              ...(eligibility === undefined ? {} : { equityShortEligibility: eligibility }),
-            },
-          },
-          JevBatchPlanVersion.V8,
-        )
-      })
+    ? observeChartEntry(
+        {
+          ...context,
+          loadSnapshot: (query) =>
+            currentUtcInstant.pipe(Effect.flatMap((observedAt) => context.loadSnapshot({ ...query, observedAt }))),
+        },
+        JevBatchPlanVersion.V8,
+        context.query.feed === 'iex' && equityClockSession(context.observedAt) === 'regular'
+          ? readEquityShortEligibility(context.query.candidateSymbols ?? []).pipe(
+              Effect.mapError((cause) =>
+                operationalError({
+                  component: 'strategy',
+                  operation: 'current-decision',
+                  message: 'Native entry broker eligibility could not be observed',
+                  cause,
+                }),
+              ),
+            )
+          : undefined,
+      )
     : Effect.fail(
         operationalError({
           component: 'strategy',
