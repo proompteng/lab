@@ -344,7 +344,7 @@ Alpaca trade activities have a separate side vocabulary from orders: `buy`, `sel
 The read boundary normalizes `sell_short` to the existing sell direction for signed position accounting,
 while the raw response hash retains the provider's original side. Order requests and responses still accept
 only `buy` and `sell`; unsupported activity sides fail decoding. See Alpaca's
-[activity reference](https://docs.alpaca.markets/us/reference/getaccountactivitiesbytype) and
+[Trading API activity reference](https://docs.alpaca.markets/us/reference/getaccountactivitiesbyactivitytype-1) and
 [October 20 schema clarification](https://docs.alpaca.markets/us/changelog/2026-10-20-order-side-df66f83).
 
 Stable history compares broker order facts before and after the account read. It excludes
