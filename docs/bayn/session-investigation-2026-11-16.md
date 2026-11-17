@@ -223,3 +223,195 @@ System-assessment and durable forward-performance receipt counts remained zero. 
 was supplied or established in the inspected sources; this is not a claim that every private storage location was
 searched. A bounded cash-cut query timed out and therefore establishes no missing-cash conclusion. Actual source
 artifacts, reviewed cost allocation and sufficient closed evidence remain necessary before all-in profit qualification.
+
+## Loss-mechanism investigation — November 17
+
+The economic reconstruction below uses a frozen native read at `2026-11-17T18:46:28.274402Z`, with broker
+occurrence cut exclusive `2026-11-17T18:40:22.724Z`. It contains 1,110 equity accounting transactions and 225
+completed flat-to-flat position episodes. Every selected transaction belongs to exactly one episode; every episode
+binds one cycle and generation. Inventory is flat at this cut. It is not a current broker-position assertion.
+November 17 is a partial session and must remain separate from the ten completed November 3–16 sessions.
+
+| Cohort              | Episodes | Wins / losses | Gross realized USD | Gross profit factor |
+| ------------------- | -------: | ------------: | -----------------: | ------------------: |
+| November 3–12       |      147 |       78 / 69 |             323.40 |               1.260 |
+| November 13 and 16  |       69 |       35 / 34 |            -291.37 |               0.684 |
+| November 3–16       |      216 |     113 / 103 |              32.03 |               1.015 |
+| November 17 partial |        9 |         6 / 3 |             -75.36 |               0.740 |
+
+### What explains the losses
+
+The completed two-week cohort has $2,198.35 of winning-episode gross P&L and $2,166.32 of losing-episode gross
+P&L. Its remaining gross profit is only **$0.1483 per episode**, while posted broker fees average **$0.3752 per
+episode** ($81.05 / 216). This is an accounting decomposition, not a claim that every episode incurred the average
+fee. Fees more than consume the small observed gross edge: the known subtotal is **-$49.02**, before operating
+and inference costs. Episode-level gains/losses group partial closes together and need not equal the report's
+transaction-level positive and negative close amounts; their net reconciles exactly.
+
+The recent negative sessions also have unfavorable realized payoff asymmetry. November 13 and 16 together
+average $17.99 per winner against $27.08 per loser. In the November 17 partial cut, six wins total $213.98 but
+three losses total $289.34: mean win $35.66, mean loss $96.45. A high observed hit rate does not establish
+positive expectancy. These are sample outcomes, not calibrated probabilities or evidence of future performance.
+
+November 17 broker-fee records had not arrived at this cut. Combined gross through the frozen occurrence cut is
+-$43.33; subtracting only the $81.05 known prior fees gives **-$124.38 before unknown November 17 fees and operating
+costs**. Neither the missing fees nor missing operating expenses are replaced with zero.
+
+Original funded plans and actual fills were independently checked for all 78 filled cycles on November 13, 16
+and the partial November 17 cohort. No BUY exceeded its original maximum entry price; no filled entry quantity
+exceeded its original maximum quantity. Funded target/stop arithmetic reproduced without discrepancies. The
+observed losses are not explained by an entry-cap, sizing or duplicate-fill accounting error in this cohort.
+
+### Structural judgment is not a probability of profitable execution
+
+Current entry questions assess an observed support recovery or base breakout and whether the proposed stop
+structurally invalidates that setup. Their 0.70 threshold is not the probability that the target will beat the stop.
+Ranking uses the weakest required structural judgment, then modeled loss; funded eligibility requires positive
+modeled target proceeds after transaction fees, not demonstrated positive expected value.
+
+For example, one retained November 16 AAPL plan acquired $18,734.98, modeled target gain $2.234006 and modeled
+stop loss $42.285077. Its target-gain/stop-loss ratio is about 0.0528. The plan satisfies the existing funding
+contract; that contract does not make a low-payoff scenario an independently profitable trade.
+
+The timestamped November 13 exploratory research note froze original-plan `G = targetNet - acquisitionCost`,
+`L = acquisitionCost - stopNet` and exact bins below 0.25, 0.25–below 0.5, 0.5–below 1 and at least 1. The
+below-0.25 group lost $281.64 over 16 discovery episodes. Without retuning those bins, the corresponding
+November 16 group lost $96.93 over 16 episodes and the partial November 17 group lost $124.92 over four episodes.
+The other 20 later episodes made $34.57 gross. This descriptive association does not establish avoided loss,
+a causal threshold or deployable strategy improvement: higher-ratio bins also lost, sessions are correlated,
+partial quantities matter and the protocol changed.
+
+November 13 used v40, protocol hash `140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf`.
+November 16–17 use v41. The version, position policy, candidate/observation universes and entry-question policy
+changed; the execution model and 15-minute holding policy did not. The later eligible universe adds long/short
+support and changes candidate competition. Old eligible names gained $21.81 on November 16 but lost $182.10
+in the partial November 17 cut; newly eligible names lost $133.73 and then gained $106.74. Outcome-selected
+symbol exclusions, a new payoff floor or relabeling structural confidence as a win probability are not validated
+repairs. The note is not a native economic registration or assessment receipt. Preserve separate protocol cohorts
+and prospective economic acceptance.
+
+### A demonstrated exit stall
+
+NVDA cycle `0e57852b693befd35afd0511a663bdda92d9b447de562568dc733ce2544dcaae` filled 98 shares near
+`2026-11-13T20:57:19Z` at $162.98. Its sealed stop was $162.45 and stop limit $162.29. A protective-stop exit
+was durably requested at `20:59:10.073`; cancellation was observed by `20:59:37.516`. The broker-observation
+continuation then waited through `21:00:09`; the first ordinary close attempt at `21:00:15.785` encountered
+`CLOSE_MARKET_DATA_UNAVAILABLE` after regular market close. Repeated attempts remained blocked, including
+after the first-fill-plus-15-minute deadline at `21:12:19`.
+
+The retained native calendar explicitly ran 13:00–22:00 UTC. Its existing reconciled-position liquidation fallback
+was restricted to the last five minutes of that window. A forced-close decision appeared at `21:55:02.496`;
+the final SELL was created at `21:59:55.735` and filled at `21:59:59.462` at $161.78. The episode lasted
+3,760,462 ms and lost **$117.60**. A stop-limit can legitimately remain unfilled through a price gap; that fact
+does not remove the demonstrated post-cancellation close stall. No counterfactual fill price or avoided-loss
+amount is inferred.
+
+The corrective boundary is an already-committed, source-verified reducing exit after protection release. An
+uncommitted price trigger must not become executable from a broker mark. Exact fresh reconciliation, settled
+order/mutation state, source identity, remaining signed inventory, current authority, price bounds, profit floors
+and original expiry remain necessary. The recovery must not authorize an entry, invent an archive quote or use
+an unknown broker state.
+
+### A separate market-session heap failure
+
+On November 17 at `17:59:33 UTC`, the ARM controller exited 133 with V8's
+`Ineffective mark-compacts near heap limit` / `JavaScript heap out of memory`. Its main-isolate heap was near the
+configured 192 MiB old-space limit. This was not a cgroup OOM: retained cgroup peak was about 811 MB against
+2 GiB. Main, projection and decision isolates had different working sets; a healthy idle replica was not a valid
+active-owner capacity test.
+
+The last successful native pass before the failure completed at `17:59:20.575`; the next success completed
+at `18:02:12.706`, a **172.131-second success gap**. Native inventory was flat throughout that interval and no
+episode spanned it, so the crash is a demonstrated reliability defect without demonstrated realized-loss
+attribution. Closed-market report checks from the earlier rollout did not establish market-session stability.
+
+Capacity validation must exercise representative retained working sets and repeated work inside the unchanged
+container budget. A nominal sum of isolate heap allowances is not an RSS bound or evidence that all retention
+is bounded. Keep the capacity repair distinct from the exit-stall repair and from economic qualification.
+
+### Evidence and limits
+
+The frozen episode artifact SHA-256 is
+`c0fb2b42efbf0cc19888dcc095827e73c3fdebc6653ca3cadc0a73b93adf3423`; its executed export SQL SHA-256 is
+`cb762117348149fdd704876fa0a5019faf95fdc0defdf14ecf06536c9c1a5e14`. The original-plan independent summary
+SHA-256 is `aeffbceae08a18a7fa29ea6f71b1af2a3f07954ba02465dfcb9883c4005eca4c`.
+Source ingestion advanced after an earlier 32-transaction/one-open-position cut; two NVDA SELLs with broker
+times `18:40:21.498` and `18:40:22.723` arrived later. Those observations are not silently mixed into the frozen
+225-episode reconstruction. Current broker observation, actual operating costs, immutable qualification receipts
+and prospective strategy edge remain separate evidence requirements.
+
+### Complete exit-path attribution and repairs
+
+All 225 frozen episodes were classified by their actual ordinary intents and native parent/child/OCO identities;
+all 561 SELL fills and their net P&L reconcile exactly once. The prior completed-session cohort decomposes as follows.
+These outcome-defined paths are not ex-ante strategy choices or causal alternatives.
+
+| Exit path                                   | Episodes | Gross USD |
+| ------------------------------------------- | -------: | --------: |
+| Native take-profit only                     |       73 |  1,362.66 |
+| Native stop-loss only                       |       40 |   -944.72 |
+| Jev latched protective stop                 |       63 |   -852.45 |
+| Jev maximum hold                            |       17 |    149.75 |
+| Native take-profit plus protection released |       10 |     95.19 |
+| Native take-profit plus Jev profit target   |        8 |    255.97 |
+| Native stop plus Jev protective stop        |        2 |    -31.86 |
+| Jev profit target only                      |        3 |     -2.51 |
+
+The partial November 17 cohort has six native take-profits totaling $213.98 and three latched protective stops
+totaling -$289.34. The largest NVDA loss was $120.24 against original modeled risk $179.21; its fill at $155.24
+was above the sealed $154.94 stop / $154.79 limit. INTC lost $93.96 against modeled risk $136.13, filling at $53.69
+above its $53.65 stop / $53.60 limit. From trigger until the closing intent that eventually filled, intervals were
+50.745 and 51.831 seconds; the remaining intent-to-final-fill intervals were 4.595 and 4.430 seconds. These are
+not measurements of time until the first close attempt: earlier unfilled or replanned intents must remain visible.
+The intervals do not prove an additional adverse loss attributable to delay.
+
+Exactly 19 frozen episodes exceeded 900 seconds: 17 maximum-hold exits, one native take-profit and the 62-minute
+protective-stop anomaly. Maximum-hold triggers occurred 900.146–903.864 seconds after first actual entry fill.
+A trigger deadline is not a guarantee that the broker fills at that instant. Shortening holding limits from the
+selected losses is not a supported repair; the maximum-hold group made $149.75 gross.
+
+The protective-exit deadline defect is independent of pricing. The recovery driver already supplied a one-second
+post-mutation continuation, but both broker-observation-pending deadline branches discarded it and scheduled the
+30-second financial freshness cadence. The repair honors the existing shorter hint while retaining that cadence
+as an upper bound, unchanged default behavior, earlier absolute deadlines and the minimum future timer. It does
+not increase the broker's allowed request rate or bypass reconciliation. Two regression cases reproduced the
+one-second-to-30-second mismatch before the repair.
+
+The archive-gap repair permits the existing fresh reconciled-position liquidation binding before the final close
+window only for a fully reproduced `ProtectionReleased` target with a durable, nonfuture, non-profit exit latch.
+Original entry, account, cycle, session and sealed exit-policy identities must match. A profit latch remains on its
+original quote/window path: a broker mark must not create a fresh stop trigger that releases its profit floor.
+Pending known protection orders, unknown orders/mutations, inexact accounting/reconciliation, stale/missing marks,
+foreign or malformed targets and expired leases remain blocked. The original target expiry is not extended.
+
+### A live short-fill decoder failure
+
+At `18:42:16.816 UTC`, the broker accepted a new NFLX short entry. It filled 315 shares across three activities,
+with provider side `sell_short`. The account's first such fill poisoned the full-history capture: the provider wire
+schema accepted only `buy` and `sell`, so repeated successful HTTP 200 activity responses failed strict decoding.
+The last successful cached broker observation preceded the order. Flat accounting inventory was therefore not
+evidence that the actual broker had no short exposure.
+
+A bounded read-only same-account probe at `18:56:49` established that the attached BUY target had closed all
+315 shares at `18:43:36.914`; fresh broker positions were empty. No manual liquidation, cancellation or capital
+change was performed. The three opening fills were 10 and 32 shares at $59.63 and 273 at $59.62; the two covers
+were 231 and 84 shares at $59.57. Their gross difference is $16.17 before fees, outside the frozen 225-episode cut.
+
+The repair defines the provider's closed activity-side vocabulary separately from the canonical order side and
+maps `sell_short` to canonical SELL at normalization. Unknown sides still fail; order submission still permits only
+its existing order-side vocabulary. Account, order, cumulative/leaves quantity, partial/final status, cursor,
+source-content hash and complete-page/history checks remain intact. No rejected row is skipped or made retryable
+to hide malformed evidence.
+
+Before deployment, the patched native adapter completed a GET-only full capture in 4.336 seconds, retaining
+1,101 orders, 2,044 fills and 405 fee records in a 3,324,692-byte validated snapshot. This did not publish an
+observer result, write financial state or submit an order. Normal deployed fenced capture must still catch up the
+five missing short/cover fills and their accounting exactly once.
+
+For the heap mitigation, 320 MiB old space and 16 MiB semi-space were independently probed on both architectures:
+main plus two workers each have a 368 MiB V8 limit, totaling 1,104 MiB inside the unchanged 2 GiB container limit.
+The nominal 944 MiB remainder is not an RSS guarantee. The real full-history snapshot passed 300 strict
+decode/hash replacements at both 192 and 320 MiB on each architecture, with stable retained checkpoints and
+approximately 11.2–11.4 MiB after collection. Both settings pass that component workload; it does not reproduce
+the full active controller's heap failure. The larger allowance addresses the measured main-isolate working-set
+failure without claiming that all retention or future full-session stability is proven.
