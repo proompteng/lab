@@ -539,12 +539,6 @@ export const readForwardPerformancePostgres = (
           sql,
           decisionQuery(sql, accountId, authorityGenerationHash, scopedCycles),
         )
-        const marketVolumeBindingRows = yield* readForwardPerformanceMarketVolumeBindings(
-          sql,
-          accountId,
-          authorityGenerationHash,
-          scopedCycles,
-        )
         const executionIntentRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
@@ -944,9 +938,14 @@ export const readForwardPerformancePostgres = (
           executionFillRows,
           nativeProtectionOrderRows,
         )
-        const { executionEvidence, unverifiedDecisionHashes } = yield* readPerformanceDecisionCursor(
+        const {
+          executionEvidence,
+          unverifiedDecisionHashes,
+          captured: marketVolumeBindingRows,
+        } = yield* readPerformanceDecisionCursor(
           consumeDecisionRows,
           executionIndex,
+          readForwardPerformanceMarketVolumeBindings(sql, accountId, authorityGenerationHash, scopedCycles),
         )
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
