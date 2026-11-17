@@ -39,12 +39,12 @@ row envelope had SHA-256 `6203efde681cba4a682f66326b0f98846af0cd85245f46c1fa597c
 
 On the deployed ARM API pod, native Node 24.11.1 with the worker heap limits produced:
 
-| Measurement | Baseline | Direct descriptor lookup |
-| --- | ---: | ---: |
-| Median complete verification | 4,728.6 ms | 4,514.6 ms |
-| Median CPU time | 8,434.9 ms | 7,859.2 ms |
-| Median setup | 261.5 ms | 258.9 ms |
-| Complete verified projections per child | 3 | 3 |
+| Measurement                             |   Baseline | Direct descriptor lookup |
+| --------------------------------------- | ---------: | -----------------------: |
+| Median complete verification            | 4,728.6 ms |               4,514.6 ms |
+| Median CPU time                         | 8,434.9 ms |               7,859.2 ms |
+| Median setup                            |   261.5 ms |                 258.9 ms |
+| Complete verified projections per child |          3 |                        3 |
 
 Verification elapsed time fell 4.52%, and CPU time fell 6.83%. Every child produced complete-output SHA-256
 `701783a543b224d9edd03c2b946b5dc7692619976c158735f02d8bfd2a8d06d2`. Copied verifier, input and harness hashes were
