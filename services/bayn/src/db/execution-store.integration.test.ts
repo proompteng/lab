@@ -1516,6 +1516,64 @@ describePostgres('PostgreSQL execution persistence', () => {
     )
   })
 
+  test('accounting history preserves coincident coin fees and their exact posting and time bounds', async () => {
+    const feeAt = '2026-08-28T14:31:00.000Z'
+    const cryptoFill = (id: string, side: OrderSide, quantityAtoms: string, priceMicros: string, at: string) => {
+      const event = fillEvent(id, side, quantityAtoms, priceMicros)
+      const fill = { ...event.fill, symbol: 'SOL/USD', feeMicros: '0', occurredAt: at }
+      const timestamp = Result.getOrThrow(sourceTimestamp(at))
+      return {
+        ...event,
+        fill,
+        occurredAt: at,
+        observedAt: '2026-08-28T14:31:01.000Z',
+        sourceTimestamp: timestamp,
+        contentHash: Result.getOrThrow(canonicalHashV1Result({ fill, timestamp })),
+      }
+    }
+    const buy = cryptoFill('coin-fee-buy', OrderSide.Buy, '3000000000', '100000000', occurredAt)
+    const sell = cryptoFill('coin-fee-sell', OrderSide.Sell, '2000000000', '110000000', feeAt)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const accounting = yield* FillAccountingStore
+        const fence = yield* WriterFence
+        yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
+        yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE broker_inventory_debits (
+              account_id text, symbol text, quantity_atoms numeric, cost_basis_micros numeric,
+              effective_at timestamptz, posted boolean
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO broker_inventory_debits VALUES
+              (${accountId}, 'SOL/USD', 1000000, 100001, ${feeAt}, true),
+              (${accountId}, 'SOL/USD', 2000000, 200003, ${feeAt}, true),
+              (${accountId}, 'SOL/USD', 5000000000, 500000000, '2026-08-28T14:31:00.000001Z', true),
+              (${accountId}, 'SOL/USD', 5000000000, 500000000, ${feeAt}, false),
+              (${accountId}, 'ETH/USD', 5000000000, 500000000, ${feeAt}, true),
+              ('foreign-account', 'SOL/USD', 5000000000, 500000000, ${feeAt}, true)`
+            yield* accounting.account(buy)
+            yield* accounting.account(sell)
+            const observedFills = [buy.fill, sell.fill]
+            const history = yield* readAccountingHistory(sql, accountId, observedFills, config.tigerBeetle.ledger)
+            expect(history).toHaveLength(2)
+            expect(history[1]?.transaction).toMatchObject({
+              costBasisMicros: '199999997',
+              realizedPnlMicros: '20000003',
+            })
+            yield* sql`UPDATE pg_temp.broker_inventory_debits
+              SET cost_basis_micros = cost_basis_micros + 100
+              WHERE quantity_atoms = 1000000`
+            const changed = yield* readAccountingHistory(sql, accountId, observedFills, config.tigerBeetle.ledger).pipe(
+              Effect.flip,
+            )
+            expect(changed).toMatchObject({ operation: 'reconcile', failure: 'invariant' })
+          }),
+        )
+      }),
+    )
+  })
+
   test('opening cash and fee baselines avoid scanning account history', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -1734,6 +1792,10 @@ describePostgres('PostgreSQL execution persistence', () => {
             DROP CONSTRAINT account_snapshots_schema_version_check`
           yield* sql`ALTER TABLE account_snapshots ADD CONSTRAINT account_snapshots_schema_version_check
             CHECK (schema_version = 'bayn.paper-account-snapshot.v2') NOT VALID`
+          // These legacy orders predate brackets. Supply the current report's nullable protection fields
+          // without applying later migrations that would replace the retained fee schema under test.
+          yield* sql`ALTER TABLE orders ADD COLUMN parent_broker_order_id text, ADD COLUMN stop_price_micros numeric`
+          yield* sql`ALTER TABLE intents ADD COLUMN protection jsonb`
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>

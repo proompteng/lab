@@ -39,7 +39,11 @@ export const makeJevEntryQuery = (input: {
   readonly candidates: readonly string[]
 }): IntradaySnapshotQuery => {
   const { protocol, candidates } = input
-  const market = jevMarketForSymbol(candidates[0] ?? 'SPY')
+  const market = jevMarketForSymbol(
+    candidates[0] ?? 'SPY',
+    protocol.marketProfiles.find((profile) => profile.feed === (isContinuousMarket(input.calendar) ? 'us' : 'iex'))
+      ?.universeId,
+  )
   const rangeEndMs = jevSignalWindowEndMs(input.observedAtMs, protocol)
   return {
     sessionDate: input.sessionDate,
@@ -73,7 +77,12 @@ export const makeJevEntryQuery = (input: {
 /** Independent momentum qualification requires its actual reference series. */
 export const makeMomentumEntryQuery = (input: Parameters<typeof makeJevEntryQuery>[0]): IntradaySnapshotQuery => {
   const query = makeJevEntryQuery(input)
-  const market = jevMarketForSymbol(input.candidates[0] ?? 'SPY')
+  const market = jevMarketForSymbol(
+    input.candidates[0] ?? 'SPY',
+    input.protocol.marketProfiles.find(
+      (profile) => profile.feed === (isContinuousMarket(input.calendar) ? 'us' : 'iex'),
+    )?.universeId,
+  )
   const benchmarkSymbols = [...new Set(input.candidates.map(jevBenchmarkSymbol))].sort()
   return {
     ...query,

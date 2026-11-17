@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import {
   makeForwardPerformanceExecutionMeasurements,
   type ForwardPerformanceExecutionMeasurements,
@@ -326,7 +327,16 @@ const makeMaterial = (
     reasons.add('CASH_YIELD_EVIDENCE_GAP')
   }
 
-  const realizedCloseCount = input.transactions.filter((transaction) => transaction.side === 'SELL').length
+  const nativeTransactions = new Map(
+    input.accountTransactions?.map((transaction) => [transaction.transactionId, transaction]),
+  )
+  const realizedCloseCount = input.transactions.filter(
+    (transaction) =>
+      transaction.side ===
+      (nativeTransactions.get(transaction.transactionId)?.schemaVersion === equityShortAccountingSchemaVersion
+        ? 'BUY'
+        : 'SELL'),
+  ).length
   const reasonCodes = [...reasons].sort()
   const sufficient = reasonCodes.length === 0
   const strategyBinding =
@@ -420,9 +430,15 @@ const makeMaterial = (
   }
 }
 
-export const makeForwardPerformanceReceipt = (
+export const makeForwardPerformanceReceiptEvidence = (
   input: ForwardPerformanceEvidenceInput,
-): Result.Result<ForwardPerformanceReceipt, ForwardPerformanceDomainFailure> =>
+): Result.Result<
+  {
+    readonly receipt: ForwardPerformanceReceipt
+    readonly executionDiagnostics: ForwardPerformanceExecutionMeasurements['diagnostics']
+  },
+  ForwardPerformanceDomainFailure
+> =>
   Result.flatMap(
     Result.mapError(
       makeForwardPerformanceExecutionMeasurements(input),
@@ -435,7 +451,10 @@ export const makeForwardPerformanceReceipt = (
     (measurements) => {
       const material = makeMaterial(input, measurements)
       return Result.mapError(
-        Result.map(canonicalHashV1Result(material), (receiptHash) => ({ ...material, receiptHash })),
+        Result.map(canonicalHashV1Result(material), (receiptHash) => ({
+          receipt: { ...material, receiptHash },
+          executionDiagnostics: measurements.diagnostics,
+        })),
         (cause): ForwardPerformanceDomainFailure => ({
           _tag: 'ForwardPerformanceDomainFailure',
           operation: 'hash-receipt',
@@ -444,3 +463,8 @@ export const makeForwardPerformanceReceipt = (
       )
     },
   )
+
+export const makeForwardPerformanceReceipt = (
+  input: ForwardPerformanceEvidenceInput,
+): Result.Result<ForwardPerformanceReceipt, ForwardPerformanceDomainFailure> =>
+  Result.map(makeForwardPerformanceReceiptEvidence(input), ({ receipt }) => receipt)

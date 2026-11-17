@@ -1,14 +1,17 @@
 # Bayn deployment
 
-## Jev 1.14 cutover
+## Native equity long and short cutover
 
-[The Box cutover](../../../docs/bayn/jev114-box-cutover.md) first settles the exact v39 PAPER identity through migration 186 and native OBSERVE recovery. The old mandate remains absent until the new protocol and verified immutable image have a reviewed same-account activation request.
+[The native short cutover](../../../docs/bayn/equity-short-cutover.md) first settles the exact v40 PAPER identity through migration 199 and native OBSERVE recovery. Migration 200 admits v41 only from settled, flat, clear OBSERVE. The mandate stays absent until the immutable successor image and same-account PAPER request are verified. [The universe and strategy evidence](../../../docs/bayn/native-short-universe-2026-11-14.md) records the ten S&P 100 entry candidates, retained source symbols, directional execution and economic limitations.
 
 ## Images and operating commands
 
 The `bayn` image serves status, execution, activation and market projection. It retains `bayn-forward-performance`
 for private financial reports in the API workload. The trading artifact retains its replay executable and compiler
 receipt for candidate image-membership qualification; the registered trading digest remains authoritative.
+Read-only reports own at most eight native verification workers on x64 or sixteen on ARM64. The API has a sixteen-core burst limit, a 250m
+CPU request and a 6 GiB memory limit; execution-controller resources stay separate. Report cancellation and the
+CLI supervisor close the worker pool and discard incomplete stdout. Fenced receipt persistence verifies inline.
 The `bayn-research` image owns research, replay, GEPA, frozen
 controls and `bayn-system-assessment`. Qualification flags (`--system-*`) move to that command; the financial
 report command rejects them. Both artifacts publish as one commit- and run-bound Kargo cohort. Trading and research

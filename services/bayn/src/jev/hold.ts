@@ -13,6 +13,7 @@ import {
 } from './exit'
 import { JevObservationSchema } from './observation-contract'
 import { jevProfitTargetCrossed } from './profit-target'
+import { isShortExitPlan } from '../strategy/funded-exit-plan'
 
 export const JevPositionHoldEvidenceSchema = Schema.Struct({
   ...JevPositionEvidenceSchema.fields,
@@ -33,8 +34,13 @@ export const decideJevPositionHold = (input: unknown) =>
       return yield* Result.fail(
         new JevContractError({ message: 'An exit request or elapsed holding limit forbids a hold' }),
       )
-    const { bid, quote } = yield* verifiedPositionQuote({ ...evidence, symbol: position.symbol }, evidence.source)
-    if (jevProtectiveStopCrossed(bid, entryPlan.levels) || (yield* jevProfitTargetCrossed(portfolio, bid)))
+    const short = isShortExitPlan(entryPlan)
+    const { bid, ask, quote } = yield* verifiedPositionQuote(
+      { ...evidence, symbol: position.symbol, ...(short ? { positionSide: 'SHORT' as const } : {}) },
+      evidence.source,
+    )
+    const exitPrice = short ? ask : bid
+    if (jevProtectiveStopCrossed(exitPrice, entryPlan.levels) || (yield* jevProfitTargetCrossed(portfolio, exitPrice)))
       return yield* Result.fail(new JevContractError({ message: 'An executable exit threshold forbids a hold' }))
     return {
       schemaVersion: 'bayn.jev-position-hold.v1' as const,

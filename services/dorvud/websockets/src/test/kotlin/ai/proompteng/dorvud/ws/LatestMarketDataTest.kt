@@ -33,6 +33,86 @@ import kotlin.test.assertTrue
 
 class LatestMarketDataTest {
   @Test
+  fun `REST minute bars require completion and retain their actual event start`() {
+    val now = Instant.parse("2026-11-13T15:00:05Z")
+
+    fun body(
+      at: String,
+      high: Int = 102,
+    ) = """{"bars":{"AAPL":{"t":"$at","o":100,"h":$high,"l":99,"c":101,"v":1234,"n":34,"vw":100.5}}}"""
+    val decoded = decodeLatestMarketData(body("2026-11-13T14:59:00Z"), LatestMarketDataChannel.Bars, setOf("AAPL"), now, 10_000)
+    val bar = assertIs<AlpacaBar>(decoded.single())
+    assertEquals("2026-11-13T14:59:00Z", bar.timestamp)
+    assertEquals(1234.0, bar.volume)
+    for (at in listOf("2026-11-13T15:00:00Z", "2026-11-13T14:58:00Z")) {
+      assertTrue(decodeLatestMarketData(body(at), LatestMarketDataChannel.Bars, setOf("AAPL"), now, 10_000).isEmpty())
+    }
+    for (invalid in listOf(body("2026-11-13T14:59:01Z"), body("2026-11-13T14:59:00Z", 98))) {
+      assertFailsWith<IllegalArgumentException> {
+        decodeLatestMarketData(
+          invalid,
+          LatestMarketDataChannel.Bars,
+          setOf("AAPL"),
+          now,
+          10_000,
+        )
+      }
+    }
+  }
+
+  @Test
+  fun `REST bar acknowledgement follows publication and a blocked quote cannot delay a bar`() =
+    runBlocking {
+      val at = Instant.parse("2026-11-13T15:00:05Z")
+      val barPublished = CompletableDeferred<Unit>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            val channel = request.url.encodedPath.split('/')[3]
+            if (channel == "quotes") barPublished.await()
+            respond(
+              when (channel) {
+                "bars" -> """{"bars":{"AAPL":{"t":"2026-11-13T14:59:00Z","o":100,"h":102,"l":99,"c":101,"v":1234}}}"""
+                "quotes" -> """{"quotes":{}}"""
+                else -> """{"trades":{}}"""
+              },
+            )
+          },
+        )
+      try {
+        val poller =
+          LatestMarketDataPoller(
+            LatestMarketDataConfig(listOf("AAPL"), 2000, 10_000, listOf("AAPL")),
+            config.alpacaBaseUrl,
+            AlpacaRestClient(config, client),
+          ) {
+            at.toEpochMilli()
+          }
+        var attempts = 0
+        val delivered = mutableListOf<Envelope<JsonElement>>()
+        val publish: suspend (Envelope<JsonElement>) -> Unit = { envelope ->
+          if (envelope.channel == "bars") {
+            attempts++
+            barPublished.complete(Unit)
+            if (attempts == 1) error("publication failed")
+          }
+          delivered += envelope
+        }
+        poller.poll(SeqTracker()::next, publish)
+        assertEquals(listOf("AAPL"), poller.coverage().unavailableSymbols["bars"])
+        assertTrue(poller.coverage().errors.containsKey("bars"))
+        poller.poll(SeqTracker()::next, publish)
+        poller.poll(SeqTracker()::next, publish)
+        assertEquals(2, attempts)
+        assertEquals(1, delivered.count { it.channel == "bars" })
+        assertEquals(emptyList(), poller.coverage().unavailableSymbols["bars"])
+        assertEquals(emptyMap(), poller.coverage().errors)
+      } finally {
+        client.close()
+      }
+    }
+
+  @Test
   fun `rate-limit headers preserve retry dates reset boundaries and unknown cooldowns`() {
     val now = Instant.parse("2026-09-11T14:00:00Z").toEpochMilli()
     assertEquals(null, alpacaRestResumeAtMs(200, headersOf("X-RateLimit-Remaining", "1"), now))
