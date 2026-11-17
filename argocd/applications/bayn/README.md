@@ -156,9 +156,26 @@ decision worker and native buffers. This provides headroom above the measured No
 it does not establish a fixed leak or a complete-session upper bound. Both eligible nodes had sufficient allocated
 memory headroom when this mitigation was selected. Reporting remains isolated from execution workers.
 
-The main process and both workers inherit `--max-old-space-size=192 --max-semi-space-size=16` through
-`NODE_OPTIONS`. These per-isolate V8 allowances are separate from the shared container limit and do not bound
-native buffers or process RSS; live isolate and process measurements remain necessary for acceptance.
+The main process and both workers inherit `--max-old-space-size=320 --max-semi-space-size=16` through
+`NODE_OPTIONS`. The three V8 heap ceilings total 1,104 MiB: 320 MiB old generation plus up to three 16 MiB
+semi-spaces per isolate. This leaves 944 MiB of the unchanged 2 GiB container limit for native code, buffers and
+other process memory. These allowances are separate from the shared container limit and do not bound process
+RSS; live isolate and process measurements remain necessary for acceptance.
+
+The earlier 192 MiB old-generation limit failed during the November 17 market session. The active ARM parent
+reached 196,700,112 bytes of sampled heap usage before V8 aborted at 17:59:33 UTC; the container recorded no
+OOM event. The last successful native pass completed at 17:59:20.575 and the first recovered pass at
+18:02:12.706, a 172.131-second gap. The account was flat throughout that interval, so this establishes a real
+availability failure without attributing realized trading losses to it. Broker snapshots retain one complete
+history, and their decode and content verification require transient copies; projection state also grows with
+the retained session. The larger bounded allowance provides headroom above that measured working-set pressure. It is not
+proof that every long-lived allocation is bounded or that a complete future session will remain stable.
+
+An isolated replay of the November 17 native capture (3,324,692 bytes, 1,101 orders, 2,044 fills and 405 fees)
+repeated complete snapshot decoding and canonical content verification 300 times on both architectures with
+both heap settings. Counts and hashes stayed exact; settled heap remained about 11.2–11.4 MiB without
+growing retention in this component. Both settings fit that standalone workload. This component measurement
+does not reproduce the full controller's retained working set or its heap failure.
 
 The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.

@@ -180,7 +180,7 @@ spec:
             # Main, projection and decision isolates share the cgroup; leave native/buffer headroom.
             # Node otherwise derives a separate heap budget from the full limit for each isolate.
             - name: NODE_OPTIONS
-              value: --max-old-space-size=192 --max-semi-space-size=16
+              value: --max-old-space-size=320 --max-semi-space-size=16
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
