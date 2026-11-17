@@ -174,6 +174,12 @@ export enum OrderSide {
   Sell = 'sell',
 }
 
+export enum TradeActivitySide {
+  Buy = 'buy',
+  Sell = 'sell',
+  SellShort = 'sell_short',
+}
+
 export enum TimeInForce {
   Day = 'day',
   GoodUntilCanceled = 'gtc',
@@ -218,12 +224,6 @@ export enum SortDirection {
 export enum TradeActivityType {
   Fill = 'fill',
   PartialFill = 'partial_fill',
-}
-
-export enum FillActivitySide {
-  Buy = 'buy',
-  Sell = 'sell',
-  SellShort = 'sell_short',
 }
 
 export interface ProxyDispatcherDependencies {
@@ -675,7 +675,7 @@ export const FillActivityResponseSchema = Schema.Struct({
   leaves_qty: Decimal,
   price: Decimal,
   qty: Decimal,
-  side: Schema.Enum(FillActivitySide),
+  side: Schema.Enum(TradeActivitySide),
   symbol: ResponseSymbol,
   transaction_time: Timestamp,
   order_id: Uuid,

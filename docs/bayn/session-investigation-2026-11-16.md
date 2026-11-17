@@ -408,10 +408,16 @@ Before deployment, the patched native adapter completed a GET-only full capture 
 observer result, write financial state or submit an order. Normal deployed fenced capture must still catch up the
 five missing short/cover fills and their accounting exactly once.
 
-For the heap mitigation, 320 MiB old space and 16 MiB semi-space were independently probed on both architectures:
+An independent capacity candidate used 320 MiB old space and 16 MiB semi-space on both architectures:
 main plus two workers each have a 368 MiB V8 limit, totaling 1,104 MiB inside the unchanged 2 GiB container limit.
 The nominal 944 MiB remainder is not an RSS guarantee. The real full-history snapshot passed 300 strict
 decode/hash replacements at both 192 and 320 MiB on each architecture, with stable retained checkpoints and
 approximately 11.2–11.4 MiB after collection. Both settings pass that component workload; it does not reproduce
-the full active controller's heap failure. The larger allowance addresses the measured main-isolate working-set
-failure without claiming that all retention or future full-session stability is proven.
+the full active controller's heap failure.
+
+Concurrent reviewed PR #15968 supplies the final provider-side correction and execution-capacity configuration:
+384 MiB old space, 16 MiB semi-space and a four-core CPU burst ceiling, preserving the existing requests and
+2 GiB shared memory limit. This investigation preserves that merged implementation rather than replacing it
+with the 320 MiB candidate. Its three 432 MiB V8 ceilings total 1,296 MiB, leaving a nominal 752 MiB outside
+V8; this is still not an RSS bound or proof of future full-session stability. The remaining exit-recovery and
+continuation repairs build on that reviewed source and require their own complete validation and live acceptance.

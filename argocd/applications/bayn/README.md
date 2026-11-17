@@ -156,26 +156,22 @@ decision worker and native buffers. This provides headroom above the measured No
 it does not establish a fixed leak or a complete-session upper bound. Both eligible nodes had sufficient allocated
 memory headroom when this mitigation was selected. Reporting remains isolated from execution workers.
 
-The main process and both workers inherit `--max-old-space-size=320 --max-semi-space-size=16` through
-`NODE_OPTIONS`. The three V8 heap ceilings total 1,104 MiB: 320 MiB old generation plus up to three 16 MiB
-semi-spaces per isolate. This leaves 944 MiB of the unchanged 2 GiB container limit for native code, buffers and
-other process memory. These allowances are separate from the shared container limit and do not bound process
-RSS; live isolate and process measurements remain necessary for acceptance.
+The main process and both workers inherit `--max-old-space-size=384 --max-semi-space-size=16` through
+`NODE_OPTIONS`. Three V8 heaps can reserve 1,296 MiB (384 MiB old generation plus three 16 MiB semi-spaces
+per isolate), leaving 752 MiB of the 2 GiB container budget for native memory and buffers. These allowances
+do not bound process RSS; live isolate and process measurements remain necessary for acceptance.
 
-The earlier 192 MiB old-generation limit failed during the November 17 market session. The active ARM parent
-reached 196,700,112 bytes of sampled heap usage before V8 aborted at 17:59:33 UTC; the container recorded no
-OOM event. The last successful native pass completed at 17:59:20.575 and the first recovered pass at
-18:02:12.706, a 172.131-second gap. The account was flat throughout that interval, so this establishes a real
-availability failure without attributing realized trading losses to it. Broker snapshots retain one complete
-history, and their decode and content verification require transient copies; projection state also grows with
-the retained session. The larger bounded allowance provides headroom above that measured working-set pressure. It is not
-proof that every long-lived allocation is bounded or that a complete future session will remain stable.
+On November 17 at 17:59:33 UTC, the active ARM64 controller exhausted its previous 192 MiB old-generation
+allowance and exited with code 133. The final GC reported allocation failure near 189 MiB. The preceding
+eight-hour telemetry peaked at 190.9 MiB of main-isolate used heap and 708.3 MiB of process RSS, establishing
+isolate heap pressure well below the container limit. The larger bounded heap addresses that mismatch;
+it does not establish a leak-free runtime or a complete-session upper bound.
 
-An isolated replay of the November 17 native capture (3,324,692 bytes, 1,101 orders, 2,044 fills and 405 fees)
-repeated complete snapshot decoding and canonical content verification 300 times on both architectures with
-both heap settings. Counts and hashes stayed exact; settled heap remained about 11.2–11.4 MiB without
-growing retention in this component. Both settings fit that standalone workload. This component measurement
-does not reproduce the full controller's retained working set or its heap failure.
+The shared process has a four-core burst limit with its existing 250m request. At 18:42 UTC on November 17,
+the previous two-core limit throttled 34.9% of periods on Turin and 21.2% on ARM64, with 0.30 and 0.20 throttled
+seconds per second respectively. Node CPU utilization was 4.6% and 21.0%. The larger burst limit lets the owner,
+projection, decision worker and V8 GC progress together. Measure actual throttling and stage latency after rollout;
+the combined resource correction does not isolate the contribution of either change.
 
 The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.

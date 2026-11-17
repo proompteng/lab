@@ -177,10 +177,10 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
-            # Main, projection and decision isolates share the cgroup; leave native/buffer headroom.
-            # Node otherwise derives a separate heap budget from the full limit for each isolate.
+            # Three isolates share 2 GiB: 3 * (384 + 3 * 16) MiB leaves 752 MiB for native memory.
+            # The prior 192 MiB old-generation cap exhausted the active owner's heap during a session.
             - name: NODE_OPTIONS
-              value: --max-old-space-size=320 --max-semi-space-size=16
+              value: --max-old-space-size=384 --max-semi-space-size=16
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
@@ -245,7 +245,8 @@ spec:
               cpu: 250m
               memory: 1Gi
             limits:
-              cpu: "2"
+              # The owner, projection, decision worker and V8 GC can run together.
+              cpu: "4"
               # Measured shared-process peaks approach 1 GiB across the parent
               # and both workers. Preserve headroom while isolate metrics locate growth.
               memory: 2Gi

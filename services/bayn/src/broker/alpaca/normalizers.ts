@@ -9,7 +9,6 @@ import {
   AssetClass,
   AssetResponseSchema,
   FillActivityResponseSchema,
-  FillActivitySide,
   FeeActivityResponseSchema,
   type FeeActivity,
   I128_MAX,
@@ -22,6 +21,7 @@ import {
   OrderType,
   PositionResponseSchema,
   PositionSide,
+  TradeActivitySide,
   TradeActivityType,
   U128_MAX,
   accountConfigurationObservationSchemaVersion,
@@ -580,8 +580,8 @@ export const normalizeFillActivityResult = (
       leavesQuantityAtoms,
       priceAtoms,
       quantityAtoms,
-      // Alpaca distinguishes opening shorts in activity history; the canonical fill remains a sell.
-      side: raw.side === FillActivitySide.Buy ? OrderSide.Buy : OrderSide.Sell,
+      // Activity sides describe short sales separately; signed position accounting owns opening versus closing.
+      side: raw.side === TradeActivitySide.Buy ? OrderSide.Buy : OrderSide.Sell,
       symbol: raw.symbol,
       transactionTime: raw.transaction_time,
       brokerOrderId: raw.order_id,

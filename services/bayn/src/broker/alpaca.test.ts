@@ -1366,6 +1366,127 @@ describe('Alpaca paper reads', () => {
     expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([raw])))
   })
 
+  test.each([
+    ['buy', OrderSide.Buy],
+    ['sell', OrderSide.Sell],
+    ['sell_short', OrderSide.Sell],
+  ] as const)('normalizes trade activity side %s with exact fractional fill evidence', async (side, expected) => {
+    const raw = [{ ...fillResponse, side, qty: '0.625', cum_qty: '0.625' }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const result = await Effect.runPromise(withClient(client, (read) => read.fillActivities()))
+    expect(result.value.items).toEqual([
+      {
+        accountId,
+        activityId: fillResponse.id,
+        cumulativeQuantityAtoms: '625000000',
+        leavesQuantityAtoms: '0',
+        priceAtoms: '120125000000',
+        quantityAtoms: '625000000',
+        side: expected,
+        symbol: fillResponse.symbol,
+        transactionTime: fillResponse.transaction_time,
+        brokerOrderId: orderId,
+        type: TradeActivityType.Fill,
+        orderStatus: OrderStatus.Filled,
+      },
+    ])
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+  })
+
+  test.each(['sell_short_exempt', 'buy_to_cover', 'undisclosed', 'SELL_SHORT', ''])(
+    'rejects unsupported trade activity side %s with the original response evidence',
+    async (side) => {
+      const raw = [{ ...fillResponse, side }]
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.fillActivities())))
+      expect(failure).toMatchObject({
+        operation: 'fill-activities',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+        status: 200,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(raw)),
+      })
+    },
+  )
+
+  test('retains a sell_short fill on a later history page through both stable snapshot reads', async () => {
+    const shortOrderId = '4bd18603-8a5c-43bb-99b6-382a43862c9b'
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      ...fillResponse,
+      id: `20260721113406977::00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      symbol: 'MSFT',
+      qty: '1',
+      cum_qty: String(index + 1),
+      leaves_qty: String(99 - index),
+      type: index === 99 ? 'fill' : 'partial_fill',
+      order_status: index === 99 ? 'filled' : 'partially_filled',
+    }))
+    const lastPage = [
+      {
+        ...fillResponse,
+        id: `20260721113506977::${shortOrderId}`,
+        order_id: shortOrderId,
+        qty: '0.625',
+        cum_qty: '0.625',
+        side: 'sell_short',
+      },
+    ]
+    const orders = [
+      {
+        ...orderResponse,
+        symbol: 'MSFT',
+        qty: '100',
+        filled_qty: '100',
+        filled_avg_price: '120.125',
+        status: 'filled',
+      },
+      {
+        ...orderResponse,
+        id: shortOrderId,
+        side: 'sell',
+        qty: '0.625',
+        filled_qty: '0.625',
+        filled_avg_price: '120.125',
+        status: 'filled',
+      },
+    ]
+    const fillPages: (string | null)[] = []
+    const client = HttpClient.make((request, url) => {
+      expect(request.method).toBe('GET')
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/orders') return Effect.succeed(jsonResponse(request, orders))
+      if (url.pathname === '/v2/positions' || url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, []))
+      if (url.pathname === '/v2/account/activities/FILL') {
+        const token = url.searchParams.get('page_token')
+        fillPages.push(token)
+        return Effect.succeed(jsonResponse(request, token === null ? firstPage : lastPage))
+      }
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-07-21T16:00:00.000Z'))),
+    )
+    expect(fillPages).toEqual([null, firstPage[99]?.id, null, firstPage[99]?.id])
+    expect(snapshot.history.fills).toHaveLength(101)
+    expect(snapshot.history.fills.at(-1)?.value).toMatchObject({
+      activityId: lastPage[0]?.id,
+      brokerOrderId: shortOrderId,
+      side: OrderSide.Sell,
+      quantityAtoms: '625000000',
+      priceAtoms: '120125000000',
+    })
+    expect(snapshot.history.fills.at(-1)?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(lastPage)))
+    expect(snapshot.history.orders.rows[1]?.value.side).toBe(OrderSide.Sell)
+  })
+
+  test('keeps sell_short outside the order response side contract', async () => {
+    const raw = { ...orderResponse, side: 'sell_short' }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+    expect(failure).toMatchObject({ operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse })
+  })
+
   test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
     let calls = 0
     const client = HttpClient.make((request) => {
