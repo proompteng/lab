@@ -1809,10 +1809,11 @@ The write command acquires the execution writer fence before reading report evid
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
 Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
-Within one report, completed intraday cycles with identical retrospective archive query material share the archive
-watermark capture and bounded bar pages. The key includes the symbol, feed, session, calendar and exact report cutoff;
-each result still verifies its own decision identity and original watermark lower bounds. No evidence or query result
-is cached across reports. Retained Jev readers similarly pass one verified observation through batch and target
+Within one report, completed intraday cycles with identical retrospective archive query material share bounded bar
+pages. Their key includes the symbol, feed, session, calendar and exact report cutoff. Full-universe watermark captures
+also share one cancellable read across symbols when every other query field agrees; each result still verifies its own
+decision identity and original watermark lower bounds. No evidence or query result is cached across reports.
+Retained Jev readers similarly pass one verified observation through batch and target
 reconstruction; their quote binding projects already verified source rows without weakening current admission.
 These optimizations do not establish that a complete report meets a requested deadline; measure that on the full cut.
 Opening and closing balance queries resolve their time cuts before looking up account snapshots through the existing
