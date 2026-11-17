@@ -20,7 +20,13 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings, type JevExitTarget } from '../jev/exit'
+import {
+  JevExitReason,
+  JevExitTargetSchema,
+  jevProfitTargetLimitFloors,
+  jevProfitTargetLimitCeilings,
+  type JevExitTarget,
+} from '../jev/exit'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -51,7 +57,7 @@ import {
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { type PersistedIntradaySnapshotRows } from '../market-data/intraday/verification'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
@@ -1642,10 +1648,29 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const target = request.exitTarget
+    const releasedExit =
+      source === 'reconciled-position' &&
+      target?.reason === JevExitReason.ProtectionReleased &&
+      Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(target)) &&
+      target.evidence.portfolio.purpose === JevPurpose.Manage &&
+      target.evidence.portfolio.exitRequestedAt !== null &&
+      !target.evidence.portfolio.profitExitRequested &&
+      target.cycleId === cycle.identity.cycleId &&
+      target.entryDecisionHash === entryDocument.contentHash &&
+      target.sessionDate === cycle.identity.executionSessionDate &&
+      target.evidence.portfolio.brokerState.account.accountId === cycle.identity.accountId &&
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
+      canonicalJsonEqualV1(target.evidence.portfolio.exitPolicy, entryDocument.strategyDecision.exitPolicy)
+        ? target
+        : undefined
     const requireFallbackWindow = (observedAt: string) => {
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
-      return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
+      // Cancellation/rejection/accounted protection latched this reducing exit before the archive failed.
+      // A profit latch still needs quote evidence: a broker mark must not create a new stop trigger.
+      const resumeReleasedExit = releasedExit !== undefined && releasedExit.observedAt <= observedAt
+      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeReleasedExit) &&
         (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
           observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
@@ -1657,8 +1682,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             }),
           )
     }
-    // Sample after the archive attempt: it may have crossed into the close window. Outside that
-    // window a second reconciliation cannot authorize this fallback and only delays the next pass.
+    // Sample after the archive attempt. Only the close window or an already committed non-profit exit
+    // can authorize a fresh position-mark fallback; neither can authorize a new entry or price trigger.
     if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
     const reconciliation = yield* (
       source === 'archive' && request.initialReconciliation !== undefined
