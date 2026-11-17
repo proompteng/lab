@@ -39,11 +39,9 @@ if (!existsSync(jar)) {
         '--location',
         '--retry',
         '3',
-        '--header',
-        'Accept: application/octet-stream',
         '--output',
         temporaryJar,
-        `https://api.github.com/repos/tlaplus/tlaplus/releases/assets/${pin.releaseAssetId}`,
+        `https://github.com/tlaplus/tlaplus/releases/download/v${pin.version}/tla2tools.jar`,
       ],
       { stdout: 'inherit', stderr: 'inherit' },
     )
