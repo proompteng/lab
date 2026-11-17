@@ -840,8 +840,14 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; current equity entries retain their evidence and LIMIT/DAY requirements.
 
-Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
-that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
+Before that session-close window, the same position-mark close can resume an already committed non-profit exit after
+protection cancellation, rejection or an accounted protective disposal. The complete reproduced `PROTECTION_RELEASED`
+target must retain its durable exit-request time, exact entry, account, cycle, session and sealed exit policy. A broker
+mark cannot create a new stop trigger or release a profit limit: profit-exit latches retain the quote-backed path and
+ordinary session-close fallback window. Fresh exact reconciliation, known-order settlement, inventory-only quantity
+bounds, source-mark timestamps, current authority and close expiry remain mandatory.
+An unavailable archive without that committed non-profit exit does not trigger a redundant reconciliation before the
+fallback is eligible. Eligibility is sampled after the archive attempt, so work that crosses into the window may
 use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
 waits retain the explicit close-eligibility deadline and react to market or broker events. Failed close attempts retain the original data reason in logs.
 A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
