@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
+import { hash } from 'node:crypto'
 import { types } from 'node:util'
 
 import { pipe, Result } from 'effect'
 
-export const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
+export const sha256 = (value: string | Uint8Array): string => hash('sha256', value, 'hex')
 
 type CanonicalJsonValidationReason =
   | 'cycle'
@@ -320,11 +320,7 @@ export const canonicalJsonWithHashV1Result = (value: unknown) =>
   )
 
 export const stableU128 = (...parts: readonly string[]): bigint => {
-  const bytes = createHash('sha256').update(parts.join('\u001f')).digest().subarray(0, 16)
-  let value = 0n
-  for (const byte of bytes) {
-    value = (value << 8n) | BigInt(byte)
-  }
+  const value = BigInt(`0x${sha256(parts.join('\u001f')).slice(0, 32)}`)
   return value === 0n ? 1n : value
 }
 

@@ -92,11 +92,14 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     'bayn_generation_index',
     'bayn_io',
     'bayn_io_timing',
+    'bayn_native_arrivals',
     'bayn_replication',
     'bayn_waits',
   ])
   expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
   expect(queries.bayn_replication.primary).toBe(true)
+  expect(queries.bayn_native_arrivals.primary).toBe(true)
+  expect(queries.bayn_native_arrivals.target_databases).toEqual(['bayn'])
   expect(queries.bayn_generation_index.primary).toBe(true)
   expect(queries.bayn_generation_index.query).toContain('autonomous_cycle_shadow_decisions_generation_idx')
   expect(queries.bayn_generation_index.metrics.map((entry: Record<string, unknown>) => Object.keys(entry)[0])).toEqual([

@@ -177,6 +177,10 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
+            # Main, projection and decision isolates share the cgroup; leave native/buffer headroom.
+            # Node otherwise derives a separate heap budget from the full limit for each isolate.
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=192 --max-semi-space-size=16
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
@@ -239,10 +243,12 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 1Gi
             limits:
               cpu: "2"
-              memory: 1Gi
+              # Measured shared-process peaks approach 1 GiB across the parent
+              # and both workers. Preserve headroom while isolate metrics locate growth.
+              memory: 2Gi
           securityContext:
             # TigerBeetle's native client requires io_uring, which containerd's
             # RuntimeDefault seccomp profile blocks. Keep every other control.
