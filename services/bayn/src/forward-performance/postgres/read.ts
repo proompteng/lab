@@ -817,6 +817,10 @@ export const readForwardPerformancePostgres = (
             terminalAt: row.terminal_at.toISOString(),
           }),
         )
+        const isUnattributedGenerationFee = (row: (typeof brokerFeeRows)[number]) =>
+          !row.includes_generation &&
+          !row.includes_other_generation &&
+          cycles.some((cycle) => cycle.submissionOpenAt.slice(0, 10) === row.data.date)
         const strategyRow = strategyRows[0]
         const strategy: ForwardPerformanceStrategyEvidence | undefined =
           strategyRow === undefined
@@ -990,11 +994,7 @@ export const readForwardPerformancePostgres = (
             .filter((row) => row.includes_generation && !row.includes_other_generation)
             .map((row) => row.data.activityId),
           ambiguousBrokerFeeCount: generationFeeRows.filter(
-            (row) =>
-              (row.includes_generation && row.includes_other_generation) ||
-              (!row.includes_generation &&
-                !row.includes_other_generation &&
-                cycles.some((cycle) => cycle.submissionOpenAt.slice(0, 10) === row.data.date)),
+            (row) => (row.includes_generation && row.includes_other_generation) || isUnattributedGenerationFee(row),
           ).length,
           transactionEvidence,
           executionEvidence,
@@ -1028,6 +1028,9 @@ export const readForwardPerformancePostgres = (
             postReconciliationActivity.count +
             brokerFeeRows.filter(
               (row) =>
+                (authorityGenerationHash === undefined ||
+                  row.includes_generation ||
+                  isUnattributedGenerationFee(row)) &&
                 reconciliationRow !== undefined &&
                 (row.first_observed_at > reconciliationRow.reconciled_at ||
                   (row.posted_at !== null && row.posted_at > reconciliationRow.reconciled_at) ||
