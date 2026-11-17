@@ -28,6 +28,14 @@ const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes
 
 const StateMaterialization = Schema.Struct({ snapshotHash: Sha256Schema, state: ObservedBrokerStateSchema })
 
+const maximumRetainedSnapshotBytes = 8 * 1024 * 1024
+
+const freezeMaterialization = (value: unknown): void => {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeMaterialization(child)
+  Object.freeze(value)
+}
+
 export enum BrokerObservationClaimStatus {
   Reserved = 'RESERVED',
   QuotaWait = 'QUOTA_WAIT',
@@ -106,25 +114,42 @@ export const makeBrokerObservationStore = (
       canonicalHashV1Result({ accountId, sourceRevision, hash }),
       (keyHash) => `bayn:broker:${kind}:${keyHash}`,
     )
-  const readPayload = <A>(kind: 'snapshot' | 'state', hash: string, schema: Schema.Codec<A, unknown>) =>
-    Effect.gen(function* () {
-      const key = yield* Effect.fromResult(payloadKey(kind, hash))
-      const encoded = yield* cache.get(key)
-      if (Option.isNone(encoded))
-        return yield* observationUnavailable('Required Valkey broker materialization is absent')
-      const value = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
-      if ((yield* Effect.fromResult(canonicalHashV1Result(value))) !== hash)
-        return yield* observationUnavailable('Valkey broker materialization content hash changed')
-      yield* Metric.update(
-        materializationBytes.pipe(Metric.withAttributes({ namespace: 'bayn', kind })),
-        Buffer.byteLength(encoded.value),
-      )
-      yield* Effect.annotateCurrentSpan({
-        'bayn.broker.payload_kind': kind,
-        'bayn.broker.payload_bytes': Buffer.byteLength(encoded.value),
-      })
-      return value
-    }).pipe(withObservedStage('bayn.broker.observation.materialization', { dependency: 'valkey', operation: kind }))
+  const makePayloadReader = <A>(kind: 'snapshot' | 'state', schema: Schema.Codec<A, unknown>) => {
+    let retained: { readonly hash: string; readonly encoded: string; readonly value: A } | undefined
+    return (hash: string) =>
+      Effect.gen(function* () {
+        const key = yield* Effect.fromResult(payloadKey(kind, hash))
+        const encoded = yield* cache.get(key)
+        if (Option.isNone(encoded))
+          return yield* observationUnavailable('Required Valkey broker materialization is absent')
+        const bytes = Buffer.byteLength(encoded.value)
+        const previous = retained
+        const reused = previous !== undefined && previous.hash === hash && previous.encoded === encoded.value
+        const value = reused
+          ? structuredClone(previous.value)
+          : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
+        if (!reused) {
+          if ((yield* Effect.fromResult(canonicalHashV1Result(value))) !== hash)
+            return yield* observationUnavailable('Valkey broker materialization content hash changed')
+          // Retain only one private, verified snapshot. Every read still fetches current bytes; neither
+          // PostgreSQL admission nor account/chronology/age checks can be satisfied by this pure reuse.
+          if (kind === 'snapshot' && bytes <= maximumRetainedSnapshotBytes) {
+            const owned = structuredClone(value)
+            freezeMaterialization(owned)
+            retained = { hash, encoded: encoded.value, value: owned }
+          } else retained = undefined
+        }
+        yield* Metric.update(materializationBytes.pipe(Metric.withAttributes({ namespace: 'bayn', kind })), bytes)
+        yield* Effect.annotateCurrentSpan({
+          'bayn.broker.payload_kind': kind,
+          'bayn.broker.payload_bytes': bytes,
+          'bayn.broker.payload_decode_reused': reused,
+        })
+        return value
+      }).pipe(withObservedStage('bayn.broker.observation.materialization', { dependency: 'valkey', operation: kind }))
+  }
+  const readSnapshotPayload = makePayloadReader('snapshot', ObservedBrokerSnapshotSchema)
+  const readStatePayload = makePayloadReader('state', StateMaterialization)
 
   const activate = (nextPollNotBeforeMs: number) =>
     run(
@@ -445,7 +470,7 @@ export const makeBrokerObservationStore = (
   const read = run(
     Effect.gen(function* () {
       const row = yield* readProjection(null)
-      const value = yield* readPayload('snapshot', row.snapshot_hash, ObservedBrokerSnapshotSchema)
+      const value = yield* readSnapshotPayload(row.snapshot_hash)
       const validated = yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
       yield* requireSettled(row.pending)
       return validated
@@ -455,7 +480,7 @@ export const makeBrokerObservationStore = (
     run(
       Effect.gen(function* () {
         const row = yield* readProjection(intentId)
-        const value = yield* readPayload('state', row.state_hash, StateMaterialization)
+        const value = yield* readStatePayload(row.state_hash)
         if (value.snapshotHash !== row.snapshot_hash)
           return yield* observationUnavailable('Broker state does not belong to the fenced snapshot')
         const validated = yield* validateObservedBrokerState(
