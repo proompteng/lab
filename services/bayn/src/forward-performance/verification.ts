@@ -7,7 +7,7 @@ import {
   type DecodedInferenceCostRequest,
 } from '../inference-costs'
 import type { InferenceExpenseQuote, verifyInferenceExpenseCoverage } from '../inference-expense'
-import type { CycleDecisionRow } from './postgres/model'
+import type { CycleDecisionJsonRow } from './postgres/model'
 import type { indexExecutionEvidence } from './postgres/projection'
 import type { ForwardPerformanceExecutionEvidence } from './model'
 import { IntradaySnapshotFailure, type IntradaySnapshotRequest } from '../market-data/intraday/model'
@@ -44,7 +44,7 @@ export type ReportVolumeEvidence = Result.Result.Success<ReturnType<typeof makeI
 export type ReportVerificationInput =
   | {
       readonly task: ReportVerificationTask.Decision
-      readonly row: typeof CycleDecisionRow.Type
+      readonly row: typeof CycleDecisionJsonRow.Type
       readonly index?: ReportDecisionIndex
     }
   | { readonly task: ReportVerificationTask.Inference; readonly input: unknown; readonly asOf: string }
@@ -251,7 +251,7 @@ export const makeReportVerification = (
                   : Effect.fail(failed('Report verification omitted its volume evidence')),
           ),
         ),
-      decision: (row: typeof CycleDecisionRow.Type, index: ReturnType<typeof indexExecutionEvidence>) =>
+      decision: (row: typeof CycleDecisionJsonRow.Type, index: ReturnType<typeof indexExecutionEvidence>) =>
         run({ task: ReportVerificationTask.Decision, row, index }).pipe(
           Effect.flatMap((reply) =>
             reply.outcome === 'DECISION'

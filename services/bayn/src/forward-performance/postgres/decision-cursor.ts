@@ -10,8 +10,8 @@ import {
   type ReportDecisionProjection,
   type ReportVerificationError,
 } from '../verification'
-import { CycleDecisionRow } from './model'
-import { executionEvidenceFromRows, verifyPerformanceDecisions } from './projection'
+import { CycleDecisionJsonRow } from './model'
+import { executionEvidenceFromRows, verifyPerformanceDecisionJson } from './projection'
 
 export const readPerformanceDecisionCursor = (
   consumeRows: Effect.Success<ReturnType<typeof openSnapshotRows>>,
@@ -36,9 +36,9 @@ export const readPerformanceDecisionCursor = (
       const consume = Effect.gen(function* () {
         yield* consumeRows((input) =>
           Effect.gen(function* () {
-            const row = yield* Schema.decodeUnknownEffect(CycleDecisionRow, strictParseOptions)(input)
+            const row = yield* Schema.decodeUnknownEffect(CycleDecisionJsonRow, strictParseOptions)(input)
             if (Option.isNone(verifier)) {
-              const verified = verifyPerformanceDecisions([row])
+              const verified = verifyPerformanceDecisionJson(row)
               accept({
                 executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
                 unverifiedDecisionHashes: verified.unverifiedDecisionHashes,

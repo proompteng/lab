@@ -59,7 +59,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:346408797ff3b01bfd086e7ffdce3a3f243787249fac6ddb77b273f34b414855
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:0f64e5c35bfd3de42cacc2d32216d75518827f289e0ef2ee7bd45a2f9aef4354
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -75,7 +75,7 @@ spec:
             - name: BAYN_REPORTING_ALLOWED
               value: "false"
             - name: BAYN_CODE_REVISION
-              value: 730fa4eee7f935dd7b7ce854589f0dfdfb6cf301
+              value: a662aa567f740144f9c0ca75869810795ac5788f
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -84,7 +84,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:346408797ff3b01bfd086e7ffdce3a3f243787249fac6ddb77b273f34b414855
+              value: sha256:0f64e5c35bfd3de42cacc2d32216d75518827f289e0ef2ee7bd45a2f9aef4354
             # Bind the replacement to the exact immutable execution generation
             # currently owned by the active controller. The deployment stays
             # read-only; only the sealed, validated research mandate can
@@ -105,7 +105,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:346408797ff3b01bfd086e7ffdce3a3f243787249fac6ddb77b273f34b414855\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"730fa4eee7f935dd7b7ce854589f0dfdfb6cf301\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:0b6ddb52c548cb16791843a3a6c13e20e06abe81cce3f99e9b1833d6dd4cd841\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"503cb2d60c58c5309c2e031d032069481ac4b0db\"\n  },\n  \"requestHash\": \"6856f071e54529227ea48fa7b077506209ffd887c939d7351e948d7e03020130\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:0f64e5c35bfd3de42cacc2d32216d75518827f289e0ef2ee7bd45a2f9aef4354\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"a662aa567f740144f9c0ca75869810795ac5788f\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:0b6ddb52c548cb16791843a3a6c13e20e06abe81cce3f99e9b1833d6dd4cd841\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"503cb2d60c58c5309c2e031d032069481ac4b0db\"\n  },\n  \"requestHash\": \"6856f071e54529227ea48fa7b077506209ffd887c939d7351e948d7e03020130\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_BROKER_PROVIDER
@@ -177,7 +177,7 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
-            # Main, projection and decision isolates share 1 GiB; leave native/buffer headroom.
+            # Main, projection and decision isolates share the cgroup; leave native/buffer headroom.
             # Node otherwise derives a separate heap budget from the full limit for each isolate.
             - name: NODE_OPTIONS
               value: --max-old-space-size=192 --max-semi-space-size=16
@@ -243,10 +243,12 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 1Gi
             limits:
               cpu: "2"
-              memory: 1Gi
+              # Measured shared-process peaks approach 1 GiB across the parent
+              # and both workers. Preserve headroom while isolate metrics locate growth.
+              memory: 2Gi
           securityContext:
             # TigerBeetle's native client requires io_uring, which containerd's
             # RuntimeDefault seccomp profile blocks. Keep every other control.

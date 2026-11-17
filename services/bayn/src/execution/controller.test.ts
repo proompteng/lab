@@ -91,6 +91,88 @@ describe('execution controller decisions', () => {
       expect(recovered.nextDueAt).toBeUndefined()
     },
   )
+  describe.each(['failed', 'pending'] as const)('broker recovery deadline after a %s observation', (kind) => {
+    const at = (seconds: number) => new Date(Date.parse('2026-08-13T18:00:00.000Z') + seconds * 1_000).toISOString()
+
+    test.each([
+      { name: 'early completion', completed: 12, previous: 30, candidate: 42, expected: 30 },
+      { name: 'completion at the deadline', completed: 30, previous: 30, candidate: 60, expected: 60 },
+      { name: 'completion after the deadline', completed: 35, previous: 30, candidate: 65, expected: 65 },
+      { name: 'earlier new obligation', completed: 12, previous: 30, candidate: 20, expected: 20 },
+      { name: 'same obligation', completed: 12, previous: 30, candidate: 30, expected: 30 },
+      { name: 'first obligation', completed: 12, previous: undefined, candidate: 42, expected: 42 },
+      { name: 'no new obligation', completed: 12, previous: 30, candidate: undefined, expected: undefined },
+    ])('$name', ({ completed, previous, candidate, expected }) => {
+      const completedAt = at(completed)
+      const state = Result.getOrThrow(
+        completeExecutionControllerTick(
+          {
+            ...activated(),
+            ...(previous === undefined ? {} : { nextDueAt: at(previous), marketEligibleAt: at(previous) }),
+            wakeScheduledSequence: 0,
+            wakeAcceptedAt: at(11),
+          },
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+          {
+            completedAt,
+            observation:
+              kind === 'failed'
+                ? {
+                    result: 'FAILURE',
+                    observedAt: completedAt,
+                    operation: 'reconcile',
+                    failure: 'market-data',
+                    message: 'Broker observation is unavailable or invalidated by a mutation',
+                  }
+                : {
+                    result: 'SUCCESS',
+                    observedAt: completedAt,
+                    outcome: 'RECOVERED',
+                    recoveryAction: 'WAITING',
+                    waitReason: 'BROKER_OBSERVATION_PENDING',
+                  },
+            outcome: {
+              _tag: kind === 'failed' ? ExecutionControllerOutcome.Blocked : ExecutionControllerOutcome.Waiting,
+              receiptHash: '1'.repeat(64),
+              nextDelayMs: 30_000,
+              ...(candidate === undefined ? {} : { nextWakeAt: at(candidate) }),
+            },
+          },
+          sourceRevision,
+        ),
+      )
+      expect(state.nextDueAt).toBe(expected === undefined ? undefined : at(expected))
+      expect(state.marketEligibleAt).toBe(state.nextDueAt)
+      expect(state.nextSequence).toBe(1)
+      expect(state.wakeAcceptedAt).toBeUndefined()
+      expect(state.wakeScheduledSequence).toBeUndefined()
+      expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
+    })
+  })
+
+  test('successful progress replaces an earlier broker recovery deadline', () => {
+    const nextWakeAt = '2026-08-13T18:00:42.000Z'
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        { ...activated(), nextDueAt: '2026-08-13T18:00:30.000Z', marketEligibleAt: '2026-08-13T18:00:30.000Z' },
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          completedAt: '2026-08-13T18:00:12.000Z',
+          observation: {
+            result: 'SUCCESS',
+            observedAt: '2026-08-13T18:00:12.000Z',
+            outcome: 'RECOVERED',
+            recoveryAction: 'ACTIVATED',
+          },
+          outcome: { ...completedResult.outcome, nextWakeAt },
+        },
+        sourceRevision,
+      ),
+    )
+    expect(state.nextDueAt).toBe(nextWakeAt)
+    expect(state.marketEligibleAt).toBeUndefined()
+  })
+
   test('decodes bounded canonical Jev references while preserving unknown legacy evidence', () => {
     const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: completedResult.completedAt }
     expect(Result.isSuccess(decodeExecutionAdvanceStepResult({ ...completedResult, observation }))).toBe(true)

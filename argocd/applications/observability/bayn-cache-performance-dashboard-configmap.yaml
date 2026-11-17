@@ -1972,6 +1972,394 @@ data:
                   "sort": "desc"
                 }
               }
+            },
+            {
+              "id": 135,
+              "title": "Database and retained arrival size",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 45,
+                "w": 24,
+                "h": 8
+              },
+              "description": "Primary native arrival heap, TOAST and indexes, compared with the complete logical database. Replica observations are not summed. These are retained bytes, not filesystem free capacity or PVC quota. Missing telemetry remains unknown.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "max by (cluster) (cnpg_pg_database_size_bytes{namespace=\"bayn\",cluster=\"bayn-db\",datname=\"bayn\"})",
+                  "legendFormat": "Database",
+                  "range": true,
+                  "instant": false,
+                  "interval": "15s",
+                  "editorMode": "code"
+                },
+                {
+                  "refId": "B",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "max by (cluster) (cnpg_bayn_native_arrivals_total_bytes{namespace=\"bayn\",cluster=\"bayn-db\"})",
+                  "legendFormat": "Native arrivals",
+                  "range": true,
+                  "instant": false,
+                  "interval": "15s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 136,
+          "type": "row",
+          "title": "Controller memory",
+          "description": "Process RSS and per-isolate memory from the selected source. Worker observations retain sample age; a stopped or never-sampled worker remains unknown.",
+          "collapsed": true,
+          "gridPos": {
+            "x": 0,
+            "y": 21,
+            "w": 24,
+            "h": 1
+          },
+          "panels": [
+            {
+              "id": 137,
+              "title": "Controller process RSS",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 22,
+                "w": 12,
+                "h": 8
+              },
+              "description": "Process resident memory includes all worker heaps and native buffers. Each controller instance is separate; worker RSS is never added again.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "bayn_runtime_process_resident_memory_bytes{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"}",
+                  "legendFormat": "{{instance}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "15s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 138,
+              "title": "Heap used by isolate",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 22,
+                "w": 12,
+                "h": 8
+              },
+              "description": "Latest observed used heap in the parent, market projection and decision construction isolates. Samples are event-driven for workers; inspect sample age before interpreting a retained value as current. Heap total and heap limit remain available through the same metric kind label.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "bayn_runtime_memory_bytes{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\",kind=\"heap_used\"} and on (namespace, service, source_revision, instance, isolate) (bayn_runtime_memory_sample_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} > 0)",
+                  "legendFormat": "{{instance}} · {{isolate}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "15s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 139,
+              "title": "External and ArrayBuffer memory",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 30,
+                "w": 12,
+                "h": 8
+              },
+              "description": "External memory includes ArrayBuffers; do not sum the two series. Values describe the last sample for each isolate. A zero timestamp from a stopped or never-sampled worker withholds its memory series.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "bayn_runtime_memory_bytes{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\",kind=~\"external|array_buffers\"} and on (namespace, service, source_revision, instance, isolate) (bayn_runtime_memory_sample_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} > 0)",
+                  "legendFormat": "{{instance}} · {{isolate}} · {{kind}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "15s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 140,
+              "title": "Memory sample age",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 30,
+                "w": 12,
+                "h": 8
+              },
+              "description": "Seconds since each isolate was sampled. Decision workers sample after completing decisions; age can increase during normal inactivity. Stopped or never-sampled workers are withheld. Negative age indicates producer/evaluator clock skew.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "time() - (bayn_runtime_memory_sample_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} > 0)",
+                  "legendFormat": "{{instance}} · {{isolate}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "15s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
             }
           ]
         },
@@ -1983,7 +2371,7 @@ data:
           "collapsed": true,
           "gridPos": {
             "x": 0,
-            "y": 21,
+            "y": 22,
             "w": 24,
             "h": 1
           },
@@ -1998,7 +2386,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 22,
+                "y": 23,
                 "w": 24,
                 "h": 10
               },

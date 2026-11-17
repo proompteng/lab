@@ -91,6 +91,29 @@ sampler measures local scheduling delay, not a specific CPU, garbage-collection,
 overlap multiple operations. It does not change operation deadlines, the required replica acknowledgment, polling
 quota, freshness or authority. Confirm subsequent successful replicated publication separately.
 
+### Controller memory and retained evidence
+
+The collapsed **Controller memory** row separates process RSS from per-isolate heap and external memory.
+`bayn_runtime_process_resident_memory_bytes` is sampled by the parent only; RSS already includes its worker threads.
+`bayn_runtime_memory_bytes` exposes `heap_used`, `heap_total`, `heap_limit`, `external` and `array_buffers` for the
+bounded `main`, `market-projection` and `decision-construction` isolates. ArrayBuffers are part of external memory;
+heap-used is part of heap-total. Keep these measurements separate when identifying ownership.
+
+`bayn_runtime_memory_sample_timestamp_seconds` records when each isolate was sampled. Worker samples follow their
+existing health/decision boundaries; an idle decision worker can have an older observation. The dashboard shows
+sample age and withholds worker bytes when the timestamp is zero, including stopped or never-sampled workers.
+Compare source revision, instance, sample age, RSS and the Kubernetes memory limit before attributing a restart.
+A rising heap or RSS alone does not identify a leak.
+
+The PostgreSQL details row compares the complete database with
+`cnpg_bayn_native_arrivals_total_bytes`, the retained arrival table's heap, TOAST and index size. The primary-only
+query uses `pg_total_relation_size` for one known relation under existing `pg_monitor` privileges; it scans no
+arrival rows and leaves a missing relation unknown. Replica values are never summed into retained storage size.
+Use actual filesystem/PVC free-space measurements and the existing `PersistentVolumeFreeLowWarning` (15%) and
+`PersistentVolumeFreeLowCritical` (5%) alerts for capacity. A local-path PVC request is not its filesystem quota.
+Backup retention does not prune live arrival evidence. Archive, restore and replay verification must precede a
+retention change; these observations authorize no deletion or weaker replication.
+
 ## Alerts and diagnosis
 
 The `bayn-cache-performance.rules` Mimir group contains eight rules. They use the existing trading email route.

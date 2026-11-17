@@ -8,8 +8,11 @@ Current entry scope is **equity-only**. Retained crypto positions keep protectio
 reconciliation and accounting. The scope is enforced by
 [`currentEntryMarkets`](src/execution/trading-scope.ts), independently of the broader retained mandate.
 
-The active strategy remains long-only. [Stock-short research and accounting](../../docs/bayn/stock-short-research-2026-11-13.md)
-adds offline short controls and explicit signed inventory evidence; it does not authorize short orders.
+The active v41 strategy supports equity long and short positions. Short entries require the protocol's direction
+policy, fresh broker account and asset eligibility, and the same durable grant and risk checks as long entries.
+[Stock-short research and accounting](../../docs/bayn/stock-short-research-2026-11-13.md) retains the earlier research
+context; the current [protocol](src/jev/protocol.ts) and [short eligibility checks](src/execution/equity-short.ts)
+define executable behavior.
 
 ## Start here
 
@@ -43,7 +46,7 @@ adds offline short controls and explicit signed inventory evidence; it does not 
 - **Costs and qualification stay explicit.** Known execution and operating costs are deducted; missing costs remain
   unknown. Prospective economic acceptance and operational reliability use their registered evidence contracts.
 
-Current inference uses protocol v40, numerical input v24, batch v8, entry input v8 and handoff v5 with pinned
+Current inference uses protocol v41, numerical input v24, batch v8, entry input v8 and handoff v5 with pinned
 `jev-1.14.0`. The [Jev 1.14 cutover](../../docs/bayn/jev114-box-cutover.md) describes the authority and retained-evidence
 transition. The [pre-chart feasibility contract](../../docs/bayn/pre-chart-feasibility.md) explains which impossible
 source proposals can be rejected before paid inference.
@@ -498,6 +501,14 @@ invalidates the older projection before waiting for quota. Raw websocket events 
 trading authority; the existing complete, bracketed account/history capture remains authoritative. A published
 canonical cut sends the controller a compact snapshot hash and original observation time.
 
+An admitted event rechecks a retryable local `NO_ADMISSIBLE_CUT` preflight failure immediately through the same
+broker-observation and reconciliation fences. A cached failure cannot conceal a newly published cut until the
+recovery interval ends. Provider timeouts, rate limits and nonretryable failures retain their existing handling.
+If an early event still finds broker evidence unavailable or pending, completion preserves an existing future
+recovery deadline when it is earlier than the new explicit deadline. Market eligibility uses that same deadline;
+a pass completing at or after it establishes the next bounded recovery interval. Successful financial progress
+can replace the deadline, and a legacy delay alone never creates a timer.
+
 `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000 milliseconds and accepts 1,000–60,000. Capture is bounded by the
 smaller of the operation timeout and half the maximum age. A named financial completeness timer starts the next
 refresh that far before the original observation expires, because quiet order streams do not prove that cash,
@@ -693,7 +704,7 @@ proposal economics. Current [chart questions](src/jev/staged-chart-questions.ts)
 
 Each symbol commits its CHART terminal and handoff before final inference. Fast symbols may proceed while other
 charts run, but selection requires the complete batch. Claims prevent repeated paid calls after retries or lost
-acknowledgements. Current v40 cost projection expects CHART and JEV; historical BASE_START claims, skips, question
+acknowledgements. Current v41 cost projection expects CHART and JEV; historical BASE_START claims, skips, question
 bytes and financial hashes remain readable through their original codecs. The original ten-second deadline bounds
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
@@ -945,8 +956,9 @@ The frozen v2 contract remains available for historical verification.
   Only broker configuration and the durable grant differ.
 - Every intent, client-order ID, risk decision, and mutation transition is committed before broker I/O. Unknown broker
   outcomes block new exposure until deterministic lookup and reconciliation resolve them.
-- Execution is long-only. Sells cannot exceed reconciled inventory. Entry, gross exposure, turnover, loss, drawdown,
-  cutoff, and stale-data limits fail closed.
+- Equity entries follow the v41 long/short direction policy and fresh broker eligibility. Risk-reducing sells of long
+  inventory and buys covering short inventory remain bounded by the reconciled position. Entry, gross exposure,
+  turnover, loss, drawdown, cutoff, and stale-data limits fail closed.
 - PostgreSQL and TigerBeetle must reconcile exactly. Identity drift, unresolved mutations, stale broker evidence,
   duplicate controllers and accounting discrepancies block new orders. Unavailable archive evidence blocks entry;
   the bounded close-only path can instead bind freshly reconciled broker positions.
@@ -1603,10 +1615,16 @@ broker projection each time, so an unavailable broker remains visible as degrade
 process restart. Execution workers retain their verified broker session and all existing order-admission checks.
 
 Status [economics](src/cycle/observability.ts) labels cumulative accounting `ACCOUNT_HISTORY`, spanning authority
-generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Its execution-fee
+generations. `realizedCloseCount` counts closing accounting transactions: SELL for long inventory and BUY for the
+short-accounting schema, including partial fills. Use the report's balanced `positionEpisodes` for entry-to-flat
+episode counts. Its execution-fee
 subtotal includes recorded fill fees and posted broker fees; unposted charges and operating expenses remain outside it.
 The retained `forwardPerformance` receipt identifies its own generation, source revision and measurement window,
 independently of the current worker. When absent, it is null with `forwardPerformanceUnavailableReason=NO_PERSISTED_RECEIPT`.
+Receipt persistence requires the terminal generation and complete evidence described in
+[forward-performance reporting](#operations). An active generation or unresolved provider usage can therefore have
+exact trading reconciliation while its persisted report is unavailable. Use the separately budgeted read-only
+generation report for provisional diagnostics; retained unknown usage stays explicit until provider evidence resolves it.
 
 The private execution worker also serves `GET /startup-ready` for its initial history-rebuild barrier; it is separate
 from status-service health and current trading readiness.
