@@ -182,6 +182,7 @@ export const loadNativeEntryObservation = <E, R>(
   input: Omit<Parameters<typeof makeJevObservation>[0], 'snapshot'>,
   rangeEndAt: string,
   loadSnapshot: Effect.Effect<Parameters<typeof makeJevObservation>[0]['snapshot'], E, R>,
+  loadEligibility?: Effect.Effect<Parameters<typeof makeJevObservation>[0]['equityShortEligibility'], E, R>,
 ) =>
   Effect.gen(function* () {
     const latest = yield* (yield* CandidateObservationStore).latestJevWindowEnd({
@@ -195,6 +196,7 @@ export const loadNativeEntryObservation = <E, R>(
           jevSignalDueAtMs(Date.parse(latest.value) + jevSignalIntervalMs, input.protocol),
         ),
       })
+    const equityShortEligibility = loadEligibility === undefined ? input.equityShortEligibility : yield* loadEligibility
     const snapshot = yield* loadSnapshot
     if (snapshot.manifest.rangeEndAt !== rangeEndAt)
       return yield* new JevContractError({ message: 'Jev signal snapshot differs from its admitted window' })
@@ -205,9 +207,15 @@ export const loadNativeEntryObservation = <E, R>(
         readiness: DecisionReadinessReason.SnapshotStale,
       })
     const inputAvailableAt = yield* currentUtcInstant
-    const observation = yield* Effect.suspend(() => Effect.fromResult(makeJevObservation({ ...input, snapshot }))).pipe(
-      withObservedStage('bayn.jev.observation'),
-    )
+    const observation = yield* Effect.suspend(() =>
+      Effect.fromResult(
+        makeJevObservation({
+          ...input,
+          ...(equityShortEligibility === undefined ? {} : { equityShortEligibility }),
+          snapshot,
+        }),
+      ),
+    ).pipe(withObservedStage('bayn.jev.observation'))
     return { snapshot, observation, inputAvailableAt }
   })
 
@@ -219,6 +227,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
   loadSnapshot: Effect.Effect<Parameters<typeof makeJevObservation>[0]['snapshot'], E, R>,
   planVersion: JevBatchPlanVersion,
   options: JevBatchEvaluationOptions = {},
+  loadEligibility?: Effect.Effect<Parameters<typeof makeJevObservation>[0]['equityShortEligibility'], E, R>,
 ) =>
   Effect.gen(function* () {
     const { snapshot, observation, batchPlan, saved } = yield* Effect.gen(function* () {
@@ -276,6 +285,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         input,
         rangeEndAt,
         loadSnapshot,
+        loadEligibility,
       )
       if (options.admissionDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= options.admissionDeadlineAt)
         return yield* new JevAwaitingEvidence({
