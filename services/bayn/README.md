@@ -1805,6 +1805,12 @@ An expired sandbox mandate with no execution evidence may use the existing rearm
 receipt. That narrow exception requires a fresh exact reconciliation, a trusted flat position observation, no open
 or unknown orders, and settled mutations. Any fill, accounted execution or positive filled-order quantity bound to
 the generation retains the receipt requirement. Zero executions remain unqualified and never imply profitability.
+
+That receipt requirement concerns retirement by completion or activation expiry. Recovery from a recognized temporary
+system restriction under a standing research request follows the settlement and grant checks described above,
+including fresh exact reconciliation, flat positions and settled mutations. It does not establish economic
+qualification or replace the separate qualified-capital contract.
+
 The write command acquires the execution writer fence before reading report evidence and holds it through the
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
