@@ -1375,6 +1375,10 @@ through the existing idempotent finalizer. This closes evidence after an admissi
 it makes no provider calls and cannot bind a decision or authorize an order.
 An account-bound cursor survives physical session recreation and wraps at the end of the sweep, so failed batches
 remain retryable without starving later work. Process restart may reset this progress hint; committed results remain authoritative.
+Expiry selection and its remaining-work check materialize account-scoped unresolved work before reading expiry
+from retained plan payloads. Completed history therefore stays outside payload decoding on every recovery wake.
+The original expiry, deterministic cursor order and 64-item page still govern recovery, including unclaimed work
+and work from older generations.
 
 The same pass then reads at most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
