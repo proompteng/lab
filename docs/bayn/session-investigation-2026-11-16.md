@@ -144,3 +144,82 @@ fourteen-day JSON aggregation exceeded its 30-second statement budget. Indexed h
 about 1.5 seconds but establishes examples rather than a complete failure rate. The 2,669 pending inference
 source rows predate October 5 coverage and are not a current backlog. Retained UNKNOWN_USAGE quote prefixes
 must be resolved through native source-matched coverage rather than summed as current expense.
+
+## November 17 independent revalidation
+
+At source `1773ae4f9d6422bf250762133cad700a0ef4b9ba`, a fresh review of #15959, #15961, #15964, #15965 and
+#15966 found no production validation bypass, invented success branch or new cross-report evidence cache. The JSON
+worker path still invokes the complete decision verifier; cursor capture retains its transaction, bounded lookahead
+and interruption race; watermark sharing retains per-decision identity and lower-bound verification; descriptor
+inspection preserves the original validation and failure details. Protective exits retain their explicit unknown
+conditional-reference reason.
+
+The final-head Bayn workflows for those five PRs succeeded. This claim concerns the applicable Bayn gates, not every
+repository workflow: #15959 also had an unrelated failed Codex-devbox ARM build. For #15966, run `44020344516`
+matches head `4fa40fbfd681d1124eef972256548d0c2f7621d9`; the inspected unit shard logged 2,545 passes, 1,283 skips
+and zero failures, PostgreSQL shard 1 logged 278 plus six passes and zero failures, and the release gate received
+successful applicable unit, PostgreSQL, ledger, archive, replay and formal results. The earlier local full-suite count
+was 5,771 passes, 1,453 skips and zero failures; local skips are not executed tests.
+
+### Updated broker fees and the retained closure defect
+
+November 16 fees arrived after the earlier cuts. Two records totaling $11.70 were first observed at
+`2026-11-17T07:56:31.047Z` and posted by `07:56:34.589046Z`, with no unposted records. The bounded read-only
+November 3–16 account query still contains one account and exactly 1,076 transactions, gross realized P&L $32.03
+and zero fill-level fees. Posted broker fees now total **$81.05**, giving a known subtotal of **-$49.02** before
+operating and inference charges. This supersedes the earlier known subtotal, not its recorded observation time.
+
+The source-matched native read at `08:40:38.941Z` retained generation
+`5fcc26b3a8aeaa80033862db9dbb265b79e0a2b4e67c87a336d1a192af4cdf0f` and its reconciliation cutoff
+`2026-11-13T08:23:10.393Z`:
+
+| Fee session | Rows | Selected generation | Other generation | Late relative to selected cutoff |
+| ----------- | ---: | ------------------- | ---------------- | -------------------------------- |
+| November 12 |    2 | Yes                 | No               | No                               |
+| November 13 |    2 | No                  | Yes              | Yes                              |
+| November 16 |    2 | No                  | Yes              | Yes                              |
+
+At `08:41:14.124Z`, the selected generation had 127 native incomplete cycles, all terminally blocked for unused entry
+expiry. Its late accounting-transaction, unaccounted-fill and mutation counts were all zero. The unmodified reader
+reported 131 because it counted all four unrelated late fee records against this generation's cutoff. The earlier
+129 had the same defect with only the two November 13 fees. This defect predates the five PRs, in October 6 commit
+`a4f6dcf24e3`.
+
+The repair restricts late fee closure evidence to fees owned by or overlapping the selected generation, plus
+unattributed fees on selected cycle dates. Account-history reporting still includes every late fee. All account fee
+records and original/correction ledger plans remain available for independent ledger verification. No 127 blocked
+cycles are removed or reclassified, and no missing cost is replaced with zero. The corrected expected closure count
+is **127**, not 129 or zero. Reader regressions reproduced six failures before the repair and cover owned, shared,
+other-generation, unattributed and account-wide fees, including late and pending corrections.
+
+A fresh packaged ARM report at `08:34 UTC` completed with the original 30,000 ms command deadline in 29,357 ms wall
+time, 25,905 ms measured work and 2,292,184 KiB peak RSS. Its financial counts/totals and execution-quality evidence
+matched the earlier cut, but its proof and receipt comparison correctly failed on 129 versus 131. A receipt from a
+fresh query is not generally immutable when relevant source evidence changes. Future before/after validation must
+separately assert the corrected count and compare all other receipt fields; it must not silently accept a changed
+proof or drop the whole reconciliation object. ARM headroom remains narrow; a few runs do not establish a latency
+distribution or loaded service SLO.
+
+### Standing research recovery and live limits
+
+Native history records a reconciliation-discrepancy restriction at `07:56:35 UTC`, settlement at `08:21:58.823`,
+an OBSERVE successor at `08:22:01` and PAPER activation at `08:22:03.659`. The same standing Research request was
+reused. This sequence is not evidence of a new human operator request; the native grant contract has no actor field.
+It also does not establish an authority bypass. The existing recovery contract explicitly permits a filled generation
+to settle after a recognized temporary restriction, followed by fresh exact/flat reconciliation and ordinary grant
+validation. Research requests are standing plan-bound grants; qualified one-shot requests separately carry cutoff and
+expiry. The completed/expired receipt requirement must not be generalized into an unrequested profitability gate for
+ordinary research recovery. No authority, kill state, risk limit or capital grant was changed during this validation.
+
+At `08:32 UTC`, the same source/image cohort remained Synced/Healthy. Current PAPER/CLEAR generation was
+`722d940e8baa628cbc188ed90e2e119702823875554e6d7def4d7f00099eaa49`, with exact reconciliation covering the latest
+mutation, flat positions and zero unresolved/accounting gaps. Controller restart counts remained x64 zero and ARM one
+from the recovered startup Valkey timeout. Memory events were zero; current/peak bytes were x64
+328,732,672/363,683,840 and ARM 503,808,000/525,770,752 against 2 GiB limits. No recurring Valkey, OOM or fatal matches
+were found between `05:41` and approximately `08:36`; three Alpaca account-header timeouts preceded one recovered
+130.932-second pass gap. This closed-market interval does not prove full-session stability or an availability rate.
+
+System-assessment and durable forward-performance receipt counts remained zero. No actual operating-cost packet path
+was supplied or established in the inspected sources; this is not a claim that every private storage location was
+searched. A bounded cash-cut query timed out and therefore establishes no missing-cash conclusion. Actual source
+artifacts, reviewed cost allocation and sufficient closed evidence remain necessary before all-in profit qualification.
