@@ -589,6 +589,11 @@ without treating replayed bytes as a new live capture. Before binding or transmi
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
 
+Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
+its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
+fresh reads that cannot replace the committed source. Final short submission still checks current account, configuration,
+asset eligibility and borrow flags through the existing mutation authority.
+
 Only domain deadlines schedule a timer: source eligibility, original admission or inference expiry, position protection,
 maximum hold, session close, broker consistency, quota, financial freshness and explicit recovery. An actual state-machine
 transition can schedule one immediate continuation. Source and pending-inference discovery wait for events plus the original
@@ -1370,6 +1375,10 @@ through the existing idempotent finalizer. This closes evidence after an admissi
 it makes no provider calls and cannot bind a decision or authorize an order.
 An account-bound cursor survives physical session recreation and wraps at the end of the sweep, so failed batches
 remain retryable without starving later work. Process restart may reset this progress hint; committed results remain authoritative.
+Expiry selection and its remaining-work check materialize account-scoped unresolved work before reading expiry
+from retained plan payloads. Completed history therefore stays outside payload decoding on every recovery wake.
+The original expiry, deterministic cursor order and 64-item page still govern recovery, including unclaimed work
+and work from older generations.
 
 The same pass then reads at most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
