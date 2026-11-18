@@ -98,3 +98,36 @@ test('interrupting replay admission alignment releases its permit before recover
     }).pipe(Effect.provide(TestClock.layer())),
   )
 })
+
+test('accepted native cancellation recovery aligns its original command without changing the receipt', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(initialAt))
+      const advances: string[] = []
+      const alignment = yield* makeReplayAdmissionClock({
+        advanceTo: (at) => Effect.sync(() => void advances.push(at)),
+      })
+      const receipt = {
+        command,
+        requestHash: 'c'.repeat(64),
+        evidence: {
+          requestId: 'native-cancel-request',
+          status: 204,
+          contentHash: 'd'.repeat(64),
+          observedAt: command.requestedAt,
+        },
+      }
+      const recovered = alignment.intents(store(() => Effect.succeed({ _tag: 'Accepted', receipt })))
+      expect(
+        yield* recovered.beginProtectionCancel(command.intentId, command.brokerOrderId, initialAt, undefined),
+      ).toEqual({ _tag: 'Accepted', receipt })
+      expect(advances).toEqual([command.requestedAt])
+      expect(yield* Clock.currentTimeMillis).toBe(Date.parse(command.requestedAt))
+      const ineligible = alignment.intents(store(() => Effect.succeed({ _tag: 'NotEligible' })))
+      expect(
+        yield* ineligible.beginProtectionCancel(command.intentId, command.brokerOrderId, initialAt, undefined),
+      ).toEqual({ _tag: 'NotEligible' })
+      expect(advances).toEqual([command.requestedAt])
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+})
