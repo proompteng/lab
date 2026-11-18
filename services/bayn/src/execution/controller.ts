@@ -278,8 +278,10 @@ export const completeExecutionControllerTick = (
   const brokerReconciliationRetry =
     result.outcome._tag === ExecutionControllerOutcome.Blocked &&
     result.observation?.result === 'FAILURE' &&
-    result.observation.operation === 'reconcile' &&
-    result.observation.failure === 'market-data'
+    result.observation.failure === 'market-data' &&
+    (result.observation.operation === 'reconcile' ||
+      (result.observation.operation === 'build-decision' &&
+        result.observation.brokerObservationFailure === 'NO_ADMISSIBLE_CUT'))
   const nextDueAt = Result.try({
     try: () => {
       if (result.outcome.nextWakeAt === undefined) return undefined
@@ -304,6 +306,18 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerObservationPending =
+    result.observation?.result === 'SUCCESS' && result.observation.waitReason === 'BROKER_OBSERVATION_PENDING'
+  // An early broker wake can revalidate and still wait. Keep its existing future obligation instead
+  // of restarting the backoff; a pass completing at or after that deadline establishes a new one.
+  const dueAt =
+    (brokerReconciliationRetry || brokerObservationPending) &&
+    state.nextDueAt !== undefined &&
+    state.nextDueAt > result.completedAt &&
+    decodedNextDueAt.success !== undefined &&
+    state.nextDueAt < decodedNextDueAt.success
+      ? state.nextDueAt
+      : decodedNextDueAt.success
   const {
     nextDueAt: _previousDeadline,
     marketEligibleAt: _previousEligibility,
@@ -315,13 +329,13 @@ export const completeExecutionControllerTick = (
   // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
   // without inventing polling from a legacy delay; broker observations can still wake promptly.
   const availableAt = brokerReconciliationRetry
-    ? decodedNextDueAt.success
+    ? dueAt
     : result.observation?.result !== 'SUCCESS'
       ? undefined
       : result.observation.outcome === 'WINDOW_CLOSED' ||
           result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
           result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
-        ? result.outcome.nextWakeAt
+        ? dueAt
         : result.observation.readiness?.availableAt
   return Result.succeed({
     ...completedState,
@@ -332,7 +346,7 @@ export const completeExecutionControllerTick = (
       receiptHash: result.outcome.receiptHash,
       completedAt: result.completedAt,
     },
-    ...(decodedNextDueAt.success === undefined ? {} : { nextDueAt: decodedNextDueAt.success }),
+    ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
     ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
     ...(result.observation?.result === 'SUCCESS' &&
     result.observation.outcome === 'WINDOW_CLOSED' &&

@@ -6,6 +6,7 @@ import { TestClock } from 'effect/testing'
 
 import { verifyReportJob } from '../forward-performance-verification-worker'
 import { executionEvidenceFromRows, indexExecutionEvidence, verifyPerformanceDecisions } from './postgres/projection'
+import type { CycleDecisionJsonRow } from './postgres/model'
 import { retainedV38ExecutionFixture } from '../jev/retained-v38-execution.test-support'
 import {
   makeIntradayPerformanceFixture,
@@ -27,7 +28,7 @@ const row = (ordinal = 0) => ({
   cycle_id: 'a'.repeat(64),
   decision_hash: ordinal.toString(16).padStart(64, '0'),
   created_at: new Date('2026-11-15T00:00:00.000Z'),
-  document: null,
+  document_json: 'null',
 })
 
 class FixtureWorker extends EventEmitter {
@@ -275,7 +276,16 @@ test('native worker preserves genuine retained execution projections and rejects
     document: JSON.parse(bytes.toString('utf8')),
   }
   const corrupt = { ...valid, document: { ...valid.document, contentHash: 'f'.repeat(64) } }
-  const inputs = Array.from({ length: reportVerificationConcurrency + 2 }, (_, n) => (n % 2 === 0 ? valid : corrupt))
+  const objects = [valid, corrupt, { ...valid, document: null }]
+  const transported: (typeof CycleDecisionJsonRow.Type)[] = objects.map(({ document, ...metadata }) => ({
+    ...metadata,
+    document_json: JSON.stringify(document),
+  }))
+  transported.push({ ...transported[0]!, document_json: '{' }, { ...transported[0]!, document_json: null })
+  const inputs = Array.from(
+    { length: reportVerificationConcurrency + 2 },
+    (_, n) => transported[n % transported.length]!,
+  )
   const actual = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -284,13 +294,17 @@ test('native worker preserves genuine retained execution projections and rejects
       }),
     ),
   )
-  const expected = [valid, corrupt].map((input) => {
+  const expected = objects.map((input) => {
     const verified = verifyPerformanceDecisions([input])
     return {
       executionEvidence: executionEvidenceFromRows(verified.verifiedRows, index),
       unverifiedDecisionHashes: verified.unverifiedDecisionHashes,
     }
   })
+  expected.push(
+    { executionEvidence: [], unverifiedDecisionHashes: [valid.decision_hash] },
+    { executionEvidence: [], unverifiedDecisionHashes: [valid.decision_hash] },
+  )
   expect(actual).toEqual(inputs.map((_, n) => expected[n % expected.length]))
   expect(actual[0]?.executionEvidence.length).toBeGreaterThan(0)
   expect(actual[1]?.unverifiedDecisionHashes).toEqual([valid.decision_hash])
