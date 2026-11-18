@@ -879,9 +879,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           entryDecisionHash: portfolio.entryDecisionHash,
           brokerState: portfolio.brokerState,
         })
-        expect(sameCut).toEqual(management.target.evidence.portfolio)
+        const originalPortfolio = management.target.evidence.portfolio
+        if (originalPortfolio.purpose !== JevPurpose.Manage) throw new Error('Expected original held-position proof')
+        expect(sameCut).toEqual(originalPortfolio)
         expect(sameCut.exitRequestedAt).toBeNull()
-        yield* verifyJevPortfolioSources(sql, cycle.identity.cycleId, management.target.evidence.portfolio)
+        yield* verifyJevPortfolioSources(sql, cycle.identity.cycleId, originalPortfolio)
         const refreshedAt = new Date(Date.parse(observedAt) + 1).toISOString()
         yield* TestClock.setTime(Date.parse(refreshedAt))
         const freshMaterial = {
