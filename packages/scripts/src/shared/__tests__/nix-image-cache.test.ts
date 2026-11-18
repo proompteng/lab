@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -42,6 +43,9 @@ it.each([
   { mode: 'partial-success', status: 0, attempts: 2 },
   { mode: 'partial-always', status: 1, attempts: 2 },
   { mode: 'partial-compile', status: 23, attempts: 2 },
+  { mode: 'partial-fallback-success', status: 0, attempts: 2, sourceBuild: true },
+  { mode: 'partial-fallback-failure', status: 23, attempts: 2, sourceBuild: true },
+  { mode: 'partial-fallback-stall', status: 124, attempts: 2, sourceBuild: true },
   { mode: 'partial-mixed', status: 1, attempts: 1 },
   { mode: 'partial-hash', status: 1, attempts: 1 },
   { mode: 'partial-signature', status: 1, attempts: 1 },
@@ -52,7 +56,7 @@ it.each([
   { mode: 'partial-deadline', status: 124, attempts: 1 },
   { mode: 'historical-success', status: 0, attempts: 1 },
   { mode: 'historical-partial-success', status: 1, attempts: 1 },
-])('bounds image build attempts for $mode without a source fallback', ({ mode, status, attempts }) => {
+])('bounds image build attempts for $mode', ({ mode, status, attempts, sourceBuild = false }) => {
   const dir = mkdtempSync(join(tmpdir(), 'nix-image-build-'))
   try {
     const bin = join(dir, 'bin')
@@ -60,9 +64,12 @@ it.each([
     const archive = join(dir, 'image.tar.gz')
     const calls = join(dir, 'calls')
     const compiler = join(dir, 'compiler-started')
+    const interrupted = join(dir, 'compiler-interrupted')
+    const attemptLogs = join(dir, 'attempt-logs')
     const output = join(dir, 'github-output')
     mkdirSync(bin)
     mkdirSync(logs)
+    mkdirSync(attemptLogs)
     mkdirSync(join(dir, 'nix'))
     writeFileSync(join(dir, 'nix/ci-run-timed.sh'), readFileSync(join(repoRoot, 'nix/ci-run-timed.sh')))
     if (!mode.startsWith('historical-')) {
@@ -95,13 +102,14 @@ while [[ "$#" -gt 0 ]]; do
     --option)
       if [[ "$2" == fallback ]]; then fallback="$3"; fi
       shift 3 ;;
+    --fallback) fallback=true; shift ;;
     --out-link) out_link="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 if [[ "$NIX_TEST_MODE" == partial-* ]]; then
   if [[ "$attempt" -gt 1 && "$NIX_TEST_MODE" == partial-compile ]]; then exit 23; fi
-  if [[ "$attempt" -eq 1 || "$NIX_TEST_MODE" == partial-always ]]; then
+  if [[ "$attempt" -eq 1 || "$NIX_TEST_MODE" == partial-always || "$NIX_TEST_MODE" == partial-fallback-* ]]; then
     partial="error: unable to download 'http://attic.attic.svc.cluster.local/lab/nar/044imf1q3m5ahr91n0sidwm9q18wxp5q.nar': HTTP error 200 (curl error: Transferred a partial file)"
     case "$NIX_TEST_MODE" in
       partial-other-cache) partial="error: unable to download 'https://cache.nixos.org/nar/044imf1q3m5ahr91n0sidwm9q18wxp5q.nar': HTTP error 200 (curl error: Transferred a partial file)" ;;
@@ -117,7 +125,19 @@ if [[ "$NIX_TEST_MODE" == partial-* ]]; then
       partial-auth) echo 'error: unable to download a cached NAR: HTTP error 403' >&2 ;;
       partial-status) exit 23 ;;
     esac
-    exit 1
+    if [[ "$attempt" -gt 1 && "$NIX_TEST_MODE" == partial-fallback-* && "$fallback" == true ]]; then
+      printf 'source build\\n' > "$NIX_TEST_COMPILER"
+      case "$NIX_TEST_MODE" in
+        partial-fallback-failure) exit 23 ;;
+        partial-fallback-stall)
+          exec "$NIX_TEST_NODE" -e 'process.on("SIGTERM", () => {
+            require("node:fs").writeFileSync(process.env.NIX_TEST_INTERRUPTED, "terminated");
+            process.exit(143);
+          }); setInterval(() => {}, 1000)' ;;
+      esac
+    else
+      exit 1
+    fi
   fi
 fi
 case "$NIX_TEST_MODE" in
@@ -149,18 +169,25 @@ ln -s "$NIX_TEST_ARCHIVE" "$out_link"
         NIX_TEST_MODE: mode.replace(/^historical-/, ''),
         NIX_TEST_CALLS: calls,
         NIX_TEST_COMPILER: compiler,
+        NIX_TEST_INTERRUPTED: interrupted,
+        NIX_TEST_NODE: Bun.which('node') ?? 'node',
         NIX_TEST_ARCHIVE: archive,
         NIX_TEST_REAL_SLEEP: Bun.which('sleep') ?? '/bin/sleep',
         GITHUB_OUTPUT: output,
+        TMPDIR: attemptLogs,
       },
       timeout: 10_000,
     })
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(status)
-    expect(existsSync(compiler)).toBe(false)
+    expect(existsSync(compiler)).toBe(sourceBuild)
+    expect(existsSync(interrupted), result.stderr.toString() + result.stdout.toString()).toBe(
+      mode === 'partial-fallback-stall',
+    )
+    expect(readdirSync(attemptLogs)).toEqual([])
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(attempts)
     for (let attempt = 1; attempt <= attempts; attempt++) {
       expect(readFileSync(`${calls}.args-${attempt}`, 'utf8')).toBe(
-        'build\n.#fixture-image\n--print-build-logs\n--out-link\nresult-amd64\n',
+        `build\n.#fixture-image\n--print-build-logs\n--out-link\nresult-amd64\n${attempt === 2 ? '--fallback\n' : ''}`,
       )
     }
     expect(readFileSync(join(logs, 'timings.tsv'), 'utf8').trim().split('\n')).toHaveLength(1)
