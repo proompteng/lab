@@ -67,25 +67,36 @@ const visual = (
         category: 'DEADLINE',
         message: 'Entry inference clock regressed after admission',
       })
-    let outcome: StagedTerminalReceipt['outcome']
-    if (checkedAt >= deadlineAt)
-      return yield* new EntryInferenceError({
-        category: 'DEADLINE',
-        message:
-          deadlineAt < expires
-            ? 'Entry admission expired before visual dispatch'
-            : 'Original evidence window expired while committing visual admission',
+    const notDispatched = (at: number) =>
+      Effect.gen(function* () {
+        const terminal = yield* Effect.fromResult(
+          makeStagedTerminalReceipt({
+            schemaVersion: 'bayn.staged-terminal-receipt.v2',
+            stage: claim.stage,
+            requestId: claim.requestId,
+            claimHash: claim.claimHash,
+            recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+            outcome: {
+              status: 'NOT_DISPATCHED',
+              reason: deadlineAt < expires ? 'ADMISSION_EXPIRY' : 'ORIGINAL_EXPIRY',
+              deadlineAt: utcInstantFromEpochMillis(deadlineAt),
+              checkedAt: utcInstantFromEpochMillis(at),
+            },
+          }),
+        )
+        work.terminal = terminal
+        return terminal
       })
+    let outcome: Extract<
+      StagedTerminalReceipt,
+      { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }
+    >['outcome']
+    if (checkedAt >= deadlineAt) return yield* notDispatched(checkedAt)
     const client = yield* JevClient
     // Re-read the clock immediately before every provider dispatch. The store
     // admission may have yielded long enough to cross the enclosing lease.
     const dispatchAt = yield* Clock.currentTimeMillis
-    if (dispatchAt >= deadlineAt)
-      return yield* new EntryInferenceError({
-        category: 'DEADLINE',
-        message:
-          deadlineAt < expires ? 'Entry admission expired before visual dispatch' : 'Original evidence window expired',
-      })
+    if (dispatchAt >= deadlineAt) return yield* notDispatched(dispatchAt)
     const response = yield* client.evaluate(request.request, deadlineAt - dispatchAt).pipe(
       Effect.timeoutOrElse({
         duration: deadlineAt - dispatchAt,
@@ -176,7 +187,10 @@ const visual = (
     return terminal
   })
 
-const handoff = (work: Work, terminal: StagedTerminalReceipt | null) =>
+const handoff = (
+  work: Work,
+  terminal: Extract<StagedTerminalReceipt, { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }> | null,
+) =>
   Effect.gen(function* () {
     let disposition: EntryHandoff['disposition']
     if (terminal === null) disposition = { status: 'SOURCE_INFEASIBLE' }
@@ -291,6 +305,22 @@ export const evaluateClaimedEntryInferences = (
         Effect.gen(function* () {
           const terminal =
             entry.visualClaim === null ? null : yield* visual(entry, entry.visualClaim, entry.visualRequest, options)
+          if (terminal?.schemaVersion === 'bayn.staged-terminal-receipt.v2') {
+            const committed = yield* journal.recordTransitions([{ terminal, successor: { kind: 'NONE' } }])
+            if (committed.length !== 1 || committed[0]?.requestId !== terminal.requestId)
+              return yield* new EntryInferenceError({
+                category: 'INPUT',
+                message: 'Visual non-dispatch terminal was not durably acknowledged',
+              })
+            entry.terminalCommitted = true
+            return yield* new EntryInferenceError({
+              category: 'DEADLINE',
+              message:
+                terminal.outcome.reason === 'ADMISSION_EXPIRY'
+                  ? 'Entry admission expired before visual dispatch'
+                  : 'Original evidence window expired before visual dispatch',
+            })
+          }
           const ready = yield* handoff(entry, terminal)
           yield* commitReady({ terminal, successor: { kind: 'HANDOFF', handoff: ready } })
           entry.completion = yield* evaluateHandedOffEntry(entry.claim, ready, options)

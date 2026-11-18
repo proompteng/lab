@@ -818,7 +818,15 @@ the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
-management. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
+management. Current managed portfolios retain `bayn.jev-protection-evidence.v2` and reproduce protection facts at the
+original reconciliation cut, including broker observation and accounting receipt times. Cancellation commands must
+precede that cut strictly: a command in the same millisecond requires a subsequent fresh reconciliation.
+Untagged retained portfolios
+use their original derivation. An accounted native take-profit partial fill reduces inventory without latching a
+new application exit; the remaining native stop and target retain their sealed prices. This requires exact account,
+intent, symbol, side, fill, parent and conditional-order terms. Unproven child roles retain a conservative exit latch.
+A verified native stop disposal releases a prior profit restriction; an unknown later disposal does not create stop
+evidence or release that restriction. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
 UTC date. Expired broker evidence waits for reconciliation before authorizing a close. A 15-minute holding limit
 starts at the first actual fill. A verified adverse bid triggers the absolute strategy stop. A verified bid at the absolute strategy target triggers
 the application profit exit when a broker group has not already disposed of inventory. Its initial close must
@@ -829,6 +837,13 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
+Native protection cancellation samples the per-account database clock after acquiring the writer lease and intent
+lock, and checks the original target deadline against that unrounded time. Its stored millisecond command key
+exactly matches receipt lookup. Replay observes the committed admission before broker I/O. Delayed admission cannot
+backdate a new command or refresh its trigger; existing commands and receipts retain their identities and recovery.
+An already verified equity bracket or OCO may retain fractional residual inventory during the regular session.
+Exact child coverage and sealed prices remain required; new protection still follows provider sizing restrictions,
+and session transitions, unknown protection or a due exit retain their existing recovery behavior.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
 tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
@@ -862,10 +877,12 @@ preserves the reviewed close authority; current equity entries retain their evid
 Before that session-close window, the same position-mark close can resume an already committed non-profit exit after
 protection cancellation, rejection or an accounted protective disposal. The complete reproduced `PROTECTION_RELEASED`
 target must retain its durable exit-request time, exact entry, account, cycle, session and sealed exit policy. A broker
-mark cannot create a new stop trigger or release a profit limit: profit-exit latches retain the quote-backed path and
-ordinary session-close fallback window. Fresh exact reconciliation, known-order settlement, inventory-only quantity
+mark cannot create a new stop trigger or release a profit limit before the sealed first-fill holding deadline.
+Once that deadline elapses, a complete reproduced `MAXIMUM_HOLD` or `PROTECTION_RELEASED` target may also use the
+position-mark close, including a profit latch whose limit floor or ceiling has expired by time. The original
+first fill, holding policy and target expiry remain unchanged. Fresh exact reconciliation, known-order settlement, inventory-only quantity
 bounds, source-mark timestamps, current authority and close expiry remain mandatory.
-An unavailable archive without that committed non-profit exit does not trigger a redundant reconciliation before the
+An unavailable archive without a due holding deadline or committed non-profit exit does not trigger a redundant reconciliation before the
 fallback is eligible. Eligibility is sampled after the archive attempt, so work that crosses into the window may
 use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
 waits retain the explicit close-eligibility deadline and react to market or broker events. Failed close attempts retain the original data reason in logs.

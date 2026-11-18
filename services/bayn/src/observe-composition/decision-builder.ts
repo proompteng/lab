@@ -23,6 +23,7 @@ import { EntryInferenceJournal } from '../jev/entry-inference'
 import {
   JevExitReason,
   JevExitTargetSchema,
+  jevMaximumHoldDueAt,
   jevProfitTargetLimitFloors,
   jevProfitTargetLimitCeilings,
   type JevExitTarget,
@@ -1649,13 +1650,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const target = request.exitTarget
-    const releasedExit =
+    const mandatoryExit =
       source === 'reconciled-position' &&
-      target?.reason === JevExitReason.ProtectionReleased &&
+      target !== undefined &&
+      (target.reason === JevExitReason.ProtectionReleased || target.reason === JevExitReason.MaximumHold) &&
       Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(target)) &&
       target.evidence.portfolio.purpose === JevPurpose.Manage &&
-      target.evidence.portfolio.exitRequestedAt !== null &&
-      !target.evidence.portfolio.profitExitRequested &&
       target.cycleId === cycle.identity.cycleId &&
       target.entryDecisionHash === entryDocument.contentHash &&
       target.sessionDate === cycle.identity.executionSessionDate &&
@@ -1667,10 +1667,20 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const requireFallbackWindow = (observedAt: string) => {
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
-      // Cancellation/rejection/accounted protection latched this reducing exit before the archive failed.
-      // A profit latch still needs quote evidence: a broker mark must not create a new stop trigger.
-      const resumeReleasedExit = releasedExit !== undefined && releasedExit.observedAt <= observedAt
-      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeReleasedExit) &&
+      const portfolio = mandatoryExit?.evidence.portfolio
+      const firstFill = portfolio?.purpose === JevPurpose.Manage ? portfolio.entryFills[0] : undefined
+      // The sealed first-fill deadline authorizes a timed exit independently of any price trigger.
+      // Before it elapses, a mark may only resume an already committed non-profit exit.
+      const resumeMandatoryExit =
+        mandatoryExit !== undefined &&
+        portfolio?.purpose === JevPurpose.Manage &&
+        mandatoryExit.observedAt <= observedAt &&
+        ((firstFill !== undefined &&
+          observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)) ||
+          (mandatoryExit.reason === JevExitReason.ProtectionReleased &&
+            portfolio.exitRequestedAt !== null &&
+            !portfolio.profitExitRequested))
+      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeMandatoryExit) &&
         (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
           observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
@@ -1682,8 +1692,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             }),
           )
     }
-    // Sample after the archive attempt. Only the close window or an already committed non-profit exit
-    // can authorize a fresh position-mark fallback; neither can authorize a new entry or price trigger.
+    // Sample after the archive attempt. A due holding deadline or committed non-profit exit can also
+    // authorize a fresh position-mark close; none can authorize a new entry or price trigger.
     if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
     const reconciliation = yield* (
       source === 'archive' && request.initialReconciliation !== undefined
