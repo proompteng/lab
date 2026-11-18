@@ -167,11 +167,14 @@ eight-hour telemetry peaked at 190.9 MiB of main-isolate used heap and 708.3 MiB
 isolate heap pressure well below the container limit. The larger bounded heap addresses that mismatch;
 it does not establish a leak-free runtime or a complete-session upper bound.
 
-The shared process has a four-core burst limit with its existing 250m request. At 18:42 UTC on November 17,
-the previous two-core limit throttled 34.9% of periods on Turin and 21.2% on ARM64, with 0.30 and 0.20 throttled
-seconds per second respectively. Node CPU utilization was 4.6% and 21.0%. The larger burst limit lets the owner,
-projection, decision worker and V8 GC progress together. Measure actual throttling and stage latency after rollout;
-the combined resource correction does not isolate the contribution of either change.
+The shared process has an eight-core burst limit with its existing 250m request. The November 17 increase from two
+to four cores addressed measured throttling while increasing the bounded heap. During the November 18 session,
+the active ARM64 controller still accumulated 306 throttled seconds and throttled 21.7% of periods in the hour
+ending at 18:39 UTC. The node's four-hour maximum CPU utilization was 25.0%, leaving capacity for the owner,
+projection, decision worker and V8 GC to progress together. The eight-core correction changes only the CPU limit;
+memory requests and limits and V8 allowances remain unchanged. Measure throttling and stage latency after
+rollout on a comparable active workload; these observations do not establish an isolated CPU contribution to
+the earlier combined resource correction or a whole-session latency guarantee.
 
 The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
 `bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.

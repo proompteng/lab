@@ -478,7 +478,21 @@ const quoteSourcePrefix = (
               : null,
           handoff: line.handoffHash !== null ? source.handoff : null,
           resolution: source.resolution,
-          stagedCheckpoint: checkpoint,
+          // A retained Jev gap can precede a late positive chart non-dispatch proof.
+          // The complete current graph was verified above; reproduce only the older quote's cut.
+          stagedCheckpoint:
+            line.stage === InferenceStage.Jev &&
+            checkpoint.terminals.some(
+              (terminal) => terminal.stage === InferenceStage.Chart && terminal.outcome.status === 'NOT_DISPATCHED',
+            )
+              ? {
+                  ...checkpoint,
+                  terminals: checkpoint.terminals.filter(
+                    (terminal) =>
+                      terminal.stage !== InferenceStage.Chart || terminal.outcome.status !== 'NOT_DISPATCHED',
+                  ),
+                }
+              : checkpoint,
         }
       const claim = checkpoint.claims.find((item) => item.stage === line.stage)
       const terminal = checkpoint.terminals.find((item) => item.stage === line.stage)
@@ -699,7 +713,9 @@ export const verifyInferenceExpenseCoverage = (
           ('stageTerminalHash' in row.quote.line ? row.quote.line.stageTerminalHash : null) ===
             ('stageTerminalHash' in line ? line.stageTerminalHash : null) &&
           ('stageSkipHash' in row.quote.line ? row.quote.line.stageSkipHash : null) ===
-            ('stageSkipHash' in line ? line.stageSkipHash : null),
+            ('stageSkipHash' in line ? line.stageSkipHash : null) &&
+          ('notDispatchedByTerminalHash' in row.quote.line ? row.quote.line.notDispatchedByTerminalHash : null) ===
+            ('notDispatchedByTerminalHash' in line ? line.notDispatchedByTerminalHash : null),
       )
       if (matches.length > 1)
         return yield* Result.fail(

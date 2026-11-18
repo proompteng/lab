@@ -246,7 +246,7 @@ spec:
               memory: 1Gi
             limits:
               # The owner, projection, decision worker and V8 GC can run together.
-              cpu: "4"
+              cpu: "8"
               # Measured shared-process peaks approach 1 GiB across the parent
               # and both workers. Preserve headroom while isolate metrics locate growth.
               memory: 2Gi
