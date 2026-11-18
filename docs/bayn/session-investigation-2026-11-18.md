@@ -122,9 +122,22 @@ Fresh managed portfolios carry `bayn.jev-protection-evidence.v2`. Only a take-pr
 account, intent, symbol, side, conditional price and parent binding is an inventory-only reduction. A verified
 native stop still authorizes reducing recovery and releases an earlier profit restriction; unknown child roles
 retain a conservative latch without fabricating stop evidence. Untagged retained portfolios use the original
-derivation. New cancellation command times are sampled inside the writer lease, and the original trigger and
-commit deadline are retained. Source ordering uses the reconciliation cut and the existing serialized writer;
+derivation. New cancellation command times use the per-account database clock sampled after the writer lease and
+intent lock. The unrounded time checks the original deadline; the stored millisecond key matches receipt lookup.
+Replay aligns its market clock with that committed admission before any broker response. The original trigger and
+commit deadline remain unchanged. Source ordering uses the reconciliation cut and the existing serialized writer;
 it is not a general PostgreSQL commit-time watermark.
+
+A later independent quote-backed profit trigger can still request cancellation of a healthy residual group. Its
+closure must bind that exact command and original target, not the earlier take-profit inventory reduction. The
+three previously failing replay cases now check this complete cause, preserved residual coverage, re-entry and
+accounting. Stop or unknown-disposal exits still require their actual causal fill.
+
+An independent method-selection defect canceled an otherwise exact bracket/OCO when a partial fill left fractional
+inventory. Existing verified equity protection now remains valid during the regular session with exact quantity,
+stop and target coverage. New protection still uses provider sizing rules; session changes, bad coverage, crypto
+method restrictions and due exits remain enforced. This defect was reproduced separately and did not cause the
+three whole-share replay assertion failures.
 
 ## Inference admission and validation limits
 

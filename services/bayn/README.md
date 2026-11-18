@@ -837,9 +837,13 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
-Native protection cancellation samples its command time after acquiring the account writer lease and checks the
-original target deadline again. Delayed admission cannot backdate a new command or refresh its trigger. Existing
-commands and receipts retain their original identities and recovery behavior.
+Native protection cancellation samples the per-account database clock after acquiring the writer lease and intent
+lock, and checks the original target deadline against that unrounded time. Its stored millisecond command key
+exactly matches receipt lookup. Replay observes the committed admission before broker I/O. Delayed admission cannot
+backdate a new command or refresh its trigger; existing commands and receipts retain their identities and recovery.
+An already verified equity bracket or OCO may retain fractional residual inventory during the regular session.
+Exact child coverage and sealed prices remain required; new protection still follows provider sizing restrictions,
+and session transitions, unknown protection or a due exit retain their existing recovery behavior.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
 tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
