@@ -1718,6 +1718,14 @@ runs on the next bounded continuation. A failed post-pass projection check selec
 These wake times grant no execution authority and retain fresh reconciliation,
 quote, risk and submission checks.
 
+When decision construction fails because the fenced broker projection has no admissible cut,
+the retained failure preserves the typed `NO_ADMISSIBLE_CUT` marker. Ordinary quote updates then
+honor the existing broker recovery deadline, as direct reconciliation failures already do. Early
+retries keep an earlier outstanding deadline. Broker publications, inference completion and source
+startup, readiness or recovery events can still wake the owner immediately. Provider timeouts and
+unrelated decision failures do not acquire this marker from their message text, and every retry
+performs the normal fresh financial checks.
+
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
 observation time equals submission opening. Both calculations use the persisted `executionCalendarSchemaVersion`,
