@@ -82,6 +82,7 @@ export interface ExpiredEntryCancellationFacts {
   readonly intentAuthorityGenerationHash: string
   readonly clientOrderId: string
   readonly side: OrderSide
+  readonly protectionTag?: string | null
   readonly brokerOrderId: string
   readonly admittedAt: string
 }

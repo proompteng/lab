@@ -18,12 +18,14 @@ import {
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
-import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
+import { isShortExitPlan, entryPlanPriceMicros, type FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 
 export enum JevPurpose {
   Entry = 'ENTRY',
   Manage = 'MANAGE',
 }
+
+export const currentProtectionEvidenceVersion = 'bayn.jev-protection-evidence.v2' as const
 
 const ReconciledStateSchema = Schema.Struct({
   account: AccountSnapshotSchema,
@@ -45,6 +47,7 @@ const Base = Schema.Union([
   Schema.Struct({ purpose: Schema.Literal(JevPurpose.Entry), brokerState: ReconciledStateSchema }),
   Schema.Struct({
     purpose: Schema.Literal(JevPurpose.Manage),
+    protectionEvidenceVersion: Schema.optionalKey(Schema.Literal(currentProtectionEvidenceVersion)),
     brokerState: ReconciledStateSchema,
     entryDecisionHash: Sha256Schema,
     exitPolicy: JevPositionExitPolicySchema,
@@ -78,7 +81,10 @@ export const JevPortfolioSchema = Base.check(
           ) &&
           !(
             context.purpose === JevPurpose.Manage &&
-            order.side === OrderSide.Sell &&
+            order.side ===
+              (context.exitPolicy.plans[order.symbol]?.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1'
+                ? OrderSide.Buy
+                : OrderSide.Sell) &&
             order.intentId !== undefined &&
             context.protectionIntentIds.includes(order.intentId) &&
             (order.limitPriceMicros === context.exitPolicy.plans[order.symbol]?.levels.profitLimitPriceMicros ||
@@ -114,12 +120,13 @@ export const JevPortfolioSchema = Base.check(
     if (
       held.length !== 1 ||
       position === undefined ||
-      BigInt(position.quantityAtoms) <= 0n ||
-      BigInt(position.costBasisMicros) <= 0n
+      BigInt(position.quantityAtoms) === 0n ||
+      BigInt(position.costBasisMicros) === 0n ||
+      BigInt(position.quantityAtoms) < 0n !== BigInt(position.costBasisMicros) < 0n
     ) {
       issues.push({
         path: ['brokerState', 'positions'],
-        issue: 'management requires one reconciled long with cost basis',
+        issue: 'management requires one reconciled signed position with matching cost basis',
       })
       return issues
     }
@@ -132,10 +139,13 @@ export const JevPortfolioSchema = Base.check(
       Object.keys(context.exitPolicy.plans).length !== 1 ||
       plan.levels.symbol !== position.symbol ||
       plan.levels.maximumHoldingMinutes !== context.exitPolicy.maximumHoldingMinutes ||
+      isShortExitPlan(plan) !== BigInt(position.quantityAtoms) < 0n ||
       fills.some(
         (fill) =>
           fill.occurredAt < plan.levels.sourceEndAt ||
-          BigInt(fill.priceAtoms) > BigInt(plan.levels.maximumEntryPriceMicros) * 1000n,
+          (isShortExitPlan(plan)
+            ? BigInt(fill.priceAtoms) < entryPlanPriceMicros(plan) * 1000n
+            : BigInt(fill.priceAtoms) > entryPlanPriceMicros(plan) * 1000n),
       ) ||
       fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) > BigInt(plan.maximumQuantityAtoms)
     )
@@ -147,7 +157,7 @@ export const JevPortfolioSchema = Base.check(
         (fill, index) =>
           fill.accountId !== state.account.accountId ||
           fill.symbol !== position.symbol ||
-          fill.side !== OrderSide.Buy ||
+          fill.side !== (plan !== undefined && isShortExitPlan(plan) ? OrderSide.Sell : OrderSide.Buy) ||
           fill.intentId === undefined ||
           !context.entryIntentIds.includes(fill.intentId) ||
           fill.occurredAt > state.positionsObservedAt ||
@@ -165,7 +175,7 @@ export const JevPortfolioSchema = Base.check(
       fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) -
         BigInt(context.entryInventoryDebit.quantityAtoms) -
         BigInt(context.protectionDisposals.quantityAtoms) !==
-        BigInt(position.quantityAtoms)
+        (BigInt(position.quantityAtoms) < 0n ? -BigInt(position.quantityAtoms) : BigInt(position.quantityAtoms))
     )
       issues.push({
         path: ['entryFills'],
@@ -174,7 +184,9 @@ export const JevPortfolioSchema = Base.check(
       })
     for (const order of state.orders.filter(
       (order) =>
-        order.side === OrderSide.Buy && order.intentId !== undefined && context.entryIntentIds.includes(order.intentId),
+        order.side === (plan !== undefined && isShortExitPlan(plan) ? OrderSide.Sell : OrderSide.Buy) &&
+        order.intentId !== undefined &&
+        context.entryIntentIds.includes(order.intentId),
     )) {
       const filled = fills
         .filter((fill) => fill.brokerOrderId === order.brokerOrderId)
@@ -192,7 +204,7 @@ export type JevManagedPortfolio = Extract<JevPortfolio, { readonly purpose: JevP
 export const jevManagedExitPlan = (
   portfolio: JevManagedPortfolio,
 ): Result.Result<FundedEntryExitPlan, JevContractError> => {
-  const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
+  const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n)
   const plan = position === undefined ? undefined : portfolio.exitPolicy.plans[position.symbol]
   return plan === undefined
     ? Result.fail(new JevContractError({ message: 'Held position has no immutable strategy exit plan' }))
@@ -221,6 +233,6 @@ export const jevPortfolioCandidates = (portfolio: JevPortfolio, candidates: read
   portfolio.purpose === JevPurpose.Entry
     ? candidates
     : portfolio.brokerState.positions
-        .filter((position) => BigInt(position.quantityAtoms) > 0n)
+        .filter((position) => BigInt(position.quantityAtoms) !== 0n)
         .map((position) => position.symbol)
         .sort()

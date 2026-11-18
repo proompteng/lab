@@ -18,7 +18,7 @@ install -d ~/.codex
 cp ~/github.com/lab/services/jangar/scripts/codex-config-container.toml ~/.codex/config.toml
 ```
 
-The template pins `gpt-6-astra`, disables approvals, and trusts `/home/kalmyk/github.com/lab`.
+The template pins `gpt-6.2-sol`, disables approvals, and trusts `/home/kalmyk/github.com/lab`.
 
 ## Systemd service
 

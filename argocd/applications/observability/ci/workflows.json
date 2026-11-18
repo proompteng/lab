@@ -23,12 +23,8 @@
   ],
   "arc-placement-acceptance.yml": [
     {
-      "id": "publication-tools",
-      "pattern": "^Publication slot .*(?: \\(.*\\))?$"
-    },
-    {
       "id": "ceph-build",
-      "pattern": "^Build slot .* Ceph scratch build(?: \\(.*\\))?$"
+      "pattern": "^.* build slot .*(?: \\(.*\\))?$"
     },
     {
       "id": "verify-placement",
@@ -58,7 +54,7 @@
     },
     {
       "id": "broker-feed-validation",
-      "pattern": "^broker-feed-validation(?: \\(.*\\))?$"
+      "pattern": "^broker-feed-validation(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "image",

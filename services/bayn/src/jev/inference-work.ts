@@ -4,7 +4,7 @@ import type { OperationalError } from '../errors'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { evaluateAdmittedJevBatch, JevBatchStore, type JevBatchAdmission } from './batch-evaluation'
-import type { JevObservation } from './observation'
+import type { JevObservation, RestoredJevObservation } from './observation'
 
 const JobIdentity = {
   jobId: Sha256Schema,
@@ -55,7 +55,7 @@ export class JevInferenceWorkStore extends Context.Service<
     readonly resume: (
       cycleId: string,
       authorityGenerationHash: string,
-    ) => Effect.Effect<{ readonly batchId: string; readonly observation: JevObservation } | null, OperationalError>
+    ) => Effect.Effect<{ readonly batchId: string; readonly source: RestoredJevObservation } | null, OperationalError>
     readonly claim: (jobId: string) => Effect.Effect<
       {
         readonly job: JevInferenceJob

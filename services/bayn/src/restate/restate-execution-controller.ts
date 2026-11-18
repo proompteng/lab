@@ -32,7 +32,12 @@ import {
 import { sha256 } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
-import { decodeExecutionWakeup, MarketChangedSchema, marketChangedEventId } from '../execution/events'
+import {
+  decodeExecutionWakeup,
+  MarketChangedSchema,
+  MarketChangeReason,
+  marketChangedEventId,
+} from '../execution/events'
 import { projectExecutionControllerHealth } from '../execution/controller-health'
 
 const stateKey = 'controller'
@@ -775,19 +780,23 @@ export const makeBaynExecutionController = (
             nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
           }
           if (nextState !== state) ctx.set(stateKey, nextState)
+          // A closed owner has no quote-dependent work. Canonical broker publications still recheck
+          // its authority and calendar; source recovery and inference completion remain immediate.
+          if (
+            event._tag === 'MarketChanged' &&
+            event.reason === MarketChangeReason.Data &&
+            state.marketDataWakeSuppressed === true
+          )
+            return
           let eligibilityCheckedAt: number | undefined
-          if (event._tag === 'MarketChanged' && state.marketEligibleAt !== undefined) {
+          if (
+            event._tag === 'MarketChanged' &&
+            event.reason === MarketChangeReason.Data &&
+            state.marketEligibleAt !== undefined
+          ) {
             eligibilityCheckedAt = await ctx.date.now()
-            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) {
-              await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
-                controllerKey: ctx.key,
-                eventId: event.eventId,
-                producerId: event.producerId,
-                hintSequence: event.sequence,
-                marketEligibleAt: state.marketEligibleAt,
-              })
-              return
-            }
+            // The durable frontier already retains these hints; quote bursts need no per-hint log delivery.
+            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) return
           }
           if (state.wakeScheduledSequence === state.nextSequence) return
           // The event only accelerates the serialized owner. Every account, quote, authority and deadline check

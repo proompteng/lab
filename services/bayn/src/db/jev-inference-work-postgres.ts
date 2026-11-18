@@ -74,16 +74,19 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const generation =
         input === undefined ? undefined : yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
       const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
+      // Exclude completed results before detoasting their retained plan payloads on each dispatch poll.
       const rows = yield* decodeRows(
         yield* sql`
-        SELECT plan.payload AS plan, work.claimed_at IS NOT NULL AS claimed,
-          to_char(work.admission_deadline_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admission_deadline_at
-        FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
-        LEFT JOIN jev_batch_results AS result USING (batch_id)
-        WHERE result.batch_id IS NULL
-          AND plan.payload->>'expiresAt' > ${now}
-          AND ${generation === undefined ? sql`true` : sql`plan.authority_generation_hash = ${generation}`}
-        ORDER BY plan.payload->>'expiresAt', work.batch_id LIMIT 64`,
+        WITH unresolved AS MATERIALIZED (
+          SELECT work.batch_id, work.claimed_at, work.admission_deadline_at, plan.payload
+          FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
+          WHERE ${generation === undefined ? sql`true` : sql`plan.authority_generation_hash = ${generation}`}
+            AND NOT EXISTS (SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = work.batch_id)
+        )
+        SELECT payload AS plan, claimed_at IS NOT NULL AS claimed,
+          to_char(admission_deadline_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admission_deadline_at
+        FROM unresolved WHERE payload->>'expiresAt' > ${now}
+        ORDER BY payload->>'expiresAt', batch_id LIMIT 64`,
       )
       return yield* Effect.forEach(rows, (row) =>
         Effect.fromResult(decodeJevBatchPlan(row.plan)).pipe(Effect.map((plan) => jobFromRow(plan, row))),
@@ -120,15 +123,19 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
           remaining: true,
           nextAttemptAt: cursor.next_attempt_at,
         }
+      // Filter committed results before reading expiry from potentially large plan payloads.
+      // Materialization keeps the planner from detoasting the completed history on every recovery wake.
+      const unresolved = sql`SELECT work.batch_id, plan.payload
+        FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
+        JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
+        WHERE cycle.account_id = ${accountId}
+          AND NOT EXISTS (SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = work.batch_id)`
       const select = (after: typeof CursorRow.Type | undefined) =>
-        sql`SELECT work.batch_id, plan.payload->>'expiresAt' AS expires_at
-          FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
-          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
-          LEFT JOIN jev_batch_results AS result USING (batch_id)
-          WHERE cycle.account_id = ${accountId} AND result.batch_id IS NULL
-            AND plan.payload->>'expiresAt' <= ${now}
-            AND ${after === undefined ? sql`true` : sql`(plan.payload->>'expiresAt', work.batch_id COLLATE "C") > (${after.last_expires_at}, ${after.last_batch_id} COLLATE "C")`}
-          ORDER BY plan.payload->>'expiresAt', work.batch_id COLLATE "C" LIMIT 64`.pipe(
+        sql`WITH unresolved AS MATERIALIZED (${unresolved})
+          SELECT batch_id, payload->>'expiresAt' AS expires_at FROM unresolved
+          WHERE payload->>'expiresAt' <= ${now}
+            AND ${after === undefined ? sql`true` : sql`(payload->>'expiresAt', batch_id COLLATE "C") > (${after.last_expires_at}, ${after.last_batch_id} COLLATE "C")`}
+          ORDER BY payload->>'expiresAt', batch_id COLLATE "C" LIMIT 64`.pipe(
           Effect.flatMap(
             Schema.decodeUnknownEffect(
               Schema.Array(Schema.Struct({ batch_id: Sha256Schema, expires_at: Schema.String })),
@@ -165,13 +172,8 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
         Schema.Tuple([Schema.Struct({ remaining: Schema.Boolean })]),
         strictParseOptions,
       )(
-        yield* sql`SELECT EXISTS (
-        SELECT 1 FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
-          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
-        LEFT JOIN jev_batch_results AS result USING (batch_id)
-        WHERE cycle.account_id = ${accountId} AND result.batch_id IS NULL
-          AND plan.payload->>'expiresAt' <= ${now}
-      ) AS remaining`,
+        yield* sql`WITH unresolved AS MATERIALIZED (${unresolved})
+          SELECT EXISTS (SELECT 1 FROM unresolved WHERE payload->>'expiresAt' <= ${now}) AS remaining`,
       )
       return {
         sealed,
@@ -272,7 +274,7 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const row = rows[0]
       if (row === undefined) return null
       const restored = yield* Effect.fromResult(restoreJevObservation(row.observation))
-      return { batchId: row.batch_id, observation: restored.observation }
+      return { batchId: row.batch_id, source: restored }
     }).pipe(Effect.mapError(failure))
 
   return { read, pending, claim, resume, settleExpired } satisfies typeof JevInferenceWorkStore.Service

@@ -100,4 +100,20 @@ describe('Bayn broker Kafka ingestion health', () => {
       options: { annotations: { 'argocd.argoproj.io/sync-wave': '-2' } },
     })
   })
+
+  test('GitOps waits for registered Restate execution and its successful activation before broker ingress', () => {
+    const manifest = (file: string) =>
+      YAML.parse(readFileSync(new URL(`argocd/applications/bayn/${file}`, root), 'utf8'))
+    const controller = manifest('execution-controller.yaml')
+    const activation = manifest('execution-activation.yaml')
+    const ingress = manifest('broker-kafka-ingress.yaml')
+    expect(controller.kind).toBe('RestateDeployment')
+    expect(activation.kind).toBe('Job')
+    expect(activation.metadata.annotations['argocd.argoproj.io/hook']).toBe('Sync')
+    expect(activation.metadata.annotations['argocd.argoproj.io/hook-delete-policy']).toContain('HookSucceeded')
+    const wave = (resource: { metadata: { annotations: Record<string, string> } }) =>
+      Number(resource.metadata.annotations['argocd.argoproj.io/sync-wave'])
+    expect(wave(controller)).toBeLessThan(wave(activation))
+    expect(wave(activation)).toBeLessThan(wave(ingress))
+  })
 })

@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
@@ -10,7 +12,7 @@ import { EntryInferenceJournal } from '../jev/entry-inference'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
 import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
 
@@ -70,11 +72,13 @@ import { nativeJevInference } from '../jev/native.test-support'
 import { JevFailure, prepareJevRequest } from '../jev/contract'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
-import { JevPositionStore } from '../jev/portfolio'
+import { JevPositionStore, JevPurpose } from '../jev/portfolio'
+import { JevExitReason, JevExitTargetSchema } from '../jev/exit'
+import { strictParseOptions } from '../schemas'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
-import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { nativeSimulationFixture as simulationFixture } from '../testing/simulated-streaming-fixture'
 import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
@@ -107,7 +111,7 @@ import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
-import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { Authority, KillState, OrderStatus as ExecutionOrderStatus, ReconciliationStatus } from '../execution/contracts'
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { makeTradingEngine } from '../composition/trading-engine'
@@ -1301,6 +1305,10 @@ durableTest.each(
           const readAuthority = store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
           const resources = Context.make(BrokerRead, broker.read).pipe(
+            Context.add(DecisionConstruction, {
+              observe: constructObserveShadowDecision,
+              execution: constructExecutionDecision,
+            }),
             Context.add(CycleStore, runtime.cycleStore),
             Context.add(BrokerEventStore, store.events),
             Context.add(FillAccountingStore, store.accounting),
@@ -2024,16 +2032,26 @@ durableTest.each(
           partialEntryReentry
         ) {
           const initialState = yield* broker.snapshot
-          expect(
-            initialState.fills.map((fill) => fill.side),
-            JSON.stringify(
-              initialState.orders.map(({ order, executions }) => ({
-                symbol: order.symbol,
-                submittedAt: order.submittedAt,
-                lastExecution: executions.at(-1),
-              })),
-            ),
-          ).toEqual([OrderSide.Buy])
+          if (partialEntryReentry) {
+            expect(initialState.fills.length).toBeGreaterThan(0)
+            expect(initialState.fills.every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+            expect(new Set(initialState.fills.map((fill) => fill.brokerOrderId)).size).toBe(1)
+            const parent = initialState.orders[0]?.order
+            if (parent === undefined) throw new Error('Missing partial entry parent')
+            const filled = initialState.fills.reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(filled).toBe(BigInt(parent.filledQuantityAtoms))
+            expect(filled).toBeLessThan(BigInt(parent.quantityAtoms!))
+          } else
+            expect(
+              initialState.fills.map((fill) => fill.side),
+              JSON.stringify(
+                initialState.orders.map(({ order, executions }) => ({
+                  symbol: order.symbol,
+                  submittedAt: order.submittedAt,
+                  lastExecution: executions.at(-1),
+                })),
+              ),
+            ).toEqual([OrderSide.Buy])
           for (let attempt = 0; attempt < 40; attempt++) {
             const advanced = yield* runtime.advance
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
@@ -2043,22 +2061,132 @@ durableTest.each(
           const state = yield* broker.snapshot
           expect(managementCalls).toBe(0)
           expect(state.fills[0]?.side).toBe(OrderSide.Buy)
-          expect(state.fills.slice(1).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
+          const firstCover = state.fills.findIndex((fill) => fill.side === OrderSide.Sell)
+          expect(firstCover).toBeGreaterThan(0)
+          expect(state.fills.slice(0, firstCover).every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          expect(state.fills.slice(firstCover).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
           expect(state.fills.length).toBeGreaterThanOrEqual(scenario === 'partial-exit-reentry' ? 3 : 2)
           expect(state.ledger.positions).toHaveLength(0)
-          expect(
-            yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason,
-                (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz = (
-                  SELECT min(t.occurred_at) FROM accounting_transactions t
+          const closures = yield* sql<{ target: unknown; boundToProtectiveFill: boolean }>`SELECT
+                closure.document #> '{document,strategyDecision}' AS target,
+                EXISTS (
+                  SELECT 1 FROM accounting_transactions t
                   JOIN accounting_receipts r ON r.broker_event_id = t.broker_event_id AND r.intent_id = t.intent_id
                   JOIN intents i ON i.intent_id = t.intent_id
                   WHERE i.cycle_id = cycle.cycle_id AND i.protection IS NOT NULL AND t.side = 'SELL'
+                    AND t.account_id = cycle.account_id
+                    AND t.occurred_at = (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz
                 ) AS "boundToProtectiveFill"
               FROM autonomous_cycle_paper_closures AS closure
-              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`,
-          ).toEqual(
-            scenario === 'partial-exit-reentry' ? [{ reason: 'PROTECTION_RELEASED', boundToProtectiveFill: true }] : [],
-          )
+              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`
+          if (partialEntryReentry) {
+            // Processing time determines whether cancellation/re-protection needs a durable close decision.
+            expect(closures.length).toBeLessThanOrEqual(1)
+          } else expect(closures).toHaveLength(scenario === 'partial-exit-reentry' ? 1 : 0)
+          for (const closure of closures) {
+            const target = yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(closure.target)
+            expect(target.reason).toBe(JevExitReason.ProtectionReleased)
+            const portfolio = target.evidence.portfolio
+            if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Missing held closure evidence')
+            const exitRequestedAt = portfolio.exitRequestedAt
+            if (exitRequestedAt === null) throw new Error('Missing causal exit request')
+            if (!portfolio.profitExitRequested) {
+              // Stop and unclassified native disposals still bind the actual causal accounting fill.
+              expect(closure.boundToProtectiveFill).toBe(true)
+              continue
+            }
+            // A verified partial TP reduces inventory while its sibling stop remains armed. A later
+            // quote-backed profit exit must bind its exact durable command, not reuse the TP fill time.
+            expect(closure.boundToProtectiveFill).toBe(false)
+            const commands = yield* sql<{ intentId: string; brokerOrderId: string; exitTarget: unknown }>`SELECT
+                c.intent_id AS "intentId", c.broker_order_id AS "brokerOrderId", c.exit_target AS "exitTarget"
+              FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
+              WHERE i.account_id = ${accountId} AND i.cycle_id = ${target.cycleId}
+                AND c.requested_at = ${exitRequestedAt}::timestamptz`
+            expect(commands).toHaveLength(1)
+            const command = commands[0]
+            if (command === undefined) throw new Error('Missing exact protection cancellation')
+            const trigger = yield* Schema.decodeUnknownEffect(
+              JevExitTargetSchema,
+              strictParseOptions,
+            )(command.exitTarget)
+            expect(trigger.reason).toBe(JevExitReason.ProfitTarget)
+            expect(trigger.cycleId).toBe(target.cycleId)
+            expect(trigger.entryDecisionHash).toBe(target.entryDecisionHash)
+            const beforeCancel = trigger.evidence.portfolio
+            if (beforeCancel.purpose !== JevPurpose.Manage) throw new Error('Missing pre-cancel held evidence')
+            expect(beforeCancel.brokerState.account.accountId).toBe(accountId)
+            expect(beforeCancel.exitRequestedAt).toBeNull()
+            expect(beforeCancel.profitExitRequested).toBe(false)
+            expect(beforeCancel.exitPolicy).toEqual(portfolio.exitPolicy)
+            expect(beforeCancel.entryFills).toEqual(portfolio.entryFills)
+            expect(beforeCancel.protectionDisposals).toEqual(portfolio.protectionDisposals)
+            expect(BigInt(beforeCancel.protectionDisposals.quantityAtoms)).toBeGreaterThan(0n)
+            expect(Date.parse(trigger.observedAt)).toBeLessThanOrEqual(Date.parse(exitRequestedAt))
+            expect(Date.parse(exitRequestedAt)).toBeLessThan(Date.parse(trigger.commitDeadlineAt))
+            const protectedIntent = Option.getOrThrow(yield* (yield* IntentStore).read(command.intentId)).intent
+            if (protectedIntent.protection?._tag !== 'Oco') throw new Error('Missing partial-entry Oco protection')
+            expect(protectedIntent.protection.entryDecisionHash).toBe(target.entryDecisionHash)
+            expect(beforeCancel.protectionIntentIds).toContain(command.intentId)
+            const cancelled = state.orders.find(({ order }) => order.brokerOrderId === command.brokerOrderId)?.order
+            const parent =
+              cancelled?.parentBrokerOrderId === undefined
+                ? cancelled
+                : state.orders.find(({ order }) => order.brokerOrderId === cancelled.parentBrokerOrderId)?.order
+            if (parent === undefined) throw new Error('Missing native TP parent')
+            const children = state.orders
+              .filter(({ order }) => order.parentBrokerOrderId === parent.brokerOrderId)
+              .map(({ order }) => order)
+            Result.getOrThrow(
+              verifyProtectionGroup(
+                { ...parent, legs: children },
+                {
+                  symbol: protectedIntent.symbol,
+                  quantityAtoms: protectedIntent.quantityAtoms,
+                  protection: protectedIntent.protection,
+                },
+              ),
+            )
+            const working = beforeCancel.brokerState.orders.filter((order) => order.intentId === command.intentId)
+            expect(working).toHaveLength(2)
+            const profit = working.find((order) => order.orderType === 'LIMIT')
+            const stop = working.find((order) => order.orderType === 'STOP_LIMIT')
+            const position = beforeCancel.brokerState.positions.find(
+              (position) => position.symbol === protectedIntent.symbol,
+            )
+            if (
+              profit === undefined ||
+              profit.quantityAtoms === undefined ||
+              stop === undefined ||
+              position === undefined
+            )
+              throw new Error('Missing native TP residual coverage')
+            expect([profit.brokerOrderId, stop.brokerOrderId]).toContain(command.brokerOrderId)
+            expect(profit.status).toBe(ExecutionOrderStatus.PartiallyFilled)
+            expect(profit.limitPriceMicros).toBe(protectedIntent.protection.profitLimitPriceMicros)
+            expect(BigInt(profit.quantityAtoms) - BigInt(profit.filledQuantityAtoms)).toBe(
+              BigInt(position.quantityAtoms),
+            )
+            expect(stop.status).toBe(ExecutionOrderStatus.New)
+            expect(stop.parentBrokerOrderId).toBe(profit.brokerOrderId)
+            expect(stop.stopPriceMicros).toBe(protectedIntent.protection.stopPriceMicros)
+            expect(stop.limitPriceMicros).toBe(protectedIntent.protection.stopLimitPriceMicros)
+            expect(stop.quantityAtoms).toBe(position.quantityAtoms)
+            expect(stop.filledQuantityAtoms).toBe('0')
+            const nativeProfitFills = state.fills.filter((fill) => fill.brokerOrderId === profit.brokerOrderId)
+            expect(nativeProfitFills).toHaveLength(1)
+            const nativeProfitFill = nativeProfitFills[0]
+            if (nativeProfitFill === undefined) throw new Error('Missing actual partial TP fill')
+            expect(nativeProfitFill.accountId).toBe(accountId)
+            expect(nativeProfitFill.symbol).toBe(protectedIntent.symbol)
+            expect(nativeProfitFill.side).toBe(OrderSide.Sell)
+            expect(nativeProfitFill.quantityAtoms).toBe(beforeCancel.protectionDisposals.quantityAtoms)
+            expect(nativeProfitFill.leavesQuantityAtoms).toBe(position.quantityAtoms)
+            expect(BigInt(nativeProfitFill.priceAtoms)).toBeGreaterThanOrEqual(
+              BigInt(protectedIntent.protection.profitLimitPriceMicros) * 1000n,
+            )
+            expect(Date.parse(nativeProfitFill.transactionTime)).toBeLessThan(Date.parse(trigger.observedAt))
+          }
           const reconciliation = yield* runtime.reconcile
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
@@ -2086,7 +2214,15 @@ durableTest.each(
           ])
           if (partialEntryReentry) {
             expect(state.orders.some(({ order }) => order.nativeProtection?._tag === 'Oco')).toBe(true)
-            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['10000000000', '10000000000'])
+            const entryQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Buy)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            const exitQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Sell)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(entryQuantity).toBeGreaterThan(0n)
+            expect(entryQuantity).toBeLessThan(BigInt(entryRoot.quantityAtoms!))
+            expect(exitQuantity).toBe(entryQuantity)
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
             yield* advanceMarketTo(reentryAtMs)
@@ -2096,12 +2232,11 @@ durableTest.each(
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
             }
             const repeated = yield* broker.snapshot
-            expect(repeated.fills.map((fill) => fill.side)).toEqual([
-              OrderSide.Buy,
-              OrderSide.Sell,
-              OrderSide.Buy,
-              OrderSide.Sell,
-            ])
+            expect(
+              repeated.fills
+                .filter((fill, index, fills) => index === 0 || fills[index - 1]?.side !== fill.side)
+                .map((fill) => fill.side),
+            ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
             expect(repeated.ledger.positions).toHaveLength(0)
             expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
             expect(
@@ -2319,7 +2454,7 @@ durableTest.each(
           const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
             count(*)::int AS count,
             bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
-            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v40') AS current_protocol
+            bool_and(payload #>> '{protocol,schemaVersion}' = ${fixture.protocol.schemaVersion}) AS current_protocol
             FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
           expect(source?.count).toBeGreaterThan(0)
           expect(source?.candidate_only).toBe(true)
@@ -2437,6 +2572,10 @@ durableTest.each(
           ),
         ),
         Effect.provide(stores),
+        Effect.provideService(DecisionConstruction, {
+          observe: constructObserveShadowDecision,
+          execution: constructExecutionDecision,
+        }),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
         Effect.timeout('60 seconds'),

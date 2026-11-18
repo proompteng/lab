@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
@@ -11,6 +11,9 @@ const runId = '123456'
 const workflow = YAML.parse(
   readFileSync(new URL('../../../../.github/workflows/bayn-build-push.yml', import.meta.url), 'utf8'),
 )
+const brokerValidation = YAML.parse(
+  readFileSync(new URL('../../../../.github/workflows/bayn-broker-feed-validation.yml', import.meta.url), 'utf8'),
+)
 const steps = workflow.jobs['publish-cohort'].steps
 const verify = steps.find((step: { name?: string }) => step.name?.startsWith('Verify every immutable image')).run
 const publish = steps.find((step: { name?: string }) => step.name === 'Publish the verified cohort for Kargo').run
@@ -19,6 +22,71 @@ const digests = {
   'bayn-research': `sha256:${'b'.repeat(64)}`,
   'bayn-broker-feed': `sha256:${'c'.repeat(64)}`,
 }
+
+test('every native cohort image waits for the same nonpublishing hosted broker validation', () => {
+  expect(workflow.jobs['broker-feed-validation']).toEqual({
+    needs: 'changes',
+    if: "needs.changes.outputs.image == 'true'",
+    uses: './.github/workflows/bayn-broker-feed-validation.yml',
+  })
+  for (const image of ['image', 'research-image', 'broker-feed-image']) {
+    expect(workflow.jobs[image].needs).toEqual(['validation', 'broker-feed-validation'])
+  }
+  expect(brokerValidation.on).toEqual({ workflow_call: null, workflow_dispatch: null })
+  expect(Object.keys(brokerValidation.jobs)).toEqual(['verify'])
+  expect(brokerValidation.jobs.verify['runs-on']).toBe('ubuntu-22.04')
+  expect(brokerValidation.jobs.verify['timeout-minutes']).toBe(15)
+  expect(
+    brokerValidation.jobs.verify.steps.find((step: { uses?: string }) => step.uses === 'actions/setup-java@v4').with,
+  ).toEqual({ distribution: 'temurin', 'java-version': 25, cache: 'gradle' })
+  const reports = brokerValidation.jobs.verify.steps.find(
+    (step: { uses?: string }) => step.uses === 'actions/upload-artifact@v6',
+  )
+  expect(reports.if).toBe('always()')
+  expect(reports.with.path.trim().split('\n')).toEqual([
+    'services/dorvud/platform/build/test-results/test/*.xml',
+    'services/dorvud/platform/build/reports/tests/test/',
+    'services/dorvud/websockets/build/test-results/test/*.xml',
+    'services/dorvud/websockets/build/reports/tests/test/',
+  ])
+})
+
+test.each([0, 23])('broker diagnostic logging preserves the exact Gradle targets and exit status %s', (exitCode) => {
+  const directory = mkdtempSync(join(tmpdir(), 'bayn-broker-validation-'))
+  try {
+    const temporary = join(directory, 'temp')
+    mkdirSync(temporary)
+    writeFileSync(
+      join(directory, 'gradlew'),
+      '#!/bin/sh\nprintf "%s\\n" "$@" > "$RUNNER_TEMP/gradle-arguments"\nexit "$GRADLE_STATUS"\n',
+      { mode: 0o755 },
+    )
+    const verify = brokerValidation.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === 'Verify the broker feed and shared platform',
+    )
+    expect(verify['working-directory']).toBe('services/dorvud')
+    const result = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', verify.run], {
+      cwd: directory,
+      env: { ...process.env, RUNNER_TEMP: temporary, GRADLE_STATUS: String(exitCode) },
+    })
+    expect(result.exitCode).toBe(exitCode)
+    expect(readFileSync(join(temporary, 'gradle-arguments'), 'utf8').trim().split('\n')).toEqual([
+      '--init-script',
+      join(temporary, 'bayn-broker-test-logging.gradle'),
+      ':platform:ktlintCheck',
+      ':platform:test',
+      ':websockets:ktlintCheck',
+      ':websockets:test',
+    ])
+    const logging = readFileSync(join(temporary, 'bayn-broker-test-logging.gradle'), 'utf8')
+    expect(logging).toContain('exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL')
+    for (const detail of ['showExceptions', 'showCauses', 'showStackTraces']) {
+      expect(logging).toContain(`${detail} = true`)
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 const runStep = (script: string, directory: string, overrides: Record<string, string> = {}) =>
   Bun.spawnSync(

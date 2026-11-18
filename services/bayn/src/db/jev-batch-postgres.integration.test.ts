@@ -21,7 +21,7 @@ import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { jevBatchQuestionSetHash } from '../jev/batch'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeJevMarketTestSnapshot } from '../testing/jev-market-fixture'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevPurpose } from '../jev/portfolio'
 import { exchangeSessions } from '../market-hours'
@@ -474,7 +474,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(providerCalls).toBe(firstCalls)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toEqual({
           batchId: plan.batchId,
-          observation: fixture.observation.payload,
+          source: {
+            observation: fixture.observation.payload,
+            snapshot: fixture.snapshot,
+            contentHash: plan.observationHash,
+          },
         })
         expect(yield* work.resume(plan.cycleId, 'e'.repeat(64))).toBeNull()
         expect(yield* work.pending()).toEqual([])
@@ -605,6 +609,189 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         atObservation,
         Effect.provideService(JevClient, { evaluate: () => Effect.die('Expiry recovery cannot make provider calls') }),
       ),
+    )
+  })
+
+  test('expiry recovery excludes completed history before evaluating large plan payloads', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const lookups: Statement<Record<string, unknown>>[] = []
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            const query = statement.compile()[0]
+            if (query.includes('AS expires_at') || query.includes('AS remaining')) lookups.push(statement)
+            return statement
+          },
+        })
+        const work = yield* makeJevInferenceWorkStore.pipe(Effect.provideService(PgClient.PgClient, monitored))
+        expect(yield* work.settleExpired(replayAccountId)).toEqual({ sealed: 0, failed: 0, remaining: false })
+        expect(lookups).toHaveLength(2)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Exercise the real lookup against a completed history, independently of admission fixtures.
+            yield* sql`CREATE TEMP TABLE jev_batch_plans (
+              batch_id text PRIMARY KEY, cycle_id text NOT NULL, payload jsonb NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE jev_inference_work (batch_id text PRIMARY KEY) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE jev_batch_results (batch_id text PRIMARY KEY) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycles (
+              cycle_id text PRIMARY KEY, account_id text NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO pg_temp.autonomous_cycles VALUES (${plan.cycleId}, ${replayAccountId})`
+            yield* sql`INSERT INTO pg_temp.jev_batch_plans
+              SELECT md5(n::text)||md5('batch-'||n::text), ${plan.cycleId},
+                jsonb_build_object('expiresAt', ${plan.expiresAt}::text, 'evidence', repeat(md5(n::text), 1024))
+              FROM generate_series(1,4096) n`
+            yield* sql`INSERT INTO pg_temp.jev_batch_results SELECT batch_id FROM pg_temp.jev_batch_plans`
+            yield* sql`INSERT INTO pg_temp.jev_inference_work
+              SELECT batch_id FROM pg_temp.jev_batch_plans ORDER BY batch_id LIMIT 1024`
+            yield* sql`ANALYZE pg_temp.jev_batch_plans`
+            yield* sql`ANALYZE pg_temp.jev_inference_work`
+            yield* sql`ANALYZE pg_temp.jev_batch_results`
+            yield* sql`ANALYZE pg_temp.autonomous_cycles`
+            // A legal unfavorable join order must not reopen completed payloads. Production chose such an order.
+            yield* sql`SET LOCAL join_collapse_limit = 1`
+            for (const lookup of lookups) {
+              const [query, parameters] = lookup.compile()
+              const explained = yield* sql.unsafe(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${query}`, parameters)
+              const rows = yield* Schema.decodeUnknownEffect(
+                Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+              )(explained)
+              const root = rows[0]?.['QUERY PLAN'][0]?.Plan
+              if (root === undefined) throw new Error('Missing expiry recovery query plan')
+              let expiryFilters = 0
+              const scan = Schema.Struct({
+                'Actual Rows': Schema.Number,
+                'Actual Loops': Schema.Number,
+                'Rows Removed by Filter': Schema.optionalKey(Schema.Number),
+                Filter: Schema.optionalKey(Schema.String),
+                Plans: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+              })
+              const check = (value: unknown): void => {
+                const node = Schema.decodeUnknownSync(scan)(value)
+                if (node.Filter?.includes('expiresAt')) {
+                  expiryFilters += 1
+                  expect((node['Actual Rows'] + (node['Rows Removed by Filter'] ?? 0)) * node['Actual Loops']).toBe(0)
+                }
+                for (const child of node.Plans ?? []) check(child)
+              }
+              check(root)
+              expect(expiryFilters).toBeGreaterThan(0)
+            }
+          }),
+        )
+      }).pipe(atObservation),
+    )
+  })
+
+  test('pending inference excludes completed payload history and preserves its bounded dispatch order', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const lookups: Statement<Record<string, unknown>>[] = []
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('AS claimed')) lookups.push(statement)
+            return statement
+          },
+        })
+        const work = yield* makeJevInferenceWorkStore.pipe(Effect.provideService(PgClient.PgClient, monitored))
+        expect(yield* work.pending(plan.authorityGenerationHash)).toEqual([])
+        expect(yield* work.pending()).toEqual([])
+        expect(lookups).toHaveLength(2)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE jev_batch_plans (
+              batch_id text PRIMARY KEY, authority_generation_hash text NOT NULL, payload jsonb NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE jev_inference_work (
+              batch_id text PRIMARY KEY, claimed_at timestamptz, admission_deadline_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE jev_batch_results (batch_id text PRIMARY KEY) ON COMMIT DROP`
+            // Rebind prepared statements to this transaction's temporary fixture tables.
+            yield* sql`SET LOCAL search_path = pg_temp, public`
+            yield* sql`INSERT INTO pg_temp.jev_batch_plans
+              SELECT md5(n::text)||md5('batch-'||n::text), ${plan.authorityGenerationHash},
+                jsonb_build_object('expiresAt', ${plan.expiresAt}::text, 'evidence', repeat(md5(n::text), 1024))
+              FROM generate_series(1,4096) n`
+            yield* sql`INSERT INTO pg_temp.jev_batch_results SELECT batch_id FROM pg_temp.jev_batch_plans`
+            yield* sql`INSERT INTO pg_temp.jev_inference_work (batch_id)
+              SELECT batch_id FROM pg_temp.jev_batch_plans ORDER BY batch_id LIMIT 1024`
+            yield* sql`ANALYZE pg_temp.jev_batch_plans`
+            yield* sql`ANALYZE pg_temp.jev_inference_work`
+            yield* sql`ANALYZE pg_temp.jev_batch_results`
+            yield* sql`SET LOCAL join_collapse_limit = 1`
+            for (const lookup of lookups) {
+              const [query, parameters] = lookup.compile()
+              const explained = yield* sql.unsafe(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${query}`, parameters)
+              const rows = yield* Schema.decodeUnknownEffect(
+                Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+              )(explained)
+              const root = rows[0]?.['QUERY PLAN'][0]?.Plan
+              if (root === undefined) throw new Error('Missing pending inference query plan')
+              let expiryFilters = 0
+              const scan = Schema.Struct({
+                'Actual Rows': Schema.Number,
+                'Actual Loops': Schema.Number,
+                'Rows Removed by Filter': Schema.optionalKey(Schema.Number),
+                Filter: Schema.optionalKey(Schema.String),
+                Plans: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+              })
+              const check = (value: unknown): void => {
+                const node = Schema.decodeUnknownSync(scan)(value)
+                if (node.Filter?.includes('expiresAt')) {
+                  expiryFilters += 1
+                  expect((node['Actual Rows'] + (node['Rows Removed by Filter'] ?? 0)) * node['Actual Loops']).toBe(0)
+                }
+                for (const child of node.Plans ?? []) check(child)
+              }
+              check(root)
+              expect(expiryFilters).toBeGreaterThan(0)
+            }
+            const pending = Array.from({ length: 73 }, (_, index) => ({
+              batchId: sha256(`pending-${index}`),
+              expiresAt: utcInstantFromEpochMillis(observed + (index < 71 ? (index % 4) + 1 : 71 - index)),
+              generation: index === 70 ? sha256('other-generation') : plan.authorityGenerationHash,
+              claimed: index % 2 === 0,
+              admissionDeadlineAt: index % 3 === 0 ? null : utcInstantFromEpochMillis(observed + 15_000),
+            }))
+            for (const row of pending) {
+              yield* sql`INSERT INTO pg_temp.jev_batch_plans VALUES (
+                ${row.batchId}, ${row.generation},
+                ${sql.json({ batchId: row.batchId, expiresAt: row.expiresAt })}
+              )`
+              yield* sql`INSERT INTO pg_temp.jev_inference_work VALUES (
+                ${row.batchId}, ${row.claimed ? plan.observedAt : null}, ${row.admissionDeadlineAt}
+              )`
+            }
+            for (const [index, lookup] of lookups.entries()) {
+              const [query, parameters] = lookup.compile()
+              const expected = pending
+                .filter((row) => Date.parse(row.expiresAt) > observed)
+                .filter((row) => index === 1 || row.generation === plan.authorityGenerationHash)
+                .sort((left, right) =>
+                  left.expiresAt < right.expiresAt
+                    ? -1
+                    : left.expiresAt > right.expiresAt
+                      ? 1
+                      : left.batchId < right.batchId
+                        ? -1
+                        : 1,
+                )
+                .slice(0, 64)
+                .map((row) => ({
+                  plan: { batchId: row.batchId, expiresAt: row.expiresAt },
+                  claimed: row.claimed,
+                  admission_deadline_at: row.admissionDeadlineAt?.replace('Z', '000Z') ?? null,
+                }))
+              expect(yield* sql.unsafe(query, parameters)).toEqual(expected)
+            }
+          }),
+        )
+      }).pipe(atObservation),
     )
   })
 

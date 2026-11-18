@@ -17,18 +17,15 @@ import { JevFailure, JevResponseSchema, type JevRequest } from './contract'
 import type { DecisionsError } from './decisions'
 type ChartStageInference = typeof ChartStageInferenceSchema.Type
 import { jevEntryEconomics } from './entry-economics'
+import { makeShortEntryProposals, mayHaveFundableShortSource } from './short-entry'
+import { isLongEntryProposal, type NativeEntryProposal } from './native-entry-proposal'
+import { makeNativeEntryJudgmentRequest } from './short-entry-questions'
 import {
   prepareEntryInferenceInput,
   type EntryInferenceInput,
   type EntryInferenceMaterial,
 } from './entry-inference-input'
-import {
-  makeEntrySourceCandidates,
-  makeEntryProposals,
-  EntrySetup,
-  ProposalRejection,
-  type EntryProposal,
-} from './entry-proposals'
+import { makeEntrySourceCandidates, makeEntryProposals, EntrySetup, ProposalRejection } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
 import type { JevProviderDiagnostics } from './provider-diagnostics'
 
@@ -40,7 +37,7 @@ export type VisualFailureEvidence = {
   readonly providerDiagnostics?: JevProviderDiagnostics
 }
 type ProposalEvaluation = {
-  readonly proposals: readonly EntryProposal[]
+  readonly proposals: readonly NativeEntryProposal[]
   readonly rejections: readonly { readonly setup: EntrySetup; readonly reason: ProposalRejection }[]
 }
 type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
@@ -231,7 +228,18 @@ export const evaluateEntrySourceFeasibility = (
       protocol: input.protocol,
       bidMicros: BigInt(input.funding.bidMicros),
     })
+    const shortFeasible =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+        ? yield* mayHaveFundableShortSource({
+            chart,
+            protocol: input.protocol,
+            bidMicros: BigInt(input.funding.bidMicros),
+            askMicros: BigInt(input.funding.askMicros),
+            capitalMicros: input.funding.capitalMicros,
+          })
+        : false
     const feasible =
+      shortFeasible ||
       candidates.baseWindows.length > 0 ||
       (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0)
     return {
@@ -296,20 +304,34 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
             protocol: input.protocol,
             bidMicros: BigInt(input.funding.bidMicros),
           })
-    const jev = yield* prepareJudgments({
+    const shortProposals =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+        ? yield* makeShortEntryProposals({
+            chart,
+            assessments,
+            protocol: input.protocol,
+            bidMicros: BigInt(input.funding.bidMicros),
+            askMicros: BigInt(input.funding.askMicros),
+            capitalMicros: input.funding.capitalMicros,
+          })
+        : []
+    const nativeEvaluation = { ...evaluation, proposals: [...evaluation.proposals, ...shortProposals] }
+    const requestInput = {
       model: input.protocol.model,
       numericalState: input.numericalState,
       chart,
       assessments,
-      proposals: evaluation.proposals,
-    })
+    }
+    const jev = yield* input.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+      ? makeNativeEntryJudgmentRequest({ ...requestInput, proposals: nativeEvaluation.proposals })
+      : prepareJudgments({ ...requestInput, proposals: nativeEvaluation.proposals.filter(isLongEntryProposal) })
     return jev === null
-      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation } as const)
+      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation: nativeEvaluation } as const)
       : ({
           status: 'READY',
           visual,
           assessments,
-          evaluation,
+          evaluation: nativeEvaluation,
           jevRequest: jev.request,
           jevRequestHash: jev.requestHash,
         } as const)

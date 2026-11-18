@@ -4,7 +4,7 @@ import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { replayInstrument, type ReplayInstrumentsSchema } from './execution-core'
 import { quantityFromNumber } from '../quantity'
-import { equityMarketProfile, jevMarketForSymbol } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile, jevMarketForSymbol } from '../jev/markets'
 import { equityRollingValues } from '../market-data/features/native-feature'
 
 import { Data, Result } from 'effect'

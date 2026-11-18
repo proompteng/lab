@@ -1,6 +1,10 @@
 adminUser: admin
 adminPassword: changeme
 grafana.ini:
+  database:
+    # Reduce reader/writer contention and bound retries for transient SQLite locks.
+    wal: true
+    query_retries: 5
   users:
     home_page: /d/ci-build-performance
   auth.anonymous:
@@ -36,6 +40,14 @@ deploymentStrategy:
   rollingUpdate:
     maxSurge: 0
     maxUnavailable: 1
+# Allow bounded plugin initialization before the existing liveness checks begin.
+startupProbe:
+  httpGet:
+    path: /api/health
+    port: grafana
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 60
 service:
   type: ClusterIP
 persistence:
