@@ -67,7 +67,7 @@ test -x "${image_node}"
 
 if [[ "${role}" = trading ]]; then
   for command in index restate-execution-server restate-execution-activate market-projection-worker decision-construction-worker \
-    forward-performance-command control-opening-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
+    forward-performance-command forward-performance-verification-worker control-opening-command inference-cost-command streaming-diagnostics-command glitchtip-smoke-command valkey-command backtest-command; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done
   test -x "$(resolve_image_entry /bin/bayn-inference-cost)"
@@ -106,7 +106,7 @@ else
   for command in system-assessment forward-performance research webull-research jev-evaluate backtest frozen-control-backtest control-study native-arrival-export jev-study-export equity-edge-screen gepa gepa-native; do
     test -x "$(resolve_image_entry "/bin/bayn-${command}")"
   done
-  for command in restate-research-server system-assessment-command forward-performance-command research-command \
+  for command in restate-research-server system-assessment-command forward-performance-command forward-performance-verification-worker research-command \
     webull-research-command jev-evaluation-command backtest-command frozen-control-command control-study-command native-arrival-export-command jev-study-export-command equity-edge-screen; do
     test -f "$(resolve_image_entry "/app/services/bayn/dist/${command}.js")"
   done

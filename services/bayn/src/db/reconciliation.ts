@@ -325,9 +325,11 @@ export const readAccountingHistory = (
     Effect.gen(function* () {
       const rows = yield* sql<Record<string, unknown>>`
       WITH inventory_debits AS MATERIALIZED (
-        SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at
+        SELECT account_id, symbol, sum(quantity_atoms) AS quantity_atoms,
+          sum(cost_basis_micros) AS cost_basis_micros, effective_at
         FROM broker_inventory_debits
         WHERE account_id = ${accountId} AND posted
+        GROUP BY account_id, symbol, effective_at
       ), ranked AS (
         SELECT
           transaction.schema_version, transaction.transaction_id, transaction.broker_event_id,

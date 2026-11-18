@@ -789,18 +789,14 @@ export const makeBaynExecutionController = (
           )
             return
           let eligibilityCheckedAt: number | undefined
-          if (event._tag === 'MarketChanged' && state.marketEligibleAt !== undefined) {
+          if (
+            event._tag === 'MarketChanged' &&
+            event.reason === MarketChangeReason.Data &&
+            state.marketEligibleAt !== undefined
+          ) {
             eligibilityCheckedAt = await ctx.date.now()
-            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) {
-              await writeRuntimeLog(runtime, 'info', 'Bayn retained a market change before eligibility', {
-                controllerKey: ctx.key,
-                eventId: event.eventId,
-                producerId: event.producerId,
-                hintSequence: event.sequence,
-                marketEligibleAt: state.marketEligibleAt,
-              })
-              return
-            }
+            // The durable frontier already retains these hints; quote bursts need no per-hint log delivery.
+            if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) return
           }
           if (state.wakeScheduledSequence === state.nextSequence) return
           // The event only accelerates the serialized owner. Every account, quote, authority and deadline check

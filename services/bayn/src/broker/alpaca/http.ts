@@ -88,6 +88,9 @@ import {
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 // Calendar discovery must leave time for the rest of the bounded recovery pass.
 const marketCalendarTimeoutMs = 5_000
+// Retry a stuck read before it consumes the observation's whole freshness lead.
+// The read below still bounds headers, retries, body decoding and validation together.
+const readAttemptTimeoutMs = 5_000
 
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
@@ -164,7 +167,6 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const secret = Redacted.value(connection.secret)
     const sensitiveValues = [key, secret]
     const baseClient = yield* HttpClient.HttpClient
-    const client = baseClient.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
     const observeDiagnostic = yield* makeReadDiagnostics(connection.identity)
 
     const readJson = <A>(
@@ -172,8 +174,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       url: URL,
       decoder: Decoder<A>,
       timeoutMs = connection.operationTimeoutMs,
-    ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> =>
-      Effect.gen(function* () {
+    ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> => {
+      // A shorter whole-read deadline owns cancellation; an equal attempt timer can race it into another retry.
+      const bounded =
+        timeoutMs > readAttemptTimeoutMs ? baseClient.pipe(HttpClient.timeout(readAttemptTimeoutMs)) : baseClient
+      const client = bounded.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+      return Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
           acceptJson: true,
           headers: {
@@ -308,6 +314,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
+    }
 
     const account = readJson('account', accountUrl(connection), decodeAccount).pipe(
       Effect.flatMap((result) => {

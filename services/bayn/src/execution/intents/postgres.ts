@@ -739,16 +739,24 @@ const makeStore = Effect.gen(function* () {
           Effect.gen(function* () {
             const portfolio = exitTarget?.evidence.portfolio
             const rows = yield* sql`
+        WITH locked_intent AS MATERIALIZED (
+          SELECT intent_id, account_id FROM intents WHERE intent_id = ${intentId} FOR UPDATE
+        ), admission_clock AS MATERIALIZED (
+          -- The account clock includes measured replay work. Lock acquisition precedes this sample.
+          SELECT intent_id, execution_account_commit_now(account_id) AS admitted_at FROM locked_intent
+        )
         INSERT INTO native_protection_cancel_commands (intent_id, account_id, broker_order_id, requested_at, exit_target)
-        SELECT i.intent_id, i.account_id, latest.broker_order_id, ${observedAt}::timestamptz,
+        SELECT i.intent_id, i.account_id, latest.broker_order_id, date_trunc('milliseconds', clock.admitted_at),
           ${exitTarget === undefined ? null : JSON.stringify(exitTarget)}::jsonb
-        FROM intents i JOIN LATERAL (
+        FROM intents i JOIN admission_clock clock USING (intent_id) JOIN LATERAL (
           SELECT o.broker_order_id, o.side, o.status, o.parent_broker_order_id, e.observed_at
           FROM orders o JOIN broker_events e USING (event_id)
           WHERE o.intent_id = i.intent_id AND o.broker_order_id = ${brokerOrderId}
           ORDER BY e.source_sequence DESC LIMIT 1
         ) latest ON true
         WHERE i.intent_id = ${intentId} AND i.protection IS NOT NULL
+          AND ${observedAt}::timestamptz <= clock.admitted_at
+          AND latest.observed_at <= clock.admitted_at
           AND latest.side = CASE
             WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY'
             WHEN i.protection ->> '_tag' IN ('Bracket','Oco','StopLimit') THEN 'SELL'
@@ -759,10 +767,11 @@ const makeStore = Effect.gen(function* () {
               AND d.document #> '{strategyDecision,exitPolicy}' = ${portfolio?.purpose === JevPurpose.Manage ? JSON.stringify(portfolio.exitPolicy) : null}::jsonb)
             AND i.account_id = ${exitTarget?.evidence.portfolio.brokerState.account.accountId ?? null}
             AND i.symbol = ${exitTarget?.symbols[0] ?? null}
-            AND ${exitTarget?.observedAt ?? observedAt}::timestamptz <= ${observedAt}::timestamptz))
+            AND ${exitTarget?.observedAt ?? observedAt}::timestamptz <= ${observedAt}::timestamptz
+            AND clock.admitted_at < ${exitTarget?.commitDeadlineAt ?? observedAt}::timestamptz))
           AND latest.status IN ('NEW','PENDING','PARTIALLY_FILLED')
           AND NOT EXISTS (SELECT 1 FROM native_protection_cancel_commands c WHERE c.broker_order_id = latest.broker_order_id
-            AND (c.requested_at > ${observedAt}::timestamptz - interval '5 seconds' OR c.requested_at > latest.observed_at))
+            AND (c.requested_at > clock.admitted_at - interval '5 seconds' OR c.requested_at > latest.observed_at))
         RETURNING broker_order_id
       `
             if (rows.length > 1)

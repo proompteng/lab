@@ -277,6 +277,24 @@ integration('native equity short PostgreSQL execution', () => {
               }),
             )
             const store = yield* IntentStore
+            if (side === OrderSide.Buy) {
+              const beforeObservation = new Date(yield* Clock.currentTimeMillis).toISOString()
+              expect(Date.parse(beforeObservation)).toBeLessThan(Date.parse(cancellationAt))
+              expect(
+                (yield* store.beginProtectionCancel(intentId, brokerOrderId, beforeObservation, undefined))._tag,
+              ).toBe('NotEligible')
+              yield* TestClock.setTime(Date.parse(cancellationAt))
+              yield* sql`UPDATE simulated_execution_clocks SET observed_at=${cancellationAt}::timestamptz
+                WHERE account_id=${accountId}`
+              const futureCallerAt = new Date(Date.parse(cancellationAt) + 1).toISOString()
+              expect(
+                (yield* store.beginProtectionCancel(intentId, brokerOrderId, futureCallerAt, undefined))._tag,
+              ).toBe('NotEligible')
+              expect(
+                yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands
+                  WHERE intent_id=${intentId}`,
+              ).toEqual([{ count: 0 }])
+            }
             const admission = yield* store.beginProtectionCancel(intentId, brokerOrderId, cancellationAt, undefined)
             expect(admission._tag).toBe(side === OrderSide.Buy ? 'New' : 'NotEligible')
             if (side === OrderSide.Buy)

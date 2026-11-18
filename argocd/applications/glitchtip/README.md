@@ -24,6 +24,22 @@ The official Helm chart is pinned to 9.0.1 and the app to 6.2.6.
   The upstream chart **does not copy `extraEnvVars` to the migration Job**.
   Keep `migrationJob.extraEnvVars.VALKEY_URL` empty as well as the web value,
   or Django omits the `db` task-queue and `sessions` migration apps.
+- Liveness checks both the local `/_health/` endpoint and the shared PostgreSQL
+  scheduler heartbeat. In GlitchTip 6.2.6 / django-vtasks 3.1.0, an embedded
+  scheduler task can exit while HTTP and ingestion workers remain healthy.
+  Without recovery, maintenance stops and event ingestion eventually fails when
+  the seven-day partition horizon expires. The read-only probe accepts a
+  scheduler on either replica, allows 60 seconds beyond its lock expiry and
+  requires five consecutive failures before restarting a container. New pods
+  get 120 seconds to initialize. Database exceptions are reduced to their class
+  names so connection details cannot appear in probe logs.
+  A shared scheduler failure can restart both replicas; kubelet liveness
+  restarts are independent of the Deployment's rolling-update budget.
+  The script uses a read-only projected ConfigMap volume and is loaded afresh
+  for each probe, so subsequent script updates take effect after projection.
+
+Run the probe regression checks with
+`python3 -m unittest discover -s argocd/applications/glitchtip -p 'test_*.py'`.
 
 ## Delivery and verification
 
@@ -37,6 +53,10 @@ The official Helm chart is pinned to 9.0.1 and the app to 6.2.6.
    verify **all** migrations are applied. A successful migration Job alone is
    insufficient: it can omit backend-specific migrations if its environment
    differs from the web pods. Test `/_health/` and the registration/login page.
+   Confirm the `vtasks_scheduler_lock` expiry advances and the daily event
+   partitions cover today plus the next six UTC days; confirm fresh event rows
+   and their aggregate statistics are stored. HTTP success and updated issue
+   counts alone do not prove event ingestion or maintenance is healthy.
 5. Send a one-time SMTP test to the **existing** operations recipient using
    Django `send_mail`, then confirm provider delivery without printing emails
    or credentials. Rotate nothing and send to no new destination.

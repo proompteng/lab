@@ -10,14 +10,18 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceUnclosedCycleCount } from './read'
 import { completedIntradayCycles, makeStreamingPerformanceFixture } from '../intraday-cycle.test-support'
-import { readForwardPerformancePostgres, readForwardPerformanceExecutionOrders } from './read'
+import {
+  readForwardPerformancePostgres,
+  readForwardPerformanceExecutionOrders,
+  readForwardPerformanceNativeProtectionOrders,
+} from './read'
 import { runForwardPerformanceReport, type ForwardPerformanceReaders } from '../program'
 import type { ForwardPerformanceConfig } from '../config'
 import { coinRoundTrip } from '../coin-fee-episodes.test-support'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
-import { Authority } from '../../execution/contracts'
+import { Authority, OrderStatus } from '../../execution/contracts'
 import { makeCycleStore } from '../../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../../cycle/construction'
 import { makeIntradayCycleDraft } from '../../cycle/runner/calendar-decisions'
@@ -141,7 +145,23 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                 yield* sql`INSERT INTO broker_events VALUES (${hash(row.id)},${index},${at},${row.observed})`
                 yield* sql`INSERT INTO orders VALUES (${hash(row.id)},${row.order},${row.parent},${'client-' + row.intent},${hash(row.intent)},${accountId},'AAPL',${row.side},1000000000,NULL,${row.filled},${row.status})`
               }
+              yield* sql`ALTER TABLE intents ADD COLUMN protection jsonb DEFAULT '{"_tag":"Bracket","stopPriceMicros":"99000000","stopLimitPriceMicros":"98500000","profitLimitPriceMicros":"101000000"}'`
+              yield* sql`ALTER TABLE orders ADD COLUMN schema_version text DEFAULT 'bayn.order.v3', ADD COLUMN order_type text DEFAULT 'LIMIT', ADD COLUMN time_in_force text DEFAULT 'DAY', ADD COLUMN limit_price_micros numeric DEFAULT 100000000, ADD COLUMN stop_price_micros numeric`
+              yield* sql`UPDATE orders SET order_type='STOP_LIMIT', stop_price_micros=99000000, limit_price_micros=98500000 WHERE broker_order_id='stop'`
               for (const scope of [undefined, generation]) {
+                const native = yield* readForwardPerformanceNativeProtectionOrders(sql, accountId, scope)
+                expect(native.map((row) => row.order.brokerOrderId)).toEqual([
+                  'entry',
+                  'exit',
+                  'orphan-child',
+                  'stop',
+                  'take-profit',
+                ])
+                expect(native.find((row) => row.order.brokerOrderId === 'entry')?.order.status).toBe(OrderStatus.Filled)
+                expect(native.find((row) => row.order.brokerOrderId === 'take-profit')?.order.parentBrokerOrderId).toBe(
+                  'entry',
+                )
+                expect(yield* readForwardPerformanceNativeProtectionOrders(sql, 'another-account', scope)).toEqual([])
                 const rows = yield* readForwardPerformanceExecutionOrders(sql, accountId, scope)
                 expect(
                   rows.map((row) => ({

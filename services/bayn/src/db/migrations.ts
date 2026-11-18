@@ -1,3 +1,4 @@
+import notDispatchedVisualEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
 import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
 import equityShortObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
 import equityShortAccounting from '../../migrations/0198_equity_short_accounting'
@@ -201,6 +202,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '201_not_dispatched_visual_evidence': notDispatchedVisualEvidence,
   '197_inference_expense_wakeups': inferenceExpenseWakeups,
   '198_equity_short_accounting': equityShortAccounting,
   '199_equity_short_observe_cutover': equityShortObserveCutover,

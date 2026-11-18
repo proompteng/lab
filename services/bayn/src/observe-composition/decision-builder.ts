@@ -20,7 +20,14 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { jevProfitTargetLimitFloors, jevProfitTargetLimitCeilings, type JevExitTarget } from '../jev/exit'
+import {
+  JevExitReason,
+  JevExitTargetSchema,
+  jevMaximumHoldDueAt,
+  jevProfitTargetLimitFloors,
+  jevProfitTargetLimitCeilings,
+  type JevExitTarget,
+} from '../jev/exit'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -51,7 +58,7 @@ import {
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { type PersistedIntradaySnapshotRows } from '../market-data/intraday/verification'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
@@ -1642,10 +1649,38 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const target = request.exitTarget
+    const mandatoryExit =
+      source === 'reconciled-position' &&
+      target !== undefined &&
+      (target.reason === JevExitReason.ProtectionReleased || target.reason === JevExitReason.MaximumHold) &&
+      Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(target)) &&
+      target.evidence.portfolio.purpose === JevPurpose.Manage &&
+      target.cycleId === cycle.identity.cycleId &&
+      target.entryDecisionHash === entryDocument.contentHash &&
+      target.sessionDate === cycle.identity.executionSessionDate &&
+      target.evidence.portfolio.brokerState.account.accountId === cycle.identity.accountId &&
+      entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
+      canonicalJsonEqualV1(target.evidence.portfolio.exitPolicy, entryDocument.strategyDecision.exitPolicy)
+        ? target
+        : undefined
     const requireFallbackWindow = (observedAt: string) => {
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
-      return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
+      const portfolio = mandatoryExit?.evidence.portfolio
+      const firstFill = portfolio?.purpose === JevPurpose.Manage ? portfolio.entryFills[0] : undefined
+      // The sealed first-fill deadline authorizes a timed exit independently of any price trigger.
+      // Before it elapses, a mark may only resume an already committed non-profit exit.
+      const resumeMandatoryExit =
+        mandatoryExit !== undefined &&
+        portfolio?.purpose === JevPurpose.Manage &&
+        mandatoryExit.observedAt <= observedAt &&
+        ((firstFill !== undefined &&
+          observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)) ||
+          (mandatoryExit.reason === JevExitReason.ProtectionReleased &&
+            portfolio.exitRequestedAt !== null &&
+            !portfolio.profitExitRequested))
+      return (observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 || resumeMandatoryExit) &&
         (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
           observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
@@ -1657,8 +1692,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             }),
           )
     }
-    // Sample after the archive attempt: it may have crossed into the close window. Outside that
-    // window a second reconciliation cannot authorize this fallback and only delays the next pass.
+    // Sample after the archive attempt. A due holding deadline or committed non-profit exit can also
+    // authorize a fresh position-mark close; none can authorize a new entry or price trigger.
     if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
     const reconciliation = yield* (
       source === 'archive' && request.initialReconciliation !== undefined
