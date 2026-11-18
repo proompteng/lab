@@ -789,7 +789,11 @@ export const makeBaynExecutionController = (
           )
             return
           let eligibilityCheckedAt: number | undefined
-          if (event._tag === 'MarketChanged' && state.marketEligibleAt !== undefined) {
+          if (
+            event._tag === 'MarketChanged' &&
+            event.reason === MarketChangeReason.Data &&
+            state.marketEligibleAt !== undefined
+          ) {
             eligibilityCheckedAt = await ctx.date.now()
             // The durable frontier already retains these hints; quote bursts need no per-hint log delivery.
             if (eligibilityCheckedAt < Date.parse(state.marketEligibleAt)) return

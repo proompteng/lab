@@ -278,8 +278,10 @@ export const completeExecutionControllerTick = (
   const brokerReconciliationRetry =
     result.outcome._tag === ExecutionControllerOutcome.Blocked &&
     result.observation?.result === 'FAILURE' &&
-    result.observation.operation === 'reconcile' &&
-    result.observation.failure === 'market-data'
+    result.observation.failure === 'market-data' &&
+    (result.observation.operation === 'reconcile' ||
+      (result.observation.operation === 'build-decision' &&
+        result.observation.brokerObservationFailure === 'NO_ADMISSIBLE_CUT'))
   const nextDueAt = Result.try({
     try: () => {
       if (result.outcome.nextWakeAt === undefined) return undefined
