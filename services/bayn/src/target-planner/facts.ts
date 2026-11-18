@@ -1,3 +1,4 @@
+import type { ReconciledStateEvidence } from '../simulation-reconciliation/broker-model'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
 import { equityShortIsEligible } from '../execution/equity-short'
@@ -6,7 +7,7 @@ import { Result, pipe } from 'effect'
 import { AccountStatus, OrderStatus, ReconciliationStatus } from '../execution/contracts'
 import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
-import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
+import { reconciledStateHashFromDecoded } from '../simulation-reconciliation/broker-model'
 import {
   TargetPlanReason,
   canonicalizePlannerInputFailure,
@@ -97,12 +98,13 @@ const plannerInputHash = (
 
 export const deriveTargetPlannerHashes = (
   input: TargetPlannerInput,
+  evidence?: ReconciledStateEvidence,
 ): Result.Result<TargetPlannerHashes, TargetPlannerFailure> =>
   Result.all({
     inputHash: plannerInputHash(input, 'input', input),
     referencePriceHash: plannerInputHash(input, 'reference-price', referencePriceMaterial(input.referencePrices)),
     reconciledBrokerStateHash: pipe(
-      reconciledStateHash(input.brokerState),
+      reconciledStateHashFromDecoded(input.brokerState, evidence),
       Result.mapError((cause) =>
         canonicalizePlannerInputFailure({
           reason: 'hash',

@@ -1,4 +1,5 @@
 import { HashMap, Result, pipe } from 'effect'
+import { types } from 'node:util'
 
 import {
   DiscrepancyKind,
@@ -246,6 +247,105 @@ export const integer = (
   canonicalIntegerPattern.test(value)
     ? Result.succeed(BigInt(value))
     : fail({ _tag: 'InvalidInteger', source, identity, value })
+
+const evidenceState = (state: ReconciledStateMaterial): ReconciledStateMaterial => ({
+  account: state.account,
+  positions: state.positions,
+  positionsObservedAt: state.positionsObservedAt,
+  orders: state.orders,
+  ordersObservedAt: state.ordersObservedAt,
+  accountingHash: state.accountingHash,
+})
+
+// The right side is our private, already canonicalized data. Inspect the left
+// without invoking getters/proxy traps, sorting keys, or allocating JSON strings.
+const equalVerifiedData = (value: unknown, expected: unknown): boolean => {
+  if (value === expected) return true
+  if (value === null || expected === null || typeof value !== 'object' || typeof expected !== 'object') return false
+  if (types.isProxy(value)) return false
+  const array = Array.isArray(expected)
+  if (Array.isArray(value) !== array) return false
+  const prototype = Object.getPrototypeOf(value)
+  if (!array && prototype !== Object.prototype && prototype !== null) return false
+  const keys = Reflect.ownKeys(value)
+  const expectedKeys = Object.keys(expected)
+  if (keys.length !== expectedKeys.length + (array ? 1 : 0)) return false
+  for (const key of expectedKeys) {
+    const property = Object.getOwnPropertyDescriptor(value, key)
+    if (property === undefined || property.enumerable !== true || !('value' in property)) return false
+    if (!equalVerifiedData(property.value, (expected as Record<string, unknown>)[key])) return false
+  }
+  return !array || (value as unknown[]).length === (expected as unknown[]).length
+}
+
+const matchingEvidenceState = (state: ReconciledStateMaterial, expected: ReconciledStateMaterial): boolean => {
+  if (types.isProxy(state)) return false
+  for (const key of Object.keys(expected)) {
+    const property = Object.getOwnPropertyDescriptor(state, key)
+    if (property === undefined || property.enumerable !== true || !('value' in property)) return false
+    if (!equalVerifiedData(property.value, (expected as unknown as Record<string, unknown>)[key])) return false
+  }
+  return true
+}
+
+export interface ReconciledStateEvidence {
+  readonly kind: 'invocation-owned-reconciled-state'
+}
+
+const verifiedEvidence = new WeakMap<
+  ReconciledStateEvidence,
+  {
+    readonly state: ReconciledStateMaterial
+    readonly hash: string
+    materialHash?: string
+  }
+>()
+
+// This receipt never carries authority. Consumers must still decode their own
+// inputs and prove complete decoded-data equality, including accounting identity.
+export const makeReconciledStateEvidence = (
+  state: ReconciledStateMaterial,
+): ReconciliationDecision<ReconciledStateEvidence> => {
+  const owned = structuredClone(evidenceState(state))
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+    for (const child of Object.values(value)) freeze(child)
+    Object.freeze(value)
+  }
+  freeze(owned)
+  return Result.map(reconciledStateHash(owned), (hash) => {
+    const receipt: ReconciledStateEvidence = Object.freeze({ kind: 'invocation-owned-reconciled-state' })
+    verifiedEvidence.set(receipt, { state: owned, hash })
+    return receipt
+  })
+}
+
+export const brokerMaterialHashFromDecoded = (
+  state: ReconciledStateMaterial,
+  evidence?: ReconciledStateEvidence,
+): Result.Result<string, CanonicalHashFailure> => {
+  const verified = evidence === undefined ? undefined : verifiedEvidence.get(evidence)
+  if (verified !== undefined && matchingEvidenceState(state, verified.state)) {
+    if (verified.materialHash !== undefined) return Result.succeed(verified.materialHash)
+    return Result.map(canonicalHashV1Result(verified.state), (hash) => {
+      verified.materialHash = hash
+      return hash
+    })
+  }
+  return canonicalHashV1Result(evidenceState(state))
+}
+
+// Only call after the full domain decoder. Unknown objects must use reconciledStateHash.
+export const reconciledStateHashFromDecoded = (
+  state: ReconciledStateMaterial,
+  evidence?: ReconciledStateEvidence,
+): ReconciliationDecision<string> => {
+  const verified = evidence === undefined ? undefined : verifiedEvidence.get(evidence)
+  if (verified !== undefined && matchingEvidenceState(state, verified.state)) {
+    return Result.succeed(verified.hash)
+  }
+  return reconciledStateHash(state)
+}
 
 export const reconciledStateHash = (state: ReconciledStateMaterial): ReconciliationDecision<string> =>
   pipe(

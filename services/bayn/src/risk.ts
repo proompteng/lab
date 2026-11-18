@@ -1,3 +1,4 @@
+import type { ReconciledStateEvidence } from './simulation-reconciliation/broker-model'
 import { executionIntentSchemaVersion, submittedBrokerOrderCount } from './execution/contracts'
 import { isEquityShortProtection } from './execution/contracts'
 import { EquityShortEligibilitySchema, equityShortIsEligible } from './execution/equity-short'
@@ -33,7 +34,7 @@ import {
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './simulation-reconciliation/broker-model'
+import { reconciledStateHashFromDecoded } from './simulation-reconciliation/broker-model'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -868,16 +869,22 @@ const isStrictlyExposureReducingClose = (facts: RiskFacts, metrics: DerivedRiskM
   metrics.postTradeSymbolExposureMagnitudeMicros < metrics.currentSymbolExposureMagnitudeMicros &&
   metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros
 
-const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
+const deriveReconciledHash = (
+  facts: RiskFacts,
+  evidence?: ReconciledStateEvidence,
+): Result.Result<string, RiskEvaluationFailure> =>
   pipe(
-    reconciledStateHash({
-      account: facts.state.account,
-      positions: facts.state.positions,
-      positionsObservedAt: facts.state.positionsObservedAt,
-      orders: facts.state.orders,
-      ordersObservedAt: facts.state.ordersObservedAt,
-      accountingHash: facts.state.accountingHash,
-    }),
+    reconciledStateHashFromDecoded(
+      {
+        account: facts.state.account,
+        positions: facts.state.positions,
+        positionsObservedAt: facts.state.positionsObservedAt,
+        orders: facts.state.orders,
+        ordersObservedAt: facts.state.ordersObservedAt,
+        accountingHash: facts.state.accountingHash,
+      },
+      evidence,
+    ),
     Result.mapError((cause) =>
       canonicalizeRiskInputFailure(
         'reconciliation',
@@ -1380,10 +1387,11 @@ const evaluateDecoded = (
   state: State,
   policy: Policy,
   proposedPositions: State['positions'],
+  evidence?: ReconciledStateEvidence,
 ): Result.Result<Evaluation, RiskEvaluationFailure> =>
   Result.flatMap(validateAuthorityBinding(intent, state), () => {
     const facts = parseRiskFacts(intent, state, policy, proposedPositions)
-    return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) =>
+    return Result.flatMap(deriveReconciledHash(facts, evidence), (reconciledHash) =>
       Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
         const gates = buildRiskGates(facts, metrics, reconciledHash)
         const reasonCodes = gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
@@ -1407,7 +1415,10 @@ export interface RiskEvaluationInput {
   readonly proposedPositions?: unknown
 }
 
-export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, RiskEvaluationFailure> => {
+export const evaluate = (
+  input: RiskEvaluationInput,
+  evidence?: ReconciledStateEvidence,
+): Result.Result<Evaluation, RiskEvaluationFailure> => {
   const intent = Result.mapError(decodeRiskIntentResult(input.intent), (cause) =>
     decodeRiskInputFailure('intent', 'risk intent is invalid', {}, cause),
   )
@@ -1447,7 +1458,7 @@ export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, 
       ),
     )
   }
-  return evaluateDecoded(intent.success, state.success, policy.success, proposedPositions.success)
+  return evaluateDecoded(intent.success, state.success, policy.success, proposedPositions.success, evidence)
 }
 
 export const decodePolicy = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)

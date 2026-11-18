@@ -1,3 +1,4 @@
+import type { ReconciledStateEvidence } from './simulation-reconciliation/broker-model'
 import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
@@ -92,7 +93,7 @@ import {
 } from './execution/contracts'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
 import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from './execution/legacy-wire'
-import { reconciledStateHash } from './simulation-reconciliation/broker-model'
+import { reconciledStateHashFromDecoded } from './simulation-reconciliation/broker-model'
 import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
 import {
   IsoDateSchema,
@@ -1095,7 +1096,10 @@ const streamingPricingEvidenceIssues = (
   return []
 }
 
-const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
+const targetPlannerEvidenceIssues = (
+  document: ExecutionDecisionValidationMaterial,
+  brokerEvidence?: ReconciledStateEvidence,
+): readonly Schema.FilterIssue[] => {
   const input = executionDecisionPlannerInput(document)
   const executionMarketData = document.bindings.executionMarketData
   const requiresQuoteBoundLiquidationEvidence =
@@ -1136,14 +1140,17 @@ const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMateri
     })
   }
 
-  const planningBrokerStateHash = reconciledStateHash({
-    account: input.brokerState.account,
-    positions: input.brokerState.positions,
-    positionsObservedAt: input.brokerState.positionsObservedAt,
-    orders: input.brokerState.orders,
-    ordersObservedAt: input.brokerState.ordersObservedAt,
-    accountingHash: input.brokerState.accountingHash,
-  })
+  const planningBrokerStateHash = reconciledStateHashFromDecoded(
+    {
+      account: input.brokerState.account,
+      positions: input.brokerState.positions,
+      positionsObservedAt: input.brokerState.positionsObservedAt,
+      orders: input.brokerState.orders,
+      ordersObservedAt: input.brokerState.ordersObservedAt,
+      accountingHash: input.brokerState.accountingHash,
+    },
+    brokerEvidence,
+  )
   if (
     Result.isFailure(planningBrokerStateHash) ||
     planningBrokerStateHash.success !== document.bindings.planningBrokerStateHash ||
@@ -1156,7 +1163,7 @@ const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMateri
     })
   }
 
-  const reproducedPlan = planTargets(input)
+  const reproducedPlan = planTargets(input, brokerEvidence)
   if (Result.isFailure(reproducedPlan) || reproducedPlan.success.outputHash !== document.targetPlan.outputHash) {
     issues.push({
       path: ['targetPlan'],
@@ -1574,7 +1581,10 @@ const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): r
   return []
 }
 
-const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
+const executionMaterialIssues = (
+  document: ExecutionDecisionValidationMaterial,
+  brokerEvidence?: ReconciledStateEvidence,
+): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
   const intradayStrategy = ['intraday-momentum', 'jev'].includes(document.bindings.strategyName)
@@ -1888,7 +1898,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
   ) {
     issues.push(...quoteBoundLiquidationSnapshotIssues(document, executionMarketData))
   }
-  issues.push(...targetPlannerEvidenceIssues(document))
+  issues.push(...targetPlannerEvidenceIssues(document, brokerEvidence))
   if (usesLiquidationMarketData && executionMarketData !== undefined) {
     const bindsTargetSymbols =
       executionMarketData.symbols.length === intentTargetSymbols.length &&
@@ -2082,12 +2092,15 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
         expectedProposedPositions === undefined ||
         Result.isFailure(executionIntent)
           ? undefined
-          : evaluate({
-              intent: executionIntent.success,
-              state: facts.state,
-              policy,
-              proposedPositions: expectedProposedPositions,
-            })
+          : evaluate(
+              {
+                intent: executionIntent.success,
+                state: facts.state,
+                policy,
+                proposedPositions: expectedProposedPositions,
+              },
+              brokerEvidence,
+            )
       const reproducedHash =
         reproduced === undefined || Result.isFailure(reproduced) ? undefined : canonicalHashV1Result(reproduced.success)
       const recordedHash = canonicalHashV1Result(risk.evaluation)
@@ -2114,14 +2127,17 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
           issue: 'must reproduce the exact persisted risk gates, metrics, decision, and input hashes',
         })
       } else {
-        const brokerStateHash = reconciledStateHash({
-          account: facts.state.account,
-          positions: facts.state.positions,
-          positionsObservedAt: facts.state.positionsObservedAt,
-          orders: facts.state.orders,
-          ordersObservedAt: facts.state.ordersObservedAt,
-          accountingHash: facts.state.accountingHash,
-        })
+        const brokerStateHash = reconciledStateHashFromDecoded(
+          {
+            account: facts.state.account,
+            positions: facts.state.positions,
+            positionsObservedAt: facts.state.positionsObservedAt,
+            orders: facts.state.orders,
+            ordersObservedAt: facts.state.ordersObservedAt,
+            accountingHash: facts.state.accountingHash,
+          },
+          brokerEvidence,
+        )
         const expectedMarketDataHash = executionMarketData?.contentHash ?? document.bindings.snapshotContentHash
         const previousEvaluation = document.deltaRisk[index - 1]?.evaluation
         const expectedAuthorityHash = canonicalHashV1Result(riskContext.authority)
@@ -2228,7 +2244,7 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
 const ExecutionDecisionDocumentSemanticSchema = Schema.Struct({
   ...ExecutionDecisionMaterialSchema.fields,
   contentHash: Sha256Schema,
-}).check(Schema.makeFilter(executionMaterialIssues))
+}).check(Schema.makeFilter((document) => executionMaterialIssues(document)))
 
 export const ExecutionDecisionDocumentSchema = ExecutionDecisionDocumentSemanticSchema.check(
   Schema.makeFilter((document) => {
@@ -2255,7 +2271,7 @@ export const RetainedJevExecutionDecisionDocumentSchema = Schema.Struct({
   ),
   contentHash: Sha256Schema,
 }).check(
-  Schema.makeFilter(executionMaterialIssues),
+  Schema.makeFilter((document) => executionMaterialIssues(document)),
   Schema.makeFilter((document) => {
     const { contentHash, ...material } = document
     const expected = canonicalHashV1Result(material)
@@ -2395,6 +2411,7 @@ export const decodeObserveShadowDecisionDocument = (
 
 export const makeExecutionDecisionDocument = (
   material: unknown,
+  brokerEvidence?: ReconciledStateEvidence,
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionContractFailure> => {
   if (typeof material !== 'object' || material === null || Array.isArray(material)) {
     return Result.fail(makeDocumentFailure('contract', 'execution decision material must be an object'))
@@ -2407,7 +2424,9 @@ export const makeExecutionDecisionDocument = (
       Result.map(
         Result.mapError(
           Schema.decodeUnknownResult(
-            ExecutionDecisionMaterialSchema.check(Schema.makeFilter(executionMaterialIssues)),
+            ExecutionDecisionMaterialSchema.check(
+              Schema.makeFilter((document) => executionMaterialIssues(document, brokerEvidence)),
+            ),
             strictParseOptions,
           )(JSON.parse(json)),
           (cause) => makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),

@@ -1,3 +1,9 @@
+import { brokerMaterialHashFromDecoded } from './simulation-reconciliation/broker-model'
+import {
+  makeReconciledStateEvidence,
+  reconciledStateHashFromDecoded,
+  type ReconciledStateEvidence,
+} from './simulation-reconciliation/broker-model'
 import { isProtectedEntryTarget } from './strategy/runtime-decision'
 import { entryBracketProtection } from './execution/position-protection'
 import { intentPlanSchemaVersion } from './execution/contracts'
@@ -447,6 +453,7 @@ const validateRiskState = (
   commonExecutionSessionHash: string,
   plannerBrokerStateHash: string,
   plannerReconciliationHash: string,
+  brokerEvidence?: ReconciledStateEvidence,
 ): Result.Result<void, ShadowDecisionError> => {
   const { cycle, plannerInput, snapshot } = input
   const state = riskInput.state
@@ -505,10 +512,9 @@ const validateRiskState = (
       error('binding', 'shadow risk must use the exact planned target price, account, and reconciliation state'),
     )
   }
-  const riskStateHash = hashValue(
-    riskBrokerStateMaterial(state),
-    'contract',
-    'shadow risk broker state is not canonicalizable',
+  const riskStateHash = Result.mapError(
+    brokerMaterialHashFromDecoded(riskBrokerStateMaterial(state), brokerEvidence),
+    (cause) => error('contract', 'shadow risk broker state is not canonicalizable', cause),
   )
   if (Result.isFailure(riskStateHash)) return Result.fail(riskStateHash.failure)
   const riskReconciliationHash = hashValue(
@@ -549,6 +555,7 @@ interface ShadowReduction {
 }
 
 interface ShadowReductionContext {
+  readonly brokerEvidence?: ReconciledStateEvidence
   readonly input: ObserveShadowDecisionInput
   readonly policyHash: string
   readonly riskInputs: ReadonlyMap<string, ShadowDeltaRiskInput>
@@ -596,12 +603,15 @@ const reduceShadowDelta = (
     (cause) => error('contract', 'cumulative shadow risk state is invalid', cause),
   )
   if (Result.isFailure(state)) return Result.fail(state.failure)
-  const evaluation = evaluate({
-    intent: intent.success,
-    state: state.success,
-    policy: context.input.policy,
-    proposedPositions: accumulator.projectedPositions,
-  })
+  const evaluation = evaluate(
+    {
+      intent: intent.success,
+      state: state.success,
+      policy: context.input.policy,
+      proposedPositions: accumulator.projectedPositions,
+    },
+    context.brokerEvidence,
+  )
   if (Result.isFailure(evaluation)) {
     return Result.fail(error('risk', 'shadow target risk evaluation failed', evaluation.failure))
   }
@@ -667,6 +677,7 @@ const reduceShadowDelta = (
 }
 
 interface ShadowDecisionContext {
+  readonly brokerEvidence?: ReconciledStateEvidence
   readonly input: ObserveShadowDecisionInput
   readonly strategyDecisionHash: string
   readonly policyHash: string
@@ -759,10 +770,9 @@ const prepareShadowRisk = (context: ShadowDecisionContext): Result.Result<Prepar
   const baseReservedBuyingPower = firstRiskInput?.state.reservedBuyingPowerMicros ?? '0'
   const baseDailyTradedNotional = firstRiskInput?.state.dailyTradedNotionalMicros ?? '0'
   const commonExecutionSessionHash = firstRiskInput?.state.executionSession.bindingHash ?? ''
-  const plannerBrokerStateHash = hashValue(
-    plannerBrokerStateMaterial(input.plannerInput),
-    'contract',
-    'target-planning broker state is not canonicalizable',
+  const plannerBrokerStateHash = Result.mapError(
+    brokerMaterialHashFromDecoded(plannerBrokerStateMaterial(input.plannerInput), context.brokerEvidence),
+    (cause) => error('contract', 'target-planning broker state is not canonicalizable', cause),
   )
   if (Result.isFailure(plannerBrokerStateHash)) return Result.fail(plannerBrokerStateHash.failure)
   const plannerReconciliationHash = hashValue(
@@ -788,6 +798,7 @@ const prepareShadowRisk = (context: ShadowDecisionContext): Result.Result<Prepar
       commonExecutionSessionHash,
       plannerBrokerStateHash.success,
       plannerReconciliationHash.success,
+      context.brokerEvidence,
     )
     if (Result.isFailure(stateValidation)) return Result.fail(stateValidation.failure)
   }
@@ -820,6 +831,7 @@ const reduceShadowRisk = (
   authority: Authority,
   authorityGenerationHash?: string,
   replanGenerationHash?: string,
+  brokerEvidence?: ReconciledStateEvidence,
 ): Result.Result<ShadowReduction, ShadowDecisionError> =>
   prepared.input.targetPlan.intentTargets.reduce<Result.Result<ShadowReduction, ShadowDecisionError>>(
     (accumulator, targetIntent) =>
@@ -828,6 +840,7 @@ const reduceShadowRisk = (
           ? Result.succeed(state)
           : reduceShadowDelta(state, targetIntent, {
               input: prepared.input,
+              ...(brokerEvidence === undefined ? {} : { brokerEvidence }),
               policyHash: prepared.policyHash,
               riskInputs: prepared.riskInputs,
               targetsBySymbol: prepared.targetsBySymbol,
@@ -926,7 +939,7 @@ const assembleExecutionDecisionDocument = (
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
-    reconciledStateHash(plannerBrokerStateMaterial(input.plannerInput)),
+    reconciledStateHashFromDecoded(plannerBrokerStateMaterial(input.plannerInput), context.brokerEvidence),
     (cause) => error('contract', 'planning broker state hash could not be derived', cause),
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
@@ -949,48 +962,51 @@ const assembleExecutionDecisionDocument = (
   if (Result.isFailure(repeatsObservationState)) return Result.fail(repeatsObservationState.failure)
   const { brokerState: _brokerState, ...plannerFacts } = input.plannerInput
   return Result.mapError(
-    makeExecutionDecisionDocument({
-      schemaVersion: executionCycleDecisionSchemaVersion,
-      mode: legacyExecutionAuthorityToken,
-      dispatchable: reduction.riskBlock === undefined,
-      bindings: {
-        strategyName: input.plannerInput.strategyName,
-        cycleId: input.cycle.identity.cycleId,
-        qualificationRunId: input.cycle.identity.qualificationRunId,
-        strategyProtocolHash: input.cycle.identity.strategyProtocolHash,
-        snapshotId: input.snapshot.snapshotId,
-        snapshotContentHash: input.snapshot.contentHash,
-        snapshotFinalizedAt: input.snapshot.finalizedAt,
-        strategyDecisionHash,
-        policyHash,
-        accountId: input.plannerInput.accountId,
-        planningBrokerStateHash: planningBrokerStateHash.success,
-        reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
-        reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
-        authorityGenerationHash,
-        riskContext,
-        ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
-        ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
+    makeExecutionDecisionDocument(
+      {
+        schemaVersion: executionCycleDecisionSchemaVersion,
+        mode: legacyExecutionAuthorityToken,
+        dispatchable: reduction.riskBlock === undefined,
+        bindings: {
+          strategyName: input.plannerInput.strategyName,
+          cycleId: input.cycle.identity.cycleId,
+          qualificationRunId: input.cycle.identity.qualificationRunId,
+          strategyProtocolHash: input.cycle.identity.strategyProtocolHash,
+          snapshotId: input.snapshot.snapshotId,
+          snapshotContentHash: input.snapshot.contentHash,
+          snapshotFinalizedAt: input.snapshot.finalizedAt,
+          strategyDecisionHash,
+          policyHash,
+          accountId: input.plannerInput.accountId,
+          planningBrokerStateHash: planningBrokerStateHash.success,
+          reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
+          reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
+          authorityGenerationHash,
+          riskContext,
+          ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
+          ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
+        },
+        executionSession,
+        strategyDecision: input.compiledDecision,
+        ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
+        ...(input.executionMarketDataRows === undefined
+          ? {}
+          : { executionMarketDataRows: input.executionMarketDataRows }),
+        plannerInput: repeatsObservationState.success ? plannerFacts : input.plannerInput,
+        riskPolicy: input.policy,
+        ...(entryLimitSlippageBps === undefined ? {} : { entryLimitSlippageBps }),
+        ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
+        targetPlan: input.targetPlan,
+        deltaRisk: reduction.deltaRisk,
+        orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
+        ...(reduction.riskBlock === undefined ? {} : { riskBlock: reduction.riskBlock }),
+        ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
+        submissionCutoffAt,
+        expiresAt: submissionCutoffAt,
+        createdAt: input.plannerInput.observedAt,
       },
-      executionSession,
-      strategyDecision: input.compiledDecision,
-      ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
-      ...(input.executionMarketDataRows === undefined
-        ? {}
-        : { executionMarketDataRows: input.executionMarketDataRows }),
-      plannerInput: repeatsObservationState.success ? plannerFacts : input.plannerInput,
-      riskPolicy: input.policy,
-      ...(entryLimitSlippageBps === undefined ? {} : { entryLimitSlippageBps }),
-      ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
-      targetPlan: input.targetPlan,
-      deltaRisk: reduction.deltaRisk,
-      orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
-      ...(reduction.riskBlock === undefined ? {} : { riskBlock: reduction.riskBlock }),
-      ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
-      submissionCutoffAt,
-      expiresAt: submissionCutoffAt,
-      createdAt: input.plannerInput.observedAt,
-    }),
+      context.brokerEvidence,
+    ),
     (cause) => error('contract', 'execution decision document failed durable contract validation', cause),
   )
 }
@@ -1019,30 +1035,39 @@ export const constructExecutionDecision = (
           riskInputs: input.riskInputs,
           ...(input.submissionCutoffAt === undefined ? {} : { submissionCutoffAt: input.submissionCutoffAt }),
         }),
-        (context) =>
-          Result.flatMap(validateShadowPlanningBindings(context), () =>
-            Result.flatMap(prepareShadowRisk(context), (prepared) =>
-              Result.flatMap(
-                reduceShadowRisk(
-                  prepared,
-                  Authority.Execution,
-                  input.authorityGenerationHash,
-                  input.replanGenerationHash,
-                ),
-                (reduction) =>
-                  assembleExecutionDecisionDocument(
-                    context,
-                    reduction,
-                    input.authorityGenerationHash,
-                    input.executionSession,
-                    input.riskContext,
-                    input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
-                    input.replanGenerationHash,
-                    input.entryLimitSlippageBps,
-                    input.closeLimitSlippageBps,
-                  ),
-              ),
+        (decodedContext) =>
+          Result.flatMap(
+            Result.mapError(makeReconciledStateEvidence(decodedContext.input.plannerInput.brokerState), (cause) =>
+              error('contract', 'planning broker evidence could not be owned', cause),
             ),
+            (brokerEvidence) => {
+              const context = { ...decodedContext, brokerEvidence }
+              return Result.flatMap(validateShadowPlanningBindings(context), () =>
+                Result.flatMap(prepareShadowRisk(context), (prepared) =>
+                  Result.flatMap(
+                    reduceShadowRisk(
+                      prepared,
+                      Authority.Execution,
+                      input.authorityGenerationHash,
+                      input.replanGenerationHash,
+                      brokerEvidence,
+                    ),
+                    (reduction) =>
+                      assembleExecutionDecisionDocument(
+                        context,
+                        reduction,
+                        input.authorityGenerationHash,
+                        input.executionSession,
+                        input.riskContext,
+                        input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
+                        input.replanGenerationHash,
+                        input.entryLimitSlippageBps,
+                        input.closeLimitSlippageBps,
+                      ),
+                  ),
+                ),
+              )
+            },
           ),
       ),
     ),

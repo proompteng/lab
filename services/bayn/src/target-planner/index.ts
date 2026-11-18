@@ -1,3 +1,4 @@
+import type { ReconciledStateEvidence } from '../simulation-reconciliation/broker-model'
 import { Result, Schema } from 'effect'
 
 import { strictParseOptions } from '../schemas'
@@ -17,7 +18,10 @@ export type {
 
 const decodeTargetPlannerInputResult = Schema.decodeUnknownResult(TargetPlannerInputSchema, strictParseOptions)
 
-export const planTargets = (input: unknown): Result.Result<TargetPlanResult, TargetPlannerFailure> => {
+export const planTargets = (
+  input: unknown,
+  evidence?: ReconciledStateEvidence,
+): Result.Result<TargetPlanResult, TargetPlannerFailure> => {
   const decoded = Result.mapError(decodeTargetPlannerInputResult(input), (cause) =>
     decodePlannerInputFailure({
       reason: 'contract',
@@ -27,7 +31,7 @@ export const planTargets = (input: unknown): Result.Result<TargetPlanResult, Tar
     }),
   )
   return Result.flatMap(decoded, (value) =>
-    Result.flatMap(deriveTargetPlannerHashes(value), (hashes) =>
+    Result.flatMap(deriveTargetPlannerHashes(value, evidence), (hashes) =>
       Result.flatMap(computeTargetPlan(parseTargetPlannerFacts(value, hashes)), finalizeTargetPlan),
     ),
   )
