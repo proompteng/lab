@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Effect, Layer, Redacted, Result } from 'effect'
+import { Effect, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import nonDispatchEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
@@ -10,7 +10,7 @@ import { CycleStoreLive } from '../cycle/store/postgres'
 import { canonicalHashV1Result } from '../hash'
 import { JevCandidatePlanStatus, JevBatchPlanVersion } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { stagedCheckpointFixture } from '../jev/entry-inference.test-support'
+import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
@@ -187,9 +187,9 @@ integration.each(['ORIGINAL_EXPIRY', 'ADMISSION_EXPIRY'] as const)(
             line,
             rate: null,
           })
-        const insertQuote = (value: ReturnType<typeof quote>) =>
+        const insertQuote = (value: ReturnType<typeof quote>, accountId = account) =>
           sql`INSERT INTO inference_expense_quotes(quote_hash,account_id,session_date,payload)
-          VALUES (${value.quoteHash},${account},${value.sessionDate}::date,${sql.json(value)})`
+          VALUES (${value.quoteHash},${accountId},${value.sessionDate}::date,${sql.json(value)})`
         const historical = [
           quote('bayn.inference-expense-quote.v4', {
             ...common,
@@ -279,8 +279,30 @@ integration.each(['ORIGINAL_EXPIRY', 'ADMISSION_EXPIRY'] as const)(
           ),
         ).toBe(true)
         yield* insertTerminal(material)
+        const { handoffHash: _handoffHash, ...readyMaterial } = entryCompletionFixture(request).handoff
+        if (readyMaterial.disposition.status !== 'READY') throw new Error('Expected an executable handoff fixture')
+        const changedHandoff = { ...readyMaterial, recordedAt: lateAt }
+        const handoff = { ...changedHandoff, handoffHash: hash(changedHandoff) }
+        const rejectedHandoff = yield* sql`INSERT INTO jev_inference_handoffs(request_id,handoff_hash,payload)
+          VALUES (${request.requestId},${handoff.handoffHash},${sql.json(handoff)})`.pipe(Effect.result)
+        if (Result.isSuccess(rejectedHandoff)) throw new Error('READY handoff replaced positive non-dispatch evidence')
+        const handoffError = yield* Schema.decodeUnknownEffect(Schema.Struct({ message: Schema.String }))(
+          rejectedHandoff.failure.reason.cause,
+        )
+        expect(handoffError.message).toBe('Box handoff changes its committed chart outcome')
         const needsQuotes = sql`SELECT inference_expense_source_needs_quotes(${request.requestId}) AS needed`
         expect(yield* needsQuotes).toEqual([{ needed: true }])
+        expect(
+          Result.isFailure(
+            yield* insertQuote(quote('bayn.inference-expense-quote.v5', chart), 'foreign-account').pipe(Effect.result),
+          ),
+        ).toBe(true)
+        const { quoteHash: _quoteHash, ...quoteMaterial } = quote('bayn.inference-expense-quote.v5', chart)
+        expect(
+          Result.isFailure(
+            yield* insertQuote(signed({ ...quoteMaterial, sessionDate: '2099-01-01' })).pipe(Effect.result),
+          ),
+        ).toBe(true)
         for (const forged of [
           { ...chart, notDispatchedByTerminalHash: legacyTerminal.terminalHash },
           { ...chart, stageTerminalHash: null },

@@ -85,6 +85,8 @@ export default Effect.gen(function* () {
         IF NOT COALESCE(source->>'schemaVersion'='bayn.jev-evaluation-request.v3'
           AND source #>> '{request,protocol,schemaVersion}'='bayn.jev.protocol.v41'
           AND source->>'cycleId'=NEW.payload #>> '{line,cycleId}'
+          AND EXISTS (SELECT 1 FROM autonomous_cycles cycle WHERE cycle.cycle_id=source->>'cycleId'
+            AND cycle.account_id=NEW.account_id AND cycle.execution_session_date=NEW.session_date)
           AND NEW.payload #>> '{line,model}'=source #>> '{request,protocol,model}'
           AND NEW.payload #>> '{line,purpose}'='ENTRY'
           AND non_dispatch->>'schemaVersion'='bayn.staged-terminal-receipt.v2'
