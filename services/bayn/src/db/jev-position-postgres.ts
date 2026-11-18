@@ -177,7 +177,7 @@ export const readProtectionEvidence = (
     WITH requests AS (
       SELECT c.requested_at AS at, true AS command, false AS stopped FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
         WHERE i.cycle_id = ${cycleId}
-          AND (${cutoff}::timestamptz IS NULL OR c.requested_at <= ${cutoff}::timestamptz)
+          AND (${cutoff}::timestamptz IS NULL OR c.requested_at < ${cutoff}::timestamptz)
       UNION ALL
       SELECT i.updated_at, false, false FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit','EquityShortOco','EquityShortStopLimit')
         AND i.state = 'TERMINAL' AND i.terminal_outcome = 'REJECTED'
@@ -277,7 +277,7 @@ export const readProtectionEvidence = (
             AND d.document #> '{strategyDecision,exitPolicy}' = c.exit_target #> '{evidence,portfolio,exitPolicy}'))) AS bound
       FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
       WHERE i.cycle_id = ${cycleId}
-        AND (${cutoff}::timestamptz IS NULL OR c.requested_at <= ${cutoff}::timestamptz)
+        AND (${cutoff}::timestamptz IS NULL OR c.requested_at < ${cutoff}::timestamptz)
       ORDER BY c.requested_at, c.broker_order_id COLLATE "C" LIMIT 1
     `,
     )

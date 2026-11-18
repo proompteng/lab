@@ -819,7 +819,9 @@ the preparation ordering does not guarantee submission.
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
 management. Current managed portfolios retain `bayn.jev-protection-evidence.v2` and reproduce protection facts at the
-original reconciliation cut, including broker observation and accounting receipt times. Untagged retained portfolios
+original reconciliation cut, including broker observation and accounting receipt times. Cancellation commands must
+precede that cut strictly: a command in the same millisecond requires a subsequent fresh reconciliation.
+Untagged retained portfolios
 use their original derivation. An accounted native take-profit partial fill reduces inventory without latching a
 new application exit; the remaining native stop and target retain their sealed prices. This requires exact account,
 intent, symbol, side, fill, parent and conditional-order terms. Unproven child roles retain a conservative exit latch.

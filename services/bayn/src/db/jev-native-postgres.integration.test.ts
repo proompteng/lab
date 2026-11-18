@@ -123,7 +123,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
 import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation-postgres'
-import { JevPositionStoreLive } from './jev-position-postgres'
+import { JevPositionStoreLive, verifyJevPortfolioSources } from './jev-position-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import { verifyBrokerStateVersion } from './reconciliation'
@@ -874,14 +874,46 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`,
         )
         expect(receiptCount).toBe(1)
-        const recovered = yield* (yield* JevPositionStore).read({
+        const sameCut = yield* (yield* JevPositionStore).read({
           cycleId: cycle.identity.cycleId,
           entryDecisionHash: portfolio.entryDecisionHash,
           brokerState: portfolio.brokerState,
         })
+        expect(sameCut).toEqual(management.target.evidence.portfolio)
+        expect(sameCut.exitRequestedAt).toBeNull()
+        yield* verifyJevPortfolioSources(sql, cycle.identity.cycleId, management.target.evidence.portfolio)
+        const refreshedAt = new Date(Date.parse(observedAt) + 1).toISOString()
+        yield* TestClock.setTime(Date.parse(refreshedAt))
+        const freshMaterial = {
+          ...portfolio.brokerState,
+          account: { ...portfolio.brokerState.account, observedAt: refreshedAt },
+          positions: portfolio.brokerState.positions.map((position) => ({ ...position, observedAt: refreshedAt })),
+          orders: portfolio.brokerState.orders.map((order) => ({ ...order, observedAt: refreshedAt })),
+          positionsObservedAt: refreshedAt,
+          ordersObservedAt: refreshedAt,
+        }
+        const freshHash = Result.getOrThrow(reconciledStateHash(freshMaterial))
+        const freshReconciliation = {
+          ...freshMaterial.reconciliation,
+          reconciliationId: '6'.repeat(64),
+          expectedHash: freshHash,
+          observedHash: freshHash,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(freshMaterial)),
+          reconciledAt: refreshedAt,
+        }
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,
+          content_hash,status,discrepancies,reconciled_at) VALUES (${freshReconciliation.reconciliationId},
+          ${freshReconciliation.schemaVersion},${replayAccountId},${freshHash},${freshHash},
+          ${freshReconciliation.contentHash},'EXACT','[]'::jsonb,${refreshedAt})`
+        const freshState = { ...freshMaterial, reconciliation: freshReconciliation }
+        const recovered = yield* (yield* JevPositionStore).read({
+          cycleId: cycle.identity.cycleId,
+          entryDecisionHash: portfolio.entryDecisionHash,
+          brokerState: freshState,
+        })
         expect(recovered.exitRequestedAt).toBe(observedAt)
         expect(recovered.profitExitRequested).toBe(reason === JevExitReason.ProfitTarget)
-        const resumed = yield* evaluateJevPositionManagement(input)
+        const resumed = yield* evaluateJevPositionManagement({ ...input, brokerState: freshState })
         if (resumed._tag !== 'Exit') throw new Error('Expected durable exit recovery')
         expect(resumed.target.reason).toBe(JevExitReason.ProtectionReleased)
         const floors = Result.getOrThrow(
