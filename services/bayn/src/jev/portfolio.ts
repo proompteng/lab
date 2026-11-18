@@ -25,6 +25,8 @@ export enum JevPurpose {
   Manage = 'MANAGE',
 }
 
+export const currentProtectionEvidenceVersion = 'bayn.jev-protection-evidence.v2' as const
+
 const ReconciledStateSchema = Schema.Struct({
   account: AccountSnapshotSchema,
   positions: Schema.Array(PositionSchema),
@@ -45,6 +47,7 @@ const Base = Schema.Union([
   Schema.Struct({ purpose: Schema.Literal(JevPurpose.Entry), brokerState: ReconciledStateSchema }),
   Schema.Struct({
     purpose: Schema.Literal(JevPurpose.Manage),
+    protectionEvidenceVersion: Schema.optionalKey(Schema.Literal(currentProtectionEvidenceVersion)),
     brokerState: ReconciledStateSchema,
     entryDecisionHash: Sha256Schema,
     exitPolicy: JevPositionExitPolicySchema,

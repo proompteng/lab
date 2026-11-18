@@ -7,6 +7,7 @@ import { operationalError } from '../errors'
 import { FillSchema } from '../execution/contracts'
 import {
   decodeJevPortfolio,
+  currentProtectionEvidenceVersion,
   JevInventoryDebitSchema,
   JevPositionStore,
   JevPurpose,
@@ -60,7 +61,12 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     ) = ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...portfolio.entryIntentIds].sort())}::jsonb)) AS matches
   `,
     )
-    const protection = yield* readProtectionEvidence(sql, cycleId, portfolio.entryDecisionHash)
+    const protection = yield* readProtectionEvidence(
+      sql,
+      cycleId,
+      portfolio.entryDecisionHash,
+      portfolio.protectionEvidenceVersion,
+    )
     if (
       JSON.stringify(protection.protectionIntentIds) !== JSON.stringify(portfolio.protectionIntentIds) ||
       protection.exitRequestedAt !== portfolio.exitRequestedAt ||
@@ -133,7 +139,12 @@ const readEntryInventoryDebit = (
     return debit
   })
 
-const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDecisionHash: string) =>
+export const readProtectionEvidence = (
+  sql: PgClient.PgClient,
+  cycleId: string,
+  entryDecisionHash: string,
+  version?: typeof currentProtectionEvidenceVersion,
+) =>
   Effect.gen(function* () {
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(Schema.Struct({ intentId: Sha256Schema })),
@@ -145,23 +156,53 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
     ORDER BY intent_id COLLATE "C"
   `,
     )
+    // Untagged retained portfolios reproduce the original all-disposal latch. New evidence keeps a
+    // verified native take-profit as inventory disposal; stop fills and unproven child roles still exit.
     const [latch] = yield* Schema.decodeUnknownEffect(
-      Schema.Tuple([Schema.Struct({ exitRequestedAt: Schema.NullOr(Schema.String) })]),
+      Schema.Tuple([
+        Schema.Struct({ exitRequestedAt: Schema.NullOr(Schema.String), commandOnlyAtEarliest: Schema.Boolean }),
+      ]),
       strictParseOptions,
     )(
       yield* sql`
-    SELECT to_char(min(at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "exitRequestedAt" FROM (
-      SELECT c.requested_at AS at FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
+    WITH requests AS (
+      SELECT c.requested_at AS at, true AS command FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
         WHERE i.cycle_id = ${cycleId}
       UNION ALL
-      SELECT i.updated_at FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit','EquityShortOco','EquityShortStopLimit')
+      SELECT i.updated_at, false FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit','EquityShortOco','EquityShortStopLimit')
         AND i.state = 'TERMINAL' AND i.terminal_outcome = 'REJECTED'
       UNION ALL
-      SELECT t.occurred_at FROM accounting_transactions t JOIN intents i USING (intent_id)
+      SELECT t.occurred_at, false FROM accounting_transactions t JOIN intents i USING (intent_id)
         JOIN accounting_receipts r USING (broker_event_id)
         WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL
           AND t.side = CASE WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY' ELSE 'SELL' END
-    ) requests
+          AND NOT (${version === currentProtectionEvidenceVersion} AND EXISTS (
+            SELECT 1 FROM fills f JOIN orders profit ON profit.broker_order_id = f.broker_order_id
+              AND profit.account_id = f.account_id AND profit.intent_id = f.intent_id
+            WHERE f.event_id = t.broker_event_id AND f.account_id = t.account_id
+              AND f.intent_id = t.intent_id AND f.symbol = t.symbol AND f.side = t.side
+              AND f.quantity_atoms = t.quantity_atoms AND f.price_atoms = t.price_atoms
+              AND profit.symbol = t.symbol AND profit.side = t.side AND profit.order_type = 'LIMIT'
+              AND profit.time_in_force = 'DAY' AND profit.stop_price_micros IS NULL
+              AND profit.limit_price_micros = (i.protection ->> 'profitLimitPriceMicros')::numeric
+              AND profit.quantity_atoms > 0 AND profit.quantity_atoms <= i.quantity_atoms
+              AND profit.filled_quantity_atoms >= t.quantity_atoms
+              AND profit.filled_quantity_atoms <= profit.quantity_atoms
+              AND (
+                (i.protection ->> '_tag' IN ('Bracket','EquityShortBracket') AND EXISTS (
+                  SELECT 1 FROM orders parent WHERE parent.broker_order_id = profit.parent_broker_order_id
+                    AND parent.account_id = i.account_id AND parent.intent_id = i.intent_id
+                    AND parent.client_order_id = i.client_order_id AND parent.symbol = i.symbol
+                    AND parent.side = i.side AND parent.quantity_atoms = i.quantity_atoms
+                )) OR
+                (i.protection ->> '_tag' IN ('Oco','EquityShortOco')
+                  AND profit.client_order_id = i.client_order_id AND profit.parent_broker_order_id IS NULL)
+              )
+          ))
+    )
+    SELECT to_char(min(at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "exitRequestedAt",
+      COALESCE(bool_and(command) FILTER (WHERE at = (SELECT min(at) FROM requests)), false) AS "commandOnlyAtEarliest"
+    FROM requests
   `,
     )
     const [request] = yield* Schema.decodeUnknownEffect(
@@ -214,7 +255,9 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
       exitRequestedAt: latch.exitRequestedAt,
       profitExitRequested:
         request !== undefined &&
-        request.requestedAt === latch.exitRequestedAt &&
+        (version === currentProtectionEvidenceVersion
+          ? latch.commandOnlyAtEarliest
+          : request.requestedAt === latch.exitRequestedAt) &&
         request.target !== null &&
         (request.target.reason === JevExitReason.ProfitTarget ||
           (request.target.reason === JevExitReason.ProtectionReleased &&
@@ -274,9 +317,10 @@ export const makeJevPositionStore = Effect.gen(function* () {
         const portfolio = yield* Effect.fromResult(
           decodeJevPortfolio({
             purpose: JevPurpose.Manage,
+            protectionEvidenceVersion: currentProtectionEvidenceVersion,
             brokerState,
             entryDecisionHash,
-            ...(yield* readProtectionEvidence(sql, cycleId, entryDecisionHash)),
+            ...(yield* readProtectionEvidence(sql, cycleId, entryDecisionHash, currentProtectionEvidenceVersion)),
             exitPolicy: entry.exitPolicy,
             entryIntentIds: intents.map(({ intent_id }) => intent_id),
             entryFills: rows.map(({ fill }) => fill),
