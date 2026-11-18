@@ -183,6 +183,68 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  const replayCases = ['fill', 'partial_fill', 'trade_correct', 'trade_bust', 'dropped']
+  test.each(replayCases)('checks bounded activity replay for %s', async (kind) => {
+    const until = '2026-11-18T20:47:00.000Z'
+    const event = {
+      activity_type: 'TRD',
+      ref_id: assetId,
+      executed_at: '2026-11-18T20:46:59.000000480Z',
+      price: '260.10',
+      qty: '1',
+      details: {
+        order_id: orderId,
+        cum_qty: '1',
+        leaves_qty: kind === 'partial_fill' ? '0.25' : '0.000',
+        symbol: 'AAPL',
+        side: 'buy',
+        execution_type: kind === 'partial_fill' ? 'fill' : kind,
+      },
+    }
+    const client = HttpClient.make((request, url) => {
+      expect(url.pathname).toBe('/v2beta1/events/activities')
+      expect(url.searchParams.get('until')).toBe(until)
+      const body =
+        ': welcome to the Alpaca events\n\n' +
+        (kind === 'dropped'
+          ? ': you are reading too slowly, dropped 50 messages\n\n'
+          : `:heartbeat\n\ndata: ${JSON.stringify(event)}\n\n:heartbeat\n\n`)
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'activity-replay' } }),
+        ),
+      )
+    })
+    const result = await Effect.runPromise(
+      withClient(client, (read) => {
+        if (read.fillExecutions === undefined) return Effect.die(new Error('missing paper replay reader'))
+        return Effect.result(read.fillExecutions(until))
+      }),
+    )
+    if (kind === 'fill' || kind === 'partial_fill') {
+      expect(result).toMatchObject({
+        _tag: 'Success',
+        success: [
+          {
+            executionId: assetId,
+            accountId,
+            brokerOrderId: orderId,
+            priceAtoms: '260100000000',
+            quantityAtoms: '1000000000',
+            type: kind,
+            leavesQuantityAtoms: kind === 'partial_fill' ? '250000000' : '0',
+          },
+        ],
+      })
+    } else {
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { operation: 'fill-executions', kind: BrokerReadErrorKind.InvalidResponse },
+      })
+    }
+  })
+
   test('retains the broker crypto fee tier with its account response evidence', async () => {
     const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: 4 }
     const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
@@ -264,6 +326,7 @@ describe('Alpaca paper reads', () => {
       'assetBySymbol',
       'feeActivities',
       'fillActivities',
+      'fillExecutions',
       'marketCalendar',
       'orderByClientId',
       'orderById',
