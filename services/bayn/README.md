@@ -431,9 +431,15 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior full after-history as the next before-history.
-The after-history is always read in full, including old fill and fee corrections. A new fill, generation gap,
-backward clock, failure or interruption discards that reuse. History endpoints run concurrently within each scan;
-pagination, exact fill coverage, original timestamps and hashes remain required.
+Each new history read checks the complete execution set. With a retained PAPER fill prefix, one bounded Alpaca
+Activity SSE replay checks the original execution IDs, order bindings, quantities, prices, status and execution
+clocks against the prefix and a paginated REST tail. The tail rereads the last known fill so the recent-fill
+projection has fresh REST evidence. Bayn retains the original REST fill IDs and response evidence. Missing,
+corrected or unsupported executions, incomplete stream frames and disagreement use complete REST fill paging.
+Order and fee histories still use complete REST reads. A new fill or generation gap discards reuse of the complete
+before-history. A clock regression, failure or interruption discards the retained prefix. History endpoints run
+concurrently within each scan. The capture still requires the original account/position bracket and exact order
+fill coverage.
 The compact recent-order and recent-fill projections come from that verified after-history and retain the actual
 response page's evidence, including empty histories. They are bounded by the same source cut instead of separate
 overlapping recent-history requests. The independent latest-fill probe remains before any retained-history reuse;

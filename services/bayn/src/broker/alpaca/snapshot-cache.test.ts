@@ -711,21 +711,21 @@ describe('complete history reuse between broker captures', () => {
     const order = template.snapshot.history.orders.rows[0]?.value
     const fill = template.snapshot.history.fills[0]?.value
     if (order === undefined || fill === undefined) throw new Error('missing history fixture')
-    // Match the traced capture: four order pages, nineteen fill pages and five fee pages.
+    // Match the traced capture: four order pages, twenty-two fill pages and five fee pages.
     const orders = Array.from({ length: 1500 }, (_, i) => ({
       ...order,
       brokerOrderId: `order-${i}`,
       clientOrderId: `client-${i}`,
       submittedAt: new Date(Date.parse('2026-11-12T18:00:00.000Z') - i * 1000).toISOString(),
-      filledQuantityAtoms: i === 0 ? '1811000000000' : '0',
-      quantityAtoms: i === 0 ? '1811000000000' : '1000000000',
+      filledQuantityAtoms: i === 0 ? '2168000000000' : '0',
+      quantityAtoms: i === 0 ? '2168000000000' : '1000000000',
       status: i === 0 ? OrderStatus.Filled : OrderStatus.Canceled,
     }))
-    const fills = Array.from({ length: 1811 }, (_, i) => ({
+    const fills = Array.from({ length: 2168 }, (_, i) => ({
       ...fill,
-      activityId: `fill-${i}`,
+      activityId: `fill::${i}`,
       brokerOrderId: 'order-0',
-      transactionTime: new Date(Date.parse(at) - (2000 - i) * 1000).toISOString(),
+      transactionTime: new Date(Date.parse(at) - (2200 - i) * 1000).toISOString(),
     }))
     const fees = Array.from({ length: 401 }, (_, i) => ({
       accountId,
@@ -785,24 +785,88 @@ describe('complete history reuse between broker captures', () => {
         yield* TestClock.setTime(Date.parse(at))
         const capture = yield* makeBrokerObservationCapture
         const first = yield* capture(read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
-        expect(source.calls).toHaveLength(60) // Before: 62, including two overlapping recent-history reads.
+        expect(source.calls).toHaveLength(66)
         expect(first.snapshot.history.orders.rows).toHaveLength(1500)
-        expect(first.snapshot.history.fills).toHaveLength(1811)
+        expect(first.snapshot.history.fills).toHaveLength(2168)
         expect(first.snapshot.history.fees).toHaveLength(401)
         const recentOrder = first.snapshot.history.orders.rows[0]
         const recentFill = first.snapshot.history.fills.at(-1)
         if (recentOrder === undefined || recentFill === undefined) throw new Error('missing captured history')
         expect(first.recentOrders.value).toEqual([recentOrder.value])
         expect(first.recentOrders.evidence).toEqual(recentOrder.evidence)
-        expect(first.recentFills.value).toEqual({ items: [recentFill.value], nextPageToken: 'fill-1810' })
+        expect(first.recentFills.value).toEqual({ items: [recentFill.value], nextPageToken: 'fill::2167' })
         expect(first.recentFills.evidence).toEqual(recentFill.evidence)
         yield* TestClock.adjust(40_000)
         source.calls.length = 0
         const second = yield* capture(read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
-        expect(source.calls).toHaveLength(33) // Before: 34; keep the independent latest-fill invalidation probe.
+        expect(source.calls).toHaveLength(36)
         expect(second.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
         expect(second.recentOrders.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
         expect(second.recentFills.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
+        const replayRead: BrokerReadShape = {
+          ...read,
+          fillExecutions: () =>
+            Effect.sync(() => {
+              source.calls.push('execution-replay')
+              return fills.map(({ activityId, ...value }) => ({
+                ...value,
+                executionId: activityId.slice('fill::'.length),
+                transactionTime:
+                  activityId === 'fill::2168'
+                    ? '2026-11-13T18:00:49.999999500Z'
+                    : value.transactionTime.replace('.000Z', '.000000500Z'),
+              }))
+            }),
+        }
+        const previousOrder = orders[0]
+        if (previousOrder === undefined) throw new Error('missing filled order')
+        fills.push({
+          ...fill,
+          activityId: 'fill::2168',
+          brokerOrderId: 'order-0',
+          transactionTime: '2026-11-13T18:00:50.000Z',
+        })
+        orders[0] = { ...previousOrder, filledQuantityAtoms: '2169000000000', quantityAtoms: '2169000000000' }
+        yield* TestClock.adjust(20_000)
+        source.calls.length = 0
+        const changed = yield* capture(replayRead, { generation: 4, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls).toHaveLength(26)
+        expect(source.calls.filter((call) => call === 'execution-replay')).toHaveLength(2)
+        expect(changed.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        expect(changed.snapshot.history.fees.map((row) => row.value)).toEqual(fees)
+        const oldFill = fills[0]
+        if (oldFill === undefined) throw new Error('missing retained fill')
+        fills[0] = { ...oldFill, priceAtoms: '199000000000' }
+        const correction = yield* capture(
+          replayRead,
+          { generation: 5, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(correction).toMatchObject({
+          _tag: 'Failure',
+          failure: { cause: { failure: { reason: 'HistoryChanged' } } },
+        })
+        const recovered = yield* capture(replayRead, { generation: 6, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
+        const unavailableReplay = (kind: BrokerReadErrorKind) => ({
+          ...read,
+          fillExecutions: () =>
+            Effect.fail(
+              new BrokerReadError({ operation: 'fill-executions', kind, message: 'fixture', retryable: true }),
+            ),
+        })
+        const timedOut = yield* capture(
+          unavailableReplay(BrokerReadErrorKind.Timeout),
+          { generation: 7, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
+        expect(timedOut.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        const rateLimited = yield* capture(
+          unavailableReplay(BrokerReadErrorKind.RateLimited),
+          { generation: 8, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(rateLimited).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.RateLimited } })
       }),
     )
   })
