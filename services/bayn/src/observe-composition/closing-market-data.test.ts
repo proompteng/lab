@@ -1915,6 +1915,23 @@ describe('closing market-data fallback boundaries', () => {
     'short-maximum-hold',
     'profit-hold-deadline',
     'short-profit-hold-deadline',
+    'before-hold-profit',
+    'before-hold-short-profit',
+    'before-hold-maximum-hold',
+    'deadline-foreign-cycle',
+    'deadline-foreign-entry',
+    'deadline-foreign-account',
+    'deadline-altered-policy',
+    'deadline-future-target',
+    'deadline-unknown-order',
+    'deadline-unknown-mutation',
+    'deadline-open-protection',
+    'deadline-stale-position',
+    'deadline-inexact-reconciliation',
+    'deadline-inexact-accounting',
+    'deadline-missing-mark',
+    'deadline-expired-lease',
+    'deadline-target-expires-during-reconciliation',
     'missing-latch',
     'future-latch',
     'future-target',
@@ -1933,10 +1950,28 @@ describe('closing market-data fallback boundaries', () => {
     'expired-lease',
     'invalid-archive',
     'target-expires-during-reconciliation',
-  ] as const)('mandatory exit fallback before the session close window: %s', async (scenario) => {
+  ] as const)('mandatory exit fallback before the session close window: %s', async (testScenario) => {
+    const deadlineGuard = testScenario.startsWith('deadline-')
+    const beforeHoldingDeadline = testScenario.startsWith('before-hold-')
+    const scenario = deadlineGuard
+      ? testScenario.slice('deadline-'.length)
+      : beforeHoldingDeadline
+        ? testScenario.slice('before-hold-'.length)
+        : testScenario
+    const fallbackReconciliationGuard =
+      deadlineGuard &&
+      [
+        'unknown-order',
+        'unknown-mutation',
+        'open-protection',
+        'stale-position',
+        'inexact-reconciliation',
+        'inexact-accounting',
+        'missing-mark',
+      ].includes(scenario)
     const request = await fixture()
     const short = scenario.startsWith('short-')
-    const maximumHold = scenario === 'maximum-hold' || scenario === 'short-maximum-hold'
+    const maximumHold = scenario === 'maximum-hold' || scenario === 'short-maximum-hold' || deadlineGuard
     const profitHoldDeadline = scenario === 'profit-hold-deadline' || scenario === 'short-profit-hold-deadline'
     const timedExit = maximumHold || profitHoldDeadline
     if (short) {
@@ -1964,7 +1999,9 @@ describe('closing market-data fallback boundaries', () => {
     const priceAtoms = String(BigInt(priceMicros) * 1000n)
     const signedQuantity = short ? -BigInt(quantityAtoms) : BigInt(quantityAtoms)
     const costBasisMicros = String((signedQuantity * BigInt(priceAtoms)) / 1_000_000_000_000n)
-    const observedAt = new Date(Date.parse(at) + (timedExit ? 900_000 : 60_000)).toISOString()
+    const observedAt = new Date(
+      Date.parse(at) + (beforeHoldingDeadline ? 899_999 : timedExit ? 900_000 : 60_000),
+    ).toISOString()
     const facts = factsAt(observedAt, true)
     const state = {
       ...facts.brokerState,
@@ -2013,7 +2050,8 @@ describe('closing market-data fallback boundaries', () => {
           profitExitRequested: scenario === 'profit' || scenario === 'short-profit' || profitHoldDeadline,
           brokerState: heldFacts.brokerState,
         },
-        observedAt,
+        observedAt:
+          beforeHoldingDeadline && maximumHold ? new Date(Date.parse(at) + 900_000).toISOString() : observedAt,
         trigger: {
           reason: maximumHold ? JevExitReason.MaximumHold : JevExitReason.ProtectionReleased,
         },
@@ -2021,6 +2059,16 @@ describe('closing market-data fallback boundaries', () => {
     )
     if (exitTarget.evidence.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected managed exit evidence')
     const exitPortfolio = exitTarget.evidence.portfolio
+    if (beforeHoldingDeadline && maximumHold) {
+      Object.assign(exitTarget, {
+        observedAt,
+        commitDeadlineAt: new Date(Date.parse(observedAt) + native.protocol.maximumQuoteAgeMs).toISOString(),
+      })
+      Object.assign(exitTarget.evidence, { observedAt })
+      expect(Result.isSuccess(Schema.decodeUnknownResult(JevExitTargetSchema, strictParseOptions)(exitTarget))).toBe(
+        false,
+      )
+    }
     if (scenario === 'missing-latch') Object.assign(exitTarget.evidence.portfolio, { exitRequestedAt: null })
     if (scenario === 'future-latch')
       Object.assign(exitTarget.evidence.portfolio, { exitRequestedAt: '2099-01-01T00:00:00.000Z' })
@@ -2091,7 +2139,8 @@ describe('closing market-data fallback boundaries', () => {
     const result = await runWithConstruction(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(scenario === 'expired-lease' ? request.closeExpiresAt : observedAt))
-        const management = timedExit
+        const exerciseTimedManagement = timedExit && !deadlineGuard && !beforeHoldingDeadline
+        const management = exerciseTimedManagement
           ? yield* evaluateJevPositionManagement({
               cycle: request.cycle,
               entryDecisionHash: request.entryDocument.contentHash,
@@ -2105,11 +2154,12 @@ describe('closing market-data fallback boundaries', () => {
               },
             }).pipe(Effect.provideService(JevPositionStore, { read: () => Effect.succeed(exitPortfolio) }))
           : undefined
-        if (timedExit && management?._tag !== 'Exit') throw new Error('Expected mandatory position exit')
+        if (exerciseTimedManagement && management?._tag !== 'Exit') throw new Error('Expected mandatory position exit')
         if (management?._tag === 'Exit') expect(management.target).toEqual(exitTarget)
         return yield* prepareClosingExecutionCycleDecision({
           ...request,
           exitTarget: management?._tag === 'Exit' ? management.target : exitTarget,
+          ...(fallbackReconciliationGuard ? { initialReconciliation: heldFacts } : {}),
           input: {
             ...request.input,
             intradayMarketData: {
@@ -2188,8 +2238,13 @@ describe('closing market-data fallback boundaries', () => {
       expect(renewed.document.targetPlan.status).toBe(TargetPlanStatus.Planned)
       return
     }
-    if (scenario !== 'protective' && scenario !== 'short-protective' && !timedExit) {
+    if (
+      (scenario !== 'protective' && scenario !== 'short-protective' && !timedExit) ||
+      deadlineGuard ||
+      beforeHoldingDeadline
+    ) {
       expect(Exit.isFailure(result) || result.value.document.targetPlan.status !== TargetPlanStatus.Planned).toBe(true)
+      if (fallbackReconciliationGuard) expect(reads).toBe(1)
       if (
         scenario === 'profit' ||
         scenario === 'short-profit' ||
