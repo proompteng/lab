@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const files = [
+  'src/db/visual-non-dispatch-migration.integration.test.ts',
   'src/db/native-equity-short.integration.test.ts',
   'src/db/equity-short-accounting.integration.test.ts',
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
