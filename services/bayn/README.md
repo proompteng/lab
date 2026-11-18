@@ -8,8 +8,11 @@ Current entry scope is **equity-only**. Retained crypto positions keep protectio
 reconciliation and accounting. The scope is enforced by
 [`currentEntryMarkets`](src/execution/trading-scope.ts), independently of the broader retained mandate.
 
-The active strategy remains long-only. [Stock-short research and accounting](../../docs/bayn/stock-short-research-2026-11-13.md)
-adds offline short controls and explicit signed inventory evidence; it does not authorize short orders.
+The active v41 strategy supports equity long and short positions. Short entries require the protocol's direction
+policy, fresh broker account and asset eligibility, and the same durable grant and risk checks as long entries.
+[Stock-short research and accounting](../../docs/bayn/stock-short-research-2026-11-13.md) retains the earlier research
+context; the current [protocol](src/jev/protocol.ts) and [short eligibility checks](src/execution/equity-short.ts)
+define executable behavior.
 
 ## Start here
 
@@ -43,7 +46,7 @@ adds offline short controls and explicit signed inventory evidence; it does not 
 - **Costs and qualification stay explicit.** Known execution and operating costs are deducted; missing costs remain
   unknown. Prospective economic acceptance and operational reliability use their registered evidence contracts.
 
-Current inference uses protocol v40, numerical input v24, batch v8, entry input v8 and handoff v5 with pinned
+Current inference uses protocol v41, numerical input v24, batch v8, entry input v8 and handoff v5 with pinned
 `jev-1.14.0`. The [Jev 1.14 cutover](../../docs/bayn/jev114-box-cutover.md) describes the authority and retained-evidence
 transition. The [pre-chart feasibility contract](../../docs/bayn/pre-chart-feasibility.md) explains which impossible
 source proposals can be rejected before paid inference.
@@ -316,11 +319,18 @@ rechecks PostgreSQL fences, account binding, original times and content identity
 Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
 PostgreSQL payload fallback or cache-disable mode.
 
-A retryable snapshot rejection or read timeout discards the cut and its retained history,
-then waits for the existing quota boundary before polling again. The already verified
-broker session stays open, so transient fill convergence does not repeat startup preflight.
-Failed acquisition, account or permission rejection, defects and external interruption
-still dispose the session before recovery. Failed publication remains unavailable.
+Each generation runtime may retain one privately frozen full-snapshot decoding of at most eight MiB of encoded bytes.
+An admitted read still fetches Valkey and reuses that decoding only when both the expected hash and the complete
+encoded bytes match. Every caller receives detached evidence; changed bytes take full strict decoding and canonical
+hash verification, and oversized payloads validate without retention. Account, chronology, age, PostgreSQL mutation
+and notification fences, and all reconciliation and ledger checks remain fresh. Compact submission state is always
+decoded and verified. The materialization span records `bayn.broker.payload_decode_reused` without payload contents.
+
+A retryable snapshot rejection discards the cut and its retained history, then waits
+for the existing quota boundary before polling again. The already verified broker session
+stays open, so transient fill convergence does not repeat startup preflight. Transport failures,
+exhausted request or capture deadlines, failed acquisition, account or permission rejection,
+defects and external interruption dispose the session before recovery. Failed publication remains unavailable.
 Market-calendar HTTP reads share a five-second budget across headers, body and retries,
 or the configured operation deadline when shorter, leaving time for the bounded recovery pass.
 
@@ -336,6 +346,13 @@ catalog evidence, dashboard panels and alerts. The API reuses its existing metri
 native Effect metrics to the existing Mimir gateway. The runbook includes a read-only rollout acceptance command.
 
 ## Broker observation owner
+
+Alpaca trade activities have a separate side vocabulary from orders: `buy`, `sell`, and `sell_short`.
+The read boundary normalizes `sell_short` to the existing sell direction for signed position accounting,
+while the raw response hash retains the provider's original side. Order requests and responses still accept
+only `buy` and `sell`; unsupported activity sides fail decoding. See Alpaca's
+[Trading API activity reference](https://docs.alpaca.markets/us/reference/getaccountactivitiesbyactivitytype-1) and
+[October 20 schema clarification](https://docs.alpaca.markets/us/changelog/2026-10-20-order-side-df66f83).
 
 Stable history compares broker order facts before and after the account read. It excludes
 the local `observedAt` timestamp on both parent orders and bracket children, because each
@@ -498,6 +515,14 @@ invalidates the older projection before waiting for quota. Raw websocket events 
 trading authority; the existing complete, bracketed account/history capture remains authoritative. A published
 canonical cut sends the controller a compact snapshot hash and original observation time.
 
+An admitted event rechecks a retryable local `NO_ADMISSIBLE_CUT` preflight failure immediately through the same
+broker-observation and reconciliation fences. A cached failure cannot conceal a newly published cut until the
+recovery interval ends. Provider timeouts, rate limits and nonretryable failures retain their existing handling.
+If an early event still finds broker evidence unavailable or pending, completion preserves an existing future
+recovery deadline when it is earlier than the new explicit deadline. Market eligibility uses that same deadline;
+a pass completing at or after it establishes the next bounded recovery interval. Successful financial progress
+can replace the deadline, and a legacy delay alone never creates a timer.
+
 `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000 milliseconds and accepts 1,000–60,000. Capture is bounded by the
 smaller of the operation timeout and half the maximum age. A named financial completeness timer starts the next
 refresh that far before the original observation expires, because quiet order streams do not prove that cash,
@@ -546,6 +571,9 @@ expires. The owner retains the original close-plus-two-second eligibility timer 
 
 An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
 transaction with `jev_inference_work`. That row retains the admitted financial work and its one-way dispatch claim.
+Dispatch polling materializes unresolved work before reading expiry from retained plan payloads, so completed history
+does not reopen large JSON evidence on each wake. The selected authority generation, original strict expiry cutoff,
+expiry-then-batch order, 64-item limit, claim state and admission deadline remain unchanged.
 The owner durably sends `BaynEntryInference.evaluate` and returns. The provider-only
 service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
 binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
@@ -570,6 +598,11 @@ reference so a replacement worker can verify that same manifest
 without treating replayed bytes as a new live capture. Before binding or transmitting, the existing financial path
 rechecks the current account, reconciled positions and orders, authority generation, unknown mutations, current executable
 quote, risk and original admission/inference/submission deadlines. Late or stale completion cannot authorize an order.
+
+Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
+its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
+fresh reads that cannot replace the committed source. Final short submission still checks current account, configuration,
+asset eligibility and borrow flags through the existing mutation authority.
 
 Only domain deadlines schedule a timer: source eligibility, original admission or inference expiry, position protection,
 maximum hold, session close, broker consistency, quota, financial freshness and explicit recovery. An actual state-machine
@@ -693,7 +726,7 @@ proposal economics. Current [chart questions](src/jev/staged-chart-questions.ts)
 
 Each symbol commits its CHART terminal and handoff before final inference. Fast symbols may proceed while other
 charts run, but selection requires the complete batch. Claims prevent repeated paid calls after retries or lost
-acknowledgements. Current v40 cost projection expects CHART and JEV; historical BASE_START claims, skips, question
+acknowledgements. Current v41 cost projection expects CHART and JEV; historical BASE_START claims, skips, question
 bytes and financial hashes remain readable through their original codecs. The original ten-second deadline bounds
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
@@ -788,7 +821,15 @@ the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
-management. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
+management. Current managed portfolios retain `bayn.jev-protection-evidence.v2` and reproduce protection facts at the
+original reconciliation cut, including broker observation and accounting receipt times. Cancellation commands must
+precede that cut strictly: a command in the same millisecond requires a subsequent fresh reconciliation.
+Untagged retained portfolios
+use their original derivation. An accounted native take-profit partial fill reduces inventory without latching a
+new application exit; the remaining native stop and target retain their sealed prices. This requires exact account,
+intent, symbol, side, fill, parent and conditional-order terms. Unproven child roles retain a conservative exit latch.
+A verified native stop disposal releases a prior profit restriction; an unknown later disposal does not create stop
+evidence or release that restriction. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
 UTC date. Expired broker evidence waits for reconciliation before authorizing a close. A 15-minute holding limit
 starts at the first actual fill. A verified adverse bid triggers the absolute strategy stop. A verified bid at the absolute strategy target triggers
 the application profit exit when a broker group has not already disposed of inventory. Its initial close must
@@ -799,6 +840,13 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
+Native protection cancellation samples the per-account database clock after acquiring the writer lease and intent
+lock, and checks the original target deadline against that unrounded time. Its stored millisecond command key
+exactly matches receipt lookup. Replay observes the committed admission before broker I/O. Delayed admission cannot
+backdate a new command or refresh its trigger; existing commands and receipts retain their identities and recovery.
+An already verified equity bracket or OCO may retain fractional residual inventory during the regular session.
+Exact child coverage and sealed prices remain required; new protection still follows provider sizing restrictions,
+and session transitions, unknown protection or a due exit retain their existing recovery behavior.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
 tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
@@ -829,8 +877,16 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; current equity entries retain their evidence and LIMIT/DAY requirements.
 
-Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
-that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
+Before that session-close window, the same position-mark close can resume an already committed non-profit exit after
+protection cancellation, rejection or an accounted protective disposal. The complete reproduced `PROTECTION_RELEASED`
+target must retain its durable exit-request time, exact entry, account, cycle, session and sealed exit policy. A broker
+mark cannot create a new stop trigger or release a profit limit before the sealed first-fill holding deadline.
+Once that deadline elapses, a complete reproduced `MAXIMUM_HOLD` or `PROTECTION_RELEASED` target may also use the
+position-mark close, including a profit latch whose limit floor or ceiling has expired by time. The original
+first fill, holding policy and target expiry remain unchanged. Fresh exact reconciliation, known-order settlement, inventory-only quantity
+bounds, source-mark timestamps, current authority and close expiry remain mandatory.
+An unavailable archive without a due holding deadline or committed non-profit exit does not trigger a redundant reconciliation before the
+fallback is eligible. Eligibility is sampled after the archive attempt, so work that crosses into the window may
 use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
 waits retain the explicit close-eligibility deadline and react to market or broker events. Failed close attempts retain the original data reason in logs.
 A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
@@ -945,8 +1001,9 @@ The frozen v2 contract remains available for historical verification.
   Only broker configuration and the durable grant differ.
 - Every intent, client-order ID, risk decision, and mutation transition is committed before broker I/O. Unknown broker
   outcomes block new exposure until deterministic lookup and reconciliation resolve them.
-- Execution is long-only. Sells cannot exceed reconciled inventory. Entry, gross exposure, turnover, loss, drawdown,
-  cutoff, and stale-data limits fail closed.
+- Equity entries follow the v41 long/short direction policy and fresh broker eligibility. Risk-reducing sells of long
+  inventory and buys covering short inventory remain bounded by the reconciled position. Entry, gross exposure,
+  turnover, loss, drawdown, cutoff, and stale-data limits fail closed.
 - PostgreSQL and TigerBeetle must reconcile exactly. Identity drift, unresolved mutations, stale broker evidence,
   duplicate controllers and accounting discrepancies block new orders. Unavailable archive evidence blocks entry;
   the bounded close-only path can instead bind freshly reconciled broker positions.
@@ -1345,6 +1402,10 @@ through the existing idempotent finalizer. This closes evidence after an admissi
 it makes no provider calls and cannot bind a decision or authorize an order.
 An account-bound cursor survives physical session recreation and wraps at the end of the sweep, so failed batches
 remain retryable without starving later work. Process restart may reset this progress hint; committed results remain authoritative.
+Expiry selection and its remaining-work check materialize account-scoped unresolved work before reading expiry
+from retained plan payloads. Completed history therefore stays outside payload decoding on every recovery wake.
+The original expiry, deterministic cursor order and 64-item page still govern recovery, including unclaimed work
+and work from older generations.
 
 The same pass then reads at most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
@@ -1603,10 +1664,16 @@ broker projection each time, so an unavailable broker remains visible as degrade
 process restart. Execution workers retain their verified broker session and all existing order-admission checks.
 
 Status [economics](src/cycle/observability.ts) labels cumulative accounting `ACCOUNT_HISTORY`, spanning authority
-generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Its execution-fee
+generations. `realizedCloseCount` counts closing accounting transactions: SELL for long inventory and BUY for the
+short-accounting schema, including partial fills. Use the report's balanced `positionEpisodes` for entry-to-flat
+episode counts. Its execution-fee
 subtotal includes recorded fill fees and posted broker fees; unposted charges and operating expenses remain outside it.
 The retained `forwardPerformance` receipt identifies its own generation, source revision and measurement window,
 independently of the current worker. When absent, it is null with `forwardPerformanceUnavailableReason=NO_PERSISTED_RECEIPT`.
+Receipt persistence requires the terminal generation and complete evidence described in
+[forward-performance reporting](#operations). An active generation or unresolved provider usage can therefore have
+exact trading reconciliation while its persisted report is unavailable. Use the separately budgeted read-only
+generation report for provisional diagnostics; retained unknown usage stays explicit until provider evidence resolves it.
 
 The private execution worker also serves `GET /startup-ready` for its initial history-rebuild barrier; it is separate
 from status-service health and current trading readiness.
@@ -1650,6 +1717,14 @@ a stream event. Worker completion, persistence and transport time never reset th
 runs on the next bounded continuation. A failed post-pass projection check selects its explicit recovery deadline.
 These wake times grant no execution authority and retain fresh reconciliation,
 quote, risk and submission checks.
+
+When decision construction fails because the fenced broker projection has no admissible cut,
+the retained failure preserves the typed `NO_ADMISSIBLE_CUT` marker. Ordinary quote updates then
+honor the existing broker recovery deadline, as direct reconciliation failures already do. Early
+retries keep an earlier outstanding deadline. Broker publications, inference completion and source
+startup, readiness or recovery events can still wake the owner immediately. Provider timeouts and
+unrelated decision failures do not acquire this marker from their message text, and every retry
+performs the normal fresh financial checks.
 
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
@@ -1787,14 +1862,21 @@ An expired sandbox mandate with no execution evidence may use the existing rearm
 receipt. That narrow exception requires a fresh exact reconciliation, a trusted flat position observation, no open
 or unknown orders, and settled mutations. Any fill, accounted execution or positive filled-order quantity bound to
 the generation retains the receipt requirement. Zero executions remain unqualified and never imply profitability.
+
+That receipt requirement concerns retirement by completion or activation expiry. Recovery from a recognized temporary
+system restriction under a standing research request follows the settlement and grant checks described above,
+including fresh exact reconciliation, flat positions and settled mutations. It does not establish economic
+qualification or replace the separate qualified-capital contract.
+
 The write command acquires the execution writer fence before reading report evidence and holds it through the
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
 Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
-Within one report, completed intraday cycles with identical retrospective archive query material share the archive
-watermark capture and bounded bar pages. The key includes the symbol, feed, session, calendar and exact report cutoff;
-each result still verifies its own decision identity and original watermark lower bounds. No evidence or query result
-is cached across reports. Retained Jev readers similarly pass one verified observation through batch and target
+Within one report, completed intraday cycles with identical retrospective archive query material share bounded bar
+pages. Their key includes the symbol, feed, session, calendar and exact report cutoff. Full-universe watermark captures
+also share one cancellable read across symbols when every other query field agrees; each result still verifies its own
+decision identity and original watermark lower bounds. No evidence or query result is cached across reports.
+Retained Jev readers similarly pass one verified observation through batch and target
 reconstruction; their quote binding projects already verified source rows without weakening current admission.
 These optimizations do not establish that a complete report meets a requested deadline; measure that on the full cut.
 Opening and closing balance queries resolve their time cuts before looking up account snapshots through the existing

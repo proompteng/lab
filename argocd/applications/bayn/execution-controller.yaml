@@ -177,10 +177,10 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
-            # Main, projection and decision isolates share 1 GiB; leave native/buffer headroom.
-            # Node otherwise derives a separate heap budget from the full limit for each isolate.
+            # Three isolates share 3 GiB: 3 * (640 + 3 * 16) MiB leaves 1,008 MiB for native memory.
+            # The prior 384 MiB old-generation cap exhausted the active owner's heap during a session.
             - name: NODE_OPTIONS
-              value: --max-old-space-size=192 --max-semi-space-size=16
+              value: --max-old-space-size=640 --max-semi-space-size=16
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
@@ -243,10 +243,13 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
-            limits:
-              cpu: "2"
               memory: 1Gi
+            limits:
+              # The owner, projection, decision worker and V8 GC can run together.
+              cpu: "8"
+              # Reserve native memory and buffers beyond all three V8 ceilings.
+              # Retained-state growth still requires full-session measurement.
+              memory: 3Gi
           securityContext:
             # TigerBeetle's native client requires io_uring, which containerd's
             # RuntimeDefault seccomp profile blocks. Keep every other control.
