@@ -862,10 +862,12 @@ preserves the reviewed close authority; current equity entries retain their evid
 Before that session-close window, the same position-mark close can resume an already committed non-profit exit after
 protection cancellation, rejection or an accounted protective disposal. The complete reproduced `PROTECTION_RELEASED`
 target must retain its durable exit-request time, exact entry, account, cycle, session and sealed exit policy. A broker
-mark cannot create a new stop trigger or release a profit limit: profit-exit latches retain the quote-backed path and
-ordinary session-close fallback window. Fresh exact reconciliation, known-order settlement, inventory-only quantity
+mark cannot create a new stop trigger or release a profit limit before the sealed first-fill holding deadline.
+Once that deadline elapses, a complete reproduced `MAXIMUM_HOLD` or `PROTECTION_RELEASED` target may also use the
+position-mark close, including a profit latch whose limit floor or ceiling has expired by time. The original
+first fill, holding policy and target expiry remain unchanged. Fresh exact reconciliation, known-order settlement, inventory-only quantity
 bounds, source-mark timestamps, current authority and close expiry remain mandatory.
-An unavailable archive without that committed non-profit exit does not trigger a redundant reconciliation before the
+An unavailable archive without a due holding deadline or committed non-profit exit does not trigger a redundant reconciliation before the
 fallback is eligible. Eligibility is sampled after the archive attempt, so work that crosses into the window may
 use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
 waits retain the explicit close-eligibility deadline and react to market or broker events. Failed close attempts retain the original data reason in logs.
