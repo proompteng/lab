@@ -44,7 +44,15 @@ import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { CryptoFeeTier } from '../broker/crypto-fees'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
-import { Authority, KillState, OrderSide, OrderStatus, OrderType, TerminalOutcome } from '../execution/contracts'
+import {
+  Authority,
+  KillState,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  TerminalOutcome,
+  TimeInForce,
+} from '../execution/contracts'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
 import { makeBrokerStateCache } from '../execution/broker-state-cache'
 import { makeExecutionProgram } from '../execution/runtime-program'
@@ -213,6 +221,7 @@ const seedManagedPosition = (
     readonly heldMinutes?: number
     readonly nativeProtection?: 'strategy' | 'tampered'
     readonly settleEntry?: boolean
+    readonly completeNativeEntry?: boolean
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -285,9 +294,40 @@ const seedManagedPosition = (
       const entryId = options.entryDocument.orderedIntentIds[0]
       if (entryId === undefined) throw new Error('Expected an entry intent')
       const clientId = clientOrderIdForIntentId(entryId)
+      const fullQuantity = options.completeNativeEntry
+        ? options.entryDocument.targetPlan.intentTargets[0]?.quantityAtoms
+        : undefined
+      const originalQuantity = portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)
       const state = {
         ...portfolio.brokerState,
-        orders: portfolio.brokerState.orders.map((order) => ({ ...order, intentId: entryId, clientOrderId: clientId })),
+        positions: portfolio.brokerState.positions.map((position) =>
+          fullQuantity === undefined
+            ? position
+            : {
+                ...position,
+                quantityAtoms: fullQuantity,
+                costBasisMicros: String((BigInt(position.costBasisMicros) * BigInt(fullQuantity)) / originalQuantity),
+                marketValueMicros: String(
+                  (BigInt(position.marketValueMicros) * BigInt(fullQuantity)) / originalQuantity,
+                ),
+                unrealizedPnlMicros: String(
+                  (BigInt(position.unrealizedPnlMicros) * BigInt(fullQuantity)) / originalQuantity,
+                ),
+              },
+        ),
+        orders: portfolio.brokerState.orders.map((order) => ({
+          ...order,
+          intentId: entryId,
+          clientOrderId: clientId,
+          ...(fullQuantity === undefined
+            ? {}
+            : {
+                quantityAtoms: fullQuantity,
+                filledQuantityAtoms: fullQuantity,
+                status: OrderStatus.Filled,
+                timeInForce: TimeInForce.Day,
+              }),
+        })),
       }
       const hash = Result.getOrThrow(reconciledStateHash(state))
       portfolio = Result.getOrThrow(
@@ -299,7 +339,14 @@ const seedManagedPosition = (
               ? options.entryDocument.strategyDecision.exitPolicy
               : portfolio.exitPolicy,
           entryIntentIds: [entryId],
-          entryFills: portfolio.entryFills.map((fill) => ({ ...fill, intentId: entryId, clientOrderId: clientId })),
+          entryFills: portfolio.entryFills.map((fill, index) => ({
+            ...fill,
+            intentId: entryId,
+            clientOrderId: clientId,
+            ...(fullQuantity === undefined
+              ? {}
+              : { quantityAtoms: index === 0 ? String(BigInt(fullQuantity) - 2_000_000_000n) : '2000000000' }),
+          })),
           brokerState: {
             ...state,
             reconciliation: { ...state.reconciliation, expectedHash: hash, observedHash: hash },
@@ -2414,6 +2461,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           entryDocument: document,
           observedAt: new Date(Date.parse(document.createdAt) + 3 * 60_000 + 2000).toISOString(),
           ...(scenario.startsWith('protection-') ? { nativeProtection: 'strategy' as const, settleEntry: true } : {}),
+          ...(scenario === 'protection-native-tp-keeps-coverage' ? { completeNativeEntry: true } : {}),
         })
         if (scenario === 'fee-source') {
           const sql = yield* PgClient.PgClient
@@ -2544,6 +2592,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           exitTarget,
         }
         if (scenario.startsWith('protection-')) {
+          const keepNative = scenario === 'protection-native-tp-keeps-coverage'
           const sql = yield* PgClient.PgClient
           const fence = yield* WriterFence
           const entryId = document.orderedIntentIds[0]
@@ -2555,39 +2604,57 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const brokerOrderId = 'partial-tp-native-child'
           const eventId = '7'.repeat(64)
           const partialEventId = '8'.repeat(64)
+          const parent = portfolio.brokerState.orders[0]
+          if (parent === undefined) throw new Error('Expected the filled entry order')
           const entryFill = portfolio.entryFills[0]
           if (entryFill === undefined) throw new Error('Expected canonical entry fill pricing')
-          const partialNotional = ((2_000_000_000n * BigInt(entryFill.priceAtoms)) / 1_000_000_000_000n).toString()
+          const partialPriceAtoms = keepNative
+            ? String(BigInt(levels.profitLimitPriceMicros) * 1000n)
+            : entryFill.priceAtoms
+          const partialBasis = ((2_000_000_000n * BigInt(entryFill.priceAtoms)) / 1_000_000_000_000n).toString()
+          const partialNotional = ((2_000_000_000n * BigInt(partialPriceAtoms)) / 1_000_000_000_000n).toString()
+          const originalQuantity = keepNative ? parent.quantityAtoms : '5000000000'
+          if (originalQuantity === undefined) throw new Error('Expected native parent quantity')
+          const remainingQuantity = String(BigInt(originalQuantity) - 2_000_000_000n)
           yield* sql.withTransaction(
             Effect.gen(function* () {
+              if (keepNative) {
+                const parentEventId = '9'.repeat(64)
+                yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+                  source_event_id,source_sequence,occurred_at,observed_at) VALUES (${parentEventId},'bayn.paper-broker-event.v1',
+                  ${parentEventId},'ORDER','ALPACA',${replayAccountId},${parent.brokerOrderId},99,${entryFill.occurredAt},${entryFill.occurredAt})`
+                yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
+                  symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status)
+                  VALUES (${parentEventId},${replayAccountId},'bayn.order.v3',${parent.brokerOrderId},${parent.clientOrderId},${entryId},
+                  'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED')`
+              }
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at) VALUES (${eventId},'bayn.paper-broker-event.v1',
             ${eventId},'ORDER','ALPACA',${replayAccountId},${brokerOrderId},100,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status)
+            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id)
             VALUES (${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'partial-tp-native-child',${entryId},
-            'AAPL','SELL','LIMIT','DAY',5000000000,2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED')`
+            'AAPL','SELL','LIMIT','DAY',${originalQuantity},2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED',
+            ${keepNative ? parent.brokerOrderId : null})`
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at) VALUES (${partialEventId},'bayn.paper-broker-event.v1',
                 ${partialEventId},'FILL','ALPACA',${replayAccountId},'partial-tp-fill',101,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
                 intent_id,symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp) VALUES (${partialEventId},
                 ${replayAccountId},${entryFill.schemaVersion},'partial-tp-fill',${brokerOrderId},'partial-tp-native-child',
-                ${entryId},'AAPL','SELL',2000000000,${entryFill.priceAtoms},0,${cancelAt.replace('Z', '000000Z')})`
+                ${entryId},'AAPL','SELL',2000000000,${partialPriceAtoms},0,${cancelAt.replace('Z', '000000Z')})`
               yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,
                 account_id,symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,
                 realized_pnl_micros,quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,
                 content_hash,occurred_at) VALUES (${partialEventId},'bayn.accounting-transaction.v2',${partialEventId},
-                ${entryId},${replayAccountId},'AAPL','SELL',2000000000,${entryFill.priceAtoms},${partialNotional},0,
-                ${partialNotional},0,-2000000000,${'-' + partialNotional},${partialNotional},${partialEventId},${partialEventId},${cancelAt})`
+                ${entryId},${replayAccountId},'AAPL','SELL',2000000000,${partialPriceAtoms},${partialNotional},0,
+                ${partialBasis},${String(BigInt(partialNotional) - BigInt(partialBasis))},-2000000000,${'-' + partialBasis},${partialNotional},${partialEventId},${partialEventId},${cancelAt})`
               yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
                 tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,
                 recorded_at) VALUES (${partialEventId},'bayn.paper-accounting-receipt.v1',${entryId},${partialEventId},1,1,
                 ARRAY[1,2]::numeric[],ARRAY[999]::numeric[],${partialNotional},${partialNotional},${partialEventId},${cancelAt})`
             }),
           )
-          const parent = portfolio.brokerState.orders[0]
-          if (parent === undefined) throw new Error('Expected the filled entry order')
           const child = {
             ...parent,
             brokerOrderId,
@@ -2596,18 +2663,43 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             side: OrderSide.Sell,
             orderType: OrderType.Limit,
             status: OrderStatus.PartiallyFilled,
-            quantityAtoms: '5000000000',
+            quantityAtoms: originalQuantity,
             filledQuantityAtoms: '2000000000',
             limitPriceMicros: levels.profitLimitPriceMicros,
             observedAt: cancelAt,
+            ...(keepNative ? { timeInForce: TimeInForce.Day } : {}),
+            ...(keepNative ? { parentBrokerOrderId: parent.brokerOrderId } : {}),
+          }
+          const remainingStop = {
+            ...child,
+            brokerOrderId: 'partial-tp-native-stop',
+            clientOrderId: 'partial-tp-native-stop',
+            orderType: OrderType.StopLimit,
+            status: OrderStatus.Pending,
+            quantityAtoms: remainingQuantity,
+            filledQuantityAtoms: '0',
+            limitPriceMicros: levels.stopLimitPriceMicros,
+            stopPriceMicros: levels.stopPriceMicros,
           }
           const pendingMaterial = {
             ...closeFacts.brokerState,
             positions: closeFacts.brokerState.positions.map((position) => ({
               ...position,
-              quantityAtoms: '3000000000',
+              quantityAtoms: remainingQuantity,
+              ...(keepNative
+                ? {
+                    costBasisMicros: String(BigInt(position.costBasisMicros) - BigInt(partialBasis)),
+                    marketValueMicros: String(
+                      (BigInt(position.marketPriceMicros) * BigInt(remainingQuantity)) / 1_000_000_000n,
+                    ),
+                    unrealizedPnlMicros: String(
+                      (BigInt(position.marketPriceMicros) * BigInt(remainingQuantity)) / 1_000_000_000n -
+                        (BigInt(position.costBasisMicros) - BigInt(partialBasis)),
+                    ),
+                  }
+                : {}),
             })),
-            orders: [...closeFacts.brokerState.orders, child],
+            orders: [...closeFacts.brokerState.orders, child, ...(keepNative ? [remainingStop] : [])],
           }
           const pendingHash = Result.getOrThrow(reconciledStateHash(pendingMaterial))
           const pendingReconciliation = {
@@ -2711,7 +2803,25 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             )
           const advance = (program: ReturnType<typeof makeProgram>, facts: ReconciliationPassResult) =>
             advancePositionProtection({
-              input: closeRequest.input,
+              input: keepNative
+                ? {
+                    ...closeRequest.input,
+                    intradayMarketData: {
+                      ...marketData,
+                      loadSnapshot: (query) =>
+                        Effect.succeed(
+                          streamingFixtureFromRaw(
+                            makeIntradayMomentumTestSnapshot(
+                              fixture.protocol,
+                              { ...query, archiveWatermarks: [] },
+                              { AAPL: 0.002 },
+                            ),
+                            query,
+                          ).snapshot,
+                        ),
+                    },
+                  }
+                : closeRequest.input,
               cycle,
               document,
               protocol: fixture.protocol,
@@ -2722,6 +2832,28 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               closeExpiresAt: cycle.window.executionCloseAt,
             })
           const first = yield* advance(makeProgram(cancelStore, cancelFence), pendingFacts)
+          if (keepNative) {
+            const current = yield* (yield* JevPositionStore).read({
+              cycleId: cycle.identity.cycleId,
+              entryDecisionHash: document.contentHash,
+              brokerState: pendingFacts.brokerState,
+            })
+            expect(current).toMatchObject({
+              protectionEvidenceVersion: 'bayn.jev-protection-evidence.v2',
+              exitRequestedAt: null,
+              profitExitRequested: false,
+              protectionDisposals: { quantityAtoms: '2000000000', costBasisMicros: partialBasis },
+            })
+            expect(first).toMatchObject({ _tag: 'Step', step: { _tag: 'Wait', waitReason: 'JEV_POSITION_HELD' } })
+            expect(brokerCalls).toBe(0)
+            expect(yield* sql`SELECT count(*)::integer AS count FROM native_protection_cancel_commands`).toEqual([
+              { count: 0 },
+            ])
+            expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_cycle_paper_closures`).toEqual([
+              { count: 0 },
+            ])
+            return
+          }
           expect(fenceCalls).toBe(2)
           expect(first._tag).toBe(scenario === 'protection-committed-ack-loss' ? 'PostMutationReconciliation' : 'Step')
           expect(brokerCalls).toBe(1)
@@ -3160,6 +3292,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     'measured-on-time',
     'protection-committed-ack-loss',
     'protection-receipt-missing',
+    'protection-native-tp-keeps-coverage',
   ])('native exit persistence: %s', nativeExitPersistence, 30_000)
 })
 import { longEntryBrokerReads } from '../testing/entry-broker-reads.test-support'
