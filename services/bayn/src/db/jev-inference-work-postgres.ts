@@ -74,16 +74,19 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const generation =
         input === undefined ? undefined : yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
       const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
+      // Exclude completed results before detoasting their retained plan payloads on each dispatch poll.
       const rows = yield* decodeRows(
         yield* sql`
-        SELECT plan.payload AS plan, work.claimed_at IS NOT NULL AS claimed,
-          to_char(work.admission_deadline_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admission_deadline_at
-        FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
-        LEFT JOIN jev_batch_results AS result USING (batch_id)
-        WHERE result.batch_id IS NULL
-          AND plan.payload->>'expiresAt' > ${now}
-          AND ${generation === undefined ? sql`true` : sql`plan.authority_generation_hash = ${generation}`}
-        ORDER BY plan.payload->>'expiresAt', work.batch_id LIMIT 64`,
+        WITH unresolved AS MATERIALIZED (
+          SELECT work.batch_id, work.claimed_at, work.admission_deadline_at, plan.payload
+          FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
+          WHERE ${generation === undefined ? sql`true` : sql`plan.authority_generation_hash = ${generation}`}
+            AND NOT EXISTS (SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = work.batch_id)
+        )
+        SELECT payload AS plan, claimed_at IS NOT NULL AS claimed,
+          to_char(admission_deadline_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admission_deadline_at
+        FROM unresolved WHERE payload->>'expiresAt' > ${now}
+        ORDER BY payload->>'expiresAt', batch_id LIMIT 64`,
       )
       return yield* Effect.forEach(rows, (row) =>
         Effect.fromResult(decodeJevBatchPlan(row.plan)).pipe(Effect.map((plan) => jobFromRow(plan, row))),

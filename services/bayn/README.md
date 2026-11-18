@@ -326,11 +326,11 @@ hash verification, and oversized payloads validate without retention. Account, c
 and notification fences, and all reconciliation and ledger checks remain fresh. Compact submission state is always
 decoded and verified. The materialization span records `bayn.broker.payload_decode_reused` without payload contents.
 
-A retryable snapshot rejection or read timeout discards the cut and its retained history,
-then waits for the existing quota boundary before polling again. The already verified
-broker session stays open, so transient fill convergence does not repeat startup preflight.
-Failed acquisition, account or permission rejection, defects and external interruption
-still dispose the session before recovery. Failed publication remains unavailable.
+A retryable snapshot rejection discards the cut and its retained history, then waits
+for the existing quota boundary before polling again. The already verified broker session
+stays open, so transient fill convergence does not repeat startup preflight. Transport failures,
+exhausted request or capture deadlines, failed acquisition, account or permission rejection,
+defects and external interruption dispose the session before recovery. Failed publication remains unavailable.
 Market-calendar HTTP reads share a five-second budget across headers, body and retries,
 or the configured operation deadline when shorter, leaving time for the bounded recovery pass.
 
@@ -571,6 +571,9 @@ expires. The owner retains the original close-plus-two-second eligibility timer 
 
 An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
 transaction with `jev_inference_work`. That row retains the admitted financial work and its one-way dispatch claim.
+Dispatch polling materializes unresolved work before reading expiry from retained plan payloads, so completed history
+does not reopen large JSON evidence on each wake. The selected authority generation, original strict expiry cutoff,
+expiry-then-batch order, 64-item limit, claim state and admission deadline remain unchanged.
 The owner durably sends `BaynEntryInference.evaluate` and returns. The provider-only
 service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
 binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
@@ -1714,6 +1717,14 @@ a stream event. Worker completion, persistence and transport time never reset th
 runs on the next bounded continuation. A failed post-pass projection check selects its explicit recovery deadline.
 These wake times grant no execution authority and retain fresh reconciliation,
 quote, risk and submission checks.
+
+When decision construction fails because the fenced broker projection has no admissible cut,
+the retained failure preserves the typed `NO_ADMISSIBLE_CUT` marker. Ordinary quote updates then
+honor the existing broker recovery deadline, as direct reconciliation failures already do. Early
+retries keep an earlier outstanding deadline. Broker publications, inference completion and source
+startup, readiness or recovery events can still wake the owner immediately. Provider timeouts and
+unrelated decision failures do not acquire this marker from their message text, and every retry
+performs the normal fresh financial checks.
 
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
