@@ -143,38 +143,27 @@ export const acquireInferenceExpenseSnapshot = (
       .pipe(
         Effect.map((inputs) => ({
           verify: Effect.gen(function* () {
-            const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
-            const requests: DecodedInferenceCostRequest[] = []
             const verifier = yield* Effect.serviceOption(ReportVerification)
-            const pending: { readonly payload: unknown; readonly asOf: string }[] = []
-            const flushRequests = () =>
-              Effect.forEach(
-                pending.splice(0),
-                ({ payload, asOf }) =>
-                  Option.isSome(verifier)
-                    ? verifier.value.inference(payload, asOf)
-                    : Effect.fromResult(decodeInferenceCostRequest(payload, asOf)),
-                { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
-              ).pipe(
-                Effect.tap((decoded) =>
-                  Effect.sync(() => {
-                    requests.push(...decoded)
-                  }),
-                ),
-              )
-            for (const input of inputs) {
-              const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
-              if (row.kind === SnapshotRowKind.Request) {
-                // Reproduction is synchronous CPU work. Service sockets and caller
-                // cancellation between requests without changing the financial cut.
-                yield* Effect.yieldNow
-                pending.push({ payload: row.payload, asOf: row.as_of })
-                if (pending.length === (Option.isSome(verifier) ? reportVerificationConcurrency : 1))
-                  yield* flushRequests()
-              }
-              rows.push(row)
-            }
-            yield* flushRequests()
+            const decoded = yield* Effect.forEach(
+              inputs,
+              (input) =>
+                Effect.gen(function* () {
+                  const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
+                  let request: DecodedInferenceCostRequest | undefined
+                  if (row.kind === SnapshotRowKind.Request) {
+                    // Reproduction is synchronous CPU work. Service sockets and caller
+                    // cancellation between requests without changing the financial cut.
+                    yield* Effect.yieldNow
+                    request = yield* Option.isSome(verifier)
+                      ? verifier.value.inference(row.payload, row.as_of)
+                      : Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of))
+                  }
+                  return { row, request }
+                }),
+              { concurrency: Option.isSome(verifier) ? reportVerificationConcurrency : 1 },
+            )
+            const rows = decoded.map(({ row }) => row)
+            const requests = decoded.flatMap(({ request }) => (request === undefined ? [] : [request]))
             const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
             const cut = cuts[0]
             if (

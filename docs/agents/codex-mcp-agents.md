@@ -202,7 +202,7 @@ status and cancellation calls. The old `agent_start`, `agent_status`, `agent_rea
 and `agent_cancel` tools are removed.
 
 The Codex worker runs `codex app-server` inside the Kubernetes Job. The shared
-runtime and generated protocol types are pinned to Codex `0.166.0`.
+runtime and generated protocol types are pinned to Codex `0.170.0`.
 
 For a retained result, include the allowed `agents-artifacts` Secret alongside
 `codex-auth`, and set `parameters.artifactKey` to a unique object key for the run.

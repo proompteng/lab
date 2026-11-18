@@ -10,7 +10,7 @@ import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 
-import { validateDispatchConfigEffect } from './config'
+import { DEFAULT_CODEX_MODEL, validateDispatchConfigEffect } from './config'
 import type { CodexEvent } from './codex-app-session'
 import { evaluateDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
 import { createEmptyDeliveryTransaction, DeliveryService } from './delivery-service'
@@ -1947,7 +1947,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   },
                   codex: {
                     command: '',
-                    model: 'gpt-6-astra',
+                    model: DEFAULT_CODEX_MODEL,
                     approvalPolicy: null,
                     threadSandbox: null,
                     turnSandboxPolicy: null,

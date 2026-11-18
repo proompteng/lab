@@ -1,26 +1,21 @@
-# GPT-6 Astra upgrade
+# GPT-6.2 Sol and Codex 0.170.0 upgrade
 
-The repository's OpenAI and Codex text-generation defaults use `gpt-6-astra`. The model ID and request requirements
-come from the [OpenAI migration guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra.md#migration-quickstart).
+The repository uses Codex `0.170.0` and defaults hosted OpenAI text generation and Codex tasks to `gpt-6.2-sol`.
+See the [Codex release](https://github.com/openai/codex/releases/tag/rust-v0.170.0) and
+[OpenAI migration guide](https://developers.openai.com/api/docs/guides/latest-model#migration-quickstart).
 
 ## Scope and compatibility
 
-- Codex clients, container and workspace templates, Agents providers, Jangar chat, Symphony, Sag, Bumba's hosted completion
-  default, and Torghut's LLM default select Astra.
-- The `codex-spark` provider retains its resource name for existing consumers and selects Astra for new runs.
-- Existing supported reasoning efforts remain unchanged. Astra requests use `low` when an older configuration
-  selects `none` or `minimal`.
-- Astra requests omit `temperature`, `top_p`, and log-probability parameters. Tool calls use the Codex app server's
-  Responses transport. Plain text completions can continue using Chat Completions.
-- Self-hosted inference, embeddings, explicit compatibility fallbacks, and historical evaluation records retain
-  their model identities. Environment and per-run model overrides still take precedence over defaults.
-- Jangar's production model inventory includes Astra alongside its existing Qwen default, allowing callers to
-  select `gpt-6-astra` explicitly.
-- Codex CLI must be at least `0.153.0` for Astra, as documented in
-  [OpenAI's Codex setup guidance](https://help.openai.com/en/articles/20001354). The shared runtime pins `0.166.0`.
-  Older clients reject Astra before inference, even with valid credentials.
-- The Agents Docker runner and Codex CI also pin CLI `0.166.0`. Nanoagent's bootstrap retains its separate pin. Symphony resolves an
-  explicit `codex.model` for every thread and turn, defaulting to Astra while preserving workflow overrides.
+- The shared Nix CLI, service Dockerfiles, workers, devbox, and Nanoagent use the release pin. Generate the
+  `packages/codex` app-server types with that same CLI. Nanoagent validates the archive digest for its architecture.
+- Codex clients, container and workspace templates, Agents providers, Jangar, OpenWebUI, Symphony, Sag, Tengri,
+  Bumba's hosted completion path, and Torghut's LLM configuration default to Sol.
+- Symphony resolves `codex.model` for each thread and turn. Workflow and per-run model overrides take precedence.
+  The `codex-spark` provider selects Sol for new runs.
+- Jangar and OpenWebUI default to Sol through the signed-in Codex app server. Callers can select `qwen38-flamingo`
+  for self-hosted inference. Bumba's self-hosted endpoint uses the model configured for that endpoint.
+- GPT-6.2 Sol requests omit `temperature`, `top_p`, and log-probability controls. Map legacy `none` or `minimal`
+  reasoning settings to `low`. GPT-6.2 Sol uses Responses for tool calls and supports Chat Completions for plain text.
 - Jangar sets `HOME=/root` and `CODEX_HOME=/root/.codex`, includes the container configuration there, and uses the
   existing mounted `auth.json`. Renew an expired credential for the same verified account through
   `bun run scripts/sync-codex-auth-1password.ts sync` and the existing ExternalSecrets reconciliation. New pods
@@ -39,8 +34,8 @@ cloud-init changes affect provisioning; existing hosts need the normal Codex con
 local default changes. The repository template does not modify a developer's existing `~/.codex/config.toml`.
 
 Model selection changes output, token usage, latency, and cost. Torghut's model version lock and allowlist must
-match the selected model. Existing DSPy artifacts and strategy qualification evidence require the normal
-acceptance process before they can establish quality or trading readiness with Astra.
+match the selected model. Use the normal acceptance process to qualify DSPy artifacts and trading strategies
+for GPT-6.2 Sol.
 
 ## Acceptance and rollback
 
@@ -86,7 +81,7 @@ uv run --frozen --extra dev pyright --project pyrightconfig.json
 Render the affected Argo applications from the root Nix development shell:
 
 ```bash
-for app in agents autotrader synthesis torghut workers; do
+for app in agents autotrader jangar synthesis torghut workers; do
   kustomize build --enable-helm "argocd/applications/$app" > /dev/null || exit 1
 done
 ```
