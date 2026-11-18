@@ -44,8 +44,8 @@ RUN --mount=type=secret,id=nix-config,required=true \
     NIX_REMOTE=local nix develop /opt/lab-toolchain --command toolchain-doctor && \
     NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration && \
     rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
-ARG CODEX_VERSION=0.162.1
-ARG CODEX_INSTALLER_SHA256=150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6
+ARG CODEX_VERSION=0.170.0
+ARG CODEX_INSTALLER_SHA256=5a8eea5c3716b555fd8e539db7e5b0e7470bcee5693191b4758a0de373624a70
 RUN curl --fail --location --retry 3 "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/install.sh" -o /tmp/codex-install.sh && \
     printf '%s  %s\n' "${CODEX_INSTALLER_SHA256}" /tmp/codex-install.sh | sha256sum -c - && \
     runuser -u codex -- env CODEX_NON_INTERACTIVE=1 sh /tmp/codex-install.sh --release "${CODEX_VERSION}" && \

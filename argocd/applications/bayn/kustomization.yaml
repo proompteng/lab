@@ -55,10 +55,10 @@ configMapGenerator:
 images:
 - name: bayn-broker-feed
   newName: registry.ide-newton.ts.net/lab/bayn-broker-feed
-  digest: sha256:27bb385b3c6211ed589f01728b49effed12217319ca2c765c907d611e235911c
+  digest: sha256:585ff218b705cf47aab690904e0842f240f64a5589c1b4c7e729057cf3a028b1
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:1b91f65932f4752a155525a5f99efff9f89216dcc9068fa9897af47f8e05e168
+  digest: sha256:04b7bc51e4a2aa8ad84b35201b8006a701a14f5f0aa21756e435bb6701249343
 - name: bayn-research
   newName: registry.ide-newton.ts.net/lab/bayn-research
-  digest: sha256:cadf82ab3b540391d66cd81a2ecfac0f13a60c76ad0af8cdee50303368d005e5
+  digest: sha256:90b6bc97c3ea47f330bdb0f0d0e5287f41a51a021ca02570578216c1610470b5
