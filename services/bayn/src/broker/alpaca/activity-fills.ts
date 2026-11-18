@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { contractFailure } from './failures'
-import { FillActivityResponseSchema, type FillExecution } from './model'
+import { FillActivityResponseSchema, TradeActivityType, type FillExecution } from './model'
 import { normalizeFillActivityResult } from './normalizers'
 
 // This is the earliest publication date Alpaca documents for Activity SSE replay.
@@ -39,7 +39,7 @@ export const decodeActivityReplay = (
     try: () => {
       const rows: unknown[] = []
       for (const line of body.split(/\r?\n/)) {
-        if (line === '' || line === ': welcome to the Alpaca events') continue
+        if (line === '' || line === ':heartbeat' || line === ': welcome to the Alpaca events') continue
         // Drop and server-error notices are SSE comments. A successful HTTP response can still lose events.
         if (!line.startsWith('data:')) throw new Error('unrecognized activity replay frame')
         rows.push(JSON.parse(line.slice(5)))
@@ -79,7 +79,11 @@ export const decodeFillExecutions = (
           symbol: event.details.symbol,
           transaction_time: event.executed_at,
           order_id: event.details.order_id,
-          type: event.details.execution_type,
+          // Activity SSE can report a partial execution as `fill`. REST distinguishes it by leaves quantity.
+          type:
+            event.details.execution_type === TradeActivityType.Fill && /^0(?:\.0+)?$/.test(event.details.leaves_qty)
+              ? TradeActivityType.Fill
+              : TradeActivityType.PartialFill,
           ...(event.details.order_status === undefined ? {} : { order_status: event.details.order_status }),
         },
         accountId,

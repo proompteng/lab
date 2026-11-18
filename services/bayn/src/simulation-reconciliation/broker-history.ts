@@ -355,12 +355,20 @@ const readFillHistory = (
         yield* Effect.annotateCurrentSpan('broker.fill_history.reused', true)
         return tail
       }
-    } else if (
-      checked.failure instanceof BrokerReadError &&
-      checked.failure.kind !== BrokerReadErrorKind.InvalidResponse &&
-      checked.failure.kind !== BrokerReadErrorKind.NotFound
-    ) {
-      return yield* checked.failure
+    } else if (checked.failure instanceof BrokerReadError) {
+      const { kind, operation, status } = checked.failure
+      const replayUnavailable =
+        operation === 'fill-executions' &&
+        (kind === BrokerReadErrorKind.Transport ||
+          kind === BrokerReadErrorKind.Timeout ||
+          kind === BrokerReadErrorKind.Server)
+      if (
+        status === 401 ||
+        status === 403 ||
+        status === 429 ||
+        (!replayUnavailable && kind !== BrokerReadErrorKind.InvalidResponse && kind !== BrokerReadErrorKind.NotFound)
+      )
+        return yield* checked.failure
     }
     yield* Effect.annotateCurrentSpan('broker.fill_history.reused', false)
     // The replay is an independent completeness check. A failed or different replay never supplies a fill.

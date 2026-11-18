@@ -848,6 +848,25 @@ describe('complete history reuse between broker captures', () => {
         })
         const recovered = yield* capture(replayRead, { generation: 6, startedAt: yield* currentUtcInstant }, 15_000)
         expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
+        const unavailableReplay = (kind: BrokerReadErrorKind) => ({
+          ...read,
+          fillExecutions: () =>
+            Effect.fail(
+              new BrokerReadError({ operation: 'fill-executions', kind, message: 'fixture', retryable: true }),
+            ),
+        })
+        const timedOut = yield* capture(
+          unavailableReplay(BrokerReadErrorKind.Timeout),
+          { generation: 7, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
+        expect(timedOut.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        const rateLimited = yield* capture(
+          unavailableReplay(BrokerReadErrorKind.RateLimited),
+          { generation: 8, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(rateLimited).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.RateLimited } })
       }),
     )
   })

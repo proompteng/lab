@@ -183,7 +183,8 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
-  test.each(['fill', 'trade_correct', 'dropped'])('checks bounded activity replay for %s', async (kind) => {
+  const replayCases = ['fill', 'partial_fill', 'trade_correct', 'trade_bust', 'dropped']
+  test.each(replayCases)('checks bounded activity replay for %s', async (kind) => {
     const until = '2026-11-18T20:47:00.000Z'
     const event = {
       activity_type: 'TRD',
@@ -191,7 +192,14 @@ describe('Alpaca paper reads', () => {
       executed_at: '2026-11-18T20:46:59.000000480Z',
       price: '260.10',
       qty: '1',
-      details: { order_id: orderId, cum_qty: '1', leaves_qty: '0', symbol: 'AAPL', side: 'buy', execution_type: kind },
+      details: {
+        order_id: orderId,
+        cum_qty: '1',
+        leaves_qty: kind === 'partial_fill' ? '0.25' : '0.000',
+        symbol: 'AAPL',
+        side: 'buy',
+        execution_type: kind === 'partial_fill' ? 'fill' : kind,
+      },
     }
     const client = HttpClient.make((request, url) => {
       expect(url.pathname).toBe('/v2beta1/events/activities')
@@ -200,7 +208,7 @@ describe('Alpaca paper reads', () => {
         ': welcome to the Alpaca events\n\n' +
         (kind === 'dropped'
           ? ': you are reading too slowly, dropped 50 messages\n\n'
-          : `data: ${JSON.stringify(event)}\n\n`)
+          : `:heartbeat\n\ndata: ${JSON.stringify(event)}\n\n:heartbeat\n\n`)
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -214,7 +222,7 @@ describe('Alpaca paper reads', () => {
         return Effect.result(read.fillExecutions(until))
       }),
     )
-    if (kind === 'fill') {
+    if (kind === 'fill' || kind === 'partial_fill') {
       expect(result).toMatchObject({
         _tag: 'Success',
         success: [
@@ -224,6 +232,8 @@ describe('Alpaca paper reads', () => {
             brokerOrderId: orderId,
             priceAtoms: '260100000000',
             quantityAtoms: '1000000000',
+            type: kind,
+            leavesQuantityAtoms: kind === 'partial_fill' ? '250000000' : '0',
           },
         ],
       })
