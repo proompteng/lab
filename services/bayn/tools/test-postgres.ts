@@ -44,6 +44,7 @@ const files = [
   'src/db/retired-jev-batch-migration.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',
   'src/db/jev-native-postgres.integration.test.ts',
+  'src/db/jev-position-protection-evidence.integration.test.ts',
   'src/intraday-replay/clock.integration.test.ts',
   'src/inference-costs-postgres.integration.test.ts',
   'src/inference-expense-runtime.integration.test.ts',
