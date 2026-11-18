@@ -811,6 +811,10 @@ describe('complete history reuse between broker captures', () => {
               return fills.map(({ activityId, ...value }) => ({
                 ...value,
                 executionId: activityId.slice('fill::'.length),
+                transactionTime:
+                  activityId === 'fill::2168'
+                    ? '2026-11-13T18:00:49.999999500Z'
+                    : value.transactionTime.replace('.000Z', '.000000500Z'),
               }))
             }),
         }

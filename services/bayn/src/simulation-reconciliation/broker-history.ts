@@ -286,11 +286,14 @@ const readFillPages = (
 }
 
 const sameExecution = (row: FillActivity, replay: FillExecution): boolean => {
-  // The REST endpoint rounds the provider's nanosecond execution clock to microseconds.
-  const time = (value: string) =>
-    Date.parse(`${value.slice(0, 19)}Z`) * 1_000 +
-    Math.floor((Number(value.slice(20, -1).padEnd(9, '0')) + 500) / 1_000)
+  // REST reports microseconds. Alpaca rounds half-microsecond ties in both directions.
+  const nanos = (value: string) => Number(value.slice(20, -1).padEnd(9, '0'))
+  const restNanos = nanos(row.transactionTime)
+  const secondDeltaMs =
+    Date.parse(`${row.transactionTime.slice(0, 19)}Z`) - Date.parse(`${replay.transactionTime.slice(0, 19)}Z`)
   return (
+    restNanos % 1_000 === 0 &&
+    Math.abs(secondDeltaMs * 1_000_000 + restNanos - nanos(replay.transactionTime)) <= 500 &&
     row.accountId === replay.accountId &&
     row.brokerOrderId === replay.brokerOrderId &&
     row.symbol === replay.symbol &&
@@ -300,8 +303,7 @@ const sameExecution = (row: FillActivity, replay: FillExecution): boolean => {
     row.quantityAtoms === replay.quantityAtoms &&
     row.cumulativeQuantityAtoms === replay.cumulativeQuantityAtoms &&
     row.leavesQuantityAtoms === replay.leavesQuantityAtoms &&
-    row.priceAtoms === replay.priceAtoms &&
-    time(row.transactionTime) === time(replay.transactionTime)
+    row.priceAtoms === replay.priceAtoms
   )
 }
 
