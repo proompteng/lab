@@ -30,7 +30,7 @@ class CodexInstallTests(unittest.TestCase):
         self.env = {
             **os.environ,
             "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "CODEX_VERSION": "0.162.1",
+            "CODEX_VERSION": "0.170.0",
             "CODEX_INSTALLER_SHA256": hashlib.sha256(self.payload).hexdigest(),
             "FIXTURE": str(self.fixture),
             "CALL_LOG": str(self.log),
@@ -66,11 +66,11 @@ class CodexInstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.log.read_text()
         self.assertIn(
-            "https://github.com/openai/codex/releases/download/rust-v0.162.1/install.sh",
+            "https://github.com/openai/codex/releases/download/rust-v0.170.0/install.sh",
             calls,
         )
         self.assertIn("runuser -u codex -- env CODEX_NON_INTERACTIVE=1 sh ", calls)
-        self.assertIn("--release 0.162.1", calls)
+        self.assertIn("--release 0.170.0", calls)
         self.assertFalse((self.root / "download").exists())
 
     def test_tampered_installer_is_not_executed(self):
@@ -86,10 +86,10 @@ class CodexInstallTests(unittest.TestCase):
         self.assertNotIn("runuser", self.log.read_text())
 
     def test_version_and_installer_digest_are_pinned_together(self):
-        self.assertIn("ARG CODEX_VERSION=0.162.1\n", self.source)
+        self.assertIn("ARG CODEX_VERSION=0.170.0\n", self.source)
         self.assertIn(
             "ARG CODEX_INSTALLER_SHA256="
-            "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6\n",
+            "5a8eea5c3716b555fd8e539db7e5b0e7470bcee5693191b4758a0de373624a70\n",
             self.source,
         )
 
