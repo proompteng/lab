@@ -19,6 +19,9 @@ import { sha256 } from '../hash'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { MarketChangeReason, marketChangedEventId } from '../execution/events'
 import { CycleRunnerError } from '../cycle/runner/model'
+import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { decisionBuildError, reconciliationRunnerError } from '../observe-composition/decision-builder'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OperationalError } from '../errors'
 import {
@@ -447,76 +450,117 @@ test('the authenticated market gateway awaits only its small private wake and re
   expect(deliveries).toHaveLength(1)
 })
 
-test.each(['broker', 'market-boundary'] as const)(
-  'failed reconciliation retains market backoff and releases on %s',
-  async (recovery) => {
-    let now = Date.parse('2026-08-13T18:00:01.000Z')
-    let state: ExecutionControllerState = {
-      schemaVersion: 1,
-      active: true,
-      epoch: 1,
-      planHash,
-      sourceRevision,
-      initialSequence: 4,
-      nextSequence: 4,
-    }
-    const deliveries: unknown[] = []
-    const object = handlers(
-      makeBaynExecutionController(config, {
-        prepareActivation: async () => undefined,
-        projectState: async () => undefined,
-        log: async () => undefined,
-        advance: async () => ({
-          completedAt: '2026-08-13T18:00:00.000Z',
-          observation: {
-            result: 'FAILURE',
-            observedAt: '2026-08-13T18:00:00.000Z',
-            operation: 'reconcile',
-            failure: 'market-data',
-            message: 'Broker observation is unavailable or invalidated by a mutation',
-          },
-          outcome: {
-            _tag: ExecutionControllerOutcome.Blocked,
-            receiptHash: 'd'.repeat(64),
-            nextDelayMs: 30_000,
-            nextWakeAt: '2026-08-13T18:00:30.000Z',
-          },
-        }),
-      }),
-    )
-    const context = {
-      key: controllerKey,
-      get: async () => state,
-      set: (_key: string, next: ExecutionControllerState) => {
-        state = next
-      },
-      run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      genericSend: (delivery: unknown) => deliveries.push(delivery),
-      request: () => ({ id: 'broker-retry-eligibility', attemptCompletedSignal: new AbortController().signal }),
-      date: { now: async () => now },
-    } as unknown as TestContext
-    await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
-    expect(state.marketEligibleAt).toBe('2026-08-13T18:00:30.000Z')
-    expect(state.nextDueAt).toBe(state.marketEligibleAt)
-    for (let sequence = 1; sequence <= 100; sequence++) await object.wake(context, marketChange(sequence))
-    expect(deliveries).toHaveLength(1)
-    expect(state.marketFrontier?.sequence).toBe(100)
-    if (recovery === 'market-boundary') {
-      now = Date.parse('2026-08-13T18:00:30.000Z')
-      await object.wake(context, marketChange(101))
-    } else
-      await object.wake(context, {
-        schemaVersion: 'bayn.execution-wakeup.v1',
-        _tag: 'BrokerObservation',
+describe.each(['reconcile', 'build-decision'] as const)('a typed %s broker absence', (operation) => {
+  test.each(['broker', 'inference', 'Startup', 'Ready', 'Recovery', 'market-boundary'] as const)(
+    'retains market backoff and releases on %s',
+    async (recovery) => {
+      let now = Date.parse('2026-08-13T18:00:01.000Z')
+      let state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: 1,
+        planHash,
         sourceRevision,
-        eventId: 'a'.repeat(64),
-        snapshotHash: 'b'.repeat(64),
-        observedAt: '2026-08-13T18:00:01.000Z',
+        initialSequence: 4,
+        nextSequence: 4,
+      }
+      const deliveries: unknown[] = []
+      const missing = new BrokerReadError({
+        operation: 'preflight',
+        kind: BrokerReadErrorKind.Timeout,
+        retryable: true,
+        observationFailure: 'NO_ADMISSIBLE_CUT',
+        message: 'A differently worded local projection failure',
       })
-    expect(deliveries).toHaveLength(2)
-    expect(state.wakeScheduledSequence).toBe(5)
-  },
-)
+      const error =
+        operation === 'reconcile'
+          ? reconciliationRunnerError(missing)
+          : new CycleRunnerError({
+              operation,
+              failure: 'market-data',
+              message: 'Decision construction failed',
+              cause: decisionBuildError(
+                new OperationalError({
+                  component: 'market-data',
+                  operation: 'reconciliation',
+                  retryable: true,
+                  message: 'Read failed',
+                  cause: missing,
+                }),
+              ),
+            })
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+          log: async () => undefined,
+          advance: async () => ({
+            completedAt: '2026-08-13T18:00:00.000Z',
+            observation: retainAutonomousCyclePassObservation({
+              outcome: 'FAILED',
+              observedAt: '2026-08-13T18:00:00.000Z',
+              error,
+            }),
+            outcome: {
+              _tag: ExecutionControllerOutcome.Blocked,
+              receiptHash: 'd'.repeat(64),
+              nextDelayMs: 30_000,
+              nextWakeAt: '2026-08-13T18:00:30.000Z',
+            },
+          }),
+        }),
+      )
+      const context = {
+        key: controllerKey,
+        get: async () => state,
+        set: (_key: string, next: ExecutionControllerState) => {
+          state = next
+        },
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        genericSend: (delivery: unknown) => deliveries.push(delivery),
+        request: () => ({ id: 'broker-retry-eligibility', attemptCompletedSignal: new AbortController().signal }),
+        date: { now: async () => now },
+      } as unknown as TestContext
+      await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
+      expect(state.marketEligibleAt).toBe('2026-08-13T18:00:30.000Z')
+      expect(state.nextDueAt).toBe(state.marketEligibleAt)
+      state = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+      for (let sequence = 1; sequence <= 100; sequence++) await object.wake(context, marketChange(sequence))
+      expect(deliveries).toHaveLength(1)
+      expect(state.marketFrontier?.sequence).toBe(100)
+      if (recovery === 'market-boundary') {
+        now = Date.parse('2026-08-13T18:00:30.000Z')
+        await object.wake(context, marketChange(101))
+      } else if (recovery === 'broker')
+        await object.wake(context, {
+          schemaVersion: 'bayn.execution-wakeup.v1',
+          _tag: 'BrokerObservation',
+          sourceRevision,
+          eventId: 'a'.repeat(64),
+          snapshotHash: 'b'.repeat(64),
+          observedAt: '2026-08-13T18:00:01.000Z',
+        })
+      else if (recovery === 'inference')
+        await object.wake(context, {
+          schemaVersion: 'bayn.execution-wakeup.v1',
+          _tag: 'InferenceCompleted',
+          sourceRevision,
+          eventId: 'a'.repeat(64),
+          epoch: 1,
+          jobId: '1'.repeat(64),
+          batchId: '2'.repeat(64),
+          cycleId: '3'.repeat(64),
+          authorityGenerationHash: '4'.repeat(64),
+          expiresAt: '2026-08-13T18:00:10.000Z',
+          completedAt: '2026-08-13T18:00:01.000Z',
+        })
+      else await object.wake(context, { ...marketChange(101), reason: MarketChangeReason[recovery] })
+      expect(deliveries).toHaveLength(2)
+      expect(state.wakeScheduledSequence).toBe(5)
+      expect(state.nextDueAt).toBe('2026-08-13T18:00:30.000Z')
+    },
+  )
+})
 
 test('an early broker publication failure retains the original recovery deadline', async () => {
   let now = Date.parse('2026-08-13T18:00:00.000Z')

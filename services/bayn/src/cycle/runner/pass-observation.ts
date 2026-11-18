@@ -162,7 +162,16 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
       'store',
     ]),
     message: Schema.NonEmptyString,
-  }),
+    brokerObservationFailure: Schema.optionalKey(Schema.Literal('NO_ADMISSIBLE_CUT')),
+  }).check(
+    Schema.makeFilter(
+      (observation) =>
+        observation.brokerObservationFailure === undefined ||
+        (observation.failure === 'market-data' &&
+          (observation.operation === 'reconcile' || observation.operation === 'build-decision')),
+      { expected: 'local broker observation absence on a reconciliation or decision market-data failure' },
+    ),
+  ),
 ])
 
 export type RetainedAutonomousCyclePassObservation = typeof RetainedAutonomousCyclePassObservationSchema.Type
