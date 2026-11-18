@@ -16,7 +16,7 @@ import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevOutcome, makeJevEvaluationRequest, makeJevEvaluationReceipt, entryInferenceAvailableAt } from './evidence'
 import { defaultJevProtocolDocument } from './protocol'
 import { EntrySetup } from './entry-proposals'
-import type { StagedDispatchClaim } from './staged-checkpoint'
+import type { StagedDispatchClaim, StagedTerminalReceipt } from './staged-checkpoint'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
 const fixture = () => {
@@ -69,6 +69,7 @@ const providers = (
 ) => {
   const events: string[] = []
   const checkpointEvents: string[] = []
+  const terminals: StagedTerminalReceipt[] = []
   const handoffs: EntryHandoff[] = []
   const commits: string[] = []
   const jevBudgets: (number | undefined)[] = []
@@ -118,6 +119,7 @@ const providers = (
                 const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
                 if (terminal !== null) {
                   checkpointEvents.push('terminal')
+                  terminals.push(terminal)
                   if (successor.kind !== 'NONE' && options.chartTerminalFails)
                     return yield* operationalError({
                       component: 'journal',
@@ -222,7 +224,7 @@ const providers = (
       ),
     ),
   )
-  return { events, checkpointEvents, handoffs, commits, jevBudgets, layer }
+  return { events, checkpointEvents, handoffs, commits, jevBudgets, terminals, layer }
 }
 
 const run = (claim: Parameters<typeof evaluateFixtureEntry>[0], setup: ReturnType<typeof providers>, advance = 0) =>
@@ -370,9 +372,26 @@ describe('claimed sequential entry inference', () => {
   })
 
   test('chart admission persistence consumes the original deadline without dispatch or renewal', async () => {
-    const setup = providers({ chartClaimDelay: 10_000 })
-    expect(Result.isFailure(await run(fixture(), setup, 10_000))).toBe(true)
-    expect(setup.checkpointEvents).toEqual(['claim'])
+    const setup = providers({ chartClaimDelay: 10_223 })
+    const result = await run(fixture(), setup, 10_223)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isSuccess(result)) throw new Error('An expired admission must fail')
+    expect(result.failure).toMatchObject({ _tag: 'EntryInferenceError', category: 'DEADLINE' })
+    expect(setup.events).toEqual([])
+    expect(setup.checkpointEvents).toEqual(['claim', 'terminal'])
+    expect(setup.terminals).toHaveLength(1)
+    expect(setup.terminals[0]).toMatchObject({
+      schemaVersion: 'bayn.staged-terminal-receipt.v2',
+      stage: 'CHART',
+      requestId: fixture().requestId,
+      outcome: {
+        status: 'NOT_DISPATCHED',
+        reason: 'ORIGINAL_EXPIRY',
+        deadlineAt: fixture().expiresAt,
+        checkedAt: utcInstantFromEpochMillis(at + 10_223),
+      },
+    })
+    expect(setup.handoffs).toEqual([])
   })
 
   test('late terminal persistence retains chart evidence but never grants a fresh Jev window', async () => {

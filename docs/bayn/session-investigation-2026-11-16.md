@@ -1,5 +1,9 @@
 # Bayn session investigation — November 16, 2026
 
+The [November 18 follow-up](session-investigation-2026-11-18.md) covers the completed November 4–17 window,
+reconciles broker cash and session fees, and investigates entry economics, partial native exits and inference
+admission. It supersedes the partial November 17 economic cuts below while preserving their historical evidence.
+
 ## Session results
 
 Read-only evidence collected November 16 at approximately 21:55–22:02 UTC covers the rolling fourteen-day
