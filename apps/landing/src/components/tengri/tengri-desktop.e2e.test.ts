@@ -2122,7 +2122,7 @@ test('opens composer menus above the picker and supports keyboard selection on d
   await model.press('ArrowUp')
   const menu = page.getByRole('listbox')
   await expect(menu).toBeVisible()
-  await expect(page.getByRole('option', { name: 'GPT-6.1 Sol', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('option', { name: 'GPT-6.2 Sol', exact: true })).toHaveAttribute('aria-selected', 'true')
   const triggerBounds = (await model.boundingBox())!
   const menuBounds = (await menu.boundingBox())!
   expect(menuBounds.y + menuBounds.height).toBeLessThan(triggerBounds.y)
@@ -2183,7 +2183,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   const model = tengri.getByRole('combobox', { name: 'Model', exact: true })
   const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
-  await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-6.1 Sol')
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-6.2 Sol')
   await expect(model).toBeEnabled()
   await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('High')
   await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
@@ -2191,12 +2191,12 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   await expect
     .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
     .toMatchObject({
-      model: 'gpt-6.1-sol',
+      model: 'gpt-6.2-sol',
       reasoningEffort: 'high',
       text: 'Read the workspace',
     })
   expect(mock.actions.find((action) => action.action === 'create-thread')).toMatchObject({
-    model: 'gpt-6.1-sol',
+    model: 'gpt-6.2-sol',
     reasoningEffort: 'high',
   })
   await expect(model).toBeDisabled()
@@ -2272,7 +2272,7 @@ for (const savedThread of [false, true]) {
       await tengri.getByRole('button', { name: 'Send message' }).click()
       await expect
         .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
-        .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
+        .toMatchObject({ model: 'gpt-6.2-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
       expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
     })
   }
@@ -2693,7 +2693,7 @@ for (const unavailable of ['model', 'effort']) {
     await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
     const model = tengri.getByRole('combobox', { name: 'Model', exact: true })
     await expect(model).toBeEnabled()
-    if (unavailable === 'model') await selectOption(page, model, 'GPT-6.1 Sol')
+    if (unavailable === 'model') await selectOption(page, model, 'GPT-6.2 Sol')
     const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
     await expect(reasoning).toBeEnabled()
     await selectOption(page, reasoning, 'Low')
@@ -2702,7 +2702,7 @@ for (const unavailable of ['model', 'effort']) {
     await expect
       .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
       .toMatchObject({
-        model: unavailable === 'model' ? 'gpt-6.1-sol' : 'gpt-5.6-luna',
+        model: unavailable === 'model' ? 'gpt-6.2-sol' : 'gpt-5.6-luna',
         reasoningEffort: 'low',
       })
   })
@@ -2714,7 +2714,7 @@ test('keeps an unavailable default visible until the user selects an available m
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   const model = tengri.getByRole('combobox', { name: 'Model', exact: true })
   await expect(tengri.getByRole('alert')).toContainText('This model is unavailable')
-  await expect(model.locator('[data-slot="select-value"]')).toHaveText('gpt-6.1-sol (unavailable)')
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('gpt-6.2-sol (unavailable)')
   await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
   await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
   await selectOption(page, model, 'GPT-5.6 Luna')
