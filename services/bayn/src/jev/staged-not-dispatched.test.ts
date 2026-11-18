@@ -90,6 +90,22 @@ test('an uncompleted claim remains unknown and a paid chart cannot become a zero
   ).toBe(true)
 })
 
+test('frozen zero quotes validate the complete current graph before projecting their proof', () => {
+  const { request, source, claim, terminal } = undispatchedVisualFixture()
+  const zero = Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard))
+  const paid = stagedCheckpointFixture(request)
+  const invalidSources = [
+    { ...source, asOf: request.observedAt },
+    { ...source, stagedCheckpoint: { claims: [claim, claim], terminals: [terminal], skips: [] } },
+    { ...source, stagedCheckpoint: { claims: [claim], terminals: [terminal, terminal], skips: [] } },
+    { ...source, stagedCheckpoint: { claims: [claim], terminals: [terminal, ...paid.terminals], skips: [] } },
+  ]
+  for (const changed of invalidSources) {
+    expect(Result.isFailure(makeInferenceExpenseQuotes(changed, inferenceExpenseRateCard))).toBe(true)
+    for (const quote of zero) expect(Result.isFailure(verifyInferenceExpenseQuote(changed, quote))).toBe(true)
+  }
+})
+
 test('v5 cannot be relabeled as a legacy quote or consume tokens, price or unrelated proof', () => {
   const { source } = undispatchedVisualFixture()
   const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard))
