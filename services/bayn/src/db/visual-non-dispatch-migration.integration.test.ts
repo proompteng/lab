@@ -8,15 +8,22 @@ import nonDispatchEvidence from '../../migrations/0201_not_dispatched_visual_evi
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { canonicalHashV1Result } from '../hash'
+import { buildInferenceExpensePlan, inferenceExpenseRateCard, makeInferenceExpenseQuotes } from '../inference-expense'
+import { makeInferenceExpenseStore } from '../inference-expense-postgres'
+import { JevClient } from '../jev/client'
+import { evaluateClaimedEntryInferences } from '../jev/entry-inference-batch'
 import { JevCandidatePlanStatus, JevBatchPlanVersion } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
+import { StagedTerminalReceiptSchema } from '../jev/staged-checkpoint'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevBatchStoreLive } from './jev-batch-postgres'
+import { EntryInferenceJournalLive } from './entry-inference-postgres'
+import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
 import { migrationLoader } from './migrations'
 
 const integration = baynTestPostgresUrl === undefined ? test.skip : test
@@ -24,7 +31,13 @@ const url = baynTestPostgresUrl ?? 'postgresql://postgres@127.0.0.1:55432/bayn_n
 const parsed = new URL(url)
 if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
   throw new Error('Visual non-dispatch migration requires an isolated local _test database')
-const layer = Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevBatchStoreLive).pipe(
+const layer = Layer.mergeAll(
+  CycleStoreLive,
+  CandidateObservationStoreLive,
+  JevBatchStoreLive,
+  EntryInferenceJournalLive,
+  JevEvaluationStoreLive,
+).pipe(
   Layer.provideMerge(PgClient.layer({ url: Redacted.make(url), maxConnections: 2 })),
   Layer.provideMerge(NodeServices.layer),
 )
@@ -79,6 +92,7 @@ const retain = (account: string) =>
       request,
       claim,
       account,
+      rights: admission.dispatches,
       batchId: batch.batchId,
       dispatches: admission.dispatches?.map((dispatch) => ({
         requestId: dispatch.request.requestId,
@@ -88,6 +102,75 @@ const retain = (account: string) =>
       alternate: { request: next.request, claim: nextClaim, account },
     }
   })
+
+integration(
+  'native expired dispatch journals and freezes both verified zero-cost stages without provider work',
+  async () => {
+    let providerCalls = 0
+    const provider = Layer.succeed(JevClient, {
+      evaluate: () =>
+        Effect.sync(() => {
+          providerCalls += 1
+        }).pipe(Effect.andThen(Effect.die('Unexpected provider dispatch'))),
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
+        const native = yield* retain(`replay-${'7'.repeat(64)}`)
+        if (native.rights === null) throw new Error('Missing native dispatch rights')
+        const lateAt = new Date(Date.parse(native.request.expiresAt) + 223).toISOString()
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${lateAt} WHERE account_id=${native.account}`
+        const result = yield* TestClock.setTime(Date.parse(lateAt)).pipe(
+          Effect.andThen(evaluateClaimedEntryInferences(native.rights).pipe(Effect.result)),
+          Effect.provide(TestClock.layer()),
+        )
+        if (Result.isSuccess(result)) throw new Error('Expired native dispatch succeeded')
+        expect(result.failure).toMatchObject({ _tag: 'EntryInferenceError', category: 'DEADLINE' })
+        expect(providerCalls).toBe(0)
+        const requests = native.rights.map((right) => right.request.requestId).sort()
+        const terminals = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              request_id: Schema.String,
+              payload: StagedTerminalReceiptSchema,
+            }),
+          ),
+        )(yield* sql`SELECT request_id,payload FROM jev_staged_terminal_receipts ORDER BY request_id`)
+        expect(terminals.map((row) => row.request_id)).toEqual(requests)
+        expect(terminals.every((row) => row.payload.schemaVersion === 'bayn.staged-terminal-receipt.v2')).toBe(true)
+        const store = makeInferenceExpenseStore(sql, native.account, '1970-01-01')
+        const sources = yield* store.newSources
+        expect(sources.map((source) => source.requestId).sort()).toEqual(requests)
+        const quotes = sources.flatMap((source) =>
+          Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard)),
+        )
+        expect(quotes).toHaveLength(requests.length * 2)
+        expect(quotes.every((quote) => quote.schemaVersion === 'bayn.inference-expense-quote.v5')).toBe(true)
+        expect(
+          quotes.every(
+            (quote) => quote.line.usageStatus === 'NOT_DISPATCHED' && quote.line.estimatedCostPicoUsd === '0',
+          ),
+        ).toBe(true)
+        expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toEqual([])
+        yield* store.freeze(quotes)
+        const pending = yield* store.pending
+        expect(pending.map((quote) => quote.quoteHash).sort()).toEqual(quotes.map((quote) => quote.quoteHash).sort())
+        expect(yield* store.newSources).toEqual([])
+        yield* store.acknowledge(pending)
+        const saved = yield* store.session(native.request.observedAt.slice(0, 10))
+        expect(saved.map(({ quote }) => quote.quoteHash).sort()).toEqual(quotes.map((quote) => quote.quoteHash).sort())
+        expect(saved.every((row) => row.verifiedAt !== null)).toBe(true)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_inference_handoffs`).toEqual([{ count: 0 }])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_receipts`).toEqual([{ count: 0 }])
+        expect(providerCalls).toBe(0)
+      }).pipe(Effect.provide(provider), Effect.provide(layer)),
+    )
+  },
+  60_000,
+)
 
 integration.each(['ORIGINAL_EXPIRY', 'ADMISSION_EXPIRY'] as const)(
   'keeps retained evidence and requires positive %s proof for both undispatched stages',
