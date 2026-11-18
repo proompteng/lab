@@ -607,8 +607,9 @@ quote, risk and original admission/inference/submission deadlines. Late or stale
 
 Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
 its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
-fresh reads that cannot replace the committed source. Final short submission still checks current account, configuration,
-asset eligibility and borrow flags through the existing mutation authority.
+fresh reads that cannot replace the committed source. Final short submission reads the selected symbol's asset,
+account and configuration in parallel. The fresh account must match the reconciled identity and cash before
+the mutation authority uses it to check short eligibility and buying power.
 
 Only domain deadlines schedule a timer: source eligibility, original admission or inference expiry, position protection,
 maximum hold, session close, broker consistency, quota, financial freshness and explicit recovery. An actual state-machine
