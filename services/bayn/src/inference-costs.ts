@@ -149,7 +149,12 @@ export const ThreeStageInferenceCostLineSchema = Schema.Struct({
   stageTerminalHash: Schema.NullOr(Sha256Schema),
   stageSkipHash: Schema.NullOr(Sha256Schema),
 })
+export const UndispatchedInferenceCostLineSchema = Schema.Struct({
+  ...ThreeStageInferenceCostLineSchema.fields,
+  notDispatchedByTerminalHash: Sha256Schema,
+})
 export const InferenceCostLineSchema = Schema.Union([
+  UndispatchedInferenceCostLineSchema,
   ThreeStageInferenceCostLineSchema,
   CheckpointInferenceCostLineSchema,
   StagedInferenceCostLineSchema,
@@ -195,6 +200,7 @@ type Stage = {
   readonly chartClaimHash?: string
   readonly chartTerminalHash?: string | null
   readonly stageClaimHash?: string | null
+  readonly notDispatchedByTerminalHash?: string
   readonly stageTerminalHash?: string | null
   readonly stageSkipHash?: string | null
 }
@@ -214,10 +220,11 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
     if (version.schemaVersion === 'bayn.jev-evaluation-request.v3') {
       if (row.chartCheckpoint !== undefined || row.stagedCheckpoint === undefined)
         return yield* failure('Staged requests require their explicit journal, not a historical chart checkpoint')
-      const { request, receipt, resolution, handoff, visualStages } = yield* readStagedInferenceCostEvidence({
-        ...row,
-        stagedCheckpoint: row.stagedCheckpoint,
-      })
+      const { request, receipt, resolution, handoff, visualStages, jevNotDispatchedByTerminalHash } =
+        yield* readStagedInferenceCostEvidence({
+          ...row,
+          stagedCheckpoint: row.stagedCheckpoint,
+        })
       const visual: Stage[] = visualStages.map((stage) => ({
         stage: stage.stage === 'CHART' ? InferenceStage.Chart : InferenceStage.BaseStart,
         provider: usesJevOnlyInference(request.request.protocol) ? 'typesafe' : 'openai',
@@ -248,10 +255,14 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         handoffHash: stage.handoffHash,
         receiptHash: stage.receiptHash,
         resolutionHash: stage.resolutionHash,
+        ...(stage.notDispatchedByTerminalHash === undefined
+          ? {}
+          : { notDispatchedByTerminalHash: stage.notDispatchedByTerminalHash }),
       }))
       const zero = receipt?.outcome.status === JevOutcome.Failed && receipt.outcome.failure === JevFailure.NotDispatched
       const skipped = handoff !== null && handoff.disposition.status !== 'READY'
-      let jevUsage: Usage | null = zero || skipped ? notDispatched() : null
+      let jevUsage: Usage | null =
+        zero || skipped || jevNotDispatchedByTerminalHash !== undefined ? notDispatched() : null
       let startedAt: string | undefined
       let recordedStartedAt: string | undefined
       if (receipt?.outcome.status === JevOutcome.Completed) {
@@ -277,10 +288,14 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
           recordedStartedAt,
           handoffHash: handoff?.handoffHash ?? null,
           receiptHash: skipped ? null : (receipt?.receiptHash ?? null),
-          resolutionHash: skipped ? null : (resolution?.resolutionHash ?? null),
+          resolutionHash:
+            skipped || jevNotDispatchedByTerminalHash !== undefined ? null : (resolution?.resolutionHash ?? null),
           stageClaimHash: null,
           stageTerminalHash: null,
           stageSkipHash: null,
+          ...(jevNotDispatchedByTerminalHash === undefined
+            ? {}
+            : { notDispatchedByTerminalHash: jevNotDispatchedByTerminalHash }),
         },
       ]
       return { request, receipt, resolution, handoffAt: handoff?.recordedAt ?? null, stages }
@@ -744,6 +759,9 @@ export const makeInferenceCostReport = (
             stageClaimHash: stage.stageClaimHash,
             stageTerminalHash: stage.stageTerminalHash ?? null,
             stageSkipHash: stage.stageSkipHash ?? null,
+            ...(stage.notDispatchedByTerminalHash === undefined
+              ? {}
+              : { notDispatchedByTerminalHash: stage.notDispatchedByTerminalHash }),
           })
         else {
           if (stage.stage === InferenceStage.BaseStart)
@@ -797,6 +815,9 @@ export const makeInferenceCostReport = (
               stageTerminalHash: line.stageTerminalHash,
               stageSkipHash: line.stageSkipHash,
             }
+          : {}),
+        ...('notDispatchedByTerminalHash' in line
+          ? { notDispatchedByTerminalHash: line.notDispatchedByTerminalHash }
           : {}),
       })),
     })

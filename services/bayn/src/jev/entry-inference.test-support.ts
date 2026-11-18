@@ -17,6 +17,7 @@ import {
   makeStagedSkipReceipt,
   stageResponseIdentity,
   type StagedCheckpoint,
+  type StagedTerminalReceipt,
 } from './staged-checkpoint'
 import { decodeJevResponse, prepareJevRequest } from './contract'
 import { JevClient } from './client'
@@ -388,7 +389,12 @@ export const stagedCheckpointFixture = (
   request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41'
     ? { makeInitialChartStageRequest }
     : retainedJevChartStages,
-): StagedCheckpoint => {
+): Omit<StagedCheckpoint, 'terminals'> & {
+  readonly terminals: readonly Extract<
+    StagedTerminalReceipt,
+    { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }
+  >[]
+} => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const initial = Result.getOrThrow<
     Result.Result.Success<ReturnType<ChartStageCodecs['makeInitialChartStageRequest']>>,
