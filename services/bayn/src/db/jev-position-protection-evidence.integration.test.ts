@@ -369,7 +369,7 @@ describePostgres('Native partial take-profit evidence', () => {
     },
   )
 
-  test.each(['receipt', 'order-observation', 'fill-observation', 'command'] as const)(
+  test.each(['receipt', 'order-observation', 'fill-observation', 'command', 'command-boundary'] as const)(
     'future evidence cannot change the original reconciliation cut: %s',
     async (mode) => {
       await fixture(false, (sql) =>
@@ -380,9 +380,9 @@ describePostgres('Native partial take-profit evidence', () => {
             yield* sql`UPDATE broker_events SET observed_at=${later}::timestamptz WHERE event_id=${'f'.repeat(64)}`
           if (mode === 'fill-observation')
             yield* sql`UPDATE broker_events SET observed_at=${later}::timestamptz WHERE event_id=${eventId}`
-          if (mode === 'command')
+          if (mode === 'command' || mode === 'command-boundary')
             yield* sql`INSERT INTO native_protection_cancel_commands VALUES (
-              ${intentId},'account','take-profit',${later}::timestamptz,NULL
+              ${intentId},'account','take-profit',${mode === 'command' ? later : asOf}::timestamptz,NULL
             )`
           const original = yield* readProtectionEvidence(sql, cycleId, entryDecisionHash, version, asOf)
           const current = yield* readProtectionEvidence(
@@ -396,9 +396,9 @@ describePostgres('Native partial take-profit evidence', () => {
           if (mode === 'receipt' || mode === 'fill-observation')
             expect(original.protectionDisposals.quantityAtoms).toBe('0')
           if (mode === 'order-observation') expect(original.exitRequestedAt).toBe(at)
-          if (mode === 'command') {
+          if (mode === 'command' || mode === 'command-boundary') {
             expect(original.exitRequestedAt).toBe(null)
-            expect(current.exitRequestedAt).toBe(later)
+            expect(current.exitRequestedAt).toBe(mode === 'command' ? later : asOf)
           } else {
             expect(current.exitRequestedAt).toBe(null)
             expect(current.protectionDisposals.quantityAtoms).toBe('14000000000')
