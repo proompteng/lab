@@ -8,6 +8,8 @@ import { OrderSide, OrderType } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { decideJevEntry } from '../jev/decision'
+import { shortNativeEntryFixture } from '../jev/short-entry.test-support'
 import { makeJevObservation } from '../jev/observation'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -26,6 +28,54 @@ const batch = (supportsEntry = true) => {
   const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence(fixture, supportsEntry)
   return evidence
 }
+
+test('refuses a reproduced native short instead of evaluating its symbol as a long', () => {
+  const short = Result.getOrThrow(shortNativeEntryFixture())
+  const { decidedAt: _at, ...evidence } = short.evidence
+  expect(short.decision.selectedSymbols).toEqual(['AAPL'])
+  expect(short.decision.targetWeights['AAPL']).toBe(-0.2)
+
+  const actual = prepareSignalStudyBatch(evidence)
+  expect(Result.isFailure(actual)).toBe(true)
+  if (Result.isSuccess(actual)) throw new Error('A short selection must not become a long study label')
+  expect(actual.failure).toMatchObject({
+    _tag: 'SignalStudyFailure',
+    cause: {
+      message: expect.stringContaining(
+        `SHORT selection AAPL (target weight -0.2) in batch ${evidence.batchPlan.batchId}`,
+      ),
+    },
+  })
+})
+
+test('retains a native long selection when its candidate evidence also contains funded shorts', () => {
+  const short = Result.getOrThrow(shortNativeEntryFixture())
+  const { decidedAt, ...evidence } = nativeJevDecisionEvidence({
+    observation: {
+      payload: short.observation,
+      contentHash: Result.getOrThrow(canonicalHashV1Result(short.observation)),
+    },
+    protocol: short.protocol,
+  })
+  const native = Result.getOrThrow(decideJevEntry({ ...evidence, decidedAt }))
+  expect(native.selectedSymbols).toEqual(['AAPL'])
+  expect(native.targetWeights['AAPL']).toBe(0.2)
+  const candidate = evidence.batchResult.candidates.find((entry) => entry.symbol === 'AAPL')
+  if (
+    candidate?.status !== 'RESOLVED' ||
+    candidate.receipt === null ||
+    candidate.receipt.outcome.status !== 'COMPLETED'
+  )
+    throw new Error('Expected source-bound native AAPL completion')
+  const disposition = candidate.receipt.outcome.completion.handoff.disposition
+  if (disposition.status !== 'READY') throw new Error('Expected funded native proposals')
+  expect(
+    disposition.evaluation.proposals.some(
+      (proposal) => proposal.schemaVersion === 'bayn.equity-short-entry-proposal.v1',
+    ),
+  ).toBe(true)
+  expect(Result.getOrThrow(prepareSignalStudyBatch(evidence)).selected[SignalScreenRule.Jev]).toBe('AAPL')
+})
 const at = Date.parse(fixture.observation.payload.observedAt)
 const assumptions = {
   instruments: replayTestInstruments,

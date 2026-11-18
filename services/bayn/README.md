@@ -319,11 +319,18 @@ rechecks PostgreSQL fences, account binding, original times and content identity
 Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
 PostgreSQL payload fallback or cache-disable mode.
 
-A retryable snapshot rejection or read timeout discards the cut and its retained history,
-then waits for the existing quota boundary before polling again. The already verified
-broker session stays open, so transient fill convergence does not repeat startup preflight.
-Failed acquisition, account or permission rejection, defects and external interruption
-still dispose the session before recovery. Failed publication remains unavailable.
+Each generation runtime may retain one privately frozen full-snapshot decoding of at most eight MiB of encoded bytes.
+An admitted read still fetches Valkey and reuses that decoding only when both the expected hash and the complete
+encoded bytes match. Every caller receives detached evidence; changed bytes take full strict decoding and canonical
+hash verification, and oversized payloads validate without retention. Account, chronology, age, PostgreSQL mutation
+and notification fences, and all reconciliation and ledger checks remain fresh. Compact submission state is always
+decoded and verified. The materialization span records `bayn.broker.payload_decode_reused` without payload contents.
+
+A retryable snapshot rejection discards the cut and its retained history, then waits
+for the existing quota boundary before polling again. The already verified broker session
+stays open, so transient fill convergence does not repeat startup preflight. Transport failures,
+exhausted request or capture deadlines, failed acquisition, account or permission rejection,
+defects and external interruption dispose the session before recovery. Failed publication remains unavailable.
 Market-calendar HTTP reads share a five-second budget across headers, body and retries,
 or the configured operation deadline when shorter, leaving time for the bounded recovery pass.
 
@@ -564,6 +571,9 @@ expires. The owner retains the original close-plus-two-second eligibility timer 
 
 An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
 transaction with `jev_inference_work`. That row retains the admitted financial work and its one-way dispatch claim.
+Dispatch polling materializes unresolved work before reading expiry from retained plan payloads, so completed history
+does not reopen large JSON evidence on each wake. The selected authority generation, original strict expiry cutoff,
+expiry-then-batch order, 64-item limit, claim state and admission deadline remain unchanged.
 The owner durably sends `BaynEntryInference.evaluate` and returns. The provider-only
 service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
 binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
@@ -811,7 +821,15 @@ the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
-management. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
+management. Current managed portfolios retain `bayn.jev-protection-evidence.v2` and reproduce protection facts at the
+original reconciliation cut, including broker observation and accounting receipt times. Cancellation commands must
+precede that cut strictly: a command in the same millisecond requires a subsequent fresh reconciliation.
+Untagged retained portfolios
+use their original derivation. An accounted native take-profit partial fill reduces inventory without latching a
+new application exit; the remaining native stop and target retain their sealed prices. This requires exact account,
+intent, symbol, side, fill, parent and conditional-order terms. Unproven child roles retain a conservative exit latch.
+A verified native stop disposal releases a prior profit restriction; an unknown later disposal does not create stop
+evidence or release that restriction. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
 UTC date. Expired broker evidence waits for reconciliation before authorizing a close. A 15-minute holding limit
 starts at the first actual fill. A verified adverse bid triggers the absolute strategy stop. A verified bid at the absolute strategy target triggers
 the application profit exit when a broker group has not already disposed of inventory. Its initial close must
@@ -822,6 +840,13 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
+Native protection cancellation samples the per-account database clock after acquiring the writer lease and intent
+lock, and checks the original target deadline against that unrounded time. Its stored millisecond command key
+exactly matches receipt lookup. Replay observes the committed admission before broker I/O. Delayed admission cannot
+backdate a new command or refresh its trigger; existing commands and receipts retain their identities and recovery.
+An already verified equity bracket or OCO may retain fractional residual inventory during the regular session.
+Exact child coverage and sealed prices remain required; new protection still follows provider sizing restrictions,
+and session transitions, unknown protection or a due exit retain their existing recovery behavior.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
 tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
@@ -855,10 +880,12 @@ preserves the reviewed close authority; current equity entries retain their evid
 Before that session-close window, the same position-mark close can resume an already committed non-profit exit after
 protection cancellation, rejection or an accounted protective disposal. The complete reproduced `PROTECTION_RELEASED`
 target must retain its durable exit-request time, exact entry, account, cycle, session and sealed exit policy. A broker
-mark cannot create a new stop trigger or release a profit limit: profit-exit latches retain the quote-backed path and
-ordinary session-close fallback window. Fresh exact reconciliation, known-order settlement, inventory-only quantity
+mark cannot create a new stop trigger or release a profit limit before the sealed first-fill holding deadline.
+Once that deadline elapses, a complete reproduced `MAXIMUM_HOLD` or `PROTECTION_RELEASED` target may also use the
+position-mark close, including a profit latch whose limit floor or ceiling has expired by time. The original
+first fill, holding policy and target expiry remain unchanged. Fresh exact reconciliation, known-order settlement, inventory-only quantity
 bounds, source-mark timestamps, current authority and close expiry remain mandatory.
-An unavailable archive without that committed non-profit exit does not trigger a redundant reconciliation before the
+An unavailable archive without a due holding deadline or committed non-profit exit does not trigger a redundant reconciliation before the
 fallback is eligible. Eligibility is sampled after the archive attempt, so work that crosses into the window may
 use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
 waits retain the explicit close-eligibility deadline and react to market or broker events. Failed close attempts retain the original data reason in logs.
@@ -1690,6 +1717,14 @@ a stream event. Worker completion, persistence and transport time never reset th
 runs on the next bounded continuation. A failed post-pass projection check selects its explicit recovery deadline.
 These wake times grant no execution authority and retain fresh reconciliation,
 quote, risk and submission checks.
+
+When decision construction fails because the fenced broker projection has no admissible cut,
+the retained failure preserves the typed `NO_ADMISSIBLE_CUT` marker. Ordinary quote updates then
+honor the existing broker recovery deadline, as direct reconciliation failures already do. Early
+retries keep an earlier outstanding deadline. Broker publications, inference completion and source
+startup, readiness or recovery events can still wake the owner immediately. Provider timeouts and
+unrelated decision failures do not acquire this marker from their message text, and every retry
+performs the normal fresh financial checks.
 
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
