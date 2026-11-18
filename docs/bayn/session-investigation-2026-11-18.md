@@ -3,7 +3,7 @@
 ## Result and financial boundary
 
 The exact fourteen-day interval is **2026-11-04T01:07:22Z through 2026-11-18T01:07:22Z**, exclusive at the end.
-It contains ten completed equity sessions, one account, **1,107 accounting transactions, 1,107 matching receipts,
+It contains ten completed equity sessions in the retained **PAPER** account, **1,107 accounting transactions, 1,107 matching receipts,
 and 225 closed flat-to-flat episodes**: 121 winners and 104 losers. Every instrument ends with zero quantity.
 There are no crypto transactions or fee-accrual rows in this interval. The earlier November 3–17 comparison is
 fifteen calendar days, not this fourteen-day result.
