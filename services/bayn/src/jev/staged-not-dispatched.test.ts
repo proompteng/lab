@@ -9,8 +9,11 @@ import {
   inferenceExpenseRateCard,
   makeInferenceExpenseQuotes,
   verifyInferenceExpenseQuote,
+  verifyPendingInferenceExpenses,
 } from '../inference-expense'
+import { expenseCoverageFromEvidence } from '../inference-expense.test-support'
 import { entryCompletionFixture, stagedCheckpointFixture } from './entry-inference.test-support'
+import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { decodeStagedCheckpoint } from './staged-checkpoint'
 import { undispatchedVisualFixture } from './staged-not-dispatched.test-support'
 
@@ -104,6 +107,76 @@ test('frozen zero quotes validate the complete current graph before projecting t
     expect(Result.isFailure(makeInferenceExpenseQuotes(changed, inferenceExpenseRateCard))).toBe(true)
     for (const quote of zero) expect(Result.isFailure(verifyInferenceExpenseQuote(changed, quote))).toBe(true)
   }
+})
+
+test('retained abandoned gaps still verify after a late positive non-dispatch terminal', () => {
+  const { request, source } = undispatchedVisualFixture()
+  const resolution = Result.getOrThrow(
+    makeJevResolution(request, null, {
+      schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+      requestId: request.requestId,
+      status: JevResolutionStatus.Abandoned,
+      abandonedAt: request.expiresAt,
+    }),
+  )
+  const earlier = {
+    ...source,
+    asOf: request.expiresAt,
+    resolution,
+    stagedCheckpoint: { ...source.stagedCheckpoint, terminals: [] },
+  }
+  const gaps = Result.getOrThrow(makeInferenceExpenseQuotes(earlier, inferenceExpenseRateCard))
+  expect(gaps).toHaveLength(2)
+  expect(gaps.every((quote) => quote.schemaVersion === 'bayn.inference-expense-quote.v4')).toBe(true)
+  expect(gaps.every((quote) => quote.line.usageStatus === InferenceUsageStatus.Unknown)).toBe(true)
+  const retainedHashes = gaps.map((quote) => quote.quoteHash)
+  const current = { ...source, resolution }
+  const zero = Result.getOrThrow(makeInferenceExpenseQuotes(current, inferenceExpenseRateCard))
+  for (const quote of gaps) expect(Result.isSuccess(verifyInferenceExpenseQuote(current, quote))).toBe(true)
+  const quotes = [...gaps, ...zero]
+  const pending = quotes.map((payload) => ({ quoteHash: payload.quoteHash, payload, source: current }))
+  expect(Result.getOrThrow(verifyPendingInferenceExpenses(pending)).map((quote) => quote.quoteHash)).toEqual(
+    quotes.map((quote) => quote.quoteHash),
+  )
+  const { accountId, sessionDate, asOf, ...entry } = current
+  const evidence = {
+    schemaVersion: 'bayn.inference-cost-evidence.v4' as const,
+    accountBindingHash: zero[0]?.accountBindingHash,
+    sessionDate,
+    asOf,
+    requests: [entry],
+  }
+  const coverage = Result.getOrThrow(
+    expenseCoverageFromEvidence(
+      evidence,
+      accountId,
+      quotes.map((quote) => ({ quote, verifiedAt: asOf })),
+    ),
+  )
+  expect(coverage.completeMeteredCoverage).toBe(true)
+  expect(coverage.knownEstimatedCostPicoUsd).toBe('0')
+  expect(coverage.gapRequestCount).toBe(0)
+  expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toEqual([])
+  expect(gaps.map((quote) => quote.quoteHash)).toEqual(retainedHashes)
+  const missingCurrent = Result.getOrThrow(
+    expenseCoverageFromEvidence(
+      evidence,
+      accountId,
+      gaps.map((quote) => ({ quote, verifiedAt: asOf })),
+    ),
+  )
+  expect(missingCurrent.completeMeteredCoverage).toBe(false)
+  expect(missingCurrent.missingQuoteCount).toBe(2)
+  const corrupted = { ...current, stagedCheckpoint: { ...current.stagedCheckpoint, terminals: [] } }
+  for (const quote of zero) expect(Result.isFailure(verifyInferenceExpenseQuote(corrupted, quote))).toBe(true)
+  const invalidGraph = {
+    ...current,
+    stagedCheckpoint: {
+      ...current.stagedCheckpoint,
+      terminals: current.stagedCheckpoint.terminals.map((terminal) => ({ ...terminal, terminalHash: 'f'.repeat(64) })),
+    },
+  }
+  for (const quote of gaps) expect(Result.isFailure(verifyInferenceExpenseQuote(invalidGraph, quote))).toBe(true)
 })
 
 test('v5 cannot be relabeled as a legacy quote or consume tokens, price or unrelated proof', () => {
