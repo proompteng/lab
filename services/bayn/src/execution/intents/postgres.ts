@@ -5,6 +5,7 @@ import type { Fragment } from 'effect/sql/Statement'
 import { JevPurpose } from '../../jev/portfolio'
 import { MutationOperation, type CancelReceipt } from '../../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../../hash'
+import { currentUtcInstant } from '../../time'
 
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../contracts'
 import { Sha256Schema as Sha256, strictParseOptions } from '../../schemas'
@@ -738,9 +739,11 @@ const makeStore = Effect.gen(function* () {
         fence.transaction(
           Effect.gen(function* () {
             const portfolio = exitTarget?.evidence.portfolio
+            // Sample after the writer lease: a delayed caller clock cannot backdate a newly visible command.
+            const requestedAt = yield* currentUtcInstant
             const rows = yield* sql`
         INSERT INTO native_protection_cancel_commands (intent_id, account_id, broker_order_id, requested_at, exit_target)
-        SELECT i.intent_id, i.account_id, latest.broker_order_id, ${observedAt}::timestamptz,
+        SELECT i.intent_id, i.account_id, latest.broker_order_id, ${requestedAt}::timestamptz,
           ${exitTarget === undefined ? null : JSON.stringify(exitTarget)}::jsonb
         FROM intents i JOIN LATERAL (
           SELECT o.broker_order_id, o.side, o.status, o.parent_broker_order_id, e.observed_at
@@ -749,6 +752,8 @@ const makeStore = Effect.gen(function* () {
           ORDER BY e.source_sequence DESC LIMIT 1
         ) latest ON true
         WHERE i.intent_id = ${intentId} AND i.protection IS NOT NULL
+          AND ${observedAt}::timestamptz <= ${requestedAt}::timestamptz
+          AND latest.observed_at <= ${requestedAt}::timestamptz
           AND latest.side = CASE
             WHEN i.protection ->> '_tag' IN ('EquityShortBracket','EquityShortOco','EquityShortStopLimit') THEN 'BUY'
             WHEN i.protection ->> '_tag' IN ('Bracket','Oco','StopLimit') THEN 'SELL'
@@ -759,10 +764,11 @@ const makeStore = Effect.gen(function* () {
               AND d.document #> '{strategyDecision,exitPolicy}' = ${portfolio?.purpose === JevPurpose.Manage ? JSON.stringify(portfolio.exitPolicy) : null}::jsonb)
             AND i.account_id = ${exitTarget?.evidence.portfolio.brokerState.account.accountId ?? null}
             AND i.symbol = ${exitTarget?.symbols[0] ?? null}
-            AND ${exitTarget?.observedAt ?? observedAt}::timestamptz <= ${observedAt}::timestamptz))
+            AND ${exitTarget?.observedAt ?? observedAt}::timestamptz <= ${observedAt}::timestamptz
+            AND ${requestedAt}::timestamptz < ${exitTarget?.commitDeadlineAt ?? requestedAt}::timestamptz))
           AND latest.status IN ('NEW','PENDING','PARTIALLY_FILLED')
           AND NOT EXISTS (SELECT 1 FROM native_protection_cancel_commands c WHERE c.broker_order_id = latest.broker_order_id
-            AND (c.requested_at > ${observedAt}::timestamptz - interval '5 seconds' OR c.requested_at > latest.observed_at))
+            AND (c.requested_at > ${requestedAt}::timestamptz - interval '5 seconds' OR c.requested_at > latest.observed_at))
         RETURNING broker_order_id
       `
             if (rows.length > 1)

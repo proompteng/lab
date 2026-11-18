@@ -818,7 +818,13 @@ the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
-management. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
+management. Current managed portfolios retain `bayn.jev-protection-evidence.v2` and reproduce protection facts at the
+original reconciliation cut, including broker observation and accounting receipt times. Untagged retained portfolios
+use their original derivation. An accounted native take-profit partial fill reduces inventory without latching a
+new application exit; the remaining native stop and target retain their sealed prices. This requires exact account,
+intent, symbol, side, fill, parent and conditional-order terms. Unproven child roles retain a conservative exit latch.
+A verified native stop disposal releases a prior profit restriction; an unknown later disposal does not create stop
+evidence or release that restriction. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
 UTC date. Expired broker evidence waits for reconciliation before authorizing a close. A 15-minute holding limit
 starts at the first actual fill. A verified adverse bid triggers the absolute strategy stop. A verified bid at the absolute strategy target triggers
 the application profit exit when a broker group has not already disposed of inventory. Its initial close must
@@ -829,6 +835,9 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
+Native protection cancellation samples its command time after acquiring the account writer lease and checks the
+original target deadline again. Delayed admission cannot backdate a new command or refresh its trigger. Existing
+commands and receipts retain their original identities and recovery behavior.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
 tick. Current numerical evidence reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`

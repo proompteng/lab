@@ -666,191 +666,235 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
-  test.each([JevExitReason.ProfitTarget, JevExitReason.ProtectiveStop])(
-    'protection cancellation retains its original %s cause through durable recovery',
-    async (reason) => {
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          const { portfolio, managed } = yield* seedManagedPosition({ nativeProtection: 'strategy' })
-          const cycle = Option.getOrThrow(yield* (yield* CycleStore).read(nativeInput.cycleId))
-          const input = {
-            cycle,
-            entryDecisionHash: portfolio.entryDecisionHash,
-            authorityGenerationHash: nativeInput.authorityGenerationHash,
-            protocol: fixture.protocol,
-            calendar: managed.snapshot.manifest.calendar,
-            brokerState: portfolio.brokerState,
-            marketData: {
-              check: Effect.void,
-              verifyReference: fixtureStreamingReference,
-              loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
-                Effect.succeed(
-                  streamingFixtureFromRaw(
-                    makeIntradayMomentumTestSnapshot(
-                      fixture.protocol,
-                      { ...query, archiveWatermarks: [] },
-                      { AAPL: reason === JevExitReason.ProfitTarget ? 0.08 : -0.02 },
-                    ),
-                    query,
-                  ).snapshot,
-                ),
-            },
-          }
-          const management = yield* evaluateJevPositionManagement(input)
-          if (management._tag !== 'Exit') throw new Error('Expected verified exit trigger')
-          expect(management.target.reason).toBe(reason)
-          const intentId = portfolio.entryIntentIds[0]
-          const levels = portfolio.exitPolicy.plans['AAPL']?.levels
-          if (intentId === undefined || levels === undefined) throw new Error('Expected immutable protection')
-          const sql = yield* PgClient.PgClient
-          const eventId = '7'.repeat(64)
-          const brokerOrderId = 'protective-child'
-          const observedAt = management.target.observedAt
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+  test.each([
+    { reason: JevExitReason.ProfitTarget, delayMs: 0 },
+    { reason: JevExitReason.ProtectiveStop, delayMs: 0 },
+    { reason: JevExitReason.ProfitTarget, delayMs: 500 },
+    { reason: JevExitReason.ProfitTarget, delayMs: 15_000 },
+  ])('protection cancellation retains its original cause through durable recovery: %j', async ({ reason, delayMs }) => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { portfolio, managed } = yield* seedManagedPosition({ nativeProtection: 'strategy' })
+        const cycle = Option.getOrThrow(yield* (yield* CycleStore).read(nativeInput.cycleId))
+        const input = {
+          cycle,
+          entryDecisionHash: portfolio.entryDecisionHash,
+          authorityGenerationHash: nativeInput.authorityGenerationHash,
+          protocol: fixture.protocol,
+          calendar: managed.snapshot.manifest.calendar,
+          brokerState: portfolio.brokerState,
+          marketData: {
+            check: Effect.void,
+            verifyReference: fixtureStreamingReference,
+            loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
+              Effect.succeed(
+                streamingFixtureFromRaw(
+                  makeIntradayMomentumTestSnapshot(
+                    fixture.protocol,
+                    { ...query, archiveWatermarks: [] },
+                    { AAPL: reason === JevExitReason.ProfitTarget ? 0.08 : -0.02 },
+                  ),
+                  query,
+                ).snapshot,
+              ),
+          },
+        }
+        const management = yield* evaluateJevPositionManagement(input)
+        if (management._tag !== 'Exit') throw new Error('Expected verified exit trigger')
+        expect(management.target.reason).toBe(reason)
+        const intentId = portfolio.entryIntentIds[0]
+        const levels = portfolio.exitPolicy.plans['AAPL']?.levels
+        if (intentId === undefined || levels === undefined) throw new Error('Expected immutable protection')
+        const sql = yield* PgClient.PgClient
+        const eventId = '7'.repeat(64)
+        const brokerOrderId = 'protective-child'
+        const observedAt = management.target.observedAt
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
           source_event_id,source_sequence,occurred_at,observed_at)
           VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
             ${brokerOrderId},100,${observedAt},${observedAt})`
-              yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
+            yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
           symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status)
           VALUES(${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'protective-child-client',${intentId},
             'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW')`
-            }),
+          }),
+        )
+        const store = yield* IntentStore
+        if (delayMs > 0) {
+          const fence = yield* WriterFence
+          const delayedStore = yield* IntentStore.pipe(
+            Effect.provide(
+              IntentStoreLive.pipe(
+                Layer.provide(
+                  Layer.succeed(WriterFence, {
+                    check: fence.check,
+                    transaction: (effect, finalize) =>
+                      fence.transaction(TestClock.adjust(delayMs).pipe(Effect.andThen(effect)), finalize),
+                  }),
+                ),
+                Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
+                Layer.fresh,
+              ),
+            ),
           )
-          const store = yield* IntentStore
-          expect(
-            (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, {
-              ...management.target,
-              entryDecisionHash: '9'.repeat(64),
-            }))._tag,
-          ).toBe('NotEligible')
-          const started = yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)
-          expect(started._tag).toBe('New')
-          if (started._tag !== 'New') throw new Error('Expected a new native protection cancellation command')
-          const pendingBeforeFreshObservation = yield* store.beginProtectionCancel(
+          const admitted = yield* delayedStore.beginProtectionCancel(
             intentId,
             brokerOrderId,
             observedAt,
             management.target,
           )
-          expect(pendingBeforeFreshObservation._tag).toBe('PendingUnknown')
-          const pendingBeforeFiveSecondWindowExpires = yield* store.beginProtectionCancel(
-            intentId,
-            brokerOrderId,
-            new Date(Date.parse(observedAt) + 1_000).toISOString(),
-            management.target,
-          )
-          expect(pendingBeforeFiveSecondWindowExpires._tag).toBe('PendingUnknown')
-          const [{ pendingCommandCount }] = yield* Schema.decodeUnknownEffect(
-            Schema.Tuple([Schema.Struct({ pendingCommandCount: Schema.Number })]),
-          )(
-            yield* sql`SELECT count(*)::int AS "pendingCommandCount"
+          if (delayMs >= fixture.protocol.maximumQuoteAgeMs) {
+            expect(admitted._tag).toBe('NotEligible')
+            expect(yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands`).toEqual([
+              { count: 0 },
+            ])
+          } else {
+            expect(admitted._tag).toBe('New')
+            if (admitted._tag !== 'New') throw new Error('Expected delayed native cancellation admission')
+            expect(admitted.command.requestedAt).toBe(new Date(Date.parse(observedAt) + delayMs).toISOString())
+            expect(
+              yield* sql`SELECT exit_target FROM native_protection_cancel_commands WHERE intent_id = ${intentId}`,
+            ).toEqual([{ exit_target: management.target }])
+            expect(
+              (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target))._tag,
+            ).toBe('PendingUnknown')
+            expect(yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands`).toEqual([
+              { count: 1 },
+            ])
+          }
+          return
+        }
+        expect(
+          (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, {
+            ...management.target,
+            entryDecisionHash: '9'.repeat(64),
+          }))._tag,
+        ).toBe('NotEligible')
+        const started = yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)
+        expect(started._tag).toBe('New')
+        if (started._tag !== 'New') throw new Error('Expected a new native protection cancellation command')
+        const pendingBeforeFreshObservation = yield* store.beginProtectionCancel(
+          intentId,
+          brokerOrderId,
+          observedAt,
+          management.target,
+        )
+        expect(pendingBeforeFreshObservation._tag).toBe('PendingUnknown')
+        const pendingBeforeFiveSecondWindowExpires = yield* store.beginProtectionCancel(
+          intentId,
+          brokerOrderId,
+          new Date(Date.parse(observedAt) + 1_000).toISOString(),
+          management.target,
+        )
+        expect(pendingBeforeFiveSecondWindowExpires._tag).toBe('PendingUnknown')
+        const [{ pendingCommandCount }] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ pendingCommandCount: Schema.Number })]),
+        )(
+          yield* sql`SELECT count(*)::int AS "pendingCommandCount"
               FROM native_protection_cancel_commands
               WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`,
-          )
-          expect(pendingCommandCount).toBe(1)
+        )
+        expect(pendingCommandCount).toBe(1)
 
-          const requestHash = Result.getOrThrow(
-            canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId }),
-          )
-          const contentHash = Result.getOrThrow(canonicalHashV1Result(null))
-          const validReceipt = {
-            requestHash,
-            brokerOrderId,
-            evidence: {
-              requestId: 'native-protection-cancel-receipt',
-              status: 204,
-              contentHash,
-              observedAt,
-            },
-          }
-          const invalidReceipts = [
-            ['broker order', { ...validReceipt, brokerOrderId: 'different-protective-order' }],
-            ['request hash', { ...validReceipt, requestHash: '0'.repeat(64) }],
-            ['status', { ...validReceipt, evidence: { ...validReceipt.evidence, status: 200 } }],
-            [
-              'observed time',
-              {
-                ...validReceipt,
-                evidence: {
-                  ...validReceipt.evidence,
-                  observedAt: new Date(Date.parse(observedAt) - 1_000).toISOString(),
-                },
-              },
-            ],
-          ] as const
-          for (const [label, invalidReceipt] of invalidReceipts) {
-            const attempted = yield* store
-              .recordProtectionCancelAccepted(started.command, invalidReceipt)
-              .pipe(Effect.exit)
-            if (Exit.isSuccess(attempted)) throw new Error(`Invalid ${label} receipt was accepted`)
-            expect(Cause.pretty(attempted.cause)).toContain('native protection cancel')
-          }
-          const accepted = yield* store.recordProtectionCancelAccepted(started.command, validReceipt)
-          expect(accepted._tag).toBe('Accepted')
-          const duplicate = yield* store.recordProtectionCancelAccepted(started.command, validReceipt)
-          expect(duplicate._tag).toBe('Accepted')
-          const conflicting = yield* store
-            .recordProtectionCancelAccepted(started.command, {
+        const requestHash = Result.getOrThrow(
+          canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId }),
+        )
+        const contentHash = Result.getOrThrow(canonicalHashV1Result(null))
+        const validReceipt = {
+          requestHash,
+          brokerOrderId,
+          evidence: {
+            requestId: 'native-protection-cancel-receipt',
+            status: 204,
+            contentHash,
+            observedAt,
+          },
+        }
+        const invalidReceipts = [
+          ['broker order', { ...validReceipt, brokerOrderId: 'different-protective-order' }],
+          ['request hash', { ...validReceipt, requestHash: '0'.repeat(64) }],
+          ['status', { ...validReceipt, evidence: { ...validReceipt.evidence, status: 200 } }],
+          [
+            'observed time',
+            {
               ...validReceipt,
-              evidence: { ...validReceipt.evidence, requestId: 'conflicting-native-protection-cancel-receipt' },
-            })
+              evidence: {
+                ...validReceipt.evidence,
+                observedAt: new Date(Date.parse(observedAt) - 1_000).toISOString(),
+              },
+            },
+          ],
+        ] as const
+        for (const [label, invalidReceipt] of invalidReceipts) {
+          const attempted = yield* store
+            .recordProtectionCancelAccepted(started.command, invalidReceipt)
             .pipe(Effect.exit)
-          if (Exit.isSuccess(conflicting)) throw new Error('Conflicting native protection receipt was accepted')
-          expect(Cause.pretty(conflicting.cause)).toContain('conflicts')
-          expect(
-            Result.isFailure(
-              yield* sql`UPDATE native_protection_cancel_receipts
+          if (Exit.isSuccess(attempted)) throw new Error(`Invalid ${label} receipt was accepted`)
+          expect(Cause.pretty(attempted.cause)).toContain('native protection cancel')
+        }
+        const accepted = yield* store.recordProtectionCancelAccepted(started.command, validReceipt)
+        expect(accepted._tag).toBe('Accepted')
+        const duplicate = yield* store.recordProtectionCancelAccepted(started.command, validReceipt)
+        expect(duplicate._tag).toBe('Accepted')
+        const conflicting = yield* store
+          .recordProtectionCancelAccepted(started.command, {
+            ...validReceipt,
+            evidence: { ...validReceipt.evidence, requestId: 'conflicting-native-protection-cancel-receipt' },
+          })
+          .pipe(Effect.exit)
+        if (Exit.isSuccess(conflicting)) throw new Error('Conflicting native protection receipt was accepted')
+        expect(Cause.pretty(conflicting.cause)).toContain('conflicts')
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE native_protection_cancel_receipts
                 SET request_id = 'mutated-native-protection-cancel-receipt'
                 WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`.pipe(Effect.result),
-            ),
-          ).toBe(true)
-          expect(
-            Result.isFailure(
-              yield* sql`DELETE FROM native_protection_cancel_receipts
+          ),
+        ).toBe(true)
+        expect(
+          Result.isFailure(
+            yield* sql`DELETE FROM native_protection_cancel_receipts
                 WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`.pipe(Effect.result),
-            ),
-          ).toBe(true)
-          expect(
-            (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target))._tag,
-          ).toBe('Accepted')
-          const [{ count }] = yield* Schema.decodeUnknownEffect(
-            Schema.Tuple([Schema.Struct({ count: Schema.Number })]),
-          )(
-            yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands WHERE exit_target = ${JSON.stringify(management.target)}::jsonb`,
-          )
-          expect(count).toBe(1)
-          const [{ receiptCount }] = yield* Schema.decodeUnknownEffect(
-            Schema.Tuple([Schema.Struct({ receiptCount: Schema.Number })]),
-          )(
-            yield* sql`SELECT count(*)::int AS "receiptCount"
+          ),
+        ).toBe(true)
+        expect((yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target))._tag).toBe(
+          'Accepted',
+        )
+        const [{ count }] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ count: Schema.Number })]))(
+          yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands WHERE exit_target = ${JSON.stringify(management.target)}::jsonb`,
+        )
+        expect(count).toBe(1)
+        const [{ receiptCount }] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ receiptCount: Schema.Number })]),
+        )(
+          yield* sql`SELECT count(*)::int AS "receiptCount"
               FROM native_protection_cancel_receipts
               WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`,
-          )
-          expect(receiptCount).toBe(1)
-          const recovered = yield* (yield* JevPositionStore).read({
-            cycleId: cycle.identity.cycleId,
-            entryDecisionHash: portfolio.entryDecisionHash,
-            brokerState: portfolio.brokerState,
-          })
-          expect(recovered.exitRequestedAt).toBe(observedAt)
-          expect(recovered.profitExitRequested).toBe(reason === JevExitReason.ProfitTarget)
-          const resumed = yield* evaluateJevPositionManagement(input)
-          if (resumed._tag !== 'Exit') throw new Error('Expected durable exit recovery')
-          expect(resumed.target.reason).toBe(JevExitReason.ProtectionReleased)
-          const floors = Result.getOrThrow(
-            jevProfitTargetLimitFloors(resumed.target, observedAt, [
-              { symbol: 'AAPL', referencePriceMicros: String(BigInt(levels.profitLimitPriceMicros) - 10_000n) },
-            ]),
-          )
-          expect(floors).toEqual(
-            reason === JevExitReason.ProfitTarget ? { AAPL: BigInt(levels.profitLimitPriceMicros) } : {},
-          )
-        }).pipe(atObservation),
-      )
-    },
-  )
+        )
+        expect(receiptCount).toBe(1)
+        const recovered = yield* (yield* JevPositionStore).read({
+          cycleId: cycle.identity.cycleId,
+          entryDecisionHash: portfolio.entryDecisionHash,
+          brokerState: portfolio.brokerState,
+        })
+        expect(recovered.exitRequestedAt).toBe(observedAt)
+        expect(recovered.profitExitRequested).toBe(reason === JevExitReason.ProfitTarget)
+        const resumed = yield* evaluateJevPositionManagement(input)
+        if (resumed._tag !== 'Exit') throw new Error('Expected durable exit recovery')
+        expect(resumed.target.reason).toBe(JevExitReason.ProtectionReleased)
+        const floors = Result.getOrThrow(
+          jevProfitTargetLimitFloors(resumed.target, observedAt, [
+            { symbol: 'AAPL', referencePriceMicros: String(BigInt(levels.profitLimitPriceMicros) - 10_000n) },
+          ]),
+        )
+        expect(floors).toEqual(
+          reason === JevExitReason.ProfitTarget ? { AAPL: BigInt(levels.profitLimitPriceMicros) } : {},
+        )
+      }).pipe(atObservation),
+    )
+  })
 
   test('close intent classification is restricted to the persisted intent and its owning cycle', async () => {
     await runtime.runPromise(
