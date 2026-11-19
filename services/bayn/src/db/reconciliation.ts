@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { isStopProtection, isEquityShortProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
@@ -314,16 +315,20 @@ const fromDecision = <A>(
     }),
   )
 
-export const readAccountingHistory = (
-  sql: PgClient.PgClient,
-  accountId: string,
-  observedFills: readonly Fill[],
-  ledger: number,
-) =>
-  runStore(
-    'reconcile',
-    Effect.gen(function* () {
-      const rows = yield* sql<Record<string, unknown>>`
+const accountingHistoryReuseLimit = 4096
+type AccountingHistory = Parameters<typeof verifyAccountingHistory>[0]
+type VerifiedAccountingHistory = Result.Result.Success<ReturnType<typeof verifyAccountingHistory>>
+
+export const makeAccountingHistoryReader = (sql: PgClient.PgClient, ledger: number) => {
+  let previous:
+    | { readonly accountId: string; readonly history: AccountingHistory; readonly verified: VerifiedAccountingHistory }
+    | undefined
+
+  return (accountId: string, observedFills: readonly Fill[]) =>
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        const rows = yield* sql<Record<string, unknown>>`
       WITH inventory_debits AS MATERIALIZED (
         SELECT account_id, symbol, sum(quantity_atoms) AS quantity_atoms,
           sum(cost_basis_micros) AS cost_basis_micros, effective_at
@@ -381,20 +386,43 @@ export const readAccountingHistory = (
       )
       SELECT * FROM ranked ORDER BY occurred_at, transaction_id COLLATE "C"
   `.pipe(Effect.flatMap(decodeAccountingHistoryRows))
-      const observed = new Map(observedFills.map((fill) => [fill.fillId, fill]))
-      return yield* fromDecision(
-        'reconcile',
-        verifyAccountingHistory(
-          rows.map((row) => ({
-            transaction: accountingTransactionFromRow(row),
-            fill: observed.get(row.fill.fillId) ?? row.fill,
-            prior: { quantityAtoms: row.prior_quantity_atoms, costMicros: row.prior_cost_micros },
-          })),
-          ledger,
-        ),
-      )
-    }),
-  )
+        const observed = new Map(observedFills.map((fill) => [fill.fillId, fill]))
+        const history = rows.map((row) => ({
+          transaction: accountingTransactionFromRow(row),
+          fill: observed.get(row.fill.fillId) ?? row.fill,
+          prior: { quantityAtoms: row.prior_quantity_atoms, costMicros: row.prior_cost_micros },
+        }))
+        const retained = previous?.accountId === accountId ? previous : undefined
+        let reused = 0
+        if (retained !== undefined) {
+          const comparable = Math.min(history.length, retained.history.length)
+          while (reused < comparable && isDeepStrictEqual(history[reused], retained.history[reused])) reused++
+        }
+        yield* Effect.annotateCurrentSpan({
+          'bayn.reconciliation.history_rows': history.length,
+          'bayn.reconciliation.history_reused_rows': reused,
+        })
+
+        if (retained !== undefined && reused === history.length && reused === retained.history.length)
+          return retained.verified
+
+        const suffix = yield* fromDecision('reconcile', verifyAccountingHistory(history.slice(reused), ledger))
+        const verified =
+          retained === undefined || reused === 0 ? suffix : [...retained.verified.slice(0, reused), ...suffix]
+        const retainCount = Math.min(history.length, accountingHistoryReuseLimit)
+        if (reused < retainCount || retainCount !== retained?.history.length) {
+          // Reuse only deterministic plan reconstruction after rereading the full input.
+          // Own the checked fill and prior cost so later mutations cannot change the proof.
+          previous = {
+            accountId,
+            history: structuredClone(history.slice(0, retainCount)),
+            verified: verified.slice(0, retainCount),
+          }
+        }
+        return verified
+      }),
+    )
+}
 
 export const restrictAuthority = (
   sql: PgClient.PgClient,
@@ -598,6 +626,8 @@ export const makeReconciliation = (
   writerFence: WriterFenceService,
   clock: DatabaseClock = postgresWallClock(sql),
 ) => {
+  const readAccountingHistory = makeAccountingHistoryReader(sql, config.tigerBeetle.ledger)
+
   const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
     runStore(
       'bindings',
@@ -707,7 +737,7 @@ export const makeReconciliation = (
         const intents: readonly IntentExpectation[] = [...projected.intents, ...childExpectations]
         const unknownMutationCount = projected.unknownMutationCount
 
-        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger).pipe(
+        const prepared = yield* readAccountingHistory(accountId, snapshot.fills).pipe(
           withObservedStage('bayn.reconciliation.accounting-history'),
         )
         const transactions = prepared.map(({ transaction }) => transaction)

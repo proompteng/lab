@@ -60,7 +60,7 @@ import { persistStableSnapshot } from '../simulation-reconciliation/broker-persi
 import { ReconciliationClock, runOnce } from '../reconciler'
 import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
 import {
-  readAccountingHistory,
+  makeAccountingHistoryReader,
   makeReconciliation,
   verifyBrokerStateVersion,
   type BrokerSnapshot,
@@ -1092,11 +1092,9 @@ describePostgres('PostgreSQL execution persistence', () => {
               const snapshot = yield* events.ingestPositions(positionSnapshot(sourceHash, positions))
               const completed = yield* events.completeHistory([fill])
               expect(completed.has(fill.sourceEventId)).toBeTrue()
-              yield* readAccountingHistory(
-                yield* PgClient.PgClient,
+              yield* makeAccountingHistoryReader(yield* PgClient.PgClient, config.tigerBeetle.ledger)(
                 accountId,
                 [fill].map((event) => event.fill),
-                config.tigerBeetle.ledger,
               )
               const valuation = yield* valuations.value({
                 accountEventId: accountReceipt.eventId,
@@ -1422,26 +1420,18 @@ describePostgres('PostgreSQL execution persistence', () => {
 
         const history = [observedOrder, accountedFill, preparedFill, unaccountedFill, newOrder]
         const completed = yield* events.completeHistory(history)
-        yield* readAccountingHistory(
-          yield* PgClient.PgClient,
-          accountId,
-          [accountedFill].map((event) => event.fill),
-          config.tigerBeetle.ledger,
-        )
-        const accountingMismatch = yield* readAccountingHistory(
-          yield* PgClient.PgClient,
-          accountId,
-          [{ ...accountedFill.fill, quantityAtoms: '2000000000' }],
-          config.tigerBeetle.ledger,
-        ).pipe(Effect.flip)
+        const readHistory = makeAccountingHistoryReader(yield* PgClient.PgClient, config.tigerBeetle.ledger)
+        const first = yield* readHistory(accountId, [accountedFill.fill])
+        const repeated = yield* readHistory(accountId, [{ ...accountedFill.fill }])
+        expect(repeated).toEqual(first)
+        const accountingMismatch = yield* readHistory(accountId, [
+          { ...accountedFill.fill, quantityAtoms: '2000000000' },
+        ]).pipe(Effect.flip)
         yield* accounting.account(preparedFill)
         const completedAfterRecovery = yield* events.completeHistory(history)
-        yield* readAccountingHistory(
-          yield* PgClient.PgClient,
-          accountId,
-          [accountedFill, preparedFill].map((event) => event.fill),
-          config.tigerBeetle.ledger,
-        )
+        const extended = yield* readHistory(accountId, [accountedFill.fill, preparedFill.fill])
+        expect(extended).toHaveLength(2)
+        expect(extended[0]).toEqual(first[0])
         const conflict = yield* events
           .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
           .pipe(Effect.flip)
@@ -1480,11 +1470,9 @@ describePostgres('PostgreSQL execution persistence', () => {
             return statement
           },
         })
-        yield* readAccountingHistory(
-          monitored,
+        yield* makeAccountingHistoryReader(monitored, config.tigerBeetle.ledger)(
           accountId,
           inputs.map((event) => event.fill),
-          config.tigerBeetle.ledger,
         )
         expect(lookups).toHaveLength(1)
         const lookup = lookups[0]
@@ -1555,7 +1543,8 @@ describePostgres('PostgreSQL execution persistence', () => {
             yield* accounting.account(buy)
             yield* accounting.account(sell)
             const observedFills = [buy.fill, sell.fill]
-            const history = yield* readAccountingHistory(sql, accountId, observedFills, config.tigerBeetle.ledger)
+            const readHistory = makeAccountingHistoryReader(sql, config.tigerBeetle.ledger)
+            const history = yield* readHistory(accountId, observedFills)
             expect(history).toHaveLength(2)
             expect(history[1]?.transaction).toMatchObject({
               costBasisMicros: '199999997',
@@ -1564,9 +1553,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             yield* sql`UPDATE pg_temp.broker_inventory_debits
               SET cost_basis_micros = cost_basis_micros + 100
               WHERE quantity_atoms = 1000000`
-            const changed = yield* readAccountingHistory(sql, accountId, observedFills, config.tigerBeetle.ledger).pipe(
-              Effect.flip,
-            )
+            const changed = yield* readHistory(accountId, observedFills).pipe(Effect.flip)
             expect(changed).toMatchObject({ operation: 'reconcile', failure: 'invariant' })
           }),
         )
@@ -1751,11 +1738,9 @@ describePostgres('PostgreSQL execution persistence', () => {
         const accounting = yield* FillAccountingStore
         yield* accounting.account(secondBuy)
         yield* accounting.account(sell)
-        yield* readAccountingHistory(
-          yield* PgClient.PgClient,
+        yield* makeAccountingHistoryReader(yield* PgClient.PgClient, config.tigerBeetle.ledger)(
           accountId,
           [buy, secondBuy, sell].map((event) => event.fill),
-          config.tigerBeetle.ledger,
         )
         const sql = yield* PgClient.PgClient
         return yield* sql`SELECT
@@ -2517,11 +2502,9 @@ describePostgres('PostgreSQL execution persistence', () => {
             expect(report.cashYieldEvidence?.accountedCashDeltaMicros).toBe(hasRegulatory ? '915896' : '2055896')
           }),
         )
-        yield* readAccountingHistory(
-          yield* PgClient.PgClient,
+        yield* makeAccountingHistoryReader(yield* PgClient.PgClient, config.tigerBeetle.ledger)(
           accountId,
           [buy, sell].map((event) => event.fill),
-          config.tigerBeetle.ledger,
         )
         expect(
           yield* sql`SELECT sum(quantity_atoms)::text AS quantity,sum(cost_basis_micros)::text AS cost FROM broker_inventory_debits WHERE posted`,
