@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
   Clock,
@@ -26,7 +27,7 @@ import {
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevInferenceWorkStore, executeJevInferenceWork } from '../jev/inference-work'
-import type { JevInferenceCompletion, JevInferenceJob } from '../jev/inference-work'
+import type { JevInferenceJob } from '../jev/inference-work'
 import type { EntryInferenceRuntime } from '../restate/restate-entry-inference'
 import {
   ExecutionControllerOutcome,
@@ -53,11 +54,14 @@ import { nativeActivationPreflight } from './native-activation-preflight'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
+  JevRuntimeResourcesLive,
   WorkerMarketProjectionLive,
+  type JevRuntimeServices,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
-import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { AuthorityGenerationStore, type AuthorityGenerationStoreShape } from '../db/execution-store/contract'
+import { readAuthorityState } from '../db/execution-store/observe-authority'
 import { IntradayMarketData } from '../market-data/intraday/model'
 import { KillState } from '../execution/contracts'
 
@@ -81,10 +85,7 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError>
   readonly nextDelayMs: number
-  readonly inference?: {
-    readonly pending: Effect.Effect<readonly JevInferenceJob[], OperationalError>
-    readonly execute: (jobId: string) => Effect.Effect<JevInferenceCompletion | null, OperationalError>
-  }
+  readonly pendingInference?: Effect.Effect<readonly JevInferenceJob[], OperationalError>
 }
 
 export class ExecutionCycleDriver extends Context.Service<ExecutionCycleDriver, BoundRecoveryFirstCycleDriver>()(
@@ -127,6 +128,41 @@ const pendingInferenceForAuthority = (context: Context.Context<RecoveryFirstRunt
     )
     return yield* work.value.pending(authority.generationHash)
   })
+
+const executeNativeJevInference = (jobId: string, readAuthority: AuthorityGenerationStoreShape['readAuthorityState']) =>
+  executeJevInferenceWork(jobId, (job) =>
+    readAuthority.pipe(
+      Effect.map(
+        (authority) =>
+          job.authorityGenerationHash === authority.generationHash &&
+          authority.kill === KillState.Clear &&
+          authority.effective === authority.maximum,
+      ),
+    ),
+  ).pipe(
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'jev-batch',
+        message: 'admitted inference failed',
+        cause,
+      }),
+    ),
+  )
+
+export const makeNativeEntryInferenceRuntime = (
+  runtime: Pick<
+    ManagedRuntime.ManagedRuntime<Effect.Services<ReturnType<typeof executeNativeJevInference>>, unknown>,
+    'runPromise'
+  >,
+  readAuthority: AuthorityGenerationStoreShape['readAuthorityState'],
+): EntryInferenceRuntime => ({
+  executeInference: (jobId, signal) => {
+    const parent = currentOpenTelemetryParentSpan()
+    const execute = executeNativeJevInference(jobId, readAuthority)
+    return runtime.runPromise(parent === undefined ? execute : execute.pipe(Effect.withParentSpan(parent)), { signal })
+  },
+})
 
 export const executionReceiptDelayMs = (completedAt: string, nextWakeAt?: string): number =>
   nextWakeAt === undefined ? 1 : Math.min(86_400_000, Math.max(1, Date.parse(nextWakeAt) - Date.parse(completedAt)))
@@ -243,44 +279,7 @@ export const bindRecoveryFirstCycleDriver = (
       }),
       nextDelayMs: driver.nextDelayMs,
       ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore))
-        ? {
-            inference: {
-              pending: pendingInferenceForAuthority(context),
-              execute: (jobId: string) => {
-                const work = Context.getOption(context, JevInferenceWorkStore)
-                if (Option.isNone(work))
-                  return Effect.fail(
-                    operationalError({
-                      component: 'config',
-                      operation: 'jev-batch',
-                      message: 'inference work store disappeared',
-                    }),
-                  )
-                return Effect.provideContext(
-                  executeJevInferenceWork(jobId, (job) =>
-                    Effect.gen(function* () {
-                      const authority = yield* Context.get(context, AuthorityGenerationStore).readAuthorityState
-                      return (
-                        job.authorityGenerationHash === authority.generationHash &&
-                        authority.kill === KillState.Clear &&
-                        authority.effective === authority.maximum
-                      )
-                    }),
-                  ),
-                  Context.add(context, JevInferenceWorkStore, work.value),
-                ).pipe(
-                  Effect.mapError((cause) =>
-                    operationalError({
-                      component: 'strategy',
-                      operation: 'jev-batch',
-                      message: 'admitted inference failed',
-                      cause,
-                    }),
-                  ),
-                )
-              },
-            },
-          }
+        ? { pendingInference: pendingInferenceForAuthority(context) }
         : {}),
     })),
   )
@@ -506,9 +505,9 @@ export const executeNativeExecutionAdvance = (
       replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
     ),
     Effect.flatMap((step) =>
-      driver.inference === undefined || step.inferenceJobs !== undefined
+      driver.pendingInference === undefined || step.inferenceJobs !== undefined
         ? Effect.succeed(step)
-        : driver.inference.pending.pipe(
+        : driver.pendingInference.pipe(
             Effect.mapError(projectionFailure),
             Effect.map((inferenceJobs) => ({ ...step, inferenceJobs })),
           ),
@@ -545,10 +544,14 @@ export const makeExecutionCycleDriverLive = <E, R>(
     ),
   )
 
-export const ExecutionCycleDriverLive = (plan: ApplicationPlan) =>
+const executionCycleDriverLive = (plan: ApplicationPlan, inferenceContext: Context.Context<JevRuntimeServices>) =>
   makeExecutionCycleDriverLive(
     plan.config.operationTimeoutMs,
-    makeExecutionCycleDriver(plan, nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs)).pipe(
+    makeExecutionCycleDriver(
+      plan,
+      nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs),
+      inferenceContext,
+    ).pipe(
       Effect.flatMap(({ driver, context }) =>
         bindRecoveryFirstCycleDriver(driver, {
           sourceRevision: plan.config.build.sourceRevision,
@@ -703,6 +706,23 @@ export const acquireNativeExecutionRuntime = (
     const { layer: prewarmedProjection, market } = yield* prewarmNativeMarketProjection(
       WorkerMarketProjectionLive(plan),
     )
+    const projectionManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
+    )
+    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
+
+    const inferenceContext = yield* Layer.build(JevRuntimeResourcesLive(plan)).pipe(
+      Effect.mapError((cause) => runtimeError('initialize', 'native inference resource preparation failed', cause)),
+    )
+    const inferenceManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(
+        Layer.succeedContext(inferenceContext).pipe(
+          Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+          Layer.provideMerge(metricIdentity),
+        ),
+      ),
+    )
+    const readInferenceAuthority = readAuthorityState(Context.get(inferenceContext, PgClient.PgClient))
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -712,25 +732,18 @@ export const acquireNativeExecutionRuntime = (
     )
     const executionResources = Layer.merge(
       sharedResources,
-      ExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
+      executionCycleDriverLive(plan, inferenceContext).pipe(Layer.provide(sharedResources)),
     )
     // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
     // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
     // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
 
-    const projectionManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
-    )
-    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
-    const logManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
-    )
     const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
       managed,
       executionResources,
       projectionManaged,
-      logManaged,
+      inferenceManaged,
       config.planHash,
       (signal) =>
         projectionManaged.runPromise(
@@ -741,23 +754,7 @@ export const acquireNativeExecutionRuntime = (
     return {
       config,
       runtime,
-      inferenceRuntime: {
-        executeInference: (jobId, signal) => {
-          const parent = currentOpenTelemetryParentSpan()
-          const execute = ExecutionCycleDriver.pipe(
-            Effect.flatMap(
-              (driver): Effect.Effect<JevInferenceCompletion | null, NativeExecutionRuntimeError | OperationalError> =>
-                driver.inference === undefined
-                  ? Effect.fail(runtimeError('binding', 'native execution driver has no admitted inference port'))
-                  : driver.inference.execute(jobId),
-            ),
-          )
-          return ScopedRef.getUnsafe(managed).runPromise(
-            parent === undefined ? execute : execute.pipe(Effect.withParentSpan(parent)),
-            { signal },
-          )
-        },
-      },
+      inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, readInferenceAuthority),
       readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
       startMarketWakeups: market.startWakeups,
     }

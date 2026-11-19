@@ -31,6 +31,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
   Clock,
+  Context,
   Deferred,
   Effect,
   Effectable,
@@ -52,9 +53,10 @@ import type { SqlError } from 'effect/sql/SqlError'
 import { CycleState, CycleTerminalReason } from '../cycle/model'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
+import { makeExecutionCycleDriverLive, makeNativeEntryInferenceRuntime } from '../composition/native-execution-runtime'
 import { operationalError } from '../errors'
 import { sha256 } from '../hash'
-import { Authority } from '../execution/contracts'
+import { Authority, KillState } from '../execution/contracts'
 import {
   JevCandidatePlanStatus,
   JevBatchPlanVersion,
@@ -85,6 +87,7 @@ import { streamingSnapshotReference, recoverStreamingSnapshotReference } from '.
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { readAuthorityState } from './execution-store/observe-authority'
 
 setDefaultTimeout(30_000)
 
@@ -506,22 +509,57 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('deferred completion retains original source and cannot dispatch again on replay', async () => {
+  test('the native worker settles admitted inference during a stalled financial startup and reuses its exact result', async () => {
     let providerCalls = 0
     await runtime.runPromise(
       Effect.gen(function* () {
         const batches = yield* JevBatchStore
         const work = yield* JevInferenceWorkStore
+        const sql = yield* PgClient.PgClient
         yield* beginRecordedJevBatch(batches, plan, fixture.observation.payload, {
           deferProviderDispatch: true,
           sourceReference: streamingSnapshotReference(fixture.snapshot),
           admissionDeadlineAt: observed + 15_000,
         })
-        const completed = yield* executeJevInferenceWork(plan.batchId)
+        yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+          VALUES ('bayn.paper-authority.v1', ${plan.authorityGenerationHash}, ${Authority.Observe}, ${Authority.Observe},
+            ${KillState.Clear}, 1, ${plan.observedAt})`
+        const services = yield* Effect.context<
+          JevBatchStore | JevEvaluationStore | JevClient | EntryInferenceJournal | JevInferenceWorkStore
+        >()
+        const clock = yield* Clock.Clock
+        const inference = makeNativeEntryInferenceRuntime(
+          {
+            runPromise: Effect.runPromiseWith(Context.add(services, Clock.Clock, clock)),
+          },
+          readAuthorityState(sql),
+        )
+        const initializing = yield* Deferred.make<void>()
+        const financial = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            ManagedRuntime.make(
+              makeExecutionCycleDriverLive(
+                5_000,
+                Deferred.succeed(initializing, undefined).pipe(Effect.andThen(Effect.never)),
+              ),
+            ),
+          ),
+          (runtime) => runtime.disposeEffect,
+        )
+        const startup = yield* Effect.promise((signal) => financial.runPromiseExit(Effect.void, { signal })).pipe(
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(initializing)
+        const execute = Effect.promise((signal) => inference.executeInference(plan.batchId, signal))
+        const completed = yield* execute
         expect(completed).toMatchObject({ status: 'Completed', expiresAt: plan.expiresAt })
+        expect(startup.pollUnsafe()).toBeUndefined()
+        expect((yield* batches.read(plan.batchId))?.result?.resultHash).toBe(
+          completed?.status === 'Completed' ? completed.resultHash : undefined,
+        )
         const firstCalls = providerCalls
         expect(firstCalls).toBeGreaterThan(0)
-        expect(yield* executeJevInferenceWork(plan.batchId)).toEqual(completed)
+        expect(yield* execute).toEqual(completed)
         expect(providerCalls).toBe(firstCalls)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toEqual({
           batchId: plan.batchId,
@@ -536,6 +574,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* TestClock.setTime(observed + 15_000)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toBeNull()
       }).pipe(
+        Effect.scoped,
         atObservation,
         Effect.provideService(JevClient, {
           evaluate: (...args) =>

@@ -1,4 +1,5 @@
-import { Data } from 'effect'
+import { Data, Result } from 'effect'
+import { canonicalJsonEqualV1 } from '../../hash'
 import { topicPartitionKey } from './projection'
 
 export class KafkaBootstrapFailure extends Data.TaggedError('KafkaBootstrapFailure')<{ readonly message: string }> {}
@@ -56,21 +57,21 @@ export const bootstrapKafkaPartitions = (
   seek: readonly KafkaPartitionPosition[],
 ): readonly KafkaBootstrapPartition[] => {
   const canonical = canonicalPositions(ends)
+  const logStarts = canonicalPositions(starts)
+  const seeks = canonicalPositions(seek)
   const keys = canonical.map((position) => topicPartitionKey(position.topic, position.partition))
   if (
     keys.length === 0 ||
     new Set(keys).size !== keys.length ||
-    [starts, seek].some(
+    [logStarts, seeks].some(
       (positions) =>
-        canonicalPositions(positions)
-          .map((position) => topicPartitionKey(position.topic, position.partition))
-          .join('|') !== keys.join('|'),
+        positions.map((position) => topicPartitionKey(position.topic, position.partition)).join('|') !== keys.join('|'),
     )
   )
     throw new KafkaBootstrapFailure({ message: 'Kafka partition set changed during bootstrap' })
   return canonical.map((end, index) => {
-    const start = canonicalPositions(starts)[index]
-    const requested = canonicalPositions(seek)[index]
+    const start = logStarts[index]
+    const requested = seeks[index]
     if (start === undefined || requested === undefined)
       throw new KafkaBootstrapFailure({ message: 'Kafka bootstrap positions are missing' })
     const first = BigInt(start.offset)
@@ -90,6 +91,31 @@ export const bootstrapKafkaPartitions = (
     }
   })
 }
+
+export const verifyKafkaSourceBounds = (
+  bootstrap: KafkaBootstrapEvidence,
+  positions: readonly KafkaPartitionPosition[],
+) =>
+  Result.try({
+    try: () => {
+      const bounds = bootstrapKafkaPartitions(
+        bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.logStartOffset })),
+        bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.endOffset })),
+        bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.startOffset })),
+      )
+      if (
+        !canonicalJsonEqualV1(bounds, bootstrap.partitions) ||
+        new Set(positions.map((position) => topicPartitionKey(position.topic, position.partition))).size !==
+          positions.length ||
+        canonicalPositions(positions).some((position, index) => position !== positions[index])
+      )
+        throw new KafkaBootstrapFailure({ message: 'Kafka source bounds are not canonical' })
+    },
+    catch: (cause) =>
+      cause instanceof KafkaBootstrapFailure
+        ? cause
+        : new KafkaBootstrapFailure({ message: 'Kafka source bounds are invalid' }),
+  })
 export const kafkaBootstrapComplete = (
   evidence: KafkaBootstrapEvidence,
   positions: readonly KafkaPartitionPosition[],

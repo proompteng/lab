@@ -408,12 +408,12 @@ describe('entry observation admission', () => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     const active = new Map<symbol, ActiveExecutionStage>()
     let reads = 0
-    const snapshot = {
-      ...fixture.snapshot,
-      get bars() {
+    const portfolio = {
+      ...fixture.portfolio,
+      get brokerState() {
         reads++
         expect([...active.values()].some(({ stage }) => stage === 'bayn.jev.observation')).toBe(true)
-        return fixture.snapshot.bars
+        return fixture.portfolio.brokerState
       },
     }
     const result = await Effect.runPromise(
@@ -422,10 +422,10 @@ describe('entry observation admission', () => {
           cycleId: fixture.observation.payload.cycleId,
           authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
           protocol: fixture.protocol,
-          portfolio: fixture.portfolio,
+          portfolio,
         },
-        snapshot.manifest.rangeEndAt,
-        Effect.succeed(snapshot),
+        fixture.snapshot.manifest.rangeEndAt,
+        Effect.succeed(fixture.snapshot),
       ).pipe(
         Effect.provideService(ActiveExecutionStages, active),
         Effect.provideService(CandidateObservationStore, {

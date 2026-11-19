@@ -19,6 +19,7 @@ import {
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
+import { freezeEvidence } from '../immutable-evidence'
 import { JevContractError } from './contract'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { instrumentMarket, MarketKind } from '../instruments'
@@ -31,12 +32,7 @@ import {
   type JevBatchPlan,
 } from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
-import {
-  freezeJevEvidence,
-  isOwnedJevObservation,
-  reproduceJevCandidateObservation,
-  type OwnedJevObservation,
-} from './observation'
+import { isOwnedJevObservation, reproduceJevCandidateObservation, type OwnedJevObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
@@ -589,7 +585,7 @@ export const prepareJevTradingSignalBatch = (
     const plan = yield* batchFromObservation(source.verified, expiresAt, planVersion)
     const batch = Object.freeze({
       [PreparedBatchTypeId]: true,
-      plan: freezeJevEvidence(plan),
+      plan: freezeEvidence(plan),
       source,
     } satisfies PreparedJevBatch)
     preparedBatches.add(batch)
