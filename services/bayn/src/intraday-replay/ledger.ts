@@ -7,6 +7,7 @@ import { calculateSessionFees, receivedCryptoFee, type FeeInput } from '../strat
 import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { type ExecutionModelFailure } from '../strategy/execution-model/model'
 import { UtcInstantSchema } from '../schemas'
+import { instrumentMarket, MarketKind } from '../instruments'
 
 const MAX_U128 = (1n << 128n) - 1n
 const canonicalUnsigned = /^(?:0|[1-9][0-9]*)$/
@@ -51,6 +52,7 @@ export type IntradayReplayLedgerFailure =
     }
 
 export interface EconomicReplayFill {
+  readonly inventorySide?: 'SHORT'
   readonly symbol: string
   readonly side: 'buy' | 'sell'
   readonly observedAt: string
@@ -198,7 +200,41 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   const existingIndex = ledger.positions.findIndex((position) => position.symbol === fill.symbol)
   const existing = existingIndex < 0 ? undefined : ledger.positions[existingIndex]
   let nextPositions: readonly ReplayPosition[]
-  if (side === 'buy') {
+  if (fill.inventorySide === 'SHORT') {
+    if (
+      instrumentMarket(fill.symbol) !== MarketKind.Equity ||
+      (existing !== undefined && (BigInt(existing.quantityAtoms) >= 0n || BigInt(existing.costBasisMicros) >= 0n))
+    )
+      return invalid('fill.inventorySide', fill.inventorySide, 'invalid-side')
+    let quantity: bigint
+    let cost: bigint
+    if (side === 'sell') {
+      quantity = (existing === undefined ? 0n : BigInt(existing.quantityAtoms)) - filledQuantity.success
+      cost = (existing === undefined ? 0n : BigInt(existing.costBasisMicros)) - fillNotional.success
+    } else {
+      const magnitude = existing === undefined ? 0n : -BigInt(existing.quantityAtoms)
+      if (existing === undefined || filledQuantity.success > magnitude)
+        return Result.fail({
+          _tag: 'IntradayReplayLedgerOversell',
+          symbol: fill.symbol,
+          requestedQuantityAtoms: filledQuantity.success.toString(),
+          positionQuantityAtoms: magnitude.toString(),
+        })
+      const relieved = saleCostBasisMicros(-BigInt(existing.costBasisMicros), filledQuantity.success, magnitude)
+      if (Result.isFailure(relieved)) return accountingFailure(relieved.failure)
+      quantity = -magnitude + filledQuantity.success
+      cost = BigInt(existing.costBasisMicros) + relieved.success
+    }
+    const remaining = { symbol: fill.symbol, quantityAtoms: quantity.toString(), costBasisMicros: cost.toString() }
+    nextPositions =
+      quantity === 0n
+        ? ledger.positions.filter((_position, index) => index !== existingIndex)
+        : existing === undefined
+          ? [...ledger.positions, remaining].toSorted((left, right) => left.symbol.localeCompare(right.symbol))
+          : ledger.positions.map((position, index) => (index === existingIndex ? remaining : position))
+  } else if (existing !== undefined && BigInt(existing.quantityAtoms) < 0n) {
+    return invalid('fill.inventorySide', fill.inventorySide, 'invalid-side')
+  } else if (side === 'buy') {
     const receivedFee = receivedCryptoFee(
       { symbol: fill.symbol, side, quantityAtoms: filledQuantity.success, notionalMicros: fillNotional.success },
       feeMultiplier.success,
@@ -258,7 +294,10 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
           )
   }
 
-  const cash = parseUnsigned(ledger.cashMicros, 'ledger.cashMicros', false)
+  const cash =
+    ledger.cashMicros.startsWith('-') && fill.inventorySide === 'SHORT'
+      ? Result.map(parseUnsigned(ledger.cashMicros.slice(1), 'ledger.cashMicros', true), (value) => -value)
+      : parseUnsigned(ledger.cashMicros, 'ledger.cashMicros', false)
   const openingCash = parseUnsigned(ledger.openingCashMicros, 'ledger.openingCashMicros', false)
   if (Result.isFailure(cash)) return Result.fail(cash.failure)
   if (Result.isFailure(openingCash)) return Result.fail(openingCash.failure)
@@ -270,7 +309,7 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   )
   const cashFeeDelta = feeDelta - (receivedFee.valueMicros - receivedFee.cashMicros)
   const nextCash = cashBeforeFees - cashFeeDelta
-  if (nextCash < 0n) {
+  if (nextCash < 0n && !(fill.inventorySide === 'SHORT' && side === 'buy')) {
     return Result.fail({
       _tag: 'IntradayReplayLedgerInsufficientCash',
       cashMicros: cash.success.toString(),

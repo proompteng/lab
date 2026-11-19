@@ -92,6 +92,13 @@ await mock.module('../broker/alpaca/snapshot-cache', () => ({
         if (mode === 'timeout') return yield* Effect.never
         if (mode === 'defect') return yield* Effect.die(new Error('capture fixture defect'))
         if (mode === 'interruption') return yield* Effect.interrupt
+        if (mode === 'provider-timeout' || mode === 'transport')
+          return yield* new BrokerReadError({
+            operation: 'fill-activities',
+            kind: mode === 'provider-timeout' ? BrokerReadErrorKind.Timeout : BrokerReadErrorKind.Transport,
+            retryable: true,
+            message: 'synthetic stalled transport',
+          })
         if (mode === 'retryable')
           return yield* observationUnavailable(
             'pending fill history',

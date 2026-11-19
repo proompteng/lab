@@ -92,11 +92,14 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     'bayn_generation_index',
     'bayn_io',
     'bayn_io_timing',
+    'bayn_native_arrivals',
     'bayn_replication',
     'bayn_waits',
   ])
   expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
   expect(queries.bayn_replication.primary).toBe(true)
+  expect(queries.bayn_native_arrivals.primary).toBe(true)
+  expect(queries.bayn_native_arrivals.target_databases).toEqual(['bayn'])
   expect(queries.bayn_generation_index.primary).toBe(true)
   expect(queries.bayn_generation_index.query).toContain('autonomous_cycle_shadow_decisions_generation_idx')
   expect(queries.bayn_generation_index.metrics.map((entry: Record<string, unknown>) => Object.keys(entry)[0])).toEqual([
@@ -212,6 +215,10 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   })
 
   expect(controller.spec.replicas).toBe(2)
+  expect(controller.spec.template.spec.containers[0].env).toContainEqual({
+    name: 'BAYN_REPORTING_ALLOWED',
+    value: 'false',
+  })
   expect(controller.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(controller.spec.template.spec.topologySpreadConstraints).toEqual([
     {
@@ -582,7 +589,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
   const activationGeneration = activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value
   expect(activationGeneration).toMatch(/^[0-9a-f]{64}$/)
-  if (mandateIdentity !== undefined) expect(activationGeneration).toBe(mandateIdentity.requestHash)
+  // Kargo binds this invocation key to each promoted image digest. The mandate remains bound through
+  // the lineage checks above and packages/scripts/src/bayn/kargo.test.ts, independently of that key.
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
     name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
     valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },

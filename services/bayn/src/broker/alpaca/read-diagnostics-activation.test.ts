@@ -98,6 +98,7 @@ test('broker capture recovery emits diagnostics while native deployment activati
         { controllerKey, sourceRevision, maxAgeMs: 60_000, freshnessLeadMs: 30_000, operationTimeoutMs: 30_000 },
         {
           verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
           invalidate: async () => undefined,
           activate: async () => undefined,

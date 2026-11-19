@@ -41,8 +41,8 @@ mod tests {
 
     #[test]
     fn explicit_model_does_not_override_the_owners_reasoning() {
-        let options = CodexOptions::parse("gpt-6.1-sol".into(), String::new()).unwrap();
-        assert_eq!(options.model.as_deref(), Some("gpt-6.1-sol"));
+        let options = CodexOptions::parse("gpt-6.2-sol".into(), String::new()).unwrap();
+        assert_eq!(options.model.as_deref(), Some("gpt-6.2-sol"));
         assert_eq!(options.thread_config(), None);
     }
 
@@ -55,9 +55,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_model_and_effort_values() {
-        for model in ["gpt-6.1-sol\n", "gpt 6.1 sol", &"m".repeat(161)] {
+        for model in ["gpt-6.2-sol\n", "gpt 6.2 sol", &"m".repeat(161)] {
             assert!(CodexOptions::parse(model.into(), "high".into()).is_err());
         }
-        assert!(CodexOptions::parse("gpt-6.1-sol".into(), "unknown".into()).is_err());
+        assert!(CodexOptions::parse("gpt-6.2-sol".into(), "unknown".into()).is_err());
     }
 }

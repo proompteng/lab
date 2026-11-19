@@ -58,6 +58,7 @@ const account = Schema.Struct({
   accountBlocked: Schema.Boolean,
   tradingBlocked: Schema.Boolean,
   tradeSuspendedByUser: Schema.Boolean,
+  shortingEnabled: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
 })
 const position = Schema.Struct({
@@ -114,6 +115,7 @@ const order = Schema.Struct({
   ...orderLeaf.fields,
   legs: Schema.optionalKey(Schema.Array(orderLeaf).check(Schema.isMaxLength(2))),
 })
+export const BrokerOrderReadResultSchema = observed(order)
 const fill = Schema.Struct({
   accountId: Schema.String,
   activityId: Schema.String,
@@ -133,6 +135,7 @@ const configuration = Schema.Struct({
   source: Schema.Literal(accountConfigurationObservationSource),
   requestHash: Sha256Schema,
   fractionalTrading: Schema.Boolean,
+  noShorting: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
   normalizedResponseHash: Sha256Schema,
 })

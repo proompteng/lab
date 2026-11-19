@@ -57,6 +57,7 @@ const acquisitionStage = (cause: BrokerReadError | BrokerAccountPreflightError):
     case 'order-by-id':
     case 'order-by-client-id':
     case 'fill-activities':
+    case 'activity-stream':
     case 'fee-activities':
     case 'asset-by-symbol':
     case 'market-calendar':
@@ -157,6 +158,9 @@ export const cachedLayer = (
     Effect.map(BrokerSession, (value) => value.read),
   ).pipe(Layer.provideMerge(session))
 }
+
+export const projectedReadLayer = (connection: BrokerConnection) =>
+  Layer.effect(BrokerRead, make(connection).pipe(Effect.flatMap(makeProjectedBrokerRead)))
 
 export const mapHttpAcquisitionError = (
   connection: BrokerConnection,

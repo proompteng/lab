@@ -4,6 +4,7 @@ import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { FeeReadEvidenceSchema } from '../accounting/broker-fees'
 import type { AccountingTransaction } from '../accounting/schema'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import { IsoDateSchema, NonNegativeIntegerSchema, Sha256Schema } from '../schemas'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import { PositionOutcomeSchema, PositionSymbolOutcomesSchema, summarizePositionOutcomes } from './position-outcomes'
@@ -43,6 +44,7 @@ export type PositionEpisodeEvidence = typeof PositionEpisodeEvidenceSchema.Type
 
 interface PositionEpisode {
   readonly quantity: bigint
+  readonly short: boolean
   readonly openedAt: string
   readonly touchesScope: boolean
   readonly whollyInScope: boolean
@@ -280,7 +282,9 @@ export const measurePositionEpisodes = (
       const previous = positions.get(transaction.symbol)
       const selected = selectedIds.has(transaction.transactionId)
       const quantity = (previous?.quantity ?? 0n) + BigInt(transaction.quantityDeltaAtoms)
-      if (quantity < 0n) return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
+      const short = transaction.schemaVersion === equityShortAccountingSchemaVersion
+      if ((previous !== undefined && previous.short !== short) || (short ? quantity > 0n : quantity < 0n))
+        return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
       const touchesScope = (previous?.touchesScope ?? false) || selected
       const whollyInScope = (previous?.whollyInScope ?? true) && selected
       const trades = [...(previous?.trades ?? []), transaction]
@@ -295,6 +299,7 @@ export const measurePositionEpisodes = (
       } else
         positions.set(transaction.symbol, {
           quantity,
+          short,
           openedAt: previous?.openedAt ?? transaction.occurredAt,
           touchesScope,
           whollyInScope,

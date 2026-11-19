@@ -106,7 +106,7 @@ const respondToThreadResume = async (
         path: '',
         turns: [],
       },
-      model: 'gpt-6-astra',
+      model: 'gpt-6.2-sol',
       modelProvider: 'openai',
       serviceTier: null,
       cwd: '/workspace/lab',
@@ -578,7 +578,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       cwd: '/workspace/lab',
       approval: 'never',
       sandbox: 'danger-full-access',
-      defaultModel: 'gpt-6-astra',
+      defaultModel: 'gpt-6.2-sol',
       defaultEffort: 'high',
       threadConfig: { mcp_servers: {}, web_search: 'live' },
       persistExtendedHistory: true,
@@ -594,7 +594,7 @@ describe('CodexAppServerClient v2 notifications', () => {
     await respondToThreadResume(child, 'thread-existing', (request) => {
       expect(request.params).toMatchObject({
         threadId: 'thread-existing',
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         cwd: '/workspace/lab',
         approvalPolicy: 'never',
         sandbox: 'danger-full-access',
@@ -764,7 +764,7 @@ describe('CodexAppServerClient v2 notifications', () => {
 
     const [binaryPath, args] = spawnMock.mock.calls[0] ?? []
     expect(binaryPath).toBe('codex')
-    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-6-astra', 'app-server'])
+    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-6.2-sol', 'app-server'])
 
     await respondToInitialize(child)
     await client.ensureReady()
@@ -788,7 +788,7 @@ describe('CodexAppServerClient v2 notifications', () => {
       '--ask-for-approval',
       'never',
       '--model',
-      'gpt-6-astra',
+      'gpt-6.2-sol',
       'app-server',
     ])
 

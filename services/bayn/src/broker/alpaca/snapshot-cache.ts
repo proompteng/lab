@@ -1,9 +1,17 @@
 import { Config, DateTime, Effect, Exit, Schema, Semaphore } from 'effect'
 
-import { readBrokerSnapshotOnce } from '../../simulation-reconciliation/broker-history'
+import { readBrokerSnapshotOnce, readFeePages } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
+import { feeHistoryMatches } from './activity-fees'
 import { BrokerPollFailureReason, BrokerReadError, configurationError } from './failures'
-import { OrderCollection, SortDirection, type BrokerHistory, type BrokerReadShape } from './model'
+import {
+  OrderCollection,
+  SortDirection,
+  type BrokerHistory,
+  type BrokerReadShape,
+  type FeeActivity,
+  type Observed,
+} from './model'
 import {
   BrokerObservations,
   maximumBrokerObservationAgeMs,
@@ -37,6 +45,9 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
         readonly latestFillId: string | null
       }
     | undefined
+  let verifiedFees:
+    | { readonly counts: ReadonlyMap<string, number>; readonly rows: readonly Observed<FeeActivity>[] }
+    | undefined
   return (
     fresh: BrokerReadShape,
     ticket: BrokerObservationTicket,
@@ -54,35 +65,57 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
               ticket.generation !== previous.generation + 1)
           )
             previous = undefined
-          // The existing latest-fill read starts a fresh bracket immediately after a newly reported fill.
-          const recentFills =
-            previous === undefined
+          const accountActivity = fresh.accountActivity
+          const paperActivities =
+            accountActivity === undefined
               ? undefined
-              : yield* fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
-          if (recentFills !== undefined && previous?.latestFillId !== (recentFills.value.items[0]?.activityId ?? null))
-            previous = undefined
+              : Effect.gen(function* () {
+                  const cut = yield* accountActivity
+                  if (verifiedFees?.counts === cut.feeCounts) return { cut, fees: verifiedFees.rows }
+                  const rows = yield* readFeePages(fresh)
+                  const confirmed = yield* accountActivity
+                  if (confirmed.feeCounts !== cut.feeCounts || !feeHistoryMatches(cut.feeCounts, rows))
+                    return yield* observationUnavailable(
+                      'Alpaca Activity SSE and fee authority have not converged',
+                      undefined,
+                      BrokerPollFailureReason.SnapshotRejected,
+                    )
+                  verifiedFees = { counts: cut.feeCounts, rows }
+                  return { cut: confirmed, fees: rows }
+                })
+          if (previous !== undefined) {
+            if (accountActivity === undefined) {
+              const latest = yield* fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
+              if (previous.latestFillId !== (latest.value.items[0]?.activityId ?? null)) previous = undefined
+            } else {
+              const cut = yield* accountActivity
+              if (
+                verifiedFees?.counts !== cut.feeCounts ||
+                previous.latestFillId !== (cut.fills.at(-1)?.value.activityId ?? null)
+              )
+                previous = undefined
+            }
+          }
           yield* Effect.annotateCurrentSpan('broker.history.reused', previous !== undefined)
           const value = yield* Effect.all(
             {
               // Restart unstable cuts through the owner, with a new durable ticket and the existing quota wait.
               // Retrying under a ticket invalidated by that mutation only adds unusable history reads and debt.
-              snapshot: readBrokerSnapshotOnce(fresh, currentUtcInstant, previous?.history),
+              capture: readBrokerSnapshotOnce(fresh, currentUtcInstant, previous?.history, paperActivities),
               configuration: fresh.accountConfiguration,
               openOrders: fresh.orders({ status: OrderCollection.Open, limit: 1 }),
-              recentOrders: fresh.orders({
-                status: OrderCollection.All,
-                limit: 1,
-                direction: SortDirection.Descending,
-              }),
-              recentFills:
-                recentFills === undefined
-                  ? fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
-                  : Effect.succeed(recentFills),
             },
             { concurrency: 2 },
           )
           const completedAt = yield* currentUtcInstant
-          const candidate = { ...value, startedAt, completedAt, observedAt: startedAt }
+          const candidate = {
+            ...value.capture,
+            configuration: value.configuration,
+            openOrders: value.openOrders,
+            startedAt,
+            completedAt,
+            observedAt: startedAt,
+          }
           const observedAt = DateTime.formatIso(
             DateTime.makeUnsafe(
               Math.min(
