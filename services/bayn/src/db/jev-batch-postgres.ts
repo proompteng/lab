@@ -26,6 +26,7 @@ import {
   type JevBatchEvidence,
 } from '../jev/batch-evaluation'
 import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest } from '../jev/evidence'
+import { jevInferenceWorkChannel } from '../jev/inference-work'
 import {
   decodeJevResolution,
   makeJevResolution,
@@ -271,14 +272,18 @@ export const makeJevBatchStore = Effect.gen(function* () {
               )
               if (!match.matches)
                 return yield* persistError('Deferred inference reference conflicts with recorded source')
-              yield* sql`INSERT INTO jev_inference_work (batch_id, dispatches, admission_deadline_at)
+              yield* sql`WITH admitted AS (
+                INSERT INTO jev_inference_work (batch_id, dispatches, admission_deadline_at)
                 VALUES (${plan.batchId}, ${sql.json(
                   dispatches.map(({ request, claimedAt, visualClaim }) => ({
                     requestId: request.requestId,
                     claimedAt,
                     visualClaim,
                   })),
-                )}, ${options.admissionDeadlineAt === undefined ? null : utcInstantFromEpochMillis(options.admissionDeadlineAt)}::timestamptz)`
+                )}, ${options.admissionDeadlineAt === undefined ? null : utcInstantFromEpochMillis(options.admissionDeadlineAt)}::timestamptz)
+                RETURNING batch_id
+              )
+              SELECT pg_notify(${jevInferenceWorkChannel}, '') FROM admitted`
               return null
             }
             return dispatches

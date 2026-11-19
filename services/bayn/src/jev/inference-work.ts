@@ -51,6 +51,20 @@ export interface JevInferenceRecoverySummary {
   readonly nextAttemptAt?: string
 }
 
+export const jevInferenceWorkChannel = 'bayn_jev_inference_work'
+export const maximumWatchedInferenceJobs = 64
+
+export interface JevInferenceController {
+  readonly controllerKey: string
+  readonly epoch: number
+  readonly planHash: string
+  readonly accountId: string
+}
+
+export type JevInferenceWatchResult =
+  | { readonly active: false }
+  | { readonly active: true; readonly pending: readonly string[]; readonly dispatch: readonly string[] }
+
 export class JevInferenceWorkStore extends Context.Service<
   JevInferenceWorkStore,
   {
@@ -67,7 +81,10 @@ export class JevInferenceWorkStore extends Context.Service<
       } | null,
       OperationalError
     >
-    readonly claim: (jobId: string) => Effect.Effect<
+    readonly claim: (
+      jobId: string,
+      controller?: JevInferenceController,
+    ) => Effect.Effect<
       {
         readonly admission: JevBatchAdmission
         readonly completionSource: ClaimedJevSource
@@ -81,15 +98,12 @@ export class JevInferenceWorkStore extends Context.Service<
  * Claiming is a one-way expense boundary. A replay may finish committed evidence,
  * but cannot repeat a provider call whose outcome was lost with the worker.
  */
-export const executeJevInferenceWork = <E = never, R = never>(
-  jobId: string,
-  allowDispatch: (job: JevInferenceJob) => Effect.Effect<boolean, E, R> = () => Effect.succeed(true),
-) =>
+export const executeJevInferenceWork = (jobId: string, controller?: JevInferenceController) =>
   Effect.gen(function* () {
     const work = yield* JevInferenceWorkStore
     const job = yield* work.read(jobId)
     if (job === null) return null
-    const claimed = (yield* allowDispatch(job)) ? yield* work.claim(jobId) : null
+    const claimed = yield* work.claim(jobId, controller)
     const batches = yield* JevBatchStore
     const evidence =
       claimed === null
