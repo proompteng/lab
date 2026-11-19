@@ -19,6 +19,8 @@ import {
 import {
   JevBatchExpired,
   JevBatchStore,
+  isVerifiedJevCompletion,
+  readClaimedJevSource,
   retainJevBatchPreparation,
   type JevBatchAdmissionOptions,
   type JevBatchEvidence,
@@ -559,10 +561,19 @@ export const makeJevBatchStore = Effect.gen(function* () {
   const complete = (sourcePlan: JevBatchPlan, observation: unknown, sourceResult: JevBatchResult) =>
     Effect.gen(function* () {
       yield* requireAutocommit
+      const source = readClaimedJevSource(observation)
+      if (source !== undefined && source.plan !== sourcePlan)
+        return yield* persistError('Completed batch claim differs from its admitted plan')
       const { plan, result, entries } = yield* Effect.gen(function* () {
-        const plan = yield* Effect.fromResult(decodeJevBatchPlan(sourcePlan))
-        const result = yield* Effect.fromResult(decodeJevBatchResult(plan, sourceResult))
-        if ((yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash)
+        const plan = source?.plan ?? (yield* Effect.fromResult(decodeJevBatchPlan(sourcePlan)))
+        const result =
+          source !== undefined && isVerifiedJevCompletion(plan, sourceResult)
+            ? sourceResult
+            : yield* Effect.fromResult(decodeJevBatchResult(plan, sourceResult))
+        if (
+          source === undefined &&
+          (yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash
+        )
           return yield* persistError('Completed batch observation differs from its admitted source')
         const entries = []
         for (const [index, candidate] of result.candidates.entries()) {
@@ -597,7 +608,16 @@ export const makeJevBatchStore = Effect.gen(function* () {
               AND plan.payload=${sql.json(plan)} AND plan.observation_hash=${plan.observationHash}
               AND plan.cycle_id=${plan.cycleId} AND plan.authority_generation_hash=${plan.authorityGenerationHash}
               AND observation.cycle_id=plan.cycle_id AND observation.observed_at=${plan.observedAt}::timestamptz
-              AND observation.payload=${sql.json(observation)}
+              AND ${
+                source === undefined
+                  ? sql`observation.payload=${sql.json(observation)}`
+                  : sql`EXISTS (
+                    SELECT 1 FROM jev_inference_work work WHERE work.batch_id=plan.batch_id
+                      AND work.claimed_at IS NOT NULL
+                      AND work.source_sha256=decode(${source.seal},'hex')
+                      AND sha256(convert_to(observation.payload::text, 'UTF8'))=work.source_sha256
+                  )`
+              }
               AND observation.payload->>'authorityGenerationHash'=plan.authority_generation_hash
               AND observation.payload->>'observedAt'=${plan.observedAt}
               AND observation.payload#>>'{manifest,observedAt}'=${plan.observedAt}
