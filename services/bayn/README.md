@@ -433,14 +433,18 @@ Each capture brackets account and position reads with matching complete order, f
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
 The PAPER execution controller verifies the account and replays Alpaca Activity SSE once at startup. It then keeps
 the connection open and resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
-the reader verifies its payload before advancing. It waits for the stream heartbeat before admitting a fill cut.
-A disconnect, dropped frame or unsupported trade correction makes the local fill cut unavailable until replay succeeds.
+the reader verifies its payload before advancing. It waits for a stream heartbeat before admitting the activity history.
+A disconnect, dropped frame or unsupported correction makes the local activity history unavailable.
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
-activity ID and microsecond timestamp used by existing ledger records. Current order and fee histories use REST.
-The capture still compares both histories and checks exact filled quantities for every order and leg. The order
-WebSocket carries cancellations and other order lifecycle events. Successful captures project recent orders and
-fills from the same verified cut. Open-order eligibility retains its fresh broker query.
+activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
+the same connection. Bayn fetches REST fee records on startup and when the streamed fee history changes. It
+checks that both sources agree on fee counts by booking date, fee kind, cash amount and coin quantity. REST
+supplies the existing ledger IDs, crypto symbols and exact prices. The capture waits for the two sources to agree.
+
+The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
+compares complete histories around the account read and checks the filled quantity for every order and leg.
+The order WebSocket carries cancellations and other order lifecycle events.
 See [Activity SSE ownership](src/broker/alpaca/activity-stream.ts),
 [capture ownership](src/broker/alpaca/snapshot-cache.ts) and
 [history verification](src/simulation-reconciliation/broker-history.ts).
