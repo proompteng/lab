@@ -66,7 +66,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -191,7 +191,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -298,7 +298,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -423,7 +423,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
