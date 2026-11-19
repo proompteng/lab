@@ -222,24 +222,21 @@ describe('Alpaca paper reads', () => {
   test('reads PAPER fills and fees from an open stream and replays its inclusive cursor across reconnects', async () => {
     const requests: string[] = []
     let transport: ReadableStreamDefaultController<Uint8Array> | undefined
+    let cancellations = 0
     const bytes = new TextEncoder()
     const client = HttpClient.make((request, url) => {
       expect(url.pathname).toBe('/v2beta1/events/activities')
       requests.push(url.search)
-      const body = url.searchParams.has('until')
-        ? frameText(fillFrame(1))
-        : new ReadableStream<Uint8Array>({
-            start(controller) {
-              transport = controller
-              controller.enqueue(
-                bytes.encode(
-                  ': welcome to the Alpaca events\n\n' +
-                    frameText(requests.length === 2 ? fillFrame(1) : feeFrame) +
-                    ': heartbeat\n\n',
-                ),
-              )
-            },
-          })
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          transport = controller
+          const history = requests.length === 1 ? frameText(fillFrame(1)) : frameText(feeFrame) + ': heartbeat\n\n'
+          controller.enqueue(bytes.encode(': welcome to the Alpaca events\n\n' + history))
+        },
+        cancel() {
+          cancellations++
+        },
+      })
       return Effect.succeed(HttpClientResponse.fromWeb(request, sseResponse(body)))
     })
     const verified = Effect.void
@@ -251,6 +248,12 @@ describe('Alpaca paper reads', () => {
             Effect.catch(() => Effect.sleep('1 millis').pipe(Effect.andThen(snapshot))),
             Effect.retry({ times: 50 }),
           )
+          yield* Effect.sync(() => transport).pipe(
+            Effect.repeat({ while: (controller) => controller === undefined, schedule: Schedule.spaced('1 millis') }),
+            Effect.timeout('1 second'),
+          )
+          expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
+          transport?.enqueue(bytes.encode(': heartbeat\n\n'))
           expect((yield* read).fills.map(({ value }) => value)).toMatchObject([
             {
               activityId: `20261118154659021::${assetId}`,
@@ -258,7 +261,9 @@ describe('Alpaca paper reads', () => {
               type: TradeActivityType.PartialFill,
             },
           ])
-          expect(requests).toHaveLength(2)
+          expect(requests.map((query) => Object.fromEntries(new URLSearchParams(query)))).toEqual([
+            { since: '2026-02-11T00:00:00.000Z' },
+          ])
           transport?.enqueue(bytes.encode(frameText(fillFrame(2))))
           const second = yield* snapshot.pipe(
             Effect.repeat({ while: (cut) => cut.fills.length < 2, schedule: Schedule.spaced('1 millis') }),
@@ -274,7 +279,7 @@ describe('Alpaca paper reads', () => {
           )
           expect([...withFee.feeCounts]).toEqual([['["CFEE","2026-11-18","0","200000"]', 1]])
           expect(feeCountsBefore.size).toBe(0)
-          expect(requests).toHaveLength(2)
+          expect(requests).toHaveLength(1)
           transport?.close()
           yield* Effect.sleep('100 millis')
           expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
@@ -282,11 +287,14 @@ describe('Alpaca paper reads', () => {
           const reconnected = yield* read
           expect(reconnected.fills).toHaveLength(2)
           expect(reconnected.feeCounts).toBe(withFee.feeCounts)
-          expect(requests).toHaveLength(3)
-          expect(new URLSearchParams(requests[2]).get('since_id')).toBe(activityCursor(3))
+          expect(requests.map((query) => Object.fromEntries(new URLSearchParams(query)))).toEqual([
+            { since: '2026-02-11T00:00:00.000Z' },
+            { since_id: activityCursor(3) },
+          ])
         }),
       ).pipe(Effect.provideService(HttpClient.HttpClient, client)),
     )
+    expect(cancellations).toBe(1)
   })
 
   test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
