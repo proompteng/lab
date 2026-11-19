@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
@@ -73,7 +74,7 @@ const retain = (account: string) =>
     yield* (yield* CandidateObservationStore).record(fixture.observation)
     const store = yield* JevBatchStore
     const admission = yield* TestClock.setTime(Date.parse(observedAt)).pipe(
-      Effect.andThen(store.begin(batch, fixture.observation.payload)),
+      Effect.andThen(beginRecordedJevBatch(store, batch, fixture.observation.payload)),
       Effect.provide(TestClock.layer()),
     )
     const claim = admission.dispatches?.find(

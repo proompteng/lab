@@ -2,7 +2,6 @@ import { Clock, Context, Data, Effect, Exit } from 'effect'
 
 import type { OperationalError } from '../errors'
 import {
-  decodeJevBatchPlan,
   JevCandidatePlanStatus,
   JevCandidateResultStatus,
   makeJevBatchResult,
@@ -17,6 +16,7 @@ import { JevEvidenceError } from './evidence'
 import type { JevObservation } from './observation'
 import { utcInstantFromEpochMillis } from '../time'
 import type { MarketSnapshotReference } from '../market-data/intraday/model'
+import type { PreparedJevBatch } from './trading-signals'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
@@ -53,8 +53,7 @@ export class JevBatchStore extends Context.Service<
       authorityGenerationHash?: string,
     ) => Effect.Effect<readonly string[], OperationalError>
     readonly begin: (
-      plan: JevBatchPlan,
-      observation: JevObservation,
+      batch: PreparedJevBatch,
       options?: JevBatchAdmissionOptions,
     ) => Effect.Effect<JevBatchAdmission, OperationalError | JevBatchExpired>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
@@ -66,19 +65,12 @@ export class JevBatchStore extends Context.Service<
   }
 >()('@proompteng/bayn/JevBatchStore') {}
 
-export const evaluateJevBatch = (
-  input: unknown,
-  observation: JevObservation,
-  options: JevBatchEvaluationOptions = {},
-) =>
+export const evaluateJevBatch = (batch: PreparedJevBatch, options: JevBatchEvaluationOptions = {}) =>
   Effect.gen(function* () {
-    // Keep the admitted source private while provider I/O yields to other actors.
-    const sourceObservation = structuredClone(observation)
-    const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
     const store = yield* JevBatchStore
-    const saved = yield* store.begin(plan, sourceObservation, options)
+    const saved = yield* store.begin(batch, options)
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
-    return yield* evaluateAdmittedJevBatch(saved, sourceObservation, options)
+    return yield* evaluateAdmittedJevBatch(saved, batch.source.payload, options)
   })
 
 /** The same admitted cohort is used by local replay and the provider-only durable worker. */

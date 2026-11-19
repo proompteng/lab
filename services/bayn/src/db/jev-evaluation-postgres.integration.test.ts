@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
 import {
@@ -104,7 +105,9 @@ const recorded = Result.getOrThrow(
 )
 
 const admit = TestClock.setTime(Date.parse(request.observedAt)).pipe(
-  Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
+  Effect.andThen(
+    Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
+  ),
   Effect.provide(TestClock.layer()),
 )
 

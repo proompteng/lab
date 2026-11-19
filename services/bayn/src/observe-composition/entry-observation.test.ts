@@ -143,7 +143,7 @@ test('new native source obtains fresh eligibility before sampling its observatio
       Effect.provideService(JevBatchStore, {
         ...batches,
         pending: () => Effect.succeed([]),
-        begin: (plan, observation) =>
+        begin: ({ plan, source: { payload: observation } }) =>
           Effect.sync(() => {
             admitted.push({ plan, observation })
             return { plan, result: null, dispatches: null }

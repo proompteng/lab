@@ -472,7 +472,7 @@ describe('entry observation admission', () => {
           read: () => Effect.die('No recovery read'),
           complete: () => Effect.die('No new provider work'),
           finish: () => (pending === null ? Effect.die('No pending batch') : Effect.succeed(pending)),
-          begin: (plan) =>
+          begin: ({ plan }) =>
             Effect.gen(function* () {
               pending = { plan, result: null }
               if (mode === 'pending') return { ...pending, dispatches: [] }
@@ -595,7 +595,7 @@ describe('entry observation admission', () => {
             read: () => Effect.die('No batch was recorded'),
             complete: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(
                 Effect.andThen(Clock.currentTimeMillis),
                 Effect.flatMap((now) =>
