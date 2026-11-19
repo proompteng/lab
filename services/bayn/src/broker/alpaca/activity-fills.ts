@@ -7,9 +7,6 @@ import { normalizeFillActivityResult } from './normalizers'
 // This is the earliest publication date Alpaca documents for Activity SSE replay.
 export const activityReplayStart = '2026-02-11T00:00:00.000Z'
 
-const activity = Schema.Struct({
-  activity_type: Schema.String.check(Schema.isMinLength(1)),
-})
 const fillFields = FillActivityResponseSchema.fields
 const trade = Schema.Struct({
   ref_id: fillFields.order_id,
@@ -28,7 +25,6 @@ const trade = Schema.Struct({
     order_status: fillFields.order_status,
   }),
 })
-const decodeActivity = Schema.decodeUnknownResult(activity)
 const decodeTrade = Schema.decodeUnknownResult(trade)
 
 const replayFailure = (message: string) => contractFailure({ reason: 'FILL_SHAPE', message })
@@ -36,10 +32,8 @@ const replayFailure = (message: string) => contractFailure({ reason: 'FILL_SHAPE
 export const decodeFillExecution = (
   row: unknown,
   accountId: string,
-): Result.Result<FillExecution | undefined, ReturnType<typeof replayFailure>> =>
+): Result.Result<FillExecution, ReturnType<typeof replayFailure>> =>
   Result.gen(function* () {
-    const header = yield* decodeActivity(row).pipe(Result.mapError(() => replayFailure('Invalid Alpaca activity')))
-    if (header.activity_type !== 'TRD') return
     const event = yield* decodeTrade(row).pipe(
       Result.mapError(() => replayFailure('Alpaca trade activity cannot represent an ordinary execution')),
     )
