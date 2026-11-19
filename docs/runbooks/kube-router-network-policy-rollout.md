@@ -25,8 +25,8 @@ set -euo pipefail
 git fetch --quiet origin main
 main_revision=$(git rev-parse origin/main)
 test "$(git rev-parse HEAD)" = "$main_revision"
-test "$(crane digest docker.io/cloudnativelabs/kube-router:v2.11.1)" = \
-  sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a
+test "$(crane digest docker.io/cloudnativelabs/kube-router:v2.12.0)" = \
+  sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4
 test "$(kubectl -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')" = 10.96.0.1
 kubectl -n kube-system get daemonset kube-proxy -o json |
   jq -e '.spec.template.spec.containers[0].command | any(. == "--proxy-mode=nftables")'
@@ -52,8 +52,8 @@ kubectl -n flamingo get deployment,pod,service -o wide
 ```
 
 Expected image platform digests are
-`sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2` for amd64 and
-`sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b` for arm64.
+`sha256:29034446e59a9e984a8a720c03f2ba1ce4e61ebb938d1a88c8f40b08bdb06c78` for amd64 and
+`sha256:c9b534a88b5a09abe452ba5a20d528e106c640416de95f4e9b6cc308fd24c54a` for arm64.
 
 ## 2. Manual activation
 
@@ -85,7 +85,7 @@ ready=$(kubectl -n kube-system get daemonset kube-router -o jsonpath='{.status.n
 test "$desired" -gt 0
 test "$ready" = "$desired"
 
-kube_router_index_digest=sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a
+kube_router_index_digest=sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4
 pod_rows=$(
   kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
     jq -er '
@@ -107,11 +107,11 @@ while IFS=$'\t' read -r pod node pod_ready restart_count image_id; do
   node_arch=$(kubectl get node "$node" -o jsonpath='{.status.nodeInfo.architecture}')
   case "$node_arch" in
     amd64)
-      platform_digest=sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2
+      platform_digest=sha256:29034446e59a9e984a8a720c03f2ba1ce4e61ebb938d1a88c8f40b08bdb06c78
       expected_runtime_arch=x86_64
       ;;
     arm64)
-      platform_digest=sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b
+      platform_digest=sha256:c9b534a88b5a09abe452ba5a20d528e106c640416de95f4e9b6cc308fd24c54a
       expected_runtime_arch=aarch64
       ;;
     *)

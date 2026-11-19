@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 const kubeRouterImage =
-  'docker.io/cloudnativelabs/kube-router@sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a'
+  'docker.io/cloudnativelabs/kube-router@sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4'
 const kubectlImage = 'docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7'
 const trafficNeutralSafetyNamespaces = [
   'agents',
@@ -194,7 +194,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.daemonSet}: DaemonSet must run in kube-system`)
   }
   if (container?.image !== kubeRouterImage) {
-    failures.push(`${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.11.1 index`)
+    failures.push(`${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.12.0 index`)
   }
   if (JSON.stringify(args) !== JSON.stringify(requiredArgs)) {
     failures.push(`${productionPaths.daemonSet}: controller flags must select firewall-only Flannel coexistence`)
@@ -412,8 +412,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   forbidTerms(failures, productionPaths.cleanupDaemonSet, files.cleanupDaemonSet, ['--cleanup-config'])
   requireTerms(failures, productionPaths.readme, files.readme, [
     'manual Argo CD application',
-    'amd64: `sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2`',
-    'arm64: `sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b`',
+    'amd64: `sha256:29034446e59a9e984a8a720c03f2ba1ce4e61ebb938d1a88c8f40b08bdb06c78`',
+    'arm64: `sha256:c9b534a88b5a09abe452ba5a20d528e106c640416de95f4e9b6cc308fd24c54a`',
     'Prune=false',
   ])
 
@@ -494,7 +494,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.runbook, files.runbook, [
     'kubectl -n kube-system rollout status daemonset/kube-router',
-    'kube_router_index_digest=sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a',
+    'kube_router_index_digest=sha256:e1da38f71e2f1521e7a74c5cdaa511fdee9d2ee76972b25c9b5785b030b96fe4',
     'pod_rows=$(',
     'if [ "$pod_count" -ne "$desired" ]; then',
     "while IFS=$'\\t' read -r pod node pod_ready restart_count image_id",
