@@ -2,12 +2,15 @@ import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Option, Result, Schema } from 'effect'
 
 import { IntentStore, NativeProtectionCancelCommandSchema } from '../execution/intents/domain'
+import { IntentState, OrderSide, OrderType } from '../execution/contracts'
 import { VerifiedProtectionReleaseSchema, type ProtectionReleaseBasis } from '../execution/protection-release'
-import { ProtectionReleaseReferenceSchema } from '../execution/events'
+import { ProtectionReleaseReferenceSchema, type ProtectionReleaseReference } from '../execution/events'
+import { ProtectionCloseBasisSchema, protectionCloseReducesPosition } from '../execution/protection-close-basis'
 import { withWriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
-import { JevExitTargetSchema } from '../jev/exit'
-import { currentAccountPostingBasis } from './reconciliation'
+import { JevExitTargetSchema, type JevExitTarget } from '../jev/exit'
+import { currentAccountPostingBasis, readReconciliationRiskContext } from './reconciliation'
+import { currentUtcInstant } from '../time'
 import {
   Sha256Schema,
   SignedMicrosSchema,
@@ -60,7 +63,37 @@ const ProtectionReleaseEvidence = Schema.Struct({
   readback: VerifiedProtectionReleaseSchema,
 })
 
-const readReleaseFrontier = (sql: PgClient.PgClient, accountId: string, cycleId: string, reconciledAt: string) =>
+export const deriveProtectionCloseBasis = (proofId: string, evidence: typeof ProtectionReleaseEvidence.Type) => {
+  const { readback } = evidence
+  const [position] = readback.positions.value
+  return Schema.decodeUnknownResult(
+    ProtectionCloseBasisSchema,
+    strictParseOptions,
+  )({
+    proofId,
+    accountId: readback.command.accountId,
+    cycleId: evidence.cycleId,
+    reconciliationId: evidence.baselineReconciliationId,
+    authorityGenerationHash: evidence.frontier.authorityGenerationHash,
+    protectionIntentId: readback.command.intentId,
+    symbol: position?.symbol,
+    signedQuantityAtoms: evidence.postedFills
+      .reduce((sum, fill) => sum + BigInt(fill.signedQuantityAtoms), 0n)
+      .toString(),
+    checkedAt: readback.checkedAt,
+    releasedOrderIds: [readback.root.value, ...(readback.root.value.legs ?? [])]
+      .map(({ brokerOrderId }) => brokerOrderId)
+      .sort(),
+  })
+}
+
+const readReleaseFrontier = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  cycleId: string,
+  reconciledAt: string,
+  admittedIntentId?: string,
+) =>
   sql`
     SELECT a.generation_hash AS "authorityGenerationHash", a.version::text AS "authorityVersion",
       c.state_version::text AS "cycleVersion",
@@ -70,7 +103,8 @@ const readReleaseFrontier = (sql: PgClient.PgClient, accountId: string, cycleId:
       (SELECT count(*)::text FROM broker_events WHERE account_id = ${accountId}
         AND observed_at > ${reconciledAt}::timestamptz) AS "brokerEvents",
       (SELECT count(*)::text FROM mutation_events m JOIN intents i USING (intent_id) WHERE i.account_id = ${accountId}
-        AND m.occurred_at >= ${reconciledAt}::timestamptz) AS mutations,
+        AND m.occurred_at >= ${reconciledAt}::timestamptz
+        AND NOT (m.intent_id IS NOT DISTINCT FROM ${admittedIntentId ?? null} AND m.event_type = 'SUBMIT_STARTED')) AS mutations,
       (SELECT count(*)::text FROM native_protection_cancel_commands WHERE account_id = ${accountId}
         AND requested_at >= ${reconciledAt}::timestamptz) AS "protectionCommands",
       (SELECT jsonb_build_object('intentId', x.intent_id, 'accountId', x.account_id, 'brokerOrderId', x.broker_order_id,
@@ -220,20 +254,28 @@ export const recordProtectionReleaseProof = (
 
 /** Reopen the immutable proof under the same fence used by its consumer. */
 export const withCurrentProtectionReleaseProof = <A, E, R>(
-  scope: { readonly proofId: string; readonly cycleId: string; readonly accountId: string },
+  scope: {
+    readonly proofId: string
+    readonly cycleId: string
+    readonly accountId: string
+    readonly admittedIntentId?: string
+  },
   maximumObservationAgeMs: number,
-  consume: (evidence: typeof ProtectionReleaseEvidence.Type) => Effect.Effect<A, E, R>,
+  consume: (evidence: typeof ProtectionReleaseEvidence.Type, trigger: JevExitTarget) => Effect.Effect<A, E, R>,
 ) =>
   withWriterFence(
     Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const [row] = yield* sql`
-        SELECT proof.evidence FROM protection_release_proofs AS proof JOIN intents i USING (intent_id)
+        SELECT proof.evidence, c.exit_target AS trigger
+        FROM protection_release_proofs AS proof
+        JOIN native_protection_cancel_commands c USING (intent_id, broker_order_id, requested_at)
+        JOIN intents i USING (intent_id, account_id)
         WHERE proof.proof_id = ${scope.proofId} AND i.cycle_id = ${scope.cycleId} AND i.account_id = ${scope.accountId}
       `.pipe(
         Effect.flatMap(
           Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Struct({ evidence: ProtectionReleaseEvidence })),
+            Schema.Array(Schema.Struct({ evidence: ProtectionReleaseEvidence, trigger: JevExitTargetSchema })),
             strictParseOptions,
           ),
         ),
@@ -252,8 +294,133 @@ export const withCurrentProtectionReleaseProof = <A, E, R>(
         age >= maximumObservationAgeMs
       )
         return undefined
-      const current = yield* readReleaseFrontier(sql, scope.accountId, scope.cycleId, evidence.baselineReconciledAt)
+      const current = yield* readReleaseFrontier(
+        sql,
+        scope.accountId,
+        scope.cycleId,
+        evidence.baselineReconciledAt,
+        scope.admittedIntentId,
+      )
       if (current === undefined || !canonicalJsonEqualV1(evidence.frontier, current)) return undefined
-      return yield* consume(evidence)
+      return yield* consume(evidence, row.trigger)
+    }),
+  )
+
+const ProtectionSubmitRows = Schema.Array(
+  Schema.Struct({
+    accountId: StrictNonEmptyStringSchema,
+    cycleId: Sha256Schema,
+    authorityGenerationHash: Sha256Schema,
+    symbol: StrictNonEmptyStringSchema,
+    side: Schema.Enum(OrderSide),
+    orderType: Schema.Literal(OrderType.Limit),
+    quantityAtoms: UnsignedMicrosSchema,
+    protectionClose: ProtectionCloseBasisSchema,
+    maximumAgeMs: Schema.Int.check(Schema.isGreaterThan(0)),
+    expiresAt: UtcInstantSchema,
+    databaseAt: UtcInstantSchema,
+  }),
+)
+
+/** Reopen the already bound close under the current mutation transaction. */
+export const readProtectionSubmit = (
+  intentId: string,
+  proofId: string,
+  phase: 'admission' | 'transmission',
+  submitExpiresAt?: string,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const [row] = yield* sql`
+      SELECT i.account_id AS "accountId", i.cycle_id AS "cycleId",
+        i.authority_generation_hash AS "authorityGenerationHash",
+        i.symbol, i.side, i.order_type AS "orderType", i.quantity_atoms::text AS "quantityAtoms",
+        c.document #> '{document,plannerInput,protectionClose}' AS "protectionClose",
+        (c.document #>> '{document,plannerInput,maximumInputAgeMs}')::integer AS "maximumAgeMs",
+        c.document ->> 'expiresAt' AS "expiresAt",
+        to_char(execution_account_commit_now(i.account_id) AT TIME ZONE 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "databaseAt"
+      FROM intents i JOIN autonomous_cycle_paper_closures c USING (cycle_id)
+      WHERE i.intent_id = ${intentId} AND i.protection IS NULL AND i.order_type = 'LIMIT'
+        AND i.state = ${phase === 'admission' ? IntentState.Approved : IntentState.IoStarted}
+        AND c.document #> '{document,orderedIntentIds}' = jsonb_build_array(i.intent_id)
+        AND c.document #>> '{document,bindings,strategyDecisionHash}' = i.decision_hash
+        AND c.document #>> '{document,deltaRisk,0,evaluation,decision,decisionId}' = i.risk_decision_id
+        AND c.document #>> '{document,plannerInput,protectionClose,proofId}' = ${proofId}
+        AND (${phase === 'admission'} OR EXISTS (
+          SELECT 1 FROM mutation_events m JOIN execution_decision_admissions a USING (event_id)
+          WHERE m.intent_id = i.intent_id AND m.event_type = 'SUBMIT_STARTED'
+            AND a.decision_id = c.document #>> '{document,contentHash}'
+        ))
+    `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(ProtectionSubmitRows, strictParseOptions)))
+    if (
+      row === undefined ||
+      !protectionCloseReducesPosition(row.protectionClose, row) ||
+      (submitExpiresAt !== undefined && row.databaseAt >= submitExpiresAt)
+    )
+      return undefined
+    return yield* withCurrentProtectionReleaseProof(
+      {
+        proofId,
+        accountId: row.accountId,
+        cycleId: row.cycleId,
+        ...(phase === 'admission' ? {} : { admittedIntentId: intentId }),
+      },
+      row.maximumAgeMs,
+      (evidence, trigger) =>
+        Effect.gen(function* () {
+          const proven = deriveProtectionCloseBasis(proofId, evidence)
+          const now = yield* currentUtcInstant
+          if (
+            Result.isFailure(proven) ||
+            !canonicalJsonEqualV1(proven.success, row.protectionClose) ||
+            now >= row.expiresAt ||
+            now >= trigger.commitDeadlineAt ||
+            row.databaseAt >= trigger.commitDeadlineAt ||
+            (submitExpiresAt !== undefined && now >= submitExpiresAt)
+          )
+            return undefined
+          return evidence.readback
+        }),
+    )
+  })
+
+export const readCurrentProtectionClose = (
+  reference: ProtectionReleaseReference,
+  accountId: string,
+  maximumObservationAgeMs: number,
+) =>
+  withCurrentProtectionReleaseProof({ ...reference, accountId }, maximumObservationAgeMs, (evidence, trigger) =>
+    Effect.gen(function* () {
+      const basis = deriveProtectionCloseBasis(reference.proofId, evidence)
+      const brokerState = trigger.evidence.portfolio.brokerState
+      const now = yield* currentUtcInstant
+      if (
+        Result.isFailure(basis) ||
+        reference.checkedAt !== basis.success.checkedAt ||
+        trigger.entryDecisionHash !== evidence.entryDecisionHash ||
+        brokerState.reconciliation.reconciliationId !== evidence.baselineReconciliationId ||
+        now >= trigger.commitDeadlineAt
+      )
+        return undefined
+      const sql = yield* PgClient.PgClient
+      const riskContext = yield* readReconciliationRiskContext(
+        sql,
+        { now: sql`${now}::timestamptz` },
+        accountId,
+        evidence.baselineReconciledAt,
+        0,
+      )
+      if (
+        riskContext.authority?.generationHash !== basis.success.authorityGenerationHash ||
+        String(riskContext.authority.version) !== evidence.frontier.authorityVersion
+      )
+        return undefined
+      return {
+        _tag: 'ProtectionRelease' as const,
+        trigger,
+        protectionClose: basis.success,
+        reconciliation: { brokerState, riskContext },
+      }
     }),
   )

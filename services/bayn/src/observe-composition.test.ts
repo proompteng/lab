@@ -1236,6 +1236,7 @@ const sandboxExecutionProgram = (
     invalidateBrokerState: Effect.void,
     dryRunSubmit: () => unused,
     submit: () => unused,
+    submitProtectionClose: () => unused,
     cancel: () => unused,
     cancelProtectionOrder: () => unused,
     recover: () => unused,

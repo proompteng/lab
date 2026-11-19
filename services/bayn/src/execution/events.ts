@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Context, Schema } from 'effect'
 
 import { sha256 } from '../hash'
 import { Sha256Schema, SourceRevisionSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -21,6 +21,11 @@ export const ProtectionReleaseReferenceSchema = Schema.Struct({
   checkedAt: UtcInstantSchema,
 })
 export type ProtectionReleaseReference = typeof ProtectionReleaseReferenceSchema.Type
+
+export const ExecutionProtectionRelease = Context.Reference<ProtectionReleaseReference | undefined>(
+  '@proompteng/bayn/execution/ExecutionProtectionRelease',
+  { defaultValue: () => undefined },
+)
 
 const ProtectionReleaseWakeupSchema = Schema.TaggedStruct('ProtectionRelease', {
   ...envelope,

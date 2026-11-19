@@ -6,6 +6,9 @@ import { operationalError } from '../errors'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations/interpreter'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
+import { readCurrentProtectionClose, readProtectionSubmit } from '../db/protection-release'
+import { WriterFence } from '../execution/writer-fence'
+import { PgClient } from '@effect/sql-pg'
 import { Authority } from '../execution/contracts'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
@@ -147,6 +150,11 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
           strategy: plan.strategy,
           intradayMarketData: marketData,
           executionCycleClosureStore: services.executionCycleClosureStore,
+          readProtectionClose: (reference, maximumObservationAgeMs) =>
+            readCurrentProtectionClose(reference, plan.config.alpaca.expectedAccountId, maximumObservationAgeMs).pipe(
+              Effect.provideService(PgClient.PgClient, services.pgClient),
+              Effect.provideService(WriterFence, services.writerFence),
+            ),
           blockedCycleIntentStore: services.blockedCycleIntentStore,
           reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
           reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
@@ -167,6 +175,11 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
           persistedCapitalGrants: services.persistedCapitalGrants,
           readFinalExecutionRiskContext: (observedAt) =>
             readFinalExecutionRiskContext(services.pgClient, plan.config.alpaca.expectedAccountId, observedAt),
+          readProtectionSubmit: (intentId, proofId) =>
+            readProtectionSubmit(intentId, proofId, 'transmission').pipe(
+              Effect.provideService(PgClient.PgClient, services.pgClient),
+              Effect.provideService(WriterFence, services.writerFence),
+            ),
           intentStore: services.intentStore,
           mutationStore: services.mutationStore,
           writerFence: services.writerFence,

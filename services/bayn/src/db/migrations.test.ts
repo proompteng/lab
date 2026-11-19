@@ -22,6 +22,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [201, 'not_dispatched_visual_evidence'],
     [202, 'protection_release_proofs'],
     [203, 'protection_read_allowance'],
+    [204, 'protection_close_plans'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
@@ -41,6 +42,7 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [201, 'not_dispatched_visual_evidence'],
     [202, 'protection_release_proofs'],
     [203, 'protection_read_allowance'],
+    [204, 'protection_close_plans'],
   ])
 })
 

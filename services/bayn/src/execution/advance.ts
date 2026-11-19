@@ -7,7 +7,7 @@ import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { ExecutionStageTimings, type ExecutionStageTiming, withObservedSpan } from '../telemetry'
 import { operationCurrentTimeMillis } from '../operation-timeout'
 import type { JevInferenceJob } from '../jev/inference-work'
-import type { ProtectionReleaseReference } from './events'
+import { ExecutionProtectionRelease, type ProtectionReleaseReference } from './events'
 
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
@@ -184,6 +184,7 @@ export const advanceExecutionOnce = <E, R>(
     const startedAt = yield* operationCurrentTimeMillis
     const stageTimings = new Map<string, ExecutionStageTiming>()
     return yield* driver.advance.pipe(
+      Effect.provideService(ExecutionProtectionRelease, command.protectionRelease),
       Effect.mapError(
         (cause) =>
           new TransientExecutionFailure({

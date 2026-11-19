@@ -26,6 +26,7 @@ import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapsho
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import {
+  readCurrentProtectionClose,
   readProtectionReleaseBasis,
   readProtectionReleaseReference,
   recordProtectionReleaseProof,
@@ -67,7 +68,7 @@ import {
   executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
 } from '../execution/controller-status'
-import type { AdvanceExecutionCommand } from '../execution/advance'
+import { advanceExecutionOnce, type AdvanceExecutionCommand } from '../execution/advance'
 import { executionControllerPlanHash } from '../execution/controller-plan'
 import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -162,6 +163,9 @@ durableTest.each(
       'accepted-cancel-lookup-failed',
       'early-exit',
       'partial-exit-reentry',
+      'partial-exit-reentry-protection-proof',
+      'partial-exit-reentry-protection-admission-race',
+      'partial-exit-reentry-protection-transmission-race',
       'measured-exit',
       'measured-bootstrap-delay',
       'measured-partial-entry-reentry',
@@ -185,6 +189,10 @@ durableTest.each(
 )(
   '$label: $scenario',
   async ({ scenario: mode }) => {
+    const useProtectionProof = mode === 'partial-exit-reentry-protection-proof'
+    const protectionAdmissionRace = mode === 'partial-exit-reentry-protection-admission-race'
+    const protectionTransmissionRace = mode === 'partial-exit-reentry-protection-transmission-race'
+    const protectionProofScenario = useProtectionProof || protectionAdmissionRace || protectionTransmissionRace
     const ablation = mode === 'ablation-fill'
     const momentum = mode.startsWith('momentum-')
     const chartProvider: JevClient['Service'] =
@@ -196,7 +204,7 @@ durableTest.each(
         ? 'latency-stress-valid'
         : mode === 'momentum-latency-expired'
           ? 'latency-stress-expired'
-          : mode === 'momentum-partial-exit-reentry'
+          : mode === 'momentum-partial-exit-reentry' || protectionProofScenario
             ? 'partial-exit-reentry'
             : ablation || momentum
               ? 'fill'
@@ -669,6 +677,21 @@ durableTest.each(
         const passes = yield* Ref.make<Array<Parameters<import('../app').RecordAutonomousCyclePass>[0]>>([])
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
+        const injectProtectionTransmissionRace = yield* Ref.make(false)
+        let protectedCloseRollbackVerified = false
+        const notificationConnection =
+          protectionAdmissionRace || protectionTransmissionRace ? yield* sql.reserve : undefined
+        const recordRacingNotification = Effect.gen(function* () {
+          if (notificationConnection === undefined) throw new Error('Missing independent notification connection')
+          const now = yield* currentUtcInstant
+          yield* notificationConnection
+            .executeUnprepared(
+              'INSERT INTO broker_notification_receipts (account_id, event_id, source_revision, received_at) VALUES ($1, $2, $3, $4::timestamptz)',
+              [accountId, 'c'.repeat(64), 'a'.repeat(40), now],
+              undefined,
+            )
+            .pipe(Effect.orDie)
+        })
         const runtimeInput = {
           decisionLatencyStress: latencyStress
             ? {
@@ -688,6 +711,11 @@ durableTest.each(
             ...broker,
             read: {
               ...broker.read,
+              assetBySymbol: (symbol: string) =>
+                Ref.getAndSet(injectProtectionTransmissionRace, false).pipe(
+                  Effect.flatMap((inject) => (inject ? recordRacingNotification : Effect.void)),
+                  Effect.andThen(broker.read.assetBySymbol(symbol)),
+                ),
               projection: {
                 ...broker.read.projection,
                 snapshot: Ref.get(stallReconciliation).pipe(
@@ -753,6 +781,34 @@ durableTest.each(
             scenario === 'no-trade-finalization' ? 30_000 : sessionCloseLifecycle ? 1000 : config.operationTimeoutMs,
         }
         const mutations = yield* MutationStore
+        const protectedRaceMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (intentId, requestHash, delayMs, observedAt, closeOnly, protection) =>
+            protection === undefined
+              ? mutations.beginSubmit(intentId, requestHash, delayMs, observedAt, closeOnly)
+              : mutations
+                  .beginSubmit(intentId, requestHash, delayMs, observedAt, closeOnly, {
+                    ...protection,
+                    bind: protection.bind.pipe(Effect.andThen(recordRacingNotification)),
+                  })
+                  .pipe(
+                    Effect.tapError(() =>
+                      sql`SELECT
+                      EXISTS(SELECT 1 FROM intents WHERE intent_id = ${intentId}) AS intent,
+                      EXISTS(SELECT 1 FROM autonomous_cycle_paper_closures
+                        WHERE document #>> '{document,orderedIntentIds,0}' = ${intentId}) AS closure,
+                      EXISTS(SELECT 1 FROM mutation_events WHERE intent_id = ${intentId}) AS start`.pipe(
+                        Effect.orDie,
+                        Effect.tap((rows) =>
+                          Effect.sync(() => {
+                            expect(rows).toEqual([{ intent: false, closure: false, start: false }])
+                            protectedCloseRollbackVerified = true
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+        }
         const expiryMutations: typeof mutations = {
           ...mutations,
           beginSubmit: (...args) =>
@@ -769,7 +825,10 @@ durableTest.each(
             }),
         }
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
-          Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
+          Effect.provideService(
+            MutationStore,
+            untouchedExpiry ? expiryMutations : protectionAdmissionRace ? protectedRaceMutations : mutations,
+          ),
           Effect.provideService(JevClient, timing?.clients.jev ?? provider),
 
           (operation) => (timing === undefined ? operation : timing.run(operation)),
@@ -2111,6 +2170,7 @@ durableTest.each(
                 const blocked = yield* observationStore.begin('too-early', 0)
                 expect(blocked.status).toBe(BrokerObservationClaimStatus.QuotaWait)
                 expect(blocked.nextPollNotBeforeMs).toBe(ordinaryDueAtMs + 2_400)
+                if (protectionProofScenario) yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 474)
                 const proof = yield* readProtectionRelease(broker.read, basis, 5_000)
                 expect(proof._tag).toBe('VerifiedProtectionRelease')
                 if (proof._tag !== 'VerifiedProtectionRelease') throw new Error(proof.reason)
@@ -2141,10 +2201,82 @@ durableTest.each(
                 expect(
                   yield* sql`SELECT count(*)::int AS count FROM protection_release_proofs WHERE proof_id = ${proofId}`,
                 ).toEqual([{ count: 1 }])
-                yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
-                  VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
-                expect(yield* readProof).toBeUndefined()
-                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
+                if (protectionProofScenario) {
+                  const release = { proofId, cycleId, checkedAt: proof.checkedAt }
+                  expect((yield* readCurrentProtectionClose(release, accountId, 5_000))?.protectionClose.proofId).toBe(
+                    proofId,
+                  )
+                  if (protectionTransmissionRace) yield* Ref.set(injectProtectionTransmissionRace, true)
+                  const accelerated = yield* advanceExecutionOnce(
+                    {
+                      controllerKey: Result.getOrThrow(canonicalHashV1Result({ accountId })),
+                      epoch: 1,
+                      sequence: attempt,
+                      issuedAt: yield* currentUtcInstant,
+                      sourceRevision: config.build.sourceRevision,
+                      protectionRelease: release,
+                    },
+                    { advance: runtime.advance, nextDelayMs: 1000 },
+                  )
+                  const [admitted] = yield* sql<{
+                    proof_id: string
+                    start_count: number
+                    latency_ms: number
+                    latest_reconciliation: string
+                    physical_identity_count: number
+                    denied_count: number
+                    qualification_count: number
+                  }>`
+                    SELECT c.document#>>'{document,plannerInput,protectionClose,proofId}' AS proof_id,
+                      count(*) FILTER (WHERE m.event_type = 'SUBMIT_STARTED')::int AS start_count,
+                      max(EXTRACT(EPOCH FROM m.occurred_at - ${basis.trigger.observedAt}::timestamptz) * 1000)
+                        FILTER (WHERE m.event_type = 'SUBMIT_STARTED')::float8 AS latency_ms,
+                      (SELECT reconciliation_id FROM reconciliations WHERE account_id = ${accountId}
+                        ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1) AS latest_reconciliation,
+                      count(distinct m.broker_order_id) FILTER (WHERE m.event_type = 'SUBMIT_ACCEPTED')::int AS physical_identity_count,
+                      count(*) FILTER (WHERE m.event_type = 'SUBMIT_DENIED')::int AS denied_count,
+                      count(a.event_id)::int AS qualification_count
+                    FROM autonomous_cycle_paper_closures c
+                    JOIN mutation_events m ON m.intent_id = c.document #>> '{document,orderedIntentIds,0}'
+                    LEFT JOIN execution_decision_admissions a ON a.event_id = m.event_id
+                      AND a.decision_id = c.document #>> '{document,contentHash}'
+                    WHERE c.cycle_id = ${cycleId} GROUP BY c.document
+                  `
+                  if (protectionAdmissionRace) {
+                    expect(protectedCloseRollbackVerified).toBe(true)
+                    expect(admitted?.proof_id ?? null).toBeNull()
+                    expect(
+                      yield* sql`SELECT system_evidence_source_committed(xmin) AS committed
+                      FROM protection_release_close_plans WHERE proof_id = ${proofId}`,
+                    ).toEqual([{ committed: true }])
+                  } else {
+                    expect(admitted, JSON.stringify(accelerated.observation)).toMatchObject({
+                      proof_id: proofId,
+                      start_count: 1,
+                      physical_identity_count: protectionTransmissionRace ? 0 : 1,
+                      denied_count: protectionTransmissionRace ? 1 : 0,
+                      qualification_count: 1,
+                      latest_reconciliation:
+                        basis.trigger.evidence.portfolio.brokerState.reconciliation.reconciliationId,
+                    })
+                    expect(admitted?.latency_ms).toBeLessThanOrEqual(5_311)
+                    if (useProtectionProof) {
+                      expect(admitted?.latency_ms).toBeGreaterThanOrEqual(474)
+                      yield* Effect.logInfo('Native protection timing with modeled broker wait').pipe(
+                        Effect.annotateLogs({ triggerToDurableAdmissionMs: admitted?.latency_ms ?? -1 }),
+                      )
+                    }
+                  }
+                  expect(yield* readProof).toBeUndefined()
+                  if (protectionTransmissionRace) {
+                    expect((yield* runtime.store.authorityGeneration.readAuthorityState).kill).toBe(KillState.Clear)
+                  }
+                } else {
+                  yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
+                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
+                  expect(yield* readProof).toBeUndefined()
+                  expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
+                }
 
                 const readGroup = broker.read.orderByClientId(basis.protectionIntent.clientOrderId)
                 const changedGroup = (change: (order: BrokerOrder) => BrokerOrder) => ({
@@ -2233,6 +2365,14 @@ durableTest.each(
           } else expect(closures).toHaveLength(scenario === 'partial-exit-reentry' ? 1 : 0)
           for (const closure of closures) {
             const target = yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(closure.target)
+            if (useProtectionProof || protectionTransmissionRace) {
+              const [command] = yield* sql<{ exit_target: unknown }>`SELECT exit_target
+                FROM native_protection_cancel_commands WHERE account_id = ${accountId}`
+              expect(target).toEqual(
+                yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(command?.exit_target),
+              )
+              continue
+            }
             expect(target.reason).toBe(JevExitReason.ProtectionReleased)
             const portfolio = target.evidence.portfolio
             if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Missing held closure evidence')
@@ -2498,7 +2638,11 @@ durableTest.each(
                 FROM autonomous_cycle_paper_close_replans AS replan
                 JOIN autonomous_cycle_paper_closures AS original USING (cycle_id)
               `,
-            ).toEqual([{ plans: 0, same_exit_evidence: null }])
+            ).toEqual(
+              protectionTransmissionRace
+                ? [{ plans: 1, same_exit_evidence: true }]
+                : [{ plans: 0, same_exit_evidence: null }],
+            )
           }
           return { _tag: 'Lifecycle' as const }
         }

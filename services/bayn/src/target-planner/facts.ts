@@ -1,6 +1,7 @@
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
 import { equityShortIsEligible } from '../execution/equity-short'
+import { matchesProtectionCloseBook } from '../execution/protection-close-basis'
 import { Result, pipe } from 'effect'
 
 import { AccountStatus, OrderStatus, ReconciliationStatus } from '../execution/contracts'
@@ -387,8 +388,27 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
   if (!brokerStateIsCurrent(facts)) return TargetPlanReason.ReconciliationNotExact
   if (input.brokerState.account.status !== AccountStatus.Active) return TargetPlanReason.AccountNotActive
   if (input.brokerState.unknownOrderCount > 0) return TargetPlanReason.UnknownOrder
-  if (input.brokerState.orders.some((order) => isUnresolved(order.status))) return TargetPlanReason.UnresolvedOrder
   const forcedClose = input.executionTerms.executionPurpose !== undefined
+  const protectionClose = input.protectionClose
+  if (protectionClose !== undefined) {
+    if (
+      !forcedClose ||
+      input.strategyName !== 'jev' ||
+      input.executionTerms.priceReference !== 'verified-adverse-quote-boundary' ||
+      facts.targetSymbols.length !== 1 ||
+      facts.targetSymbols[0] !== protectionClose.symbol ||
+      !matchesProtectionCloseBook(
+        protectionClose,
+        input.brokerState,
+        input.cycleId,
+        input.observedAt,
+        input.maximumInputAgeMs,
+      )
+    )
+      return TargetPlanReason.UnresolvedOrder
+  } else if (input.brokerState.orders.some((order) => isUnresolved(order.status))) {
+    return TargetPlanReason.UnresolvedOrder
+  }
   if (
     Object.entries(input.targetWeights).some(
       ([symbol, weight]) =>
