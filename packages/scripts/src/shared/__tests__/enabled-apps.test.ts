@@ -503,12 +503,12 @@ describe('enabled app inventory', () => {
 
   it('pins the enabled observability collector upgrade wave', () => {
     for (const deploymentPath of enabledAlloyDeploymentPaths) {
-      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.19.2')
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.22.0')
     }
     expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
-      'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
+      'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
-    expect(natsKustomization).toContain('newTag: v1.19.2')
+    expect(natsKustomization).toContain('newTag: v1.22.0')
     expect(observabilityKustomization).toContain('version: 8.4.2')
   })
 
