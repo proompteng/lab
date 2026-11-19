@@ -580,9 +580,11 @@ expires. The owner retains the original close-plus-two-second eligibility timer 
 
 An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
 transaction with `jev_inference_work`. That row retains the admitted financial work and its one-way dispatch claim.
-The pass verifies and freezes its owned source once. Planning, live source-reference verification, and PostgreSQL
-admission use that same graph. Admission still checks any retained observation bytes and all current durable source
-bindings.
+Capture binds Kafka bounds and delivery order before issuing a detached, immutable market snapshot. The account
+pass carries that snapshot and its already checked portfolio into Jev preparation, where it verifies the observation
+envelope and binds it to the same source. Retained data re-enters through the full source verifier. Planning,
+live source-reference verification, and PostgreSQL admission use the owned graph. Admission still checks any
+retained observation bytes and all current durable source bindings.
 Dispatch polling materializes unresolved work before reading expiry from retained plan payloads, so completed history
 does not reopen large JSON evidence on each wake. The selected authority generation, original strict expiry cutoff,
 expiry-then-batch order, 64-item limit, claim state and admission deadline remain unchanged.

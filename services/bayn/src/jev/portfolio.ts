@@ -2,6 +2,7 @@ import { JevPositionExitPolicySchema } from './exit-policy'
 import { Context, Effect, Result, Schema } from 'effect'
 
 import type { OperationalError } from '../errors'
+import { freezeEvidence } from '../immutable-evidence'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 
 import {
@@ -223,11 +224,22 @@ export class JevPositionStore extends Context.Service<JevPositionStore, JevPosit
   '@proompteng/bayn/jev/PositionStore',
 ) {}
 
+const ownedPortfolios = new WeakSet<JevPortfolio>()
+
+export const isOwnedJevPortfolio = (portfolio: JevPortfolio) => ownedPortfolios.has(portfolio)
+
 export const decodeJevPortfolio = (input: unknown) =>
   Schema.decodeUnknownResult(
     JevPortfolioSchema,
     strictParseOptions,
-  )(input).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev position context is invalid', cause })))
+  )(input).pipe(
+    Result.mapError((cause) => new JevContractError({ message: 'Jev position context is invalid', cause })),
+    Result.map((portfolio) => {
+      freezeEvidence(portfolio)
+      ownedPortfolios.add(portfolio)
+      return portfolio
+    }),
+  )
 
 export const jevPortfolioCandidates = (portfolio: JevPortfolio, candidates: readonly string[]): readonly string[] =>
   portfolio.purpose === JevPurpose.Entry
