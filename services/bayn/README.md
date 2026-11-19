@@ -1155,6 +1155,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - `BaynEntryInference` runs against its scoped PostgreSQL and Jev services while the financial driver initializes
   or recovers. The worker checks current authority before claiming admitted work and commits the expense claim
   before any provider call. The financial driver reuses the same database and Jev services.
+- The account process retains its last admitted source and plan. When the result arrives, PostgreSQL checks the
+  original source seal and candidate receipts before selection. The owner reuses that preparation when it still
+  matches, and reconstructs stored evidence on a cold resume. `bayn.jev.entry-selection` records which path ran.
 - Execution acquires a scoped driver directly. Production and replay share one serialized generation-rebinding
   path: when authority changes, the next pass prepares its replacement before advancing. Failed or interrupted
   preparation retains the clients and retries preparation without running the stale driver. Production preparation

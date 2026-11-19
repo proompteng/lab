@@ -57,6 +57,7 @@ import {
   evaluateJevBatch,
   JevBatchStore,
   recoverPendingJevBatches,
+  retainedJevBatchPreparation,
   type JevBatchEvaluationOptions,
 } from './batch-evaluation'
 import { JevContractError } from './contract'
@@ -235,14 +236,22 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
   loadEligibility?: Effect.Effect<Parameters<typeof makeOwnedJevObservation>[0]['equityShortEligibility'], E, R>,
 ) =>
   Effect.gen(function* () {
-    const { snapshot, observation, batchPlan, saved } = yield* Effect.gen(function* () {
+    const { snapshot, observation, batchPlan, saved, preparation } = yield* Effect.gen(function* () {
       const deferred = yield* Effect.serviceOption(JevInferenceWorkStore)
       if (Option.isSome(deferred)) {
         const resumed = yield* deferred.value.resume(input.cycleId, input.authorityGenerationHash)
         if (resumed !== null) {
           const batches = yield* JevBatchStore
           const retained = yield* batches.read(resumed.batchId)
-          const original = resumed.source
+          const preparation = retained === null ? undefined : retainedJevBatchPreparation(retained)
+          const original =
+            preparation === undefined
+              ? yield* resumed.loadSource
+              : {
+                  observation: preparation.source.payload,
+                  snapshot: preparation.source.verified.snapshot,
+                  contentHash: preparation.source.verified.contentHash,
+                }
           if (
             retained === null ||
             retained.result === null ||
@@ -266,6 +275,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             observation: { payload: original.observation, contentHash: original.contentHash },
             batchPlan: retained.plan,
             saved: retained,
+            preparation,
           }
         }
       }
@@ -350,7 +360,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           ),
         ),
       )
-      return { snapshot, observation, batchPlan: batch.plan, saved }
+      return { snapshot, observation, batchPlan: batch.plan, saved, preparation: undefined }
     })
     yield* Effect.logInfo(candidateObservationLog(observation))
     const decidedAt = yield* currentUtcInstant
@@ -418,6 +428,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
     return {
       snapshot,
       evidence: { observation: observation.payload, batchPlan: saved.plan, batchResult: saved.result, decidedAt },
+      preparation,
     }
   })
 

@@ -55,7 +55,13 @@ export class JevInferenceWorkStore extends Context.Service<
     readonly resume: (
       cycleId: string,
       authorityGenerationHash: string,
-    ) => Effect.Effect<{ readonly batchId: string; readonly source: RestoredJevObservation } | null, OperationalError>
+    ) => Effect.Effect<
+      {
+        readonly batchId: string
+        readonly loadSource: Effect.Effect<RestoredJevObservation, OperationalError>
+      } | null,
+      OperationalError
+    >
     readonly claim: (jobId: string) => Effect.Effect<
       {
         readonly admission: JevBatchAdmission

@@ -19,6 +19,7 @@ import {
 import {
   JevBatchExpired,
   JevBatchStore,
+  retainJevBatchPreparation,
   type JevBatchAdmissionOptions,
   type JevBatchEvidence,
 } from '../jev/batch-evaluation'
@@ -65,6 +66,9 @@ const jevTerminalBatchSettlementScanPages = 4
 
 export const makeJevBatchStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
+  let lastAdmitted: PreparedJevBatch | undefined
+  const attachPreparation = (evidence: JevBatchEvidence) =>
+    lastAdmitted === undefined ? evidence : retainJevBatchPreparation(evidence, lastAdmitted)
   const persistError = (cause: unknown) =>
     operationalError({
       component: 'database',
@@ -94,7 +98,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       if (row === undefined) return null
       const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
       if (plan.batchId !== batchId) return yield* persistError('Stored Jev batch identity differs')
-      if (row.result === null) return { plan, result: null } satisfies JevBatchEvidence
+      if (row.result === null) return attachPreparation({ plan, result: null })
       const result = yield* Effect.fromResult(decodeJevBatchResult(plan, row.result))
       const { evidence: evidenceByRequestId } = yield* readJevEvaluationEvidence(
         sql,
@@ -113,7 +117,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
         )
           return yield* persistError('Jev batch differs from its independently committed candidate evidence')
       }
-      return { plan, result } satisfies JevBatchEvidence
+      return attachPreparation({ plan, result })
     }).pipe(Effect.mapError(persistError))
 
   const begin = (batch: PreparedJevBatch, options?: JevBatchAdmissionOptions) =>
@@ -140,6 +144,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       const existing = yield* read(plan.batchId)
       if (existing !== null) {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
+        lastAdmitted = batch
         return { ...existing, dispatches: [] }
       }
       const checkWindow = Effect.gen(function* () {
@@ -281,6 +286,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       )
       const saved = yield* read(plan.batchId)
       if (saved === null) return yield* persistError('Committed Jev batch plan is missing')
+      lastAdmitted = batch
       return { ...saved, dispatches }
     }).pipe(
       Effect.mapError((cause) => (cause instanceof JevBatchExpired ? cause : persistError(cause))),

@@ -65,7 +65,12 @@ import {
   makeJevBatchResult,
   usableEntryBatchInferences,
 } from '../jev/batch'
-import { JevBatchExpired, JevBatchStore, type JevBatchAdmission } from '../jev/batch-evaluation'
+import {
+  JevBatchExpired,
+  JevBatchStore,
+  retainedJevBatchPreparation,
+  type JevBatchAdmission,
+} from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
@@ -554,23 +559,30 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const completed = yield* execute
         expect(completed).toMatchObject({ status: 'Completed', expiresAt: plan.expiresAt })
         expect(startup.pollUnsafe()).toBeUndefined()
-        expect((yield* batches.read(plan.batchId))?.result?.resultHash).toBe(
-          completed?.status === 'Completed' ? completed.resultHash : undefined,
-        )
+        const recorded = yield* batches.read(plan.batchId)
+        expect(recorded?.result?.resultHash).toBe(completed?.status === 'Completed' ? completed.resultHash : undefined)
+        expect(recorded && retainedJevBatchPreparation(recorded)?.plan).toEqual(plan)
         const firstCalls = providerCalls
         expect(firstCalls).toBeGreaterThan(0)
         expect(yield* execute).toEqual(completed)
         expect(providerCalls).toBe(firstCalls)
-        expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toEqual({
-          batchId: plan.batchId,
-          source: {
-            observation: fixture.observation.payload,
-            snapshot: fixture.snapshot,
-            contentHash: plan.observationHash,
-          },
+        const resumed = yield* work.resume(plan.cycleId, plan.authorityGenerationHash)
+        expect(resumed?.batchId).toBe(plan.batchId)
+        if (resumed === null) throw Error('expected committed inference to resume')
+        expect(yield* resumed.loadSource).toEqual({
+          observation: fixture.observation.payload,
+          snapshot: fixture.snapshot,
+          contentHash: plan.observationHash,
         })
         expect(yield* work.resume(plan.cycleId, 'e'.repeat(64))).toBeNull()
         expect(yield* work.pending()).toEqual([])
+        yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER intraday_candidate_observations_immutable`
+        yield* sql`UPDATE intraday_candidate_observations SET payload = payload || '{"changedAfterCompletion":true}'::jsonb
+          WHERE content_hash = ${plan.observationHash}`
+        yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER intraday_candidate_observations_immutable`
+        expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+        })
         yield* TestClock.setTime(observed + 15_000)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toBeNull()
       }).pipe(

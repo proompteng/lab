@@ -7,7 +7,6 @@ import { decodeJevBatchPlan, JevBatchPlanSchema, JevCandidatePlanStatus } from '
 import { makeJevDispatch } from '../jev/evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
 import { restoreJevObservation } from '../jev/observation'
-import { JevObservationSchema } from '../jev/observation-contract'
 import { StagedDispatchClaimSchema } from '../jev/staged-checkpoint'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
@@ -270,10 +269,13 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const generation = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(generationInput)
       const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
       const rows = yield* Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ batch_id: Sha256Schema, observation: JevObservationSchema })),
+        Schema.Array(
+          Schema.Struct({ batch_id: Sha256Schema, observation_hash: Sha256Schema, source_matches: Schema.Boolean }),
+        ),
         strictParseOptions,
       )(
-        yield* sql`SELECT work.batch_id, observation.payload AS observation
+        yield* sql`SELECT work.batch_id, plan.observation_hash,
+          COALESCE(sha256(convert_to(observation.payload::text, 'UTF8')) = work.source_sha256, false) AS source_matches
         FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
         JOIN jev_batch_results AS result USING (batch_id)
         JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
@@ -284,8 +286,18 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       )
       const row = rows[0]
       if (row === undefined) return null
-      const restored = yield* Effect.fromResult(restoreJevObservation(row.observation))
-      return { batchId: row.batch_id, source: restored }
+      if (!row.source_matches) return yield* failure('Completed inference differs from its admission source seal')
+      const loadSource = Effect.gen(function* () {
+        const [source] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
+          strictParseOptions,
+        )(yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${row.observation_hash}`)
+        return yield* Effect.fromResult(restoreJevObservation(source.payload))
+      }).pipe(
+        Effect.mapError(failure),
+        withObservedStage('bayn.jev.decision-source-restore', { dependency: 'postgresql' }),
+      )
+      return { batchId: row.batch_id, loadSource }
     }).pipe(Effect.mapError(failure))
 
   return { read, pending, claim, resume, settleExpired } satisfies typeof JevInferenceWorkStore.Service
