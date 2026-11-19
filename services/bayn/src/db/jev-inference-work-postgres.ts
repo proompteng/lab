@@ -1,12 +1,21 @@
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, Option, Result, Schema } from 'effect'
+import * as PgConnection from '@effect/sql-pg/PgConnection'
+import { Clock, Duration, Effect, Layer, Option, Queue, Result, Schema } from 'effect'
 
 import { operationalError } from '../errors'
+import { KillState } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import { decodeJevBatchPlan, JevBatchPlanSchema, JevCandidatePlanStatus } from '../jev/batch'
 import { makeClaimedJevSource } from '../jev/batch-evaluation'
 import { makeJevDispatch } from '../jev/evaluation'
-import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
+import {
+  JevInferenceWorkStore,
+  jevInferenceWorkChannel,
+  maximumWatchedInferenceJobs,
+  type JevInferenceController,
+  type JevInferenceJob,
+  type JevInferenceWatchResult,
+} from '../jev/inference-work'
 import { restoreJevObservation } from '../jev/observation'
 import { StagedDispatchClaimSchema } from '../jev/staged-checkpoint'
 import { utcInstantFromEpochMillis } from '../time'
@@ -44,6 +53,59 @@ const WorkClaimRow = Schema.Struct({
     }),
   ),
 })
+
+const InferenceQueue = Schema.Tuple([Schema.Struct({ active: Schema.Boolean, jobs: Schema.Array(Sha256Schema) })])
+
+const activeController = (sql: PgClient.PgClient, scope: JevInferenceController) => sql`
+  controller.controller_key = ${scope.controllerKey} AND controller.epoch = ${scope.epoch}
+    AND controller.plan_hash = ${scope.planHash} AND controller.active`
+
+export const awaitJevInferenceDispatch = (scope: JevInferenceController, previous: readonly string[]) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      const connection = yield* PgConnection.make(sql.config)
+      const listener = yield* connection.pin
+      // LISTEN is acknowledged before reading the queue, including when a listener resumes after disconnect.
+      const changed = yield* listener.listen(jevInferenceWorkChannel)
+      const seen = new Set(previous)
+      const wait = Effect.gen(function* () {
+        while (true) {
+          const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
+          const [{ active, jobs }] = yield* sql`
+            WITH controller AS MATERIALIZED (
+              SELECT 1 FROM execution_controller_status AS controller WHERE ${activeController(sql, scope)}
+            ), unresolved AS MATERIALIZED (
+              SELECT work.batch_id, plan.payload
+              FROM jev_inference_work AS work
+              JOIN jev_batch_plans AS plan USING (batch_id)
+              JOIN autonomous_cycles AS cycle USING (cycle_id)
+              JOIN authority_state AS authority ON authority.singleton
+                AND authority.generation_hash = plan.authority_generation_hash
+              CROSS JOIN controller
+              WHERE cycle.account_id = ${scope.accountId}
+                AND authority.kill_state = ${KillState.Clear} AND authority.effective = authority.maximum
+                AND NOT EXISTS (SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = work.batch_id)
+            )
+            SELECT EXISTS (SELECT 1 FROM controller) AS active, ARRAY(
+              SELECT batch_id FROM unresolved WHERE payload->>'expiresAt' > ${now}
+              ORDER BY payload->>'expiresAt', batch_id
+              LIMIT ${maximumWatchedInferenceJobs}
+            ) AS jobs`.pipe(Effect.flatMap(Schema.decodeUnknownEffect(InferenceQueue)))
+          if (!active) return { active: false } satisfies JevInferenceWatchResult
+          const dispatch = jobs.filter((job) => !seen.has(job))
+          if (dispatch.length > 0) return { active: true, pending: jobs, dispatch } satisfies JevInferenceWatchResult
+          yield* Queue.take(changed)
+        }
+      })
+      const pingInterval = Duration.toMillis(sql.config.connectTimeout ?? '10 seconds') / 2
+      const keepAlive = Effect.sleep(pingInterval).pipe(Effect.andThen(listener.query('SELECT 1')), Effect.forever)
+      return Option.getOrElse(
+        yield* Effect.raceFirst(wait, keepAlive).pipe(Effect.timeoutOption('30 seconds')),
+        (): JevInferenceWatchResult => ({ active: true, pending: previous, dispatch: [] }),
+      )
+    }),
+  ).pipe(withObservedStage('bayn.jev.watch', { dependency: 'postgresql' }))
 
 const jobFromRow = (row: typeof WorkRow.Type): JevInferenceJob => ({
   schemaVersion: 'bayn.jev-inference-job.v1',
@@ -199,7 +261,7 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       }
     }).pipe(Effect.mapError(failure))
 
-  const claim = (input: string) =>
+  const claim = (input: string, scope?: JevInferenceController) =>
     Effect.gen(function* () {
       if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
         return yield* failure('Jev inference must claim independently before provider work')
@@ -214,6 +276,21 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
           UPDATE jev_inference_work SET claimed_at = clock_timestamp()
           WHERE batch_id = ${jobId} AND claimed_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${jobId})
+            AND ${
+              scope === undefined
+                ? sql`TRUE`
+                : sql`EXISTS (
+              SELECT 1
+              FROM execution_controller_status AS controller
+              JOIN jev_batch_plans AS plan ON plan.batch_id = ${jobId}
+              JOIN autonomous_cycles AS cycle USING (cycle_id)
+              JOIN authority_state AS authority ON authority.singleton
+                AND authority.generation_hash = plan.authority_generation_hash
+              WHERE ${activeController(sql, scope)} AND cycle.account_id = ${scope.accountId}
+                AND authority.kill_state = ${KillState.Clear} AND authority.effective = authority.maximum
+              FOR SHARE OF controller, authority
+            )`
+            }
           RETURNING batch_id, dispatches, source_sha256
         )
         SELECT claimed.dispatches, plan.payload AS plan, encode(claimed.source_sha256, 'hex') AS source_seal,

@@ -733,6 +733,7 @@ describeRestate('Real always-replay streaming execution', () => {
     const providerGate = new Promise<void>((resolve) => {
       releaseProvider = resolve
     })
+    const admission = Promise.withResolvers<void>()
     let prepared = false
     const controller = alwaysReplay(
       makeBaynExecutionController(config, {
@@ -745,6 +746,7 @@ describeRestate('Real always-replay streaming execution', () => {
           passes.push(command)
           const first = !prepared
           prepared = true
+          if (first) admission.resolve()
           const completedAt = new Date().toISOString()
           return {
             completedAt,
@@ -758,27 +760,17 @@ describeRestate('Real always-replay streaming execution', () => {
                   ? { nextWakeAt: new Date(Date.now() + 100).toISOString() }
                   : {}),
             },
-            ...(first
-              ? {
-                  inferenceJobs: [
-                    {
-                      schemaVersion: 'bayn.jev-inference-job.v1' as const,
-                      jobId,
-                      batchId: jobId,
-                      cycleId: sha256(`${controllerKey}:cycle`),
-                      authorityGenerationHash: 'f'.repeat(64),
-                      expiresAt,
-                      status: 'Prepared' as const,
-                    },
-                  ],
-                }
-              : {}),
           }
         },
       }),
     )
     const inference = alwaysReplay(
       makeBaynEntryInference(config, {
+        awaitDispatch: async ({ epoch }, pending) => {
+          if (epoch !== 1 || pending.includes(jobId)) return { active: false }
+          await admission.promise
+          return { active: true, dispatch: [jobId], pending: [jobId] }
+        },
         executeInference: async () => {
           providerCalls += 1
           providerEntered = true
