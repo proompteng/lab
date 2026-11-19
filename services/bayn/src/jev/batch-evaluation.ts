@@ -95,10 +95,7 @@ export const evaluateAdmittedJevBatch = (
     const requested = saved.plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
     if (dispatches.length !== requested.length) return yield* store.finish(saved.plan.batchId)
     const completions = yield* evaluateClaimedEntryInferences(dispatches, options).pipe(
-      Effect.catchTags({
-        EntryInferenceError: () => Effect.succeed(null),
-        JevContractError: () => Effect.succeed(null),
-      }),
+      Effect.catchTag('EntryInferenceError', () => Effect.succeed(null)),
     )
     if (completions === null) return yield* store.finish(saved.plan.batchId)
     const byRequest = new Map(completions.map((completion) => [completion.handoff.requestId, completion]))
