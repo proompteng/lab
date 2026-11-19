@@ -16,6 +16,8 @@ test('production Valkey lifecycle preserves idle connections and bounds startup 
     const node = Effect.runSync(Config.String('BAYN_TEST_NODE_BINARY').pipe(Config.withDefault('node')))
     for (const mode of [
       'idle',
+      'startup-native-timeout',
+      'startup-recover',
       'startup-deadline',
       'startup-interrupt',
       'command-deadline',
@@ -37,4 +39,4 @@ test('production Valkey lifecycle preserves idle connections and bounds startup 
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
-}, 20_000)
+}, 35_000)
