@@ -53,6 +53,9 @@ backend:
     limits:
       memory: 2Gi
 frontend:
+  extraEnvs:
+    - name: PENPOT_HTTP_SERVER_WORKER_PROCESSES
+      value: "4"
   podSecurityContext:
     fsGroup: 1001
     seccompProfile:
