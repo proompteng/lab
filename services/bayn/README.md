@@ -586,14 +586,12 @@ pass carries that snapshot and its already checked portfolio into Jev preparatio
 envelope and binds it to the same source. Retained data re-enters through the full source verifier. Planning,
 live source-reference verification, and PostgreSQL admission use the owned graph. Admission still checks any
 retained observation bytes and all current durable source bindings.
-Dispatch polling materializes unresolved work before reading expiry from retained plan payloads, so completed history
-does not reopen large JSON evidence on each wake. The selected authority generation, original strict expiry cutoff,
-expiry-then-batch order, 64-item limit, claim state and admission deadline remain unchanged.
-The owner durably sends `BaynEntryInference.evaluate` and returns. The provider-only
-service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
-binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
-worker from repeating paid work whose provider outcome is uncertain. Unknown outcomes retain their original expiry and
-existing expense classification; a retry cannot invent a fresh validity window.
+Controller activation starts a private `BaynEntryInference.watch` chain for its epoch. The watcher subscribes to
+PostgreSQL before reading unresolved work. Admission notifies it in the same transaction that inserts the work row.
+The watcher sends each eligible job to `BaynEntryInference.evaluate` and resumes from committed work after interruption.
+The account controller tracks the original expiry separately and can process broker updates, protection or close deadlines
+while the worker runs. The one-way SQL claim checks the active controller epoch and authority before any provider call.
+An uncertain provider outcome retains its original expiry and expense classification.
 PostgreSQL seals the retained observation bytes when admission inserts the work row. The worker reads compact job
 metadata for authority and scheduling, then verifies the source seal in the one-way SQL claim. The claim returns the
 original plan and staged claims. The worker checks each reconstructed chart against its original staged claim before
@@ -1150,13 +1148,12 @@ Legacy journal and projection results keep the field absent, with unknown refere
 version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
 a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
 
-- `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
+- `BaynExecutionController` schedules financial passes. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
-- `BaynEntryInference` runs against its scoped PostgreSQL and Jev services while the financial driver initializes
-  or recovers. The worker checks current authority before claiming admitted work and commits the expense claim
-  before any provider call. The financial driver reuses the same database and Jev services.
+- `BaynEntryInference` watches committed work and dispatches provider calls while the financial driver initializes
+  or recovers. The financial driver reuses the same PostgreSQL and Jev services.
 - The account process retains its last admitted source and plan. When the result arrives, PostgreSQL checks the
   original source seal and candidate receipts before selection. The owner reuses that preparation when it still
   matches, and reconstructs stored evidence on a cold resume. `bayn.jev.entry-selection` records which path ran.

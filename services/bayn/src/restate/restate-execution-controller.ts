@@ -39,6 +39,7 @@ import {
   marketChangedEventId,
 } from '../execution/events'
 import { projectExecutionControllerHealth } from '../execution/controller-health'
+import { startInferenceWatch } from './restate-entry-inference'
 
 const stateKey = 'controller'
 const deadlineTickStateKey = 'deadlineTick'
@@ -455,6 +456,11 @@ export const makeBaynExecutionController = (
             executionControllerAdvanceRunOptions,
           )
           if (decision._tag === 'Activated') {
+            startInferenceWatch(ctx, {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              sourceRevision: config.sourceRevision,
+            })
             ctx.set(stateKey, decision.state)
             scheduleTick(
               ctx,
@@ -515,6 +521,11 @@ export const makeBaynExecutionController = (
           )
           if (decision._tag === 'Activated') {
             await retireDeadlineTick(ctx)
+            startInferenceWatch(ctx, {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              sourceRevision: config.sourceRevision,
+            })
             ctx.set(stateKey, decision.state)
           }
           scheduleTick(
@@ -703,23 +714,6 @@ export const makeBaynExecutionController = (
               inputSerde: brokerObservationJsonSerde,
               idempotencyKey: `bayn-post-mutation-refresh-${completed.epoch}-${tick.sequence}`,
             })
-
-          for (const job of result.inferenceJobs ?? []) {
-            if (job.status !== 'Prepared') continue
-            ctx.genericSend({
-              service: 'BaynEntryInference',
-              method: 'evaluate',
-              parameter: {
-                schemaVersion: 'bayn.inference-dispatch.v1',
-                controllerKey: ctx.key,
-                epoch: completed.epoch,
-                sourceRevision: config.sourceRevision,
-                jobId: job.jobId,
-              },
-              inputSerde: brokerObservationJsonSerde,
-              idempotencyKey: `bayn-inference-${job.jobId}`,
-            })
-          }
 
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
