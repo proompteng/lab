@@ -59,7 +59,6 @@ import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
 import { IntradayMarketData } from '../market-data/intraday/model'
-import { restoreJevObservation } from '../jev/observation'
 import { KillState } from '../execution/contracts'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
@@ -195,19 +194,9 @@ export const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan, observation, options) =>
+            begin: (batch, options) =>
               observe(
                 Effect.gen(function* () {
-                  const source = yield* Effect.fromResult(restoreJevObservation(observation)).pipe(
-                    Effect.mapError((cause) =>
-                      operationalError({
-                        component: 'market-data',
-                        operation: 'jev-batch',
-                        message: 'admitted source could not be restored',
-                        cause,
-                      }),
-                    ),
-                  )
                   const marketData = Context.getOption(context, IntradayMarketData)
                   if (Option.isNone(marketData))
                     return yield* operationalError({
@@ -215,8 +204,8 @@ export const bindRecoveryFirstCycleDriver = (
                       operation: 'jev-batch',
                       message: 'deferred inference requires the current market source verifier',
                     })
-                  const sourceReference = yield* marketData.value.verifyReference(source.snapshot)
-                  return yield* store.begin(plan, source.observation, {
+                  const sourceReference = yield* marketData.value.verifyReference(batch.source.verified.snapshot)
+                  return yield* store.begin(batch, {
                     ...options,
                     deferProviderDispatch: true,
                     sourceReference,

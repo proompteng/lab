@@ -255,7 +255,7 @@ const fixture = async (source = native) => {
       Effect.provideService(JevBatchStore, {
         read: () => unused,
         pending: () => Effect.succeed([]),
-        begin: (plan) =>
+        begin: ({ plan }) =>
           Clock.currentTimeMillis.pipe(
             Effect.map((now) => ({
               plan,

@@ -29,7 +29,7 @@ import {
   JevResolutionStatus,
   type JevEvaluationEvidence,
 } from '../jev/resolution'
-import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
+import { isPreparedJevBatch, type PreparedJevBatch } from '../jev/trading-signals'
 import { Sha256Schema, SymbolSchema, UtcDatabaseInstantSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
@@ -116,12 +116,11 @@ export const makeJevBatchStore = Effect.gen(function* () {
       return { plan, result } satisfies JevBatchEvidence
     }).pipe(Effect.mapError(persistError))
 
-  const begin = (input: JevBatchPlan, suppliedObservation: JevObservation, options?: JevBatchAdmissionOptions) =>
+  const begin = (batch: PreparedJevBatch, options?: JevBatchAdmissionOptions) =>
     Effect.gen(function* () {
       yield* requireAutocommit
-      const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
-      if ((yield* Effect.fromResult(canonicalHashV1Result(suppliedObservation))) !== plan.observationHash)
-        return yield* persistError('Jev admission observation differs from its sealed plan')
+      if (!isPreparedJevBatch(batch)) return yield* persistError('Jev admission requires a prepared batch')
+      const { plan, source } = batch
       yield* Effect.annotateCurrentSpan({
         'bayn.jev.batch_id': plan.batchId,
         'bayn.cycle.id': plan.cycleId,
@@ -133,13 +132,11 @@ export const makeJevBatchStore = Effect.gen(function* () {
         strictParseOptions,
       )(yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${plan.observationHash}`)
       const storedObservation = observations[0]
-      const observation = storedObservation === undefined ? suppliedObservation : storedObservation.payload
-      if ((yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash)
+      if (
+        storedObservation !== undefined &&
+        (yield* Effect.fromResult(canonicalHashV1Result(storedObservation.payload))) !== source.verified.contentHash
+      )
         return yield* persistError('Jev batch observation bytes differ from their stored hash')
-      // Decoding can retain source aliases. Keep the verified graph private while
-      // admission awaits existing evidence and transactional source checks.
-      const ownedObservation = yield* Effect.try(() => structuredClone(observation))
-      const reproduced = yield* Effect.fromResult(reproduceJevTradingSignalBatchEvidence(ownedObservation, plan))
       const existing = yield* read(plan.batchId)
       if (existing !== null) {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
@@ -173,7 +170,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       yield* checkWindow
       const dispatches = yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* recordReproducedJevObservation(sql, reproduced.observation, reproduced.plan.schemaVersion)
+          yield* recordReproducedJevObservation(sql, source.verified, plan.schemaVersion)
           const checkedAt = yield* checkWindow
           yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
           const requests = plan.candidates.flatMap((candidate) =>
@@ -245,7 +242,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
               if (
                 manifest.snapshotId !== plan.snapshotId ||
                 (yield* Effect.fromResult(canonicalHashV1Result(manifest))) !==
-                  (yield* Effect.fromResult(canonicalHashV1Result(reproduced.observation.snapshot.manifest)))
+                  (yield* Effect.fromResult(canonicalHashV1Result(source.verified.snapshot.manifest)))
               )
                 return yield* persistError('Deferred inference source differs from its verified live reference')
               const referenceTable =
