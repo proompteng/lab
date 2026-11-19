@@ -625,14 +625,14 @@ describe('enabled app inventory', () => {
 
   it('pins Coder to the immutable multi-architecture stable release', () => {
     expect(coderChart).toMatchObject({
-      appVersion: '2.36.4',
-      version: '2.36.4',
+      appVersion: '2.38.10',
+      version: '2.38.10',
     })
-    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.36.4')
+    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.38.10')
     expect(coderValues.coder?.coder).toMatchObject({
       replicaCount: 1,
       image: {
-        tag: 'v2.36.4@sha256:85e6d04d33ed4184ca689d6b736e305cc73eb8588e56657f6457835788092d6d',
+        tag: 'v2.38.10@sha256:f94f80a3bcc002b9a4e32b551d18e5331a0b9c936e0663412e8a9894339e94cf',
       },
     })
   })
