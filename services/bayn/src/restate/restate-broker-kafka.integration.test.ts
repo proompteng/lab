@@ -386,6 +386,7 @@ describeKafka('Pinned Kafka adapter and actual broker notification ingress', () 
                 return result
               },
               activate: async () => undefined,
+              probeProtection: async () => undefined,
               recordNotification: async (_signal, receipt) => {
                 receiptAttempts++
                 if (receiptBlocked) throw new Error('Injected transient SQL receipt outage')

@@ -11,6 +11,7 @@ import {
   ManagedRuntime,
   Metric,
   Option,
+  Ref,
   References,
   Result,
   Scope,
@@ -21,14 +22,27 @@ import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlan } from '../app'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
-import { alpacaHttpLayer } from '../broker/alpaca/http'
-import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
+import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
+import {
+  brokerObservationQuotaWindowMs,
+  makeBrokerObservationBudget,
+  protectionReadBackoffUntil,
+} from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, makeBrokerObservationCapture } from '../broker/alpaca/snapshot-cache'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { canonicalHashV1Result } from '../hash'
 import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
+import {
+  readProtectionReleaseBasis,
+  readProtectionReleaseReference,
+  recordProtectionReleaseProof,
+} from '../db/protection-release'
 import { PostgresClientLive } from '../db/postgres-client'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { WriterFenceLive } from '../execution/writer-fence'
+import { readProtectionRelease } from '../execution/protection-release'
+import { BrokerEnvironment } from '../broker/identity'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { verifyBrokerNotification } from '../broker/notifications'
 import { withObservedStage } from '../telemetry'
@@ -158,8 +172,9 @@ export const acquireBrokerObservationRuntime = (
       Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
       Layer.succeed(Clock.Clock, yield* Clock.Clock),
     )
-    const persistenceResources = PostgresClientLive(plan.config).pipe(
-      Layer.provide(NodeServices.layer),
+    const persistenceResources = IntentStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(plan.config).pipe(Layer.provide(NodeServices.layer))),
       Layer.provideMerge(telemetry),
     )
     const managed = yield* Effect.acquireRelease(
@@ -182,6 +197,10 @@ export const acquireBrokerObservationRuntime = (
       return { runtime, capture: yield* makeBrokerObservationCapture }
     })
     const brokerRuntimes = yield* ScopedRef.fromAcquire(acquireBroker)
+    const protectionHttp = yield* Effect.acquireRelease(
+      Effect.sync(() => ManagedRuntime.make(alpacaHttpLayer(plan.config.alpaca).pipe(Layer.provideMerge(telemetry)))),
+      (value) => value.disposeEffect,
+    )
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
     const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, Math.floor(config.maxAgeMs / 2))
     const store = Effect.map(PgClient.PgClient, (sql) =>
@@ -206,6 +225,59 @@ export const acquireBrokerObservationRuntime = (
         invalidate: (signal) =>
           managed.runPromise(
             Effect.flatMap(store, (value) => value.invalidate),
+            { signal },
+          ),
+        probeProtection: (signal, cycleId, claimId) =>
+          managed.runPromise(
+            Effect.gen(function* () {
+              if (plan.config.alpaca.environment !== BrokerEnvironment.Sandbox) return undefined
+              const accountId = plan.config.alpaca.expectedAccountId
+              const retained = yield* readProtectionReleaseReference(accountId, cycleId, claimId)
+              if (retained !== undefined) return retained
+              const basis = yield* readProtectionReleaseBasis(accountId, cycleId)
+              if (basis === undefined) return undefined
+              const elapsed = (yield* Clock.currentTimeMillis) - Date.parse(basis.acceptedAt)
+              if (elapsed < 0 || elapsed >= config.maxAgeMs) return undefined
+              const persistence = yield* store
+              const maximumReadMs = Math.min(1_800, captureTimeoutMs)
+              const paidAtMs = yield* persistence.reserveProtectionRead(basis.command, claimId, maximumReadMs)
+              if (paidAtMs === undefined) return undefined
+              const brokerBackoff = yield* Ref.make(0)
+              const readback = Effect.gen(function* () {
+                const http = yield* HttpClient.HttpClient
+                const client = HttpClient.transform(http, (response) =>
+                  response.pipe(
+                    Effect.tap((value) =>
+                      Clock.currentTimeMillis.pipe(
+                        Effect.flatMap((now) =>
+                          Ref.update(brokerBackoff, (until) => Math.max(until, protectionReadBackoffUntil(value, now))),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                const read = yield* makeAlpacaRead({ ...plan.config.alpaca, retryAttempts: 0 }).pipe(
+                  Effect.provideService(HttpClient.HttpClient, client),
+                )
+                return yield* readProtectionRelease(read, basis, config.maxAgeMs)
+              })
+              const observed = yield* Effect.promise((readSignal) =>
+                protectionHttp.runPromiseExit(readback, { signal: readSignal }),
+              ).pipe(Effect.timeoutOption(maximumReadMs))
+              // Even a lost response is paid for by the durable reservation of all four requests.
+              yield* persistence.settleProtectionRead(claimId, Math.max(paidAtMs, yield* Ref.get(brokerBackoff)))
+              if (
+                Option.isNone(observed) ||
+                Exit.isFailure(observed.value) ||
+                observed.value.value._tag !== 'VerifiedProtectionRelease'
+              )
+                return undefined
+              const proof = observed.value.value
+              const proofId = yield* recordProtectionReleaseProof(basis, proof, config.maxAgeMs, claimId)
+              return proofId === undefined
+                ? undefined
+                : { proofId, cycleId: basis.trigger.cycleId, checkedAt: proof.checkedAt }
+            }).pipe(withObservedStage('bayn.broker.observation.protection-probe', { dependency: 'broker' })),
             { signal },
           ),
         activate: (signal, nextPollNotBeforeMs) =>
@@ -343,7 +415,7 @@ export const acquireBrokerObservationRuntime = (
                 )
                 const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                 const publication = yield* persistence
-                  .publish(ticket, result.success, nextPollNotBeforeMs)
+                  .publish(ticket, result.success, nextPollNotBeforeMs, yield* budget.protectionReadAllowance)
                   .pipe(
                     withObservedStage('bayn.broker.observation.publish', { dependency: 'postgresql' }),
                     Effect.result,

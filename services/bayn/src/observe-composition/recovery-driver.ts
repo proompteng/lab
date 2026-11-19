@@ -1,4 +1,5 @@
 import { positionProtectionIntervalMs } from '../jev/exit-policy'
+import { ExecutionProtectionRelease } from '../execution/events'
 import { firstIntradayObservationAtMs, selectIntradayExecutionSession } from '../cycle/runner/calendar-decisions'
 import { strategyTradingProtocol } from '../strategy'
 import { continuousExecutionPolicy } from '../market-hours'
@@ -77,6 +78,7 @@ import {
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
   recoverExpiredEntryBeforeReconciliation,
+  executeProtectionReleaseClose,
   readUnfinishedMutationCycle,
 } from './execution-cycle'
 
@@ -939,6 +941,16 @@ const makeRecoveryFirstCycleDriverEffect = (
             }).pipe(Effect.result)
       if (Result.isFailure(lookup)) return yield* observeCycleFailure(lookup.failure)
       const unfinished = capability._tag === 'RecoveryOnly' ? undefined : { cycle: lookup.success }
+      const release = yield* ExecutionProtectionRelease
+      if (release !== undefined) {
+        const accelerated = yield* runMutationPassWithinTimeout(
+          executeProtectionReleaseClose(input, unfinished?.cycle, policy, capability, release),
+          cyclePassTimeoutMs,
+        ).pipe(Effect.result)
+        if (Result.isFailure(accelerated)) return yield* observeCycleFailure(accelerated.failure)
+        if (accelerated.success?._tag === 'PostMutationReconciliation')
+          return yield* completeCycleAdvance(accelerated.success)
+      }
       const containment = yield* recoverExpiredEntryBeforeReconciliation(
         input,
         unfinished?.cycle,

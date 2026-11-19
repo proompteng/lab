@@ -496,6 +496,15 @@ export const readFinalExecutionRiskContext = (
     }),
   )
 
+export const currentAccountPostingBasis = (sql: PgClient.PgClient, accountId: string, reconciledAt: string) =>
+  sql`NOT EXISTS (SELECT 1 FROM broker_fee_accruals WHERE account_id = ${accountId} AND posted_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM broker_fee_accounting WHERE account_id = ${accountId} AND posted_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM broker_cash_settlements WHERE account_id = ${accountId}
+        AND (posted_at IS NULL OR posted_at > ${reconciledAt}::timestamptz))
+      AND NOT EXISTS (SELECT 1 FROM broker_fee_match_corrections WHERE account_id = ${accountId}
+        AND (posted_at IS NULL OR posted_at > ${reconciledAt}::timestamptz
+          OR (data->'readEvidence'->>'observedAt')::timestamptz > ${reconciledAt}::timestamptz))`
+
 /** Called under the account writer fence; the current durable start reserves this cache version. */
 export const verifyBrokerStateVersion = (
   sql: PgClient.PgClient,
@@ -523,13 +532,7 @@ export const verifyBrokerStateVersion = (
         WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= ${version.reconciledAt}::timestamptz
           AND NOT (mutation.intent_id = ${intentId} AND mutation.event_type = 'SUBMIT_STARTED')
       )
-      AND NOT EXISTS (SELECT 1 FROM broker_fee_accruals WHERE account_id = ${accountId} AND posted_at IS NULL)
-      AND NOT EXISTS (SELECT 1 FROM broker_fee_accounting WHERE account_id = ${accountId} AND posted_at IS NULL)
-      AND NOT EXISTS (SELECT 1 FROM broker_cash_settlements WHERE account_id = ${accountId}
-        AND (posted_at IS NULL OR posted_at > ${version.reconciledAt}::timestamptz))
-      AND NOT EXISTS (SELECT 1 FROM broker_fee_match_corrections WHERE account_id = ${accountId}
-        AND (posted_at IS NULL OR posted_at > ${version.reconciledAt}::timestamptz
-          OR (data->'readEvidence'->>'observedAt')::timestamptz > ${version.reconciledAt}::timestamptz))
+      AND (${currentAccountPostingBasis(sql, accountId, version.reconciledAt)})
       AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
         AND observed_at > ${version.reconciledAt}::timestamptz)
     ) AS valid
@@ -588,6 +591,51 @@ export const verifyBrokerStateVersion = (
         ),
       )
       return cryptoTakerFeeBps(effectiveCryptoFeeTier(fee.tier, fee.account_observed_at, fee.priced_at))
+    }),
+  )
+
+export const readReconciliationRiskContext = (
+  sql: PgClient.PgClient,
+  clock: DatabaseClock,
+  accountId: string,
+  reconciledAt: string,
+  unknownMutationCount: number,
+): Effect.Effect<ReconciliationRiskContext, ReconciliationStoreError> =>
+  runStore(
+    'reconcile',
+    Effect.gen(function* () {
+      const [riskContextRow] = yield* sql<Record<string, unknown>>`
+        WITH boundary AS (
+          SELECT (${reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date AS trading_date
+        )
+        SELECT
+          boundary.trading_date::text AS trading_date,
+          authority.schema_version AS authority_schema_version,
+          authority.generation_hash AS authority_generation_hash,
+          authority.maximum AS authority_maximum,
+          authority.effective AS authority_effective,
+          authority.kill_state AS authority_kill,
+          authority.reason AS authority_reason,
+          authority.version::text AS authority_version,
+          ${databaseUtcInstant(sql, sql`authority.updated_at`)} AS authority_updated_at,
+          CASE WHEN authority.singleton IS NULL THEN NULL ELSE ${clock.now} END AS authority_observed_at,
+          coalesce((
+            SELECT sum(transaction.notional_micros)::text
+            FROM accounting_transactions AS transaction
+            WHERE transaction.account_id = ${accountId}
+              AND transaction.occurred_at <= ${reconciledAt}
+              AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
+          ), '0') AS daily_traded_notional_micros,
+          (
+            ${firstSessionEquityQuery(sql, accountId, reconciledAt)}
+          ) AS day_start_equity_micros,
+          (
+            ${peakEquityQuery(sql, accountId, reconciledAt)}
+          ) AS peak_equity_micros
+        FROM boundary
+        LEFT JOIN authority_state AS authority ON authority.singleton
+      `.pipe(Effect.flatMap(decodeRiskContext))
+      return yield* fromDecision('risk-context', riskContextFromRow(riskContextRow, unknownMutationCount))
     }),
   )
 
@@ -894,49 +942,6 @@ export const makeReconciliation = (
       }),
     )
 
-  const readRiskContextPhase = (
-    accountId: string,
-    reconciledAt: string,
-    unknownMutationCount: number,
-  ): Effect.Effect<ReconciliationRiskContext, ReconciliationStoreError> =>
-    runStore(
-      'reconcile',
-      Effect.gen(function* () {
-        const [riskContextRow] = yield* sql<Record<string, unknown>>`
-          WITH boundary AS (
-            SELECT (${reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date AS trading_date
-          )
-          SELECT
-            boundary.trading_date::text AS trading_date,
-            authority.schema_version AS authority_schema_version,
-            authority.generation_hash AS authority_generation_hash,
-            authority.maximum AS authority_maximum,
-            authority.effective AS authority_effective,
-            authority.kill_state AS authority_kill,
-            authority.reason AS authority_reason,
-            authority.version::text AS authority_version,
-            ${databaseUtcInstant(sql, sql`authority.updated_at`)} AS authority_updated_at,
-            CASE WHEN authority.singleton IS NULL THEN NULL ELSE ${clock.now} END AS authority_observed_at,
-            coalesce((
-              SELECT sum(transaction.notional_micros)::text
-              FROM accounting_transactions AS transaction
-              WHERE transaction.account_id = ${accountId}
-                AND transaction.occurred_at <= ${reconciledAt}
-                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
-            ), '0') AS daily_traded_notional_micros,
-            (
-              ${firstSessionEquityQuery(sql, accountId, reconciledAt)}
-            ) AS day_start_equity_micros,
-            (
-              ${peakEquityQuery(sql, accountId, reconciledAt)}
-            ) AS peak_equity_micros
-          FROM boundary
-          LEFT JOIN authority_state AS authority ON authority.singleton
-        `.pipe(Effect.flatMap(decodeRiskContext))
-        return yield* fromDecision('risk-context', riskContextFromRow(riskContextRow, unknownMutationCount))
-      }),
-    )
-
   const reconcileTransaction = (
     snapshot: BrokerSnapshot,
     mode: 'post' | 'verify-only' = 'post',
@@ -962,7 +967,9 @@ export const makeReconciliation = (
         const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt).pipe(
           withObservedStage('bayn.reconciliation.record', { dependency: 'postgresql' }),
         )
-        const riskContext = yield* readRiskContextPhase(
+        const riskContext = yield* readReconciliationRiskContext(
+          sql,
+          clock,
           accountId,
           snapshot.reconciledAt,
           accounting.unknownMutationCount,
