@@ -10,7 +10,7 @@ resources:
 helmCharts:
   - name: penpot
     repo: https://helm.penpot.app/
-    version: 1.12.0
+    version: 1.14.0
     releaseName: penpot
     namespace: penpot
     valuesFile: values.yaml
@@ -31,7 +31,7 @@ patches:
           spec:
             initContainers:
               - name: nginx-worker-template
-                image: penpotapp/frontend:2.19.1
+                image: penpotapp/frontend:2.19.3
                 command: [/bin/bash, -ec]
                 args:
                   - |
