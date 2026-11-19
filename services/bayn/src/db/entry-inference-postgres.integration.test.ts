@@ -1318,6 +1318,72 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
+  const coalescedTransitions = () => {
+    const requested = replayBatch.candidates
+      .flatMap((candidate) => (candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : []))
+      .slice(0, 2)
+    if (requested.length !== 2) throw new Error('Missing coalesced Box chart fixture')
+    return requested.map((request) => {
+      const [terminal] = stagedCheckpointFixture(request).terminals
+      if (terminal === undefined) throw new Error('Missing coalesced Box terminal fixture')
+      return { terminal, successor: { kind: 'HANDOFF' as const, handoff: entryCompletionFixture(request).handoff } }
+    })
+  }
+
+  test('coalesced Box transitions commit exact evidence once under reversed concurrent retries', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const group = coalescedTransitions()
+        const attempts = yield* Effect.all(
+          [journal.recordTransitions(group), journal.recordTransitions(group.toReversed())],
+          { concurrency: 2 },
+        )
+        const newDispatches = attempts.map((rows) => rows.filter((row) => row.dispatchAllowed).length)
+        expect(newDispatches.sort((left, right) => left - right)).toEqual([0, 2])
+        const rows = yield* sql<{ request_id: string; tx: string; payload: unknown; kind: string }>`
+          SELECT request_id, xmin::text AS tx, payload, 'terminal' AS kind FROM jev_staged_terminal_receipts
+          UNION ALL SELECT request_id, xmin::text, payload, 'handoff' AS kind FROM jev_inference_handoffs`
+        expect(rows).toHaveLength(4)
+        expect(new Set(rows.map((row) => row.tx)).size).toBe(1)
+        for (const { terminal, successor } of group) {
+          const evidence = rows.filter((row) => row.request_id === terminal.requestId)
+          expect(evidence.find((row) => row.kind === 'terminal')?.payload).toEqual(terminal)
+          expect(evidence.find((row) => row.kind === 'handoff')?.payload).toEqual(successor.handoff)
+        }
+      }),
+    ))
+
+  test('a rejected handoff in a coalesced group retains all paid terminals without admitting any handoff', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const [valid, rejected] = coalescedTransitions()
+        if (valid === undefined || rejected === undefined) throw new Error('Missing two coalesced transitions')
+        const result = yield* journal
+          .recordTransitions([
+            valid,
+            {
+              ...rejected,
+              successor: {
+                ...rejected.successor,
+                handoff: { ...rejected.successor.handoff, inputHash: 'f'.repeat(64) },
+              },
+            },
+          ])
+          .pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(yield* sql`SELECT payload FROM jev_inference_handoffs`).toEqual([])
+        const rows = yield* sql<{ terminal_hash: string }>`
+          SELECT terminal_hash FROM jev_staged_terminal_receipts ORDER BY terminal_hash`
+        expect(rows.map((row) => row.terminal_hash)).toEqual(
+          [valid.terminal.terminalHash, rejected.terminal.terminalHash].sort(),
+        )
+      }),
+    ))
+
   test('an invalid Box handoff retains the paid terminal without admitting dependent inference', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
