@@ -4,6 +4,7 @@ import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
 import { JevInferenceJobSchema } from '../jev/inference-work'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import { ProtectionReleaseReferenceSchema } from './events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -99,6 +100,9 @@ export const ExecutionControllerStateSchema = Schema.Struct({
     }),
   ),
   lastBrokerSnapshotHash: Schema.optionalKey(Sha256Schema),
+  lastProtectionRelease: Schema.optionalKey(
+    Schema.Struct({ ...ProtectionReleaseReferenceSchema.fields, sequence: CounterSchema }),
+  ),
 })
 export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Type
 

@@ -115,6 +115,7 @@ const order = Schema.Struct({
   ...orderLeaf.fields,
   legs: Schema.optionalKey(Schema.Array(orderLeaf).check(Schema.isMaxLength(2))),
 })
+export const BrokerOrderReadResultSchema = observed(order)
 const fill = Schema.Struct({
   accountId: Schema.String,
   activityId: Schema.String,

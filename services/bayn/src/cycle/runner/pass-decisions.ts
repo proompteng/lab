@@ -110,6 +110,10 @@ export const retainAutonomousCyclePassObservation = (
           ...('positionHold' in observation.result && observation.result.positionHold !== undefined
             ? { positionHold: observation.result.positionHold }
             : {}),
+          ...('protectionReleaseCycleId' in observation.result &&
+          observation.result.protectionReleaseCycleId !== undefined
+            ? { protectionReleaseCycleId: observation.result.protectionReleaseCycleId }
+            : {}),
           ...('entryAbstention' in observation.result && observation.result.entryAbstention !== undefined
             ? { entryAbstention: observation.result.entryAbstention }
             : {}),

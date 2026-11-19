@@ -24,6 +24,41 @@ const transport = (
 }
 
 describe('broker observation HTTP budget', () => {
+  test.each([
+    { remaining: 55, allowed: true },
+    { remaining: 54, allowed: false },
+  ])(
+    'reserves four protective reads while charging unattested responses ($remaining)',
+    async ({ remaining, allowed }) =>
+      run(
+        Effect.gen(function* () {
+          const budget = yield* makeBrokerObservationBudget
+          const source = transport((attempt) =>
+            attempt === 1
+              ? {
+                  headers: {
+                    'x-ratelimit-limit': '200',
+                    'x-ratelimit-remaining': String(remaining),
+                    'x-ratelimit-reset': '60',
+                  },
+                }
+              : {},
+          )
+          const client = budget.decorate(source.client)
+          yield* budget.beginCapture
+          expect(yield* budget.protectionReadAllowance).toBeUndefined()
+          yield* client.get(url)
+          yield* client.get(url)
+          expect(yield* budget.protectionReadAllowance).toEqual(
+            allowed ? { expiresAtMs: 60_000, requestCostMs: 600 } : undefined,
+          )
+          expect(yield* budget.nextPollNotBeforeMs).toBe(1_200)
+          yield* TestClock.adjust(60_000)
+          expect(yield* budget.protectionReadAllowance).toBeUndefined()
+        }),
+      ),
+  )
+
   test.each([14, 33, 34, 52, 60, 62])(
     'charges every attempt in a %s-call paginated capture to its next poll',
     async (count) => {

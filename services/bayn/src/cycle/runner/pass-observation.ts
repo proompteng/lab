@@ -81,6 +81,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     ),
     waitReason: Schema.optionalKey(CycleWaitReasonSchema),
     positionHold: Schema.optionalKey(JevPositionHoldSchema),
+    protectionReleaseCycleId: Schema.optionalKey(Sha256Schema),
     entryAbstention: Schema.optionalKey(
       Schema.Union([JevEntryTargetSchema, EntryAblationTargetSchema, RepeatedMomentumTargetSchema]).check(
         Schema.makeFilter((target) => target.selectedSymbols.length === 0, {
@@ -112,6 +113,11 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
         )
           return false
         if (observation.recoveryAction !== undefined && observation.outcome !== 'RECOVERED') return false
+        if (
+          observation.protectionReleaseCycleId !== undefined &&
+          (observation.recoveryAction !== 'WAITING' || observation.waitReason !== 'POST_MUTATION_RECONCILIATION')
+        )
+          return false
         if (observation.outcome === 'ADMISSION_WAITING')
           return (
             observation.waitReason === undefined &&
