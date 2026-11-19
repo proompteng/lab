@@ -21,6 +21,7 @@ import {
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlan } from '../app'
+import { startActivityFills } from '../broker/alpaca/activity-stream'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
 import {
@@ -181,6 +182,19 @@ export const acquireBrokerObservationRuntime = (
       Effect.sync(() => ManagedRuntime.make(persistenceResources)),
       (value) => value.disposeEffect,
     )
+    const activityFills =
+      plan.config.alpaca.environment === BrokerEnvironment.Sandbox
+        ? yield* Effect.gen(function* () {
+            const read = yield* makeAlpacaRead(plan.config.alpaca)
+            return yield* startActivityFills(plan.config.alpaca, read.account)
+          }).pipe(
+            Effect.provideContext(
+              yield* Layer.build(alpacaHttpLayer(plan.config.alpaca).pipe(Layer.provideMerge(telemetry))).pipe(
+                Effect.orDie,
+              ),
+            ),
+          )
+        : undefined
     const budget = yield* makeBrokerObservationBudget
     const pollingHttp = Layer.effect(HttpClient.HttpClient, Effect.map(HttpClient.HttpClient, budget.decorate)).pipe(
       Layer.provide(alpacaHttpLayer(plan.config.alpaca)),
@@ -335,7 +349,13 @@ export const acquireBrokerObservationRuntime = (
                       Effect.gen(function* () {
                         const session = yield* BrokerSession
                         sessionVerified = true
-                        return yield* broker.capture(session.read, ticket, captureTimeoutMs)
+                        return yield* broker.capture(
+                          activityFills === undefined
+                            ? session.read
+                            : { ...session.read, activityFills: activityFills.read },
+                          ticket,
+                          captureTimeoutMs,
+                        )
                       }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                       { signal: captureSignal },
                     ),
