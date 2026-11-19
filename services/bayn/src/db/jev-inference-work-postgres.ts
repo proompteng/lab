@@ -6,7 +6,7 @@ import { canonicalHashV1Result } from '../hash'
 import { decodeJevBatchPlan, JevCandidatePlanStatus, type JevBatchPlan } from '../jev/batch'
 import { makeJevDispatch } from '../jev/evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
-import { restoreJevObservation } from '../jev/observation'
+import { restoreJevObservation, restoreVerifiedJevObservation } from '../jev/observation'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { StagedDispatchClaimSchema } from '../jev/staged-checkpoint'
 import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
@@ -200,8 +200,6 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       )
       const row = rows[0]
       if (row === undefined) return null
-      const job = yield* read(jobId)
-      if (job === null) return yield* failure('Claimed Jev inference work disappeared')
       const sources = yield* Schema.decodeUnknownEffect(
         Schema.Tuple([Schema.Struct({ plan: Schema.Unknown, observation: Schema.Unknown })]),
         strictParseOptions,
@@ -211,13 +209,10 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
         JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
         WHERE plan.batch_id = ${jobId}`,
       )
-      const plan = yield* Effect.fromResult(decodeJevBatchPlan(sources[0].plan))
-      const sourceObservation = yield* Schema.decodeUnknownEffect(
-        JevObservationSchema,
-        strictParseOptions,
-      )(sources[0].observation)
-      const observation = yield* Effect.fromResult(restoreJevObservation(sourceObservation))
-      yield* Effect.fromResult(reproduceJevTradingSignalBatchEvidence(sourceObservation, plan))
+      const { plan, observation: verified } = yield* Effect.fromResult(
+        reproduceJevTradingSignalBatchEvidence(sources[0].observation, sources[0].plan),
+      )
+      const observation = yield* Effect.fromResult(restoreVerifiedJevObservation(verified))
       if (plan.batchId !== jobId || observation.contentHash !== plan.observationHash)
         return yield* failure('Claimed inference differs from its immutable source')
       const requests = plan.candidates.flatMap((candidate) =>
@@ -241,7 +236,7 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
           return dispatch
         }),
       )
-      return { job, admission: { plan, result: null, dispatches }, observation: observation.observation }
+      return { admission: { plan, result: null, dispatches }, observation: observation.observation }
     }).pipe(Effect.mapError(failure))
 
   const resume = (cycleInput: string, generationInput: string) =>
