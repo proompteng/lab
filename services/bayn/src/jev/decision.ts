@@ -2,16 +2,10 @@ import { JevBatchPlanVersion } from './batch'
 import { JevPositionExitPolicySchema, jevPositionExitPolicy } from './exit-policy'
 import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
+import { freezeEvidence } from '../immutable-evidence'
 
 import { canonicalHashV1Result } from '../hash'
-import {
-  IsoDateSchema,
-  Sha256Schema,
-  SymbolSchema,
-  UnitIntervalSchema,
-  UtcInstantSchema,
-  strictParseOptions,
-} from '../schemas'
+import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableEntryBatchInferences } from './batch'
@@ -20,9 +14,16 @@ import { selectSupportedEntryProposal } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
-import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import {
+  isPreparedJevBatch,
+  jevEntryQuoteExclusion,
+  reproduceJevTradingSignalBatchEvidence,
+  type PreparedJevBatch,
+} from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
-import { entryProposalExitPlan, JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
+import { JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
+import { nativeEntryProposalExitPlan, isShortEntryProposal } from './native-entry-proposal'
+import { ShortFundedExitPlanSchema, type ShortFundedExitPlan } from './short-exit-plan'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -34,13 +35,41 @@ export type JevDecisionEvidence = typeof JevDecisionEvidenceSchema.Type
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
+const decisionPreparations = new WeakMap<object, { evidence: JevDecisionEvidence; batch: PreparedJevBatch }>()
+
+export const prepareJevDecisionEvidence = (
+  batch: PreparedJevBatch,
+  result: JevDecisionEvidence['batchResult'],
+  decidedAt: string,
+) =>
+  Result.gen(function* () {
+    if (!isPreparedJevBatch(batch)) return yield* unavailable('Jev decision requires its owned batch preparation')
+    const clock = yield* Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(decidedAt)
+    const batchResult = yield* Schema.decodeUnknownResult(JevBatchResultSchema, strictParseOptions)(result)
+    const detachedResult = yield* Result.try({
+      try: () => structuredClone(batchResult),
+      catch: (cause) => new JevContractError({ message: 'Jev decision could not retain its exact result', cause }),
+    })
+    const { snapshot: _snapshot, contentHash: _contentHash, ...observation } = batch.source.verified
+    const evidence: JevDecisionEvidence = freezeEvidence({
+      observation,
+      batchPlan: batch.plan,
+      batchResult: detachedResult,
+      decidedAt: clock,
+    })
+    decisionPreparations.set(evidence, { evidence, batch })
+    return evidence
+  })
+
 export const reproduceDecisionEvidence = (input: unknown, expectedVersion: JevBatchPlanVersion) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input)
-    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(
-      evidence.observation,
-      evidence.batchPlan,
-    )
+    const prepared = typeof input === 'object' && input !== null ? decisionPreparations.get(input) : undefined
+    const evidence =
+      prepared?.evidence ?? (yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input))
+    const { observation, plan } =
+      prepared === undefined
+        ? yield* reproduceJevTradingSignalBatchEvidence(evidence.observation, evidence.batchPlan)
+        : { observation: prepared.batch.source.verified, plan: prepared.batch.plan }
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* unavailable('Native Jev decisions require native observations')
     const inferences = yield* usableEntryBatchInferences(
@@ -83,7 +112,7 @@ export const selectJevEntryCandidates = (
       judgmentSupport: number
       modeledLossMicros: bigint
       weight: number
-      exitPlan: JevFundedExitPlan
+      exitPlan: JevFundedExitPlan | ShortFundedExitPlan
     }[] = []
     for (const { symbol, inference } of inferences) {
       const quote = observation.snapshot.latestQuotes[symbol]
@@ -112,8 +141,8 @@ export const selectJevEntryCandidates = (
         symbol,
         judgmentSupport,
         modeledLossMicros,
-        weight: proposal.funding.maximumTargetWeight,
-        exitPlan: entryProposalExitPlan(proposal),
+        weight: proposal.funding.maximumTargetWeight * (isShortEntryProposal(proposal) ? -1 : 1),
+        exitPlan: nativeEntryProposalExitPlan(proposal),
       })
     }
     eligible.sort(
@@ -146,7 +175,7 @@ export const makeChartEntryTargetMaterial = <Evidence extends { readonly decided
     readonly selected: readonly {
       readonly symbol: string
       readonly weight: number
-      readonly exitPlan: JevFundedExitPlan
+      readonly exitPlan: JevFundedExitPlan | ShortFundedExitPlan
     }[]
   },
 ) =>
@@ -200,7 +229,7 @@ export const ChartEntryTargetFields = {
   ),
   exitPolicy: Schema.Struct({
     ...JevPositionExitPolicySchema.fields,
-    plans: Schema.Record(SymbolSchema, JevFundedExitPlanSchema),
+    plans: Schema.Record(SymbolSchema, Schema.Union([JevFundedExitPlanSchema, ShortFundedExitPlanSchema])),
   }),
   sessionDate: IsoDateSchema,
   snapshotId: Sha256Schema,
@@ -208,7 +237,7 @@ export const ChartEntryTargetFields = {
   decidedAt: UtcInstantSchema,
   calendarHash: Sha256Schema,
   selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isMaxLength(1), Schema.isUnique()),
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  targetWeights: Schema.Record(SymbolSchema, Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
   evidence: JevDecisionEvidenceSchema,
 }
 
@@ -252,7 +281,7 @@ export type JevEntryTarget = typeof JevEntryTargetSchema.Type
 export const jevPlanningTargetWeights = (
   target: Pick<ProtectedEntryTarget, 'targetWeights'>,
 ): Readonly<Record<string, number>> =>
-  Object.fromEntries(Object.entries(target.targetWeights).filter(([, weight]) => weight > 0))
+  Object.fromEntries(Object.entries(target.targetWeights).filter(([, weight]) => weight !== 0))
 
 export const jevEntryQuoteMaximumAgeMs = (
   _target: Pick<ProtectedEntryTarget, 'schemaVersion'>,

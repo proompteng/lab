@@ -59,9 +59,9 @@ spec:
             - name: UI_PORT
               value: '8080'
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: dfe158c618f22f96e91eec4c564435d810a45c49
+              value: 99078dbf18895613627ac205f545237c0675c726
             - name: JANGAR_GITOPS_REVISION
-              value: dfe158c618f22f96e91eec4c564435d810a45c49
+              value: 99078dbf18895613627ac205f545237c0675c726
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: '120'
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -123,9 +123,9 @@ spec:
             - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
               value: '5000'
             - name: JANGAR_MODELS
-              value: qwen38-flamingo,gpt-6-astra
+              value: gpt-6.2-sol,qwen38-flamingo
             - name: JANGAR_DEFAULT_MODEL
-              value: qwen38-flamingo
+              value: gpt-6.2-sol
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: '6'
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
@@ -351,15 +351,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: '5000'
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "43152359033"
+              value: "44623432865"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:d2d5b4f2e96ff8962814a389dfe63c7f58eb7efa231d64688375db07629fe9cf
+              value: sha256:e0d3a6a419f903bbe416b283b462dd5036a6ac2f549a64a6cca7694dce59e4b6
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: dfe158c618f22f96e91eec4c564435d810a45c49
+              value: 99078dbf18895613627ac205f545237c0675c726
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:d2d5b4f2e96ff8962814a389dfe63c7f58eb7efa231d64688375db07629fe9cf
+              value: sha256:e0d3a6a419f903bbe416b283b462dd5036a6ac2f549a64a6cca7694dce59e4b6
             - name: JANGAR_FLAMINGO_MODEL
               value: qwen38-flamingo
             - name: JANGAR_FLAMINGO_REASONING_EFFORT

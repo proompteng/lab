@@ -29,7 +29,7 @@ References:
 
 ## Version 16 rollout
 
-The Application tracks `kargo/forgejo` and authorizes only `lab-delivery:forgejo`.
+The Application tracks `kargo/forgejo` and authorizes only `forgejo-release:forgejo`.
 The Warehouse requires a main source commit and its matching immutable
 published image. The Stage updates both Helm-rendered containers and the
 isolated rehearsal through a Kustomize image transformation, writes source

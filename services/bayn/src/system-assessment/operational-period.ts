@@ -11,12 +11,14 @@ import {
   defaultJevProtocolDocument,
   retainedJevProtocolV38Document,
   retainedJevProtocolV39Document,
+  retainedJevProtocolV40Document,
   jevBehaviorHash,
 } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema, scheduledEvaluationFields, validateRegisteredPolicyIdentity } from './policy'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 
 export const operationalReliabilityPolicy = {
   schemaVersion: 'bayn.operational-reliability-policy.v1',
@@ -78,11 +80,13 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
       return yield* invalid('Operational registration requires a recognized native protocol')
     const parameterHash = yield* canonicalHashV1Result(runtime.protocol)
     const expectedParameterHash = yield* canonicalHashV1Result(
-      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v41'
         ? defaultJevProtocolDocument
-        : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
-          ? retainedJevProtocolV39Document
-          : retainedJevProtocolV38Document,
+        : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? retainedJevProtocolV40Document
+          : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+            ? retainedJevProtocolV39Document
+            : retainedJevProtocolV38Document,
     )
     const protocolHash = yield* makeStrategyProtocolHashResult({
       name: 'jev',
@@ -145,6 +149,13 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
 /** New periods may only bind the currently executable native protocol. */
 export const validateOperationalRegistration = (input: unknown) =>
   verifyStoredOperationalRegistration(input).pipe(
+    Result.flatMap((verified) => {
+      const runtime = verified.registration.obligations.configuration
+      return runtime.controllerPlanHash === executionControllerPlanHash &&
+        runtime.schemaVersion !== 'bayn.qualification-runtime.v2'
+        ? Result.fail(new SystemAssessmentError({ message: 'Streaming controller requires the streaming runtime' }))
+        : Result.succeed(verified)
+    }),
     Result.flatMap((verified) =>
       Schema.is(JevProtocolSchema)(verified.registration.obligations.configuration.protocol)
         ? Result.succeed(verified)

@@ -1,16 +1,15 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { streamingFixture } from '../testing/streaming-market-fixture'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { defaultJevProtocolDocument } from './protocol'
 import { makeJevEntryQuery } from './observation-query'
-import { jevObservationForSnapshot } from './native.test-support'
+import { jevObservationForSnapshot, nativeJevFixture } from './native.test-support'
 import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 
 test('a fresh equity candidate does not require an unused SPY feature', () => {
-  const fixture = streamingFixture()
+  const fixture = nativeJevFixture()
   const query = makeJevEntryQuery({
     protocol: defaultJevProtocolDocument,
     calendar: fixture.query.calendar,

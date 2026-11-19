@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import { canonicalHashV1Result } from './hash'
 import fc from 'fast-check'
 import { checkProperty } from './testing/property-test-support'
 
@@ -20,7 +21,8 @@ import {
   type Valuation,
 } from './execution/contracts'
 import type { AccountingTransaction } from './accounting/schema'
-import { prepareAccounting } from './accounting/domain'
+import { prepareAccounting, AccountingInventorySide } from './accounting/domain'
+import { comparePositions } from './simulation-reconciliation/broker-account-comparison'
 import { positionCostAnchor } from './reconciliation/position-cost-reporting'
 import { compareReconciliation } from './simulation-reconciliation/broker-compare'
 import {
@@ -572,6 +574,69 @@ describe('execution reconciliation', () => {
       ).toEqual({ priceAtomsNumerator: '100000000000', priceAtomsDenominator: '1' })
     },
   )
+
+  test('partial covers reproduce rounded short sale averages while preserving the signed ledger basis', () => {
+    const transactions: AccountingTransaction[] = []
+    const times = new Map<string, string>()
+    let lot = { quantityAtoms: '0', costMicros: '0' }
+    for (const [side, quantityAtoms, priceAtoms] of [
+      [OrderSide.Sell, '2000000000', '100000000000'],
+      [OrderSide.Sell, '1000000000', '100000100000'],
+      [OrderSide.Buy, '1000000000', '99000000000'],
+    ] as const) {
+      const index = transactions.length
+      const occurredAt = `2026-07-22T15:29:0${index}.000Z`
+      const eventId = Result.getOrThrow(canonicalHashV1Result({ shortFill: index }))
+      const prepared = Result.getOrThrow(
+        prepareAccounting(
+          eventId,
+          {
+            ...fill,
+            symbol: 'NVDA',
+            side,
+            quantityAtoms,
+            priceAtoms,
+            feeMicros: '0',
+            occurredAt,
+            fillId: `short-fill-${index}`,
+            brokerOrderId: `short-order-${side}`,
+          },
+          lot,
+          1,
+          AccountingInventorySide.Short,
+        ),
+      )
+      transactions.push(prepared.transaction)
+      times.set(eventId, `${occurredAt.slice(0, -1)}000000Z`)
+      lot = {
+        quantityAtoms: String(BigInt(lot.quantityAtoms) + BigInt(prepared.transaction.quantityDeltaAtoms)),
+        costMicros: String(BigInt(lot.costMicros) + BigInt(prepared.transaction.costBasisDeltaMicros)),
+      }
+    }
+    expect(lot).toEqual({ quantityAtoms: '-2000000000', costMicros: '-200000067' })
+    const projected = { symbol: 'NVDA', quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros }
+    const costBasisAnchor = positionCostAnchor(account.accountId, projected, transactions, [], observedAt, times)
+    expect(costBasisAnchor).toEqual({ priceAtomsNumerator: '100000033000', priceAtomsDenominator: '1' })
+    const observed: Position = {
+      ...position,
+      symbol: 'NVDA',
+      quantityAtoms: lot.quantityAtoms,
+      averageEntryPriceMicros: '100000033',
+      costBasisMicros: '-200000066',
+    }
+    const input = snapshot({ positions: [observed], projectedPositions: [{ ...projected, costBasisAnchor }] })
+    expect(successOf(comparePositions(input)).discrepancies).toEqual([])
+    expect(lot.costMicros).toBe('-200000067')
+    for (const changed of [
+      { ...observed, costBasisMicros: '-200000065' },
+      { ...observed, costBasisMicros: '200000066' },
+      { ...observed, averageEntryPriceMicros: '100000034' },
+      { ...observed, quantityAtoms: '-1000000000' },
+    ])
+      expect(successOf(comparePositions({ ...input, positions: [changed] })).discrepancies.length).toBeGreaterThan(0)
+    expect(positionCostAnchor(account.accountId, projected, transactions.slice(1), [], observedAt, times)).toBeNull()
+    expect(positionCostAnchor(account.accountId, projected, transactions, [], observedAt, new Map())).toBeNull()
+  })
 
   test('property: rounded-average position reporting rejects unrelated basis and quantity changes', () => {
     checkProperty(

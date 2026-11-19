@@ -38,6 +38,28 @@ export const intradayUniverse = {
   symbolHash: '12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1',
 } as const
 
+/** Keep the shared legacy streams; only these reviewed S&P 100 stocks may become v41 entries. */
+export const sp100EntrySymbols = Object.freeze([
+  'AAPL',
+  'AMZN',
+  'GOOGL',
+  'INTC',
+  'META',
+  'MSFT',
+  'MU',
+  'NFLX',
+  'NVDA',
+  'TSLA',
+] as const)
+const currentEquitySourceSymbols = Object.freeze(
+  [...new Set<string>([...intradayUniverse.symbols, ...sp100EntrySymbols])].sort(),
+)
+export const currentEquityUniverse = Object.freeze({
+  id: 'torghut-core-equity-v3' as const,
+  symbols: currentEquitySourceSymbols,
+  symbolHash: sha256(currentEquitySourceSymbols.join(',')),
+})
+
 export const intradaySourceTopics = Object.freeze({
   bars: 'torghut.bars.1m.v1',
   quotes: 'torghut.quotes.v1',

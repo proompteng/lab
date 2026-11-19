@@ -1,5 +1,5 @@
 import { defaultJevProtocolDocument } from '../src/jev/protocol'
-import { entryProposalExitPlan } from '../src/jev/strategy-exit-plan'
+import { nativeEntryProposalExitPlan } from '../src/jev/native-entry-proposal'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
@@ -276,7 +276,7 @@ const pathFixture = () => {
     instruments: replayTestInstruments,
     fillAssumption: 'NOT_SIMULATED',
   }
-  const plan = entryProposalExitPlan(proposal)
+  const plan = nativeEntryProposalExitPlan(proposal)
   const quote = (delay: number, sequence: number, bid: number, eventDelay = delay) => ({
     value: {
       ...original,
@@ -560,7 +560,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v3',
-    protocol: 'bayn.jev.protocol.v40',
+    protocol: 'bayn.jev.protocol.v41',
     inputDefinition: 'bayn.jev-entry-state.v24',
     selectedSymbols: [],
     profitableEdgeProven: false,
@@ -632,7 +632,7 @@ test('crypto economics and coverage are measured from sealed source rather than 
   })
   for (const plan of candidate.plans) {
     expect(plan.netRewardRisk).toBeCloseTo(plan.estimatedProfitUsd / plan.estimatedLossUsd)
-    expect(plan.targetRiseFromBidBps).toBeGreaterThan(
+    expect('targetRiseFromBidBps' in plan ? plan.targetRiseFromBidBps : undefined).toBeGreaterThan(
       candidate.entryEconomics?.takeProfitRequiredBidRiseBps ?? Infinity,
     )
   }

@@ -13,7 +13,7 @@ import {
 import { ExpiredIntentRiskDecision } from '../../execution/risk-clock'
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { isProtectedEntryTarget } from '../../strategy/runtime-decision'
-import type { CycleDecisionDocument } from '../../shadow-decision-contract'
+import { decodeCycleDecisionDocument, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner/index'
 import { makeCycleBindingPrograms } from './binding-program'
 import { makeCycleLifecyclePrograms } from './lifecycle-program'
@@ -138,16 +138,15 @@ export const withWriterFenceCycleStore = (
   acquire: (...args) => fenceMutation('acquire', store.acquire(...args), fence),
   activate: (...args) => fenceMutation('activate', store.activate(...args), fence),
   bindDecision: (cycleId, document, observedAt, evidence) =>
-    Effect.try({
-      try: () => structuredClone(document),
-      catch: (cause) =>
+    Effect.suspend(() => Effect.fromResult(decodeCycleDecisionDocument(document))).pipe(
+      Effect.mapError((cause) =>
         cycleStoreError({
           operation: 'bind-decision',
           failure: 'decode',
           message: 'decision binding could not retain its private source',
           cause,
         }),
-    }).pipe(
+      ),
       Effect.flatMap((retained) =>
         fenceMutation(
           'bind-decision',

@@ -11,6 +11,7 @@ import {
   ManagedRuntime,
   Metric,
   Option,
+  Ref,
   References,
   Result,
   Scope,
@@ -20,16 +21,31 @@ import {
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlan } from '../app'
+import { startAccountActivityStream } from '../broker/alpaca/activity-stream'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
-import { alpacaHttpLayer } from '../broker/alpaca/http'
-import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
+import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
+import {
+  brokerObservationQuotaWindowMs,
+  makeBrokerObservationBudget,
+  protectionReadBackoffUntil,
+} from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, makeBrokerObservationCapture } from '../broker/alpaca/snapshot-cache'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { canonicalHashV1Result } from '../hash'
 import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
+import {
+  readProtectionReleaseBasis,
+  readProtectionReleaseReference,
+  recordProtectionReleaseProof,
+} from '../db/protection-release'
 import { PostgresClientLive } from '../db/postgres-client'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { WriterFenceLive } from '../execution/writer-fence'
+import { readProtectionRelease } from '../execution/protection-release'
+import { BrokerEnvironment } from '../broker/identity'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
+import { verifyBrokerNotification } from '../broker/notifications'
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
@@ -142,7 +158,8 @@ export const acquireBrokerObservationRuntime = (
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
-    readonly pollIntervalMs: number
+    readonly maxAgeMs: number
+    readonly freshnessLeadMs: number
   },
   never,
   Scope.Scope | ValkeyCache
@@ -156,14 +173,28 @@ export const acquireBrokerObservationRuntime = (
       Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
       Layer.succeed(Clock.Clock, yield* Clock.Clock),
     )
-    const persistenceResources = PostgresClientLive(plan.config).pipe(
-      Layer.provide(NodeServices.layer),
+    const persistenceResources = IntentStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(plan.config).pipe(Layer.provide(NodeServices.layer))),
       Layer.provideMerge(telemetry),
     )
     const managed = yield* Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(persistenceResources)),
       (value) => value.disposeEffect,
     )
+    const accountActivity =
+      plan.config.alpaca.environment === BrokerEnvironment.Sandbox
+        ? yield* Effect.gen(function* () {
+            const read = yield* makeAlpacaRead(plan.config.alpaca)
+            return yield* startAccountActivityStream(plan.config.alpaca, read.account)
+          }).pipe(
+            Effect.provideContext(
+              yield* Layer.build(alpacaHttpLayer(plan.config.alpaca).pipe(Layer.provideMerge(telemetry))).pipe(
+                Effect.orDie,
+              ),
+            ),
+          )
+        : undefined
     const budget = yield* makeBrokerObservationBudget
     const pollingHttp = Layer.effect(HttpClient.HttpClient, Effect.map(HttpClient.HttpClient, budget.decorate)).pipe(
       Layer.provide(alpacaHttpLayer(plan.config.alpaca)),
@@ -180,8 +211,12 @@ export const acquireBrokerObservationRuntime = (
       return { runtime, capture: yield* makeBrokerObservationCapture }
     })
     const brokerRuntimes = yield* ScopedRef.fromAcquire(acquireBroker)
+    const protectionHttp = yield* Effect.acquireRelease(
+      Effect.sync(() => ManagedRuntime.make(alpacaHttpLayer(plan.config.alpaca).pipe(Layer.provideMerge(telemetry)))),
+      (value) => value.disposeEffect,
+    )
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
-    const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, config.maxAgeMs - config.pollIntervalMs)
+    const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, Math.floor(config.maxAgeMs / 2))
     const store = Effect.map(PgClient.PgClient, (sql) =>
       makeBrokerObservationStore(
         sql,
@@ -192,8 +227,73 @@ export const acquireBrokerObservationRuntime = (
       ),
     )
     return {
-      pollIntervalMs: config.pollIntervalMs,
+      maxAgeMs: config.maxAgeMs,
+      freshnessLeadMs: captureTimeoutMs,
       runtime: {
+        verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, plan.config.alpaca, nowMs),
+        recordNotification: (signal, receipt) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.recordNotification(receipt)),
+            { signal },
+          ),
+        invalidate: (signal) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.invalidate),
+            { signal },
+          ),
+        probeProtection: (signal, cycleId, claimId) =>
+          managed.runPromise(
+            Effect.gen(function* () {
+              if (plan.config.alpaca.environment !== BrokerEnvironment.Sandbox) return undefined
+              const accountId = plan.config.alpaca.expectedAccountId
+              const retained = yield* readProtectionReleaseReference(accountId, cycleId, claimId)
+              if (retained !== undefined) return retained
+              const basis = yield* readProtectionReleaseBasis(accountId, cycleId)
+              if (basis === undefined) return undefined
+              const elapsed = (yield* Clock.currentTimeMillis) - Date.parse(basis.acceptedAt)
+              if (elapsed < 0 || elapsed >= config.maxAgeMs) return undefined
+              const persistence = yield* store
+              const maximumReadMs = Math.min(1_800, captureTimeoutMs)
+              const paidAtMs = yield* persistence.reserveProtectionRead(basis.command, claimId, maximumReadMs)
+              if (paidAtMs === undefined) return undefined
+              const brokerBackoff = yield* Ref.make(0)
+              const readback = Effect.gen(function* () {
+                const http = yield* HttpClient.HttpClient
+                const client = HttpClient.transform(http, (response) =>
+                  response.pipe(
+                    Effect.tap((value) =>
+                      Clock.currentTimeMillis.pipe(
+                        Effect.flatMap((now) =>
+                          Ref.update(brokerBackoff, (until) => Math.max(until, protectionReadBackoffUntil(value, now))),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                const read = yield* makeAlpacaRead({ ...plan.config.alpaca, retryAttempts: 0 }).pipe(
+                  Effect.provideService(HttpClient.HttpClient, client),
+                )
+                return yield* readProtectionRelease(read, basis, config.maxAgeMs)
+              })
+              const observed = yield* Effect.promise((readSignal) =>
+                protectionHttp.runPromiseExit(readback, { signal: readSignal }),
+              ).pipe(Effect.timeoutOption(maximumReadMs))
+              // Even a lost response is paid for by the durable reservation of all four requests.
+              yield* persistence.settleProtectionRead(claimId, Math.max(paidAtMs, yield* Ref.get(brokerBackoff)))
+              if (
+                Option.isNone(observed) ||
+                Exit.isFailure(observed.value) ||
+                observed.value.value._tag !== 'VerifiedProtectionRelease'
+              )
+                return undefined
+              const proof = observed.value.value
+              const proofId = yield* recordProtectionReleaseProof(basis, proof, config.maxAgeMs, claimId)
+              return proofId === undefined
+                ? undefined
+                : { proofId, cycleId: basis.trigger.cycleId, checkedAt: proof.checkedAt }
+            }).pipe(withObservedStage('bayn.broker.observation.protection-probe', { dependency: 'broker' })),
+            { signal },
+          ),
         activate: (signal, nextPollNotBeforeMs) =>
           managed.runPromise(
             Effect.flatMap(store, (value) => value.activate(nextPollNotBeforeMs)),
@@ -249,7 +349,13 @@ export const acquireBrokerObservationRuntime = (
                       Effect.gen(function* () {
                         const session = yield* BrokerSession
                         sessionVerified = true
-                        return yield* broker.capture(session.read, ticket, captureTimeoutMs)
+                        return yield* broker.capture(
+                          accountActivity === undefined
+                            ? session.read
+                            : { ...session.read, accountActivity: accountActivity.read },
+                          ticket,
+                          captureTimeoutMs,
+                        )
                       }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                       { signal: captureSignal },
                     ),
@@ -292,13 +398,20 @@ export const acquireBrokerObservationRuntime = (
                   }),
                   Effect.onExit((exit) => {
                     if (Exit.isSuccess(exit)) return Effect.void
-                    const retryableReadFailure =
+                    const reusableSessionFailure =
                       exit.cause.reasons.length > 0 &&
-                      exit.cause.reasons.every((reason) => reason._tag === 'Fail' && reason.error.retryable)
-                    // A rejected or timed-out cut already discards its retained history. Keep the verified
-                    // connection for the next quota-paced poll instead of repeating startup preflight.
-                    // Acquisition failures and uncertain exits must still stop their lazy resource scope.
-                    return sessionVerified && retryableReadFailure
+                      exit.cause.reasons.every(
+                        (reason) =>
+                          reason._tag === 'Fail' &&
+                          reason.error.retryable &&
+                          reason.error.kind !== BrokerReadErrorKind.Transport &&
+                          (reason.error.kind !== BrokerReadErrorKind.Timeout ||
+                            reason.error.pollFailureReason === BrokerPollFailureReason.SnapshotRejected),
+                      )
+                    // A rejected snapshot can reuse its verified connection. Exhausted transport/timeouts
+                    // must dispose the old dispatcher so a stuck pool cannot stall the next capture too.
+                    // Reacquisition stays lazy and the next poll repeats account/permission verification.
+                    return sessionVerified && reusableSessionFailure
                       ? Effect.void
                       : ScopedRef.set(brokerRuntimes, acquireBroker)
                   }),
@@ -322,7 +435,7 @@ export const acquireBrokerObservationRuntime = (
                 )
                 const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                 const publication = yield* persistence
-                  .publish(ticket, result.success, nextPollNotBeforeMs)
+                  .publish(ticket, result.success, nextPollNotBeforeMs, yield* budget.protectionReadAllowance)
                   .pipe(
                     withObservedStage('bayn.broker.observation.publish', { dependency: 'postgresql' }),
                     Effect.result,
@@ -349,6 +462,7 @@ export const acquireBrokerObservationRuntime = (
                 return {
                   _tag: 'Published',
                   snapshotHash,
+                  observedAt: result.success.observedAt,
                   nextPollNotBeforeMs,
                 } as const
               }),

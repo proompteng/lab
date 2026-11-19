@@ -7,6 +7,14 @@ resources:
   - email-externalsecret.yaml
   - tailscale-ingress.yaml
 
+configMapGenerator:
+  - name: glitchtip-scheduler-health
+    namespace: glitchtip
+    options:
+      disableNameSuffixHash: true
+    files:
+      - scheduler-health.py
+
 helmCharts:
   - name: glitchtip
     repo: https://gitlab.com/api/v4/projects/16325141/packages/helm/stable
@@ -58,8 +66,32 @@ patches:
       kind: Deployment
       metadata:
         name: glitchtip-web
+        namespace: glitchtip
         annotations:
           argocd.argoproj.io/sync-wave: "1"
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: scheduler-health
+                configMap:
+                  name: glitchtip-scheduler-health
+            containers:
+              - name: glitchtip
+                volumeMounts:
+                  - name: scheduler-health
+                    mountPath: /opt/glitchtip-health
+                    readOnly: true
+                livenessProbe:
+                  httpGet: null
+                  exec:
+                    command:
+                      - python
+                      - /opt/glitchtip-health/scheduler-health.py
+                  initialDelaySeconds: 120
+                  periodSeconds: 10
+                  timeoutSeconds: 8
+                  failureThreshold: 5
   - target:
       kind: Pod
       name: glitchtip-test-connection

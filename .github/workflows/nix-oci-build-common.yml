@@ -161,9 +161,15 @@ jobs:
         run: |
           set -euo pipefail
           out_link="result-${ARCH}"
+          build_prefix=()
+          # Explicit source revisions can predate the optional retry helper.
+          if [[ -f nix/ci-retry-attic-download.sh ]]; then
+            build_prefix=(bash nix/ci-retry-attic-download.sh)
+          fi
           bash nix/ci-run-timed.sh "build-image-${ARCH}" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}.log" \
             timeout --kill-after=30s "${NIX_IMAGE_BUILD_TIMEOUT}" \
-            nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+            "${build_prefix[@]}" \
+              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
             echo "Nix image output is not a tar file: ${image_tar}" >&2
@@ -296,7 +302,7 @@ jobs:
         )
       }}
     needs: build-platform
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     outputs:
       image: ${{ steps.oci.outputs.image }}
       tag: ${{ steps.oci.outputs.tag }}

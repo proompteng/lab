@@ -168,13 +168,12 @@ const verifyArchiveRequest = (
     return expected
   })
 
-export const makeIntradayPerformanceVolumeEvidence = (
+const summarizeIntradayVolume = (
   request: ForwardPerformanceIntradayMarketVolumeRequest,
-  archiveRequest: IntradaySnapshotRequest,
+  archive: IntradaySnapshotRequest,
   rawBars: readonly unknown[],
-): Result.Result<ForwardPerformanceIntradayMarketVolumeEvidence | undefined, IntradaySnapshotFailure> =>
+) =>
   Result.gen(function* () {
-    const archive = yield* verifyArchiveRequest(request, archiveRequest)
     const bars = yield* decodeIntradayBarRows(rawBars)
     const open = ((intradayInstantNanos(request.windowOpenedAt) + minuteNanos - 1n) / minuteNanos) * minuteNanos
     const close = (intradayInstantNanos(request.windowClosedAt) / minuteNanos) * minuteNanos
@@ -241,21 +240,62 @@ export const makeIntradayPerformanceVolumeEvidence = (
       if (!observed.has(minute)) missingMinutes.push(new Date(Number(minute / 1_000_000n)).toISOString())
     }
     if (quantity <= 0n || price === undefined || price <= 0n) return undefined
-    const material = {
-      ...request,
-      schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v2' as const,
-      volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME' as const,
-      terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE' as const,
+    return {
       quantityAtoms: quantity.toString(),
       closePriceMicros: price.toString(),
       finalizedAt,
-      archiveRequest: archive,
       barCount: bars.length,
       missingMinutes,
       barsContentHash: yield* hash(bars),
     }
-    return { ...material, contentHash: yield* hash(material) }
   })
+
+export const makeIntradayPerformanceVolumeEvidenceBatch = (
+  requests: readonly ForwardPerformanceIntradayMarketVolumeRequest[],
+  archiveRequest: IntradaySnapshotRequest,
+  rawBars: readonly unknown[],
+): Result.Result<readonly (ForwardPerformanceIntradayMarketVolumeEvidence | undefined)[], IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const summaries = new Map<string, Result.Result.Success<ReturnType<typeof summarizeIntradayVolume>>>()
+    const evidence: (ForwardPerformanceIntradayMarketVolumeEvidence | undefined)[] = []
+    for (const request of requests) {
+      // Every cycle authenticates its own manifest and original watermark lower bounds.
+      // A successful check also binds this exact shared archive cut to the request.
+      const archive = yield* verifyArchiveRequest(request, archiveRequest)
+      const key = JSON.stringify([
+        request.symbol,
+        request.windowOpenedAt,
+        request.windowClosedAt,
+        request.evidenceCutoffAt,
+      ])
+      if (!summaries.has(key)) summaries.set(key, yield* summarizeIntradayVolume(request, archive, rawBars))
+      const summary = summaries.get(key)
+      if (summary === undefined) {
+        evidence.push(undefined)
+        continue
+      }
+      const material = {
+        ...request,
+        schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v2' as const,
+        volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME' as const,
+        terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE' as const,
+        ...summary,
+        missingMinutes: [...summary.missingMinutes],
+        archiveRequest: archive,
+      }
+      evidence.push({ ...material, contentHash: yield* hash(material) })
+    }
+    return evidence
+  })
+
+export const makeIntradayPerformanceVolumeEvidence = (
+  request: ForwardPerformanceIntradayMarketVolumeRequest,
+  archiveRequest: IntradaySnapshotRequest,
+  rawBars: readonly unknown[],
+): Result.Result<ForwardPerformanceIntradayMarketVolumeEvidence | undefined, IntradaySnapshotFailure> =>
+  makeIntradayPerformanceVolumeEvidenceBatch([request], archiveRequest, rawBars).pipe(
+    Result.map((evidence) => evidence[0]),
+  )
 
 export const validIntradayPerformanceVolumeEvidence = (
   evidence: ForwardPerformanceIntradayMarketVolumeEvidence,

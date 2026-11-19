@@ -9,7 +9,7 @@ import * as accounting from '../src/accounting/domain'
 import type { PositionCost } from '../src/accounting/model'
 import { OrderSide, type Fill } from '../src/execution/contracts'
 import { sha256 } from '../src/hash'
-import { verifyAccountingHistory } from '../src/reconciliation/algebra'
+import { makeAccountingHistoryVerifier, type AccountingHistoryVerifier } from '../src/reconciliation/algebra'
 
 // From the baseline checkout root, before changing the implementation:
 // bayn_baseline_directory="$(mktemp -d -t bayn-accounting-baseline.XXXXXX)"
@@ -19,13 +19,16 @@ import { verifyAccountingHistory } from '../src/reconciliation/algebra'
 // bun build services/bayn/tools/benchmark-accounting-verification.ts --target=node --outfile="$bayn_baseline_directory/benchmark.mjs"
 // node "$bayn_baseline_directory/benchmark.mjs" "$bayn_baseline_directory"
 // Use the production Node version (v24.11.1 for the original measurement). Both implementations
-// receive the same synthetic history; fixture construction and parity checks are not timed.
+// receive fresh copies of the same synthetic rows; fixture construction and parity checks are excluded.
 const baselinePath = process.argv[2]
 assert(baselinePath !== undefined, 'Usage: benchmark-accounting-verification <baseline-directory>')
 const baseline: typeof accounting = await import(pathToFileURL(resolve(baselinePath, 'domain.mjs')).href)
-const baselineAlgebra: { readonly verifyAccountingHistory: typeof verifyAccountingHistory } = await import(
-  pathToFileURL(resolve(baselinePath, 'algebra.mjs')).href
-)
+const baselineAlgebra: {
+  readonly verifyAccountingHistory: (
+    history: Parameters<AccountingHistoryVerifier>[0],
+    ledger: number,
+  ) => ReturnType<AccountingHistoryVerifier>
+} = await import(pathToFileURL(resolve(baselinePath, 'algebra.mjs')).href)
 const ledger = 7001
 const history = Array.from({ length: 1104 }, (_, index) => {
   const side = index % 4 === 0 ? OrderSide.Buy : OrderSide.Sell
@@ -72,7 +75,8 @@ for (const amount of ['0', '2300']) {
     baseline.coinFeeLedgerPlan('benchmark-account', 'coin-fee', 'BTC/USD', amount, ledger),
   )
 }
-const verified = Result.getOrThrow(verifyAccountingHistory(history, ledger))
+const verify = makeAccountingHistoryVerifier(ledger)
+const verified = Result.getOrThrow(verify(history))
 assert.deepEqual(verified, Result.getOrThrow(baselineAlgebra.verifyAccountingHistory(history, ledger)))
 const outputDigest = sha256(
   JSON.stringify(verified, (_, value: unknown) => (typeof value === 'bigint' ? String(value) : value)),
@@ -80,14 +84,17 @@ const outputDigest = sha256(
 const timings = { baseline: [] as number[], candidate: [] as number[] }
 for (let sample = 0; sample < 40; sample++) {
   for (const name of sample % 2 === 0 ? (['baseline', 'candidate'] as const) : (['candidate', 'baseline'] as const)) {
+    const rows = history.map(({ transaction, fill, prior }) => ({
+      transaction: { ...transaction },
+      fill: { ...fill },
+      prior: { ...prior },
+    }))
     const start = performance.now()
     const result = Result.getOrThrow(
-      name === 'baseline'
-        ? baselineAlgebra.verifyAccountingHistory(history, ledger)
-        : verifyAccountingHistory(history, ledger),
+      name === 'baseline' ? baselineAlgebra.verifyAccountingHistory(rows, ledger) : verify(rows),
     )
     const elapsed = performance.now() - start
-    assert.equal(result.length, history.length)
+    assert.deepEqual(result, verified)
     if (sample >= 10) timings[name].push(elapsed)
   }
 }
@@ -107,6 +114,6 @@ console.log(
     baselineP95Ms: percentile(timings.baseline, 0.95),
     candidateP95Ms: percentile(timings.candidate, 0.95),
     reductionPercent: (1 - after / before) * 100,
-    limitation: 'Synthetic mixed accounting history; PostgreSQL, TigerBeetle and live pass latency are not measured',
+    limitation: 'Synthetic mixed accounting history with a warm verifier; excludes PostgreSQL and TigerBeetle I/O',
   }),
 )

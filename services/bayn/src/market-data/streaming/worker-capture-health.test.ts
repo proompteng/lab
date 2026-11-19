@@ -6,8 +6,10 @@ import { PrometheusMetrics } from 'effect/observability'
 import { makeMetricsRuntimeLayer, makeTelemetryRuntimeLayer } from '../../telemetry'
 import { makeThreadedKafkaProjection, type ProjectionWorkerOptions } from './worker'
 import { nativeArrivalEpochFixture as epoch } from './native-arrival.test-support'
+import type { RuntimeMemorySample } from '../../telemetry-memory'
 
 const options: ProjectionWorkerOptions = {
+  controllerKey: 'a'.repeat(64),
   kafka: {
     brokers: ['unused:9092'],
     username: 'unused',
@@ -90,7 +92,11 @@ test('unacknowledged health frames stay bounded and recover without blocking nor
     workerData: { ...options, fixtureClock: true },
     env: { PATH: process.env['PATH'] },
   })
-  const frames: { _tag: string; health?: { activeCaptures: number; incompleteCaptures: number } }[] = []
+  const frames: {
+    _tag: string
+    health?: { activeCaptures: number; incompleteCaptures: number }
+    memory?: RuntimeMemorySample
+  }[] = []
   worker.on('message', (message) => frames.push(message))
   const waitFor = (tag: string) =>
     new Promise<void>((resolve, reject) => {
@@ -117,6 +123,9 @@ test('unacknowledged health frames stay bounded and recover without blocking nor
     const health = frames.filter((frame) => frame._tag === 'CaptureHealth')
     expect(health).toHaveLength(2)
     expect(health[1]?.health).toMatchObject({ activeCaptures: 2, incompleteCaptures: 1 })
+    expect(health[1]?.memory?.heapUsed).toBeGreaterThan(0)
+    expect(health[1]?.memory?.heapTotal).toBeGreaterThan(0)
+    expect(health[1]?.memory?.observedAtSeconds).toBe(75)
     const stopped = waitFor('Stopped')
     worker.postMessage({ operation: 'stop', id: 1 })
     await stopped
