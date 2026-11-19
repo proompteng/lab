@@ -484,7 +484,7 @@ describe('enabled app inventory', () => {
       /              - name: knative\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
 
-    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
+    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.10.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
     expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
     expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.1/operator.yaml')
