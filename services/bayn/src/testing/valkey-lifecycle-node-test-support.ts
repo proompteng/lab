@@ -16,6 +16,7 @@ import { withValkeyStartupRetry } from '../valkey-startup'
 
 const mode = process.argv[2]
 assert(mode !== undefined)
+const startupAttempts = 6
 const stallsTls = mode === 'startup-native-timeout'
 const exhaustsStartup = stallsTls || mode === 'startup-deadline'
 const peers = new Set<Socket>()
@@ -35,7 +36,9 @@ const server = createServer((socket) => {
   peers.add(socket)
   connections++
   const holdHandshake =
-    mode === 'startup-deadline' || mode === 'startup-interrupt' || (mode === 'startup-recover' && connections === 1)
+    mode === 'startup-deadline' ||
+    mode === 'startup-interrupt' ||
+    (mode === 'startup-recover' && connections < startupAttempts)
   let buffer = ''
   socket.on('error', () => {})
   socket.once('close', () => {
@@ -85,7 +88,7 @@ const guard = setTimeout(() => {
   throw new Error(
     `Valkey lifecycle fixture exceeded its bounded completion grace: ${JSON.stringify({ mode, phase, connections, closes, aborts })}`,
   )
-}, 10_000)
+}, 25_000)
 
 try {
   const options = await valkeyClientOptions.pipe(
@@ -123,8 +126,8 @@ try {
     const { client } = yield* NodeRedis.NodeRedis
     client.on('error', (cause) => errors.push(cause))
     if (mode === 'startup-recover') {
-      assert.equal(connections, 2)
-      assert.equal(closes, 1)
+      assert.equal(connections, startupAttempts)
+      assert.equal(closes, startupAttempts - 1)
       assert.equal(client.isReady, true)
       assert(Option.isNone(yield* cache.get('bayn:recovered')))
       return
@@ -169,7 +172,7 @@ try {
     )
     assert(Result.isFailure(result))
     assert(result.failure.cause instanceof ConnectionTimeoutError)
-    assert.equal(connections, 3)
+    assert.equal(connections, startupAttempts)
   } else if (mode === 'startup-interrupt') {
     await Effect.gen(function* () {
       const fiber = yield* Effect.void.pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }))
@@ -185,8 +188,9 @@ try {
   phase = 'finalize'
   await Promise.all(closed)
   assert.equal(closes, connections)
-  if (exhaustsStartup) assert.equal(aborts, 3)
-  else assert.equal(aborts, mode.startsWith('startup-') ? 1 : 0)
+  if (exhaustsStartup) assert.equal(aborts, startupAttempts)
+  else if (mode === 'startup-recover') assert.equal(aborts, startupAttempts - 1)
+  else assert.equal(aborts, mode === 'startup-interrupt' ? 1 : 0)
   console.log(JSON.stringify({ mode, connections, closes, errors: errors.length }))
 } finally {
   clearTimeout(guard)
