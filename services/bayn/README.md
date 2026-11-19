@@ -431,8 +431,8 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
-The PAPER execution controller verifies the account and replays Alpaca Activity SSE once at startup. It then keeps
-the connection open and resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
+The PAPER execution controller verifies the account and opens one Alpaca Activity SSE connection for both startup
+replay and live delivery. It resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
 the reader verifies its payload before advancing. It waits for a stream heartbeat before admitting the activity history.
 A disconnect, dropped frame or unsupported correction makes the local activity history unavailable.
 
