@@ -252,7 +252,7 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [],
-      { executeInference: async () => null },
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
       {
         runtime: {
           probeProtection: async () => undefined,
@@ -326,7 +326,7 @@ describe('native Restate execution server', () => {
         name: 'BaynBrokerObservations',
         handlers: ['notify', 'accept', 'refresh', 'probeProtection', 'activate', 'capture', 'freshness', 'status'],
       },
-      { name: 'BaynEntryInference', handlers: ['evaluate'] },
+      { name: 'BaynEntryInference', handlers: ['watch', 'evaluate'] },
     ])
     expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
       ty: 'SHARED',
@@ -344,6 +344,7 @@ describe('native Restate execution server', () => {
       idempotencyRetention: 0,
       journalRetention: 0,
     })
+    expect(services[2]?.handlers?.find(({ name }) => name === 'watch')).toMatchObject({ ingressPrivate: true })
     expect(services[1]?.handlers?.find(({ name }) => name === 'probeProtection')).toMatchObject({
       ty: 'SHARED',
       ingressPrivate: true,
@@ -409,7 +410,7 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [requestIdentityKey],
-      { executeInference: async () => null },
+      { executeInference: async () => null, awaitDispatch: async () => ({ active: false }) },
       {
         runtime: {
           probeProtection: async () => undefined,

@@ -92,7 +92,6 @@ import { streamingSnapshotReference, recoverStreamingSnapshotReference } from '.
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
-import { readAuthorityState } from './execution-store/observe-authority'
 
 setDefaultTimeout(30_000)
 
@@ -568,6 +567,13 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const batches = yield* JevBatchStore
         const work = yield* JevInferenceWorkStore
         const sql = yield* PgClient.PgClient
+        const scope = {
+          controllerKey: '1'.repeat(64),
+          planHash: '2'.repeat(64),
+          accountId: fixture.portfolio.brokerState.account.accountId,
+        }
+        yield* sql`INSERT INTO execution_controller_status (controller_key, plan_hash, epoch, next_sequence, active)
+          VALUES (${scope.controllerKey}, ${scope.planHash}, 1, 0, true)`
         yield* beginRecordedJevBatch(batches, plan, fixture.observation.payload, {
           deferProviderDispatch: true,
           sourceReference: streamingSnapshotReference(fixture.snapshot),
@@ -577,14 +583,19 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           VALUES ('bayn.paper-authority.v1', ${plan.authorityGenerationHash}, ${Authority.Observe}, ${Authority.Observe},
             ${KillState.Clear}, 1, ${plan.observedAt})`
         const services = yield* Effect.context<
-          JevBatchStore | JevEvaluationStore | JevClient | EntryInferenceJournal | JevInferenceWorkStore
+          | JevBatchStore
+          | JevEvaluationStore
+          | JevClient
+          | EntryInferenceJournal
+          | JevInferenceWorkStore
+          | PgClient.PgClient
         >()
         const clock = yield* Clock.Clock
         const inference = makeNativeEntryInferenceRuntime(
           {
             runPromise: Effect.runPromiseWith(Context.add(services, Clock.Clock, clock)),
           },
-          readAuthorityState(sql),
+          scope,
         )
         const initializing = yield* Deferred.make<void>()
         const financial = yield* Effect.acquireRelease(
@@ -602,7 +613,25 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           Effect.forkScoped,
         )
         yield* Deferred.await(initializing)
-        const execute = Effect.promise((signal) => inference.executeInference(plan.batchId, signal))
+        const oldCommand = {
+          schemaVersion: 'bayn.inference-dispatch.v1',
+          controllerKey: scope.controllerKey,
+          epoch: 1,
+          sourceRevision: 'a'.repeat(40),
+          jobId: plan.batchId,
+        } as const
+        const dispatched = yield* Effect.promise((signal) => inference.awaitDispatch(oldCommand, [], signal))
+        expect(dispatched).toEqual({ active: true, pending: [plan.batchId], dispatch: [plan.batchId] })
+        yield* sql`UPDATE execution_controller_status SET epoch=2 WHERE controller_key=${scope.controllerKey}`
+        expect(yield* Effect.promise((signal) => inference.awaitDispatch(oldCommand, [], signal))).toEqual({
+          active: false,
+        })
+        expect(yield* Effect.promise((signal) => inference.executeInference(oldCommand, signal))).toMatchObject({
+          status: 'Pending',
+        })
+        expect(providerCalls).toBe(0)
+        expect((yield* work.read(plan.batchId))?.status).toBe('Prepared')
+        const execute = Effect.promise((signal) => inference.executeInference({ ...oldCommand, epoch: 2 }, signal))
         const completed = yield* execute
         expect(completed).toMatchObject({ status: 'Completed', expiresAt: plan.expiresAt })
         expect(startup.pollUnsafe()).toBeUndefined()
@@ -671,23 +700,61 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('withdrawn dispatch authority preserves prepared work without paying or reclaiming it', async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const work = yield* JevInferenceWorkStore
-        yield* beginRecordedJevBatch(yield* JevBatchStore, plan, fixture.observation.payload, {
-          deferProviderDispatch: true,
-          sourceReference: streamingSnapshotReference(fixture.snapshot),
-        })
-        const outcome = yield* executeJevInferenceWork(plan.batchId, () => Effect.succeed(false))
-        expect(outcome?.status).toBe('Pending')
-        expect((yield* work.read(plan.batchId))?.status).toBe('Prepared')
-      }).pipe(
-        atObservation,
-        Effect.provideService(JevClient, { evaluate: () => Effect.die('Withdrawn authority cannot spend') }),
-      ),
-    )
-  })
+  test.each(['operator kill', 'safety restriction', 'different account', 'different authority generation'])(
+    'ineligible dispatch keeps committed work prepared: %s',
+    async (policy) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const work = yield* JevInferenceWorkStore
+          const sql = yield* PgClient.PgClient
+          yield* beginRecordedJevBatch(yield* JevBatchStore, plan, fixture.observation.payload, {
+            deferProviderDispatch: true,
+            sourceReference: streamingSnapshotReference(fixture.snapshot),
+          })
+          const controller = {
+            controllerKey: '3'.repeat(64),
+            planHash: '4'.repeat(64),
+            accountId: fixture.portfolio.brokerState.account.accountId,
+            epoch: 1,
+          }
+          yield* sql`INSERT INTO execution_controller_status (controller_key, plan_hash, epoch, next_sequence, active)
+          VALUES (${controller.controllerKey}, ${controller.planHash}, ${controller.epoch}, 0, true)`
+          yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+          VALUES ('bayn.paper-authority.v1', ${plan.authorityGenerationHash}, ${Authority.Observe}, ${Authority.Observe},
+            ${KillState.Clear}, 1, ${plan.observedAt})`
+          if (policy === 'operator kill') {
+            yield* sql`UPDATE authority_state SET kill_state=${KillState.Active}, reason='fixture',
+            version=2, updated_at=updated_at+interval '1 millisecond'`
+          }
+          if (policy === 'different authority generation') {
+            const successor = 'e'.repeat(64)
+            yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, previous_generation_hash,
+            maximum, authority_version, activated_at)
+            VALUES (${successor}, 'bayn.authority-generation-history.v1', ${plan.authorityGenerationHash},
+              ${Authority.Observe}, 2, ${plan.observedAt}::timestamptz+interval '1 millisecond')`
+            yield* sql`UPDATE authority_state SET generation_hash=${successor}, version=2,
+            updated_at=updated_at+interval '1 millisecond'`
+          }
+          if (policy === 'safety restriction') {
+            // Seed the already-restricted state without creating unrelated capital-grant evidence.
+            yield* sql`ALTER TABLE authority_state DISABLE TRIGGER authority_transition_only`
+            yield* sql`UPDATE authority_state SET maximum=${Authority.Execution}, version=2,
+            updated_at=updated_at+interval '1 millisecond'`
+            yield* sql`ALTER TABLE authority_state ENABLE TRIGGER authority_transition_only`
+          }
+          const outcome = yield* executeJevInferenceWork(
+            plan.batchId,
+            policy === 'different account' ? { ...controller, accountId: 'different-account' } : controller,
+          )
+          expect(outcome?.status).toBe('Pending')
+          expect((yield* work.read(plan.batchId))?.status).toBe('Prepared')
+        }).pipe(
+          atObservation,
+          Effect.provideService(JevClient, { evaluate: () => Effect.die('Withdrawn authority cannot spend') }),
+        ),
+      )
+    },
+  )
 
   test('expired enclosing admission cannot prepare a new inference job or expense claim', async () => {
     await runtime.runPromise(

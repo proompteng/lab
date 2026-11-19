@@ -27,7 +27,7 @@ import {
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevInferenceWorkStore, executeJevInferenceWork } from '../jev/inference-work'
-import type { JevInferenceJob } from '../jev/inference-work'
+import type { JevInferenceController } from '../jev/inference-work'
 import type { EntryInferenceRuntime } from '../restate/restate-entry-inference'
 import {
   ExecutionControllerOutcome,
@@ -60,10 +60,9 @@ import {
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
-import { AuthorityGenerationStore, type AuthorityGenerationStoreShape } from '../db/execution-store/contract'
-import { readAuthorityState } from '../db/execution-store/observe-authority'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { awaitJevInferenceDispatch } from '../db/jev-inference-work-postgres'
 import { IntradayMarketData } from '../market-data/intraday/model'
-import { KillState } from '../execution/contracts'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -85,7 +84,6 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError | OperationalError>
   readonly nextDelayMs: number
-  readonly pendingInference?: Effect.Effect<readonly JevInferenceJob[], OperationalError>
 }
 
 export class ExecutionCycleDriver extends Context.Service<ExecutionCycleDriver, BoundRecoveryFirstCycleDriver>()(
@@ -129,17 +127,8 @@ const pendingInferenceForAuthority = (context: Context.Context<RecoveryFirstRunt
     return yield* work.value.pending(authority.generationHash)
   })
 
-const executeNativeJevInference = (jobId: string, readAuthority: AuthorityGenerationStoreShape['readAuthorityState']) =>
-  executeJevInferenceWork(jobId, (job) =>
-    readAuthority.pipe(
-      Effect.map(
-        (authority) =>
-          job.authorityGenerationHash === authority.generationHash &&
-          authority.kill === KillState.Clear &&
-          authority.effective === authority.maximum,
-      ),
-    ),
-  ).pipe(
+const executeNativeJevInference = (jobId: string, controller: JevInferenceController) =>
+  executeJevInferenceWork(jobId, controller).pipe(
     Effect.mapError((cause) =>
       operationalError({
         component: 'strategy',
@@ -152,17 +141,31 @@ const executeNativeJevInference = (jobId: string, readAuthority: AuthorityGenera
 
 export const makeNativeEntryInferenceRuntime = (
   runtime: Pick<
-    ManagedRuntime.ManagedRuntime<Effect.Services<ReturnType<typeof executeNativeJevInference>>, unknown>,
+    ManagedRuntime.ManagedRuntime<
+      Effect.Services<ReturnType<typeof executeNativeJevInference>> | PgClient.PgClient,
+      unknown
+    >,
     'runPromise'
   >,
-  readAuthority: AuthorityGenerationStoreShape['readAuthorityState'],
-): EntryInferenceRuntime => ({
-  executeInference: (jobId, signal) => {
+  account: Pick<JevInferenceController, 'accountId' | 'planHash'>,
+): EntryInferenceRuntime => {
+  const controller = ({ controllerKey, epoch }: Pick<JevInferenceController, 'controllerKey' | 'epoch'>) => ({
+    ...account,
+    controllerKey,
+    epoch,
+  })
+  const run = <A, E, R extends Effect.Services<ReturnType<typeof executeNativeJevInference>> | PgClient.PgClient>(
+    effect: Effect.Effect<A, E, R>,
+    signal: AbortSignal,
+  ) => {
     const parent = currentOpenTelemetryParentSpan()
-    const execute = executeNativeJevInference(jobId, readAuthority)
-    return runtime.runPromise(parent === undefined ? execute : execute.pipe(Effect.withParentSpan(parent)), { signal })
-  },
-})
+    return runtime.runPromise(parent === undefined ? effect : effect.pipe(Effect.withParentSpan(parent)), { signal })
+  }
+  return {
+    executeInference: (command, signal) => run(executeNativeJevInference(command.jobId, controller(command)), signal),
+    awaitDispatch: (scope, pending, signal) => run(awaitJevInferenceDispatch(controller(scope), pending), signal),
+  }
+}
 
 export const executionReceiptDelayMs = (completedAt: string, nextWakeAt?: string): number =>
   nextWakeAt === undefined ? 1 : Math.min(86_400_000, Math.max(1, Date.parse(nextWakeAt) - Date.parse(completedAt)))
@@ -269,7 +272,6 @@ export const bindRecoveryFirstCycleDriver = (
         return {
           ...advanced,
           ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
-          ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore)) ? { inferenceJobs: pending } : {}),
           observation: {
             ...advanced.observation,
             executionBuild,
@@ -278,9 +280,6 @@ export const bindRecoveryFirstCycleDriver = (
         }
       }),
       nextDelayMs: driver.nextDelayMs,
-      ...(Option.isSome(Context.getOption(context, JevInferenceWorkStore))
-        ? { pendingInference: pendingInferenceForAuthority(context) }
-        : {}),
     })),
   )
 
@@ -456,7 +455,6 @@ const advanceAndProject = (
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
         observation: outcome.observation,
-        ...(outcome.inferenceJobs === undefined ? {} : { inferenceJobs: outcome.inferenceJobs }),
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
@@ -503,14 +501,6 @@ export const executeNativeExecutionAdvance = (
   readProjectedAdvance(command, statusStore, planHash).pipe(
     Effect.flatMap((replayed) =>
       replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
-    ),
-    Effect.flatMap((step) =>
-      driver.pendingInference === undefined || step.inferenceJobs !== undefined
-        ? Effect.succeed(step)
-        : driver.pendingInference.pipe(
-            Effect.mapError(projectionFailure),
-            Effect.map((inferenceJobs) => ({ ...step, inferenceJobs })),
-          ),
     ),
   )
 
@@ -722,7 +712,6 @@ export const acquireNativeExecutionRuntime = (
         ),
       ),
     )
-    const readInferenceAuthority = readAuthorityState(Context.get(inferenceContext, PgClient.PgClient))
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -754,7 +743,10 @@ export const acquireNativeExecutionRuntime = (
     return {
       config,
       runtime,
-      inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, readInferenceAuthority),
+      inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {
+        accountId: plan.config.alpaca.expectedAccountId,
+        planHash: config.planHash,
+      }),
       readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
       startMarketWakeups: market.startWakeups,
     }
