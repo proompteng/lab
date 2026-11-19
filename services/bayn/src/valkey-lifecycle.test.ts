@@ -14,7 +14,7 @@ test('production Valkey lifecycle preserves idle connections and bounds startup 
     })
     expect(built.success).toBe(true)
     const node = Effect.runSync(Config.String('BAYN_TEST_NODE_BINARY').pipe(Config.withDefault('node')))
-    for (const mode of [
+    const modes = [
       'idle',
       'startup-native-timeout',
       'startup-recover',
@@ -23,16 +23,22 @@ test('production Valkey lifecycle preserves idle connections and bounds startup 
       'command-deadline',
       'command-interrupt',
       'command-disconnect',
-    ]) {
-      const child = Bun.spawn([node, join(directory, 'valkey-lifecycle-node-test-support.js'), mode], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ])
+    ]
+    const outcomes = await Promise.all(
+      modes.map(async (mode) => {
+        const child = Bun.spawn([node, join(directory, 'valkey-lifecycle-node-test-support.js'), mode], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ])
+        return { mode, stdout, stderr, exitCode }
+      }),
+    )
+    for (const { mode, stdout, stderr, exitCode } of outcomes) {
       expect({ mode, stderr, exitCode }).toEqual({ mode, stderr: '', exitCode: 0 })
       expect(JSON.parse(stdout).mode).toBe(mode)
     }

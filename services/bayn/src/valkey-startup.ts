@@ -51,7 +51,7 @@ export const withValkeyStartupRetry = <A, R>(makeLayer: (signal: AbortSignal) =>
         }),
         Effect.retry({
           while: (error) => startupRetryCode(error) !== undefined,
-          times: 2,
+          times: 5,
           schedule: Schedule.spaced('1 second'),
         }),
       )

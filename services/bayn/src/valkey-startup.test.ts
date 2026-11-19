@@ -10,6 +10,7 @@ class Connection extends Context.Service<Connection, { readonly command: Effect.
   'test/ValkeyStartupConnection',
 ) {}
 const refused = new RedisError({ cause: Object.assign(new Error('fixture refused'), { code: 'ECONNREFUSED' }) })
+const startupAttempts = 6
 const handshakeUntilAbort = (signal: AbortSignal) =>
   Effect.callback<never, RedisError>((resume) => {
     const abort = () => resume(Effect.fail(new RedisError({ cause: new Error('fixture acquisition aborted') })))
@@ -19,7 +20,7 @@ const handshakeUntilAbort = (signal: AbortSignal) =>
 
 describe('Valkey startup acquisition', () => {
   test.each([false, true])(
-    'startup refusal has two spaced retries with closed attempts; persistent=%s',
+    'startup refusal has five spaced retries with closed attempts; persistent=%s',
     async (persistent) => {
       let attempts = 0
       let active = 0
@@ -39,7 +40,7 @@ describe('Valkey startup acquisition', () => {
           )
           attempts++
           expect(active).toBe(1)
-          if (persistent || attempts < 3) return yield* refused
+          if (persistent || attempts < startupAttempts) return yield* refused
           return { command: Effect.void }
         }),
       ).pipe((layer) => withValkeyStartupRetry(() => layer))
@@ -54,20 +55,17 @@ describe('Valkey startup acquisition', () => {
           Effect.result,
           Effect.forkChild({ startImmediately: true }),
         )
-        yield* TestClock.adjust('999 millis')
-        expect(attempts).toBe(1)
-        expect(active).toBe(0)
-        yield* TestClock.adjust('1 millis')
-        expect(attempts).toBe(2)
-        expect(active).toBe(0)
-        yield* TestClock.adjust('999 millis')
-        expect(attempts).toBe(2)
-        yield* TestClock.adjust('1 millis')
+        for (let attempt = 1; attempt < startupAttempts; attempt++) {
+          yield* TestClock.adjust('999 millis')
+          expect(attempts).toBe(attempt)
+          expect(active).toBe(0)
+          yield* TestClock.adjust('1 millis')
+        }
         return yield* Fiber.join(fiber)
       }).pipe(Effect.provide(TestClock.layer()), Effect.runPromise)
-      expect(attempts).toBe(3)
+      expect(attempts).toBe(startupAttempts)
       expect(active).toBe(0)
-      expect(released).toBe(3)
+      expect(released).toBe(startupAttempts)
       expect(Result.isFailure(result)).toBe(persistent)
       if (Result.isFailure(result)) expect(result.failure).toBe(refused)
     },
@@ -188,13 +186,13 @@ describe('Valkey startup acquisition', () => {
         Effect.result,
         Effect.forkChild({ startImmediately: true }),
       )
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= startupAttempts; attempt++) {
         yield* TestClock.adjust('1999 millis')
         expect(attempts).toBe(attempt)
         expect(events).toHaveLength((attempt - 1) * 2)
         yield* TestClock.adjust('1 millis')
         expect(events).toHaveLength(attempt * 2)
-        if (attempt < 3) {
+        if (attempt < startupAttempts) {
           yield* TestClock.adjust('999 millis')
           expect(attempts).toBe(attempt)
           yield* TestClock.adjust('1 millis')
@@ -205,8 +203,8 @@ describe('Valkey startup acquisition', () => {
       if (Result.isFailure(result)) expect(result.failure.cause).toBeInstanceOf(ConnectionTimeoutError)
       yield* TestClock.adjust('5 seconds')
     }).pipe(Effect.provide(TestClock.layer()), Effect.runPromise)
-    expect(attempts).toBe(3)
-    expect(events).toEqual(['abort', 'release', 'abort', 'release', 'abort', 'release'])
+    expect(attempts).toBe(startupAttempts)
+    expect(events).toEqual(Array.from({ length: startupAttempts }, () => ['abort', 'release']).flat())
   })
 
   test('defects release the failed acquisition without retrying', async () => {
