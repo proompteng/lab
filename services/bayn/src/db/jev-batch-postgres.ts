@@ -1,6 +1,5 @@
 import { makeJevDispatch } from '../jev/evaluation'
 import { makeEntryInferenceWrites } from './entry-inference-postgres'
-import { prepareClaimedEntry } from '../jev/entry-inference'
 import { recordJevEvaluationReceipts } from './jev-evaluation-postgres'
 import { PgClient } from '@effect/sql-pg'
 import { Array as Arr, Cause, Clock, Effect, Exit, Layer, Option, Schema } from 'effect'
@@ -228,26 +227,18 @@ export const makeJevBatchStore = Effect.gen(function* () {
             const writes = makeEntryInferenceWrites(sql)
             const dispatches = []
             for (const request of requests) {
-              const initial = yield* Effect.fromResult(
-                prepareClaimedEntry({
-                  requestId: request.requestId,
-                  input: request.request,
-                  observedAt: request.observedAt,
-                  expiresAt: request.expiresAt,
-                  claimedAt: checkedAt,
-                }),
-              )
-              if (initial.visualClaim !== null) {
+              const dispatch = yield* Effect.fromResult(makeJevDispatch({ request, claimedAt: checkedAt }))
+              if (dispatch.visualClaim !== null) {
                 // This transaction inserted the request. Its checkpoint is empty and
                 // no other transaction can create dependent rows before this commit.
-                const admitted = yield* writes.recordClaim(initial.visualClaim, {
+                const admitted = yield* writes.recordClaim(dispatch.visualClaim, {
                   request,
                   checkpoint: { claims: [], terminals: [], skips: [] },
                 })
                 if (!admitted.dispatchAllowed)
                   return yield* persistError('Initial visual claim could not be admitted with its request')
               }
-              dispatches.push(makeJevDispatch({ request, claimedAt: checkedAt, visualClaim: initial.visualClaim }))
+              dispatches.push(dispatch)
             }
             if (options?.deferProviderDispatch === true) {
               const reference = options.sourceReference
