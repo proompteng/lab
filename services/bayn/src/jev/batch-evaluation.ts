@@ -15,12 +15,22 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevEvidenceError } from './evidence'
 import { utcInstantFromEpochMillis } from '../time'
 import type { MarketSnapshotReference } from '../market-data/intraday/model'
-import type { PreparedJevBatch } from './trading-signals'
+import { isPreparedJevBatch, type PreparedJevBatch } from './trading-signals'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
   readonly result: JevBatchResult | null
 }
+
+const batchPreparations = new WeakMap<JevBatchEvidence, PreparedJevBatch>()
+
+export const retainJevBatchPreparation = (evidence: JevBatchEvidence, prepared: PreparedJevBatch) => {
+  if (isPreparedJevBatch(prepared) && evidence.plan.batchId === prepared.plan.batchId)
+    batchPreparations.set(evidence, prepared)
+  return evidence
+}
+
+export const retainedJevBatchPreparation = (evidence: JevBatchEvidence) => batchPreparations.get(evidence)
 
 export interface JevBatchAdmission extends JevBatchEvidence {
   /** Null means admitted for durable inference; an empty array retains claimed-work recovery. */
