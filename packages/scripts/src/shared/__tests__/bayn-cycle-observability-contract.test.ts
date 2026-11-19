@@ -44,6 +44,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynExecutionDecisionLagging',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
+      'BaynRepeatedEntryExpiry',
       'BaynCycleStalled',
       'BaynCycleFailed',
     ])

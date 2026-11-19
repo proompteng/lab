@@ -1,3 +1,6 @@
+import { beginRecordedJevBatch, evaluateRecordedJevBatch } from '../jev/batch-admission.test-support'
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import {
   persistVisualClaimFixture,
@@ -33,7 +36,8 @@ import {
 import { TestClock } from 'effect/testing'
 import { makeReplayInferenceTiming, type ReplayInferenceCall } from '../intraday-replay/inference-timing'
 import { makeSimulatedExecutionClock } from '../intraday-replay/clock'
-import { utcInstantFromEpochMillis } from '../time'
+import { makeReplayAdmissionClock } from '../intraday-replay/admission-clock'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { NodeServices } from '@effect/platform-node'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
@@ -42,7 +46,15 @@ import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { CryptoFeeTier } from '../broker/crypto-fees'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
-import { Authority, KillState, OrderSide, OrderStatus, OrderType, TerminalOutcome } from '../execution/contracts'
+import {
+  Authority,
+  KillState,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  TerminalOutcome,
+  TimeInForce,
+} from '../execution/contracts'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
 import { makeBrokerStateCache } from '../execution/broker-state-cache'
 import { makeExecutionProgram } from '../execution/runtime-program'
@@ -59,7 +71,7 @@ import {
   usableEntryBatchInferences,
 } from '../jev/batch'
 import { decideJevEntry, makeJevDefinition } from '../jev/decision'
-import { evaluateJevBatch, JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
+import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import {
@@ -90,7 +102,7 @@ import {
   evaluateJevPositionManagement,
 } from '../jev/runtime'
 import { JevExitReason, jevProfitTargetLimitFloors } from '../jev/exit'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -113,7 +125,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
 import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation-postgres'
-import { JevPositionStoreLive } from './jev-position-postgres'
+import { JevPositionStoreLive, verifyJevPortfolioSources } from './jev-position-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import { verifyBrokerStateVersion } from './reconciliation'
@@ -161,6 +173,10 @@ const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const makeRuntime = () =>
   ManagedRuntime.make(
     Layer.mergeAll(
+      Layer.succeed(DecisionConstruction, {
+        observe: constructObserveShadowDecision,
+        execution: constructExecutionDecision,
+      }),
       EntryInferenceJournalLive,
 
       CycleStoreLive,
@@ -207,6 +223,7 @@ const seedManagedPosition = (
     readonly heldMinutes?: number
     readonly nativeProtection?: 'strategy' | 'tampered'
     readonly settleEntry?: boolean
+    readonly completeNativeEntry?: boolean
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -279,9 +296,40 @@ const seedManagedPosition = (
       const entryId = options.entryDocument.orderedIntentIds[0]
       if (entryId === undefined) throw new Error('Expected an entry intent')
       const clientId = clientOrderIdForIntentId(entryId)
+      const fullQuantity = options.completeNativeEntry
+        ? options.entryDocument.targetPlan.intentTargets[0]?.quantityAtoms
+        : undefined
+      const originalQuantity = portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)
       const state = {
         ...portfolio.brokerState,
-        orders: portfolio.brokerState.orders.map((order) => ({ ...order, intentId: entryId, clientOrderId: clientId })),
+        positions: portfolio.brokerState.positions.map((position) =>
+          fullQuantity === undefined
+            ? position
+            : {
+                ...position,
+                quantityAtoms: fullQuantity,
+                costBasisMicros: String((BigInt(position.costBasisMicros) * BigInt(fullQuantity)) / originalQuantity),
+                marketValueMicros: String(
+                  (BigInt(position.marketValueMicros) * BigInt(fullQuantity)) / originalQuantity,
+                ),
+                unrealizedPnlMicros: String(
+                  (BigInt(position.unrealizedPnlMicros) * BigInt(fullQuantity)) / originalQuantity,
+                ),
+              },
+        ),
+        orders: portfolio.brokerState.orders.map((order) => ({
+          ...order,
+          intentId: entryId,
+          clientOrderId: clientId,
+          ...(fullQuantity === undefined
+            ? {}
+            : {
+                quantityAtoms: fullQuantity,
+                filledQuantityAtoms: fullQuantity,
+                status: OrderStatus.Filled,
+                timeInForce: TimeInForce.Day,
+              }),
+        })),
       }
       const hash = Result.getOrThrow(reconciledStateHash(state))
       portfolio = Result.getOrThrow(
@@ -293,7 +341,14 @@ const seedManagedPosition = (
               ? options.entryDocument.strategyDecision.exitPolicy
               : portfolio.exitPolicy,
           entryIntentIds: [entryId],
-          entryFills: portfolio.entryFills.map((fill) => ({ ...fill, intentId: entryId, clientOrderId: clientId })),
+          entryFills: portfolio.entryFills.map((fill, index) => ({
+            ...fill,
+            intentId: entryId,
+            clientOrderId: clientId,
+            ...(fullQuantity === undefined
+              ? {}
+              : { quantityAtoms: index === 0 ? String(BigInt(fullQuantity) - 2_000_000_000n) : '2000000000' }),
+          })),
           brokerState: {
             ...state,
             reconciliation: { ...state.reconciliation, expectedHash: hash, observedHash: hash },
@@ -469,13 +524,13 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       }),
     )
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-    expect(plan.candidates).toHaveLength(15)
+    expect(plan.candidates).toHaveLength(equityMarketProfile.candidateSymbols.length)
     expect(requested.map((candidate) => candidate.symbol)).toEqual([...symbols].sort())
-    const admission = yield* (yield* JevBatchStore).begin(plan, observation.payload)
+    const admission = yield* beginRecordedJevBatch(yield* JevBatchStore, plan, observation.payload)
     return { plan, requested, observation: observation.payload, admission }
   })
 
-const prepareSingleEntryBatch = (symbol = 'LITE') =>
+const prepareSingleEntryBatch = (symbol = 'NFLX') =>
   Effect.gen(function* () {
     const { plan, requested, observation, admission } = yield* prepareEntryBatch([symbol])
     const candidate = requested[0]
@@ -613,9 +668,16 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
-  test.each([JevExitReason.ProfitTarget, JevExitReason.ProtectiveStop])(
-    'protection cancellation retains its original %s cause through durable recovery',
-    async (reason) => {
+  test.each([
+    { reason: JevExitReason.ProfitTarget, delayMs: 0, measuredSql: false },
+    { reason: JevExitReason.ProtectiveStop, delayMs: 0, measuredSql: false },
+    { reason: JevExitReason.ProfitTarget, delayMs: 500, measuredSql: false },
+    { reason: JevExitReason.ProfitTarget, delayMs: 15_000, measuredSql: false },
+    { reason: JevExitReason.ProfitTarget, delayMs: 50, measuredSql: true },
+    { reason: JevExitReason.ProfitTarget, delayMs: 15_000, measuredSql: true },
+  ])(
+    'protection cancellation retains its original cause through durable recovery: %j',
+    async ({ reason, delayMs, measuredSql }) => {
       await runtime.runPromise(
         Effect.gen(function* () {
           const { portfolio, managed } = yield* seedManagedPosition({ nativeProtection: 'strategy' })
@@ -666,6 +728,118 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             }),
           )
           const store = yield* IntentStore
+          if (delayMs > 0) {
+            const fence = yield* WriterFence
+            const simulation = measuredSql
+              ? yield* makeSimulatedExecutionClock(
+                  'e'.repeat(64),
+                  'e'.repeat(64),
+                  yield* TestClock.withLive(Clock.clockWith(Effect.succeed)),
+                )
+              : undefined
+            const delayedStore = yield* IntentStore.pipe(
+              Effect.provide(
+                IntentStoreLive.pipe(
+                  Layer.provide(
+                    Layer.succeed(WriterFence, {
+                      check: fence.check,
+                      transaction: (effect, finalize) =>
+                        fence.transaction(
+                          Effect.gen(function* () {
+                            if (measuredSql) {
+                              if (delayMs >= fixture.protocol.maximumQuoteAgeMs)
+                                yield* sql`UPDATE simulated_execution_clocks
+                                SET measured_observed_at=${new Date(Date.parse(management.target.commitDeadlineAt) - 50).toISOString()},
+                                  measured_at=clock_timestamp() WHERE account_id=${replayAccountId}`
+                              const marketAt = yield* Clock.currentTimeMillis
+                              yield* sql`SELECT pg_sleep(${delayMs >= fixture.protocol.maximumQuoteAgeMs ? 0.08 : delayMs / 1000})`
+                              expect(yield* Clock.currentTimeMillis).toBe(marketAt)
+                            } else {
+                              yield* TestClock.adjust(delayMs)
+                              yield* sql`UPDATE simulated_execution_clocks
+                              SET observed_at=${yield* currentUtcInstant}::timestamptz WHERE account_id=${replayAccountId}`
+                            }
+                          }).pipe(
+                            Effect.mapError(
+                              (cause) =>
+                                new WriterFenceError({
+                                  failure: 'unavailable',
+                                  operation: 'transaction',
+                                  message: 'Fixture clock preparation failed',
+                                  cause,
+                                }),
+                            ),
+                            Effect.andThen(effect),
+                          ),
+                          finalize,
+                        ),
+                    }),
+                  ),
+                  Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
+                  Layer.fresh,
+                ),
+              ),
+            )
+            const admitted = yield* simulation === undefined
+              ? delayedStore.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)
+              : simulation.measure(
+                  Effect.gen(function* () {
+                    const replay = yield* makeReplayAdmissionClock(simulation)
+                    const admitted = yield* replay
+                      .intents(delayedStore)
+                      .beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)
+                    if (admitted._tag !== 'New') return admitted
+                    const responseAt = yield* currentUtcInstant
+                    expect(Date.parse(admitted.command.requestedAt)).toBeGreaterThanOrEqual(Date.parse(observedAt) + 50)
+                    expect(Date.parse(responseAt)).toBeGreaterThanOrEqual(Date.parse(admitted.command.requestedAt))
+                    expect(
+                      yield* sql`SELECT requested_at=${admitted.command.requestedAt}::timestamptz AS exact,
+                      requested_at=date_trunc('milliseconds',requested_at) AS milliseconds
+                      FROM native_protection_cancel_commands WHERE intent_id=${intentId}`,
+                    ).toEqual([{ exact: true, milliseconds: true }])
+                    const receipt = {
+                      brokerOrderId,
+                      requestHash: Result.getOrThrow(
+                        canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId }),
+                      ),
+                      evidence: {
+                        requestId: 'measured-native-protection-cancel',
+                        status: 204,
+                        contentHash: Result.getOrThrow(canonicalHashV1Result(null)),
+                        observedAt: responseAt,
+                      },
+                    }
+                    expect((yield* store.recordProtectionCancelAccepted(admitted.command, receipt))._tag).toBe(
+                      'Accepted',
+                    )
+                    expect((yield* store.recordProtectionCancelAccepted(admitted.command, receipt))._tag).toBe(
+                      'Accepted',
+                    )
+                    return admitted
+                  }),
+                )
+            if (delayMs >= fixture.protocol.maximumQuoteAgeMs) {
+              expect(admitted._tag).toBe('NotEligible')
+              expect(yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands`).toEqual([
+                { count: 0 },
+              ])
+            } else {
+              expect(admitted._tag).toBe('New')
+              if (admitted._tag !== 'New') throw new Error('Expected delayed native cancellation admission')
+              if (!measuredSql)
+                expect(admitted.command.requestedAt).toBe(new Date(Date.parse(observedAt) + delayMs).toISOString())
+              expect(
+                yield* sql`SELECT exit_target FROM native_protection_cancel_commands WHERE intent_id = ${intentId}`,
+              ).toEqual([{ exit_target: management.target }])
+              expect(
+                (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target))._tag,
+              ).toBe(measuredSql ? 'Accepted' : 'PendingUnknown')
+              expect(yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands`).toEqual([
+                { count: 1 },
+              ])
+            }
+            return
+          }
           expect(
             (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, {
               ...management.target,
@@ -776,14 +950,48 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`,
           )
           expect(receiptCount).toBe(1)
-          const recovered = yield* (yield* JevPositionStore).read({
+          const sameCut = yield* (yield* JevPositionStore).read({
             cycleId: cycle.identity.cycleId,
             entryDecisionHash: portfolio.entryDecisionHash,
             brokerState: portfolio.brokerState,
           })
+          const originalPortfolio = management.target.evidence.portfolio
+          if (originalPortfolio.purpose !== JevPurpose.Manage) throw new Error('Expected original held-position proof')
+          expect(sameCut).toEqual(originalPortfolio)
+          expect(sameCut.exitRequestedAt).toBeNull()
+          yield* verifyJevPortfolioSources(sql, cycle.identity.cycleId, originalPortfolio)
+          const refreshedAt = new Date(Date.parse(observedAt) + 1).toISOString()
+          yield* TestClock.setTime(Date.parse(refreshedAt))
+          const freshMaterial = {
+            ...portfolio.brokerState,
+            account: { ...portfolio.brokerState.account, observedAt: refreshedAt },
+            positions: portfolio.brokerState.positions.map((position) => ({ ...position, observedAt: refreshedAt })),
+            orders: portfolio.brokerState.orders.map((order) => ({ ...order, observedAt: refreshedAt })),
+            positionsObservedAt: refreshedAt,
+            ordersObservedAt: refreshedAt,
+          }
+          const freshHash = Result.getOrThrow(reconciledStateHash(freshMaterial))
+          const freshReconciliation = {
+            ...freshMaterial.reconciliation,
+            reconciliationId: '6'.repeat(64),
+            expectedHash: freshHash,
+            observedHash: freshHash,
+            contentHash: Result.getOrThrow(canonicalHashV1Result(freshMaterial)),
+            reconciledAt: refreshedAt,
+          }
+          yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,
+          content_hash,status,discrepancies,reconciled_at) VALUES (${freshReconciliation.reconciliationId},
+          ${freshReconciliation.schemaVersion},${replayAccountId},${freshHash},${freshHash},
+          ${freshReconciliation.contentHash},'EXACT','[]'::jsonb,${refreshedAt})`
+          const freshState = { ...freshMaterial, reconciliation: freshReconciliation }
+          const recovered = yield* (yield* JevPositionStore).read({
+            cycleId: cycle.identity.cycleId,
+            entryDecisionHash: portfolio.entryDecisionHash,
+            brokerState: freshState,
+          })
           expect(recovered.exitRequestedAt).toBe(observedAt)
           expect(recovered.profitExitRequested).toBe(reason === JevExitReason.ProfitTarget)
-          const resumed = yield* evaluateJevPositionManagement(input)
+          const resumed = yield* evaluateJevPositionManagement({ ...input, brokerState: freshState })
           if (resumed._tag !== 'Exit') throw new Error('Expected durable exit recovery')
           expect(resumed.target.reason).toBe(JevExitReason.ProtectionReleased)
           const floors = Result.getOrThrow(
@@ -901,7 +1109,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(yield* sql`SELECT request_id FROM jev_evaluation_resolutions`).toEqual([])
         expect((yield* requests.read(request.requestId))?.resolution).toBeNull()
         expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-        expect((yield* (yield* JevBatchStore).begin(plan, observation)).dispatches).toEqual([])
+        expect((yield* beginRecordedJevBatch(yield* JevBatchStore, plan, observation)).dispatches).toEqual([])
         yield* sql`ALTER TABLE jev_batch_results DROP CONSTRAINT fail_atomic_finalization`
         yield* batches.complete(plan, observation, expected)
         expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).not.toBeNull()
@@ -1047,7 +1255,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           complete: (...args: Parameters<typeof batches.complete>) =>
             batches.complete(...args).pipe(Effect.tap(() => TestClock.setTime(Date.parse(plan.expiresAt)))),
         }
-        const saved = yield* evaluateJevBatch(plan, observation).pipe(
+        const saved = yield* evaluateRecordedJevBatch(plan, observation).pipe(
           Effect.provideService(JevBatchStore, delayed),
           Effect.provideService(
             JevClient,
@@ -1157,7 +1365,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     },
   )
 
-  test.each(['AAPL', 'WDC'])(
+  test.each(['AAPL', 'TSLA'])(
     'single-request ENTRY preserves exclusions when %s is at a plan boundary',
     async (symbol) => {
       await runtime.runPromise(
@@ -1176,8 +1384,10 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           )
           expect(
             saved?.result?.candidates.filter((candidate) => candidate.status === JevCandidateResultStatus.Excluded),
-          ).toHaveLength(14)
-          expect(saved?.result?.candidates[symbol === 'AAPL' ? 0 : 14]).toEqual({
+          ).toHaveLength(equityMarketProfile.candidateSymbols.length - 1)
+          expect(
+            saved?.result?.candidates[symbol === 'AAPL' ? 0 : equityMarketProfile.candidateSymbols.length - 1],
+          ).toEqual({
             symbol,
             status: JevCandidateResultStatus.Resolved,
             requestId: request.requestId,
@@ -1193,7 +1403,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { plan, requested, observation } = yield* prepareEntryBatch(['AAPL', 'WDC'])
+          const { plan, requested, observation } = yield* prepareEntryBatch(['AAPL', 'TSLA'])
 
           const sql = yield* PgClient.PgClient
           const monitored = monitorSql(sql)
@@ -1329,7 +1539,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const wrongIdentity = Result.getOrThrow(
           makeJevBatchPlan({ ...rebound, observationHash: result.batchPlan.observationHash }),
         )
-        expect(Result.isFailure(yield* store.begin(wrongIdentity, result.observation).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(yield* beginRecordedJevBatch(store, wrongIdentity, result.observation).pipe(Effect.result)),
+        ).toBe(true)
         expect(yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans`).toEqual([{ count: 1 }])
       }).pipe(
         Effect.provideService(
@@ -1519,7 +1731,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             })
             expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
             expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
-            expect(calls).toBe(15)
+            expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
           } else {
             expect(calls).toBe(0)
           }
@@ -1575,24 +1787,24 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const staleEvidence = {
           ...raw,
           quotes: raw.quotes.map((quote) =>
-            quote.symbol === 'AMD'
+            quote.symbol === 'AMZN'
               ? { ...quote, eventAt: staleAt, ingestedAt: staleAt }
               : quote.symbol === 'AAPL'
                 ? { ...quote, askPrice: quote.bidPrice * 1.01 }
                 : quote,
           ),
           trades: raw.trades.map((trade) =>
-            trade.symbol === 'AMD' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
+            trade.symbol === 'AMZN' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
           ),
         }
         const snapshot = streamingFixtureFromRaw(staleEvidence, query).snapshot
         expect(snapshot.manifest.candidateExclusions).toContainEqual(
-          expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
+          expect.objectContaining({ symbol: 'AMZN', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
         expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
         expect(result.batchPlan.candidates).toContainEqual(
-          expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
+          expect.objectContaining({ symbol: 'AMZN', status: 'EXCLUDED' }),
         )
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AAPL', status: 'EXCLUDED', reason: JevEntryExclusion.Spread }),
@@ -1978,9 +2190,13 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             if (latencyMs === 10) {
               expect(Result.isSuccess(result)).toBe(true)
               if (Result.isFailure(result)) throw result.failure
-              expect(calls.filter((call) => call.stage === 'CHART')).toHaveLength(15)
+              expect(calls.filter((call) => call.stage === 'CHART')).toHaveLength(
+                equityMarketProfile.candidateSymbols.length,
+              )
               expect(calls.filter((call) => call.stage === 'BASE_START')).toHaveLength(0)
-              expect(calls.filter((call) => call.stage === 'JEV')).toHaveLength(15)
+              expect(calls.filter((call) => call.stage === 'JEV')).toHaveLength(
+                equityMarketProfile.candidateSymbols.length,
+              )
               expect(Result.getOrThrow(decideJevEntry(result.success)).selectedSymbols).toEqual(['AAPL'])
               expect(result.success.batchResult.completedAt).toBe(
                 utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
@@ -2008,7 +2224,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const evidence = yield* evaluateJevObservation(nativeInput)
         const target = Result.getOrThrow(decideJevEntry(evidence))
         expect(target.selectedSymbols).toEqual(['AAPL'])
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         const saved = yield* (yield* JevBatchStore).read(evidence.batchPlan.batchId)
         expect(saved).toEqual({ plan: evidence.batchPlan, result: evidence.batchResult })
         expect(yield* (yield* JevBatchStore).pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual(
@@ -2089,7 +2305,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     const firstAssertionsStartedAt = performance.now()
     expect(Result.isSuccess(first)).toBe(true)
     if (Result.isSuccess(first)) expect(Result.getOrThrow(decideJevEntry(first.success)).selectedSymbols).toEqual([])
-    expect(calls).toBe(15)
+    expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
     await Effect.runPromise(phase('first-assertions', firstAssertionsStartedAt, 0))
     const restartStartedAt = performance.now()
     await runtime.dispose()
@@ -2103,12 +2319,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         _tag: 'JevAwaitingFreshWindow',
         availableAt: utcInstantFromEpochMillis(observed + 60_000),
       })
-    expect(calls).toBe(15)
+    expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
     await Effect.runPromise(phase('same-window-assertions', repeatedAssertionsStartedAt, 1000))
     const fresh = await runtime.runPromise(observeAt(60_000))
     const assertionsStartedAt = performance.now()
     expect(Result.isSuccess(fresh)).toBe(true)
-    expect(calls).toBe(30)
+    expect(calls).toBe(2 * equityMarketProfile.candidateSymbols.length)
     expect(
       await runtime.runPromise(
         Effect.gen(function* () {
@@ -2171,7 +2387,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isSuccess(result)) throw new Error('A partial batch authorized a decision')
         expect(result.failure._tag).toBe('JevAwaitingEvidence')
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         const sql = yield* PgClient.PgClient
         expect(yield* sql`SELECT count(*)::integer AS count FROM jev_batch_results`).toEqual([{ count: 1 }])
         expect(
@@ -2215,7 +2431,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         const store = yield* JevBatchStore
-        yield* store.begin(plan, fixture.observation.payload)
+        yield* beginRecordedJevBatch(store, plan, fixture.observation.payload)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([plan.batchId])
         expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([
           plan,
@@ -2277,10 +2493,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     let calls = 0
     const unused = Effect.die(new Error('Unexpected broker read'))
     const broker: BrokerReadShape = {
-      account: unused,
-      accountConfiguration: unused,
+      ...longEntryBrokerReads(fixture.portfolio.brokerState.account, at),
       positions: unused,
-      assetBySymbol: () => unused,
       orders: () => unused,
       orderById: () => unused,
       orderByClientId: () => unused,
@@ -2404,6 +2618,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           entryDocument: document,
           observedAt: new Date(Date.parse(document.createdAt) + 3 * 60_000 + 2000).toISOString(),
           ...(scenario.startsWith('protection-') ? { nativeProtection: 'strategy' as const, settleEntry: true } : {}),
+          ...(scenario === 'protection-native-tp-keeps-coverage' ? { completeNativeEntry: true } : {}),
         })
         if (scenario === 'fee-source') {
           const sql = yield* PgClient.PgClient
@@ -2497,7 +2712,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         if (management._tag !== 'Exit') throw new Error('Expected native Jev exit')
         const exitTarget = management.target
         expect(exitTarget.reason).toBe(JevExitReason.ProfitTarget)
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         if (reconciliation.riskContext.authority === null) throw new Error('Expected execution authority')
         const closeFacts: ReconciliationPassResult = {
           brokerState: portfolio.brokerState,
@@ -2534,6 +2749,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           exitTarget,
         }
         if (scenario.startsWith('protection-')) {
+          const keepNative = scenario === 'protection-native-tp-keeps-coverage'
           const sql = yield* PgClient.PgClient
           const fence = yield* WriterFence
           const entryId = document.orderedIntentIds[0]
@@ -2545,39 +2761,57 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const brokerOrderId = 'partial-tp-native-child'
           const eventId = '7'.repeat(64)
           const partialEventId = '8'.repeat(64)
+          const parent = portfolio.brokerState.orders[0]
+          if (parent === undefined) throw new Error('Expected the filled entry order')
           const entryFill = portfolio.entryFills[0]
           if (entryFill === undefined) throw new Error('Expected canonical entry fill pricing')
-          const partialNotional = ((2_000_000_000n * BigInt(entryFill.priceAtoms)) / 1_000_000_000_000n).toString()
+          const partialPriceAtoms = keepNative
+            ? String(BigInt(levels.profitLimitPriceMicros) * 1000n)
+            : entryFill.priceAtoms
+          const partialBasis = ((2_000_000_000n * BigInt(entryFill.priceAtoms)) / 1_000_000_000_000n).toString()
+          const partialNotional = ((2_000_000_000n * BigInt(partialPriceAtoms)) / 1_000_000_000_000n).toString()
+          const originalQuantity = keepNative ? parent.quantityAtoms : '5000000000'
+          if (originalQuantity === undefined) throw new Error('Expected native parent quantity')
+          const remainingQuantity = String(BigInt(originalQuantity) - 2_000_000_000n)
           yield* sql.withTransaction(
             Effect.gen(function* () {
+              if (keepNative) {
+                const parentEventId = '9'.repeat(64)
+                yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+                  source_event_id,source_sequence,occurred_at,observed_at) VALUES (${parentEventId},'bayn.paper-broker-event.v1',
+                  ${parentEventId},'ORDER','ALPACA',${replayAccountId},${parent.brokerOrderId},99,${entryFill.occurredAt},${entryFill.occurredAt})`
+                yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
+                  symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status)
+                  VALUES (${parentEventId},${replayAccountId},'bayn.order.v3',${parent.brokerOrderId},${parent.clientOrderId},${entryId},
+                  'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED')`
+              }
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at) VALUES (${eventId},'bayn.paper-broker-event.v1',
             ${eventId},'ORDER','ALPACA',${replayAccountId},${brokerOrderId},100,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status)
+            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id)
             VALUES (${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'partial-tp-native-child',${entryId},
-            'AAPL','SELL','LIMIT','DAY',5000000000,2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED')`
+            'AAPL','SELL','LIMIT','DAY',${originalQuantity},2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED',
+            ${keepNative ? parent.brokerOrderId : null})`
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at) VALUES (${partialEventId},'bayn.paper-broker-event.v1',
                 ${partialEventId},'FILL','ALPACA',${replayAccountId},'partial-tp-fill',101,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
                 intent_id,symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp) VALUES (${partialEventId},
                 ${replayAccountId},${entryFill.schemaVersion},'partial-tp-fill',${brokerOrderId},'partial-tp-native-child',
-                ${entryId},'AAPL','SELL',2000000000,${entryFill.priceAtoms},0,${cancelAt.replace('Z', '000000Z')})`
+                ${entryId},'AAPL','SELL',2000000000,${partialPriceAtoms},0,${cancelAt.replace('Z', '000000Z')})`
               yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,
                 account_id,symbol,side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,
                 realized_pnl_micros,quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,
                 content_hash,occurred_at) VALUES (${partialEventId},'bayn.accounting-transaction.v2',${partialEventId},
-                ${entryId},${replayAccountId},'AAPL','SELL',2000000000,${entryFill.priceAtoms},${partialNotional},0,
-                ${partialNotional},0,-2000000000,${'-' + partialNotional},${partialNotional},${partialEventId},${partialEventId},${cancelAt})`
+                ${entryId},${replayAccountId},'AAPL','SELL',2000000000,${partialPriceAtoms},${partialNotional},0,
+                ${partialBasis},${String(BigInt(partialNotional) - BigInt(partialBasis))},-2000000000,${'-' + partialBasis},${partialNotional},${partialEventId},${partialEventId},${cancelAt})`
               yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,intent_id,broker_event_id,
                 tigerbeetle_cluster_id,tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,
                 recorded_at) VALUES (${partialEventId},'bayn.paper-accounting-receipt.v1',${entryId},${partialEventId},1,1,
                 ARRAY[1,2]::numeric[],ARRAY[999]::numeric[],${partialNotional},${partialNotional},${partialEventId},${cancelAt})`
             }),
           )
-          const parent = portfolio.brokerState.orders[0]
-          if (parent === undefined) throw new Error('Expected the filled entry order')
           const child = {
             ...parent,
             brokerOrderId,
@@ -2586,18 +2820,43 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             side: OrderSide.Sell,
             orderType: OrderType.Limit,
             status: OrderStatus.PartiallyFilled,
-            quantityAtoms: '5000000000',
+            quantityAtoms: originalQuantity,
             filledQuantityAtoms: '2000000000',
             limitPriceMicros: levels.profitLimitPriceMicros,
             observedAt: cancelAt,
+            ...(keepNative ? { timeInForce: TimeInForce.Day } : {}),
+            ...(keepNative ? { parentBrokerOrderId: parent.brokerOrderId } : {}),
+          }
+          const remainingStop = {
+            ...child,
+            brokerOrderId: 'partial-tp-native-stop',
+            clientOrderId: 'partial-tp-native-stop',
+            orderType: OrderType.StopLimit,
+            status: OrderStatus.Pending,
+            quantityAtoms: remainingQuantity,
+            filledQuantityAtoms: '0',
+            limitPriceMicros: levels.stopLimitPriceMicros,
+            stopPriceMicros: levels.stopPriceMicros,
           }
           const pendingMaterial = {
             ...closeFacts.brokerState,
             positions: closeFacts.brokerState.positions.map((position) => ({
               ...position,
-              quantityAtoms: '3000000000',
+              quantityAtoms: remainingQuantity,
+              ...(keepNative
+                ? {
+                    costBasisMicros: String(BigInt(position.costBasisMicros) - BigInt(partialBasis)),
+                    marketValueMicros: String(
+                      (BigInt(position.marketPriceMicros) * BigInt(remainingQuantity)) / 1_000_000_000n,
+                    ),
+                    unrealizedPnlMicros: String(
+                      (BigInt(position.marketPriceMicros) * BigInt(remainingQuantity)) / 1_000_000_000n -
+                        (BigInt(position.costBasisMicros) - BigInt(partialBasis)),
+                    ),
+                  }
+                : {}),
             })),
-            orders: [...closeFacts.brokerState.orders, child],
+            orders: [...closeFacts.brokerState.orders, child, ...(keepNative ? [remainingStop] : [])],
           }
           const pendingHash = Result.getOrThrow(reconciledStateHash(pendingMaterial))
           const pendingReconciliation = {
@@ -2701,7 +2960,25 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             )
           const advance = (program: ReturnType<typeof makeProgram>, facts: ReconciliationPassResult) =>
             advancePositionProtection({
-              input: closeRequest.input,
+              input: keepNative
+                ? {
+                    ...closeRequest.input,
+                    intradayMarketData: {
+                      ...marketData,
+                      loadSnapshot: (query) =>
+                        Effect.succeed(
+                          streamingFixtureFromRaw(
+                            makeIntradayMomentumTestSnapshot(
+                              fixture.protocol,
+                              { ...query, archiveWatermarks: [] },
+                              { AAPL: 0.002 },
+                            ),
+                            query,
+                          ).snapshot,
+                        ),
+                    },
+                  }
+                : closeRequest.input,
               cycle,
               document,
               protocol: fixture.protocol,
@@ -2712,6 +2989,28 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               closeExpiresAt: cycle.window.executionCloseAt,
             })
           const first = yield* advance(makeProgram(cancelStore, cancelFence), pendingFacts)
+          if (keepNative) {
+            const current = yield* (yield* JevPositionStore).read({
+              cycleId: cycle.identity.cycleId,
+              entryDecisionHash: document.contentHash,
+              brokerState: pendingFacts.brokerState,
+            })
+            expect(current).toMatchObject({
+              protectionEvidenceVersion: 'bayn.jev-protection-evidence.v2',
+              exitRequestedAt: null,
+              profitExitRequested: false,
+              protectionDisposals: { quantityAtoms: '2000000000', costBasisMicros: partialBasis },
+            })
+            expect(first).toMatchObject({ _tag: 'Step', step: { _tag: 'Wait', waitReason: 'JEV_POSITION_HELD' } })
+            expect(brokerCalls).toBe(0)
+            expect(yield* sql`SELECT count(*)::integer AS count FROM native_protection_cancel_commands`).toEqual([
+              { count: 0 },
+            ])
+            expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_cycle_paper_closures`).toEqual([
+              { count: 0 },
+            ])
+            return
+          }
           expect(fenceCalls).toBe(2)
           expect(first._tag).toBe(scenario === 'protection-committed-ack-loss' ? 'PostMutationReconciliation' : 'Step')
           expect(brokerCalls).toBe(1)
@@ -3030,7 +3329,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 60_000)
         expect(yield* store.bind(closure)).toEqual(saved)
         expect(Option.getOrThrow(yield* store.read(nativeInput.cycleId))).toEqual(saved)
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
         const closeWindow = {
           startAt: new Date(Date.parse(cycle.window.executionCloseAt) - 300_000).toISOString(),
           submitCutoffAt: cycle.window.executionCloseAt,
@@ -3118,7 +3417,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
         })
         expect(recoveredReplan).toEqual({ _tag: 'Close', document: residual.document })
-        expect(calls).toBe(15)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length)
       }).pipe(
         Effect.provideService(BrokerRead, broker),
         Effect.provideService(
@@ -3127,8 +3426,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             evaluate: (request) =>
               Effect.gen(function* () {
                 calls += 1
-                if (calls === 15) yield* TestClock.setTime(observed + 7000)
-                return nativeJevInference(request, new Date(yield* Clock.currentTimeMillis).toISOString(), calls <= 15)
+                if (calls === equityMarketProfile.candidateSymbols.length) yield* TestClock.setTime(observed + 7000)
+                return nativeJevInference(
+                  request,
+                  new Date(yield* Clock.currentTimeMillis).toISOString(),
+                  calls <= equityMarketProfile.candidateSymbols.length,
+                )
               }),
           }),
         ),
@@ -3146,5 +3449,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     'measured-on-time',
     'protection-committed-ack-loss',
     'protection-receipt-missing',
+    'protection-native-tp-keeps-coverage',
   ])('native exit persistence: %s', nativeExitPersistence, 30_000)
 })
+import { longEntryBrokerReads } from '../testing/entry-broker-reads.test-support'

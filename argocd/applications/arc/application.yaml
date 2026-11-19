@@ -8,7 +8,7 @@ spec:
   sources:
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.14.2
+      targetRevision: 0.15.1
       helm:
         releaseName: arc-controller
         valuesObject:
@@ -22,7 +22,7 @@ spec:
               effect: NoSchedule
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.2
+      targetRevision: 0.15.1
       helm:
         releaseName: arc-runner-set
         valuesObject:
@@ -66,7 +66,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a2411dd5554a172beff1b18866c242ee4410838b4c095cc1b8143fef73dfa6b3
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -191,7 +191,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a2411dd5554a172beff1b18866c242ee4410838b4c095cc1b8143fef73dfa6b3
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -255,7 +255,7 @@ spec:
                             storage: 100Gi
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.2
+      targetRevision: 0.15.1
       helm:
         releaseName: arc-runner-set-amd64
         valuesObject:
@@ -298,7 +298,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a2411dd5554a172beff1b18866c242ee4410838b4c095cc1b8143fef73dfa6b3
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -423,7 +423,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a2411dd5554a172beff1b18866c242ee4410838b4c095cc1b8143fef73dfa6b3
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:88a0ad188eada83923423a88267f744fe854c66a460f22a79dee60c0174a578e
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]

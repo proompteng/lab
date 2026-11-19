@@ -1,14 +1,17 @@
 # Bayn deployment
 
-## Jev 1.14 cutover
+## Native equity long and short cutover
 
-[The Box cutover](../../../docs/bayn/jev114-box-cutover.md) first settles the exact v39 PAPER identity through migration 186 and native OBSERVE recovery. The old mandate remains absent until the new protocol and verified immutable image have a reviewed same-account activation request.
+[The native short cutover](../../../docs/bayn/equity-short-cutover.md) first settles the exact v40 PAPER identity through migration 199 and native OBSERVE recovery. Migration 200 admits v41 only from settled, flat, clear OBSERVE. The mandate stays absent until the immutable successor image and same-account PAPER request are verified. [The universe and strategy evidence](../../../docs/bayn/native-short-universe-2026-11-14.md) records the ten S&P 100 entry candidates, retained source symbols, directional execution and economic limitations.
 
 ## Images and operating commands
 
 The `bayn` image serves status, execution, activation and market projection. It retains `bayn-forward-performance`
 for private financial reports in the API workload. The trading artifact retains its replay executable and compiler
 receipt for candidate image-membership qualification; the registered trading digest remains authoritative.
+Read-only reports own at most eight native verification workers on x64 or sixteen on ARM64. The API has a sixteen-core burst limit, a 250m
+CPU request and a 6 GiB memory limit; execution-controller resources stay separate. Report cancellation and the
+CLI supervisor close the worker pool and discard incomplete stdout. Fenced receipt persistence verifies inline.
 The `bayn-research` image owns research, replay, GEPA, frozen
 controls and `bayn-system-assessment`. Qualification flags (`--system-*`) move to that command; the financial
 report command rejects them. Both artifacts publish as one commit- and run-bound Kargo cohort. Trading and research
@@ -146,13 +149,60 @@ This restriction ships through the normal immutable main image and Kargo/Argo pa
 change the risk limits, reset financial history or revoke PAPER capital. The deployed `/v1/status` response reports
 `tradingScope.entryMarkets: ["EQUITY"]`; retained crypto cycles report recovery-only or closed entry scope.
 
+## Execution-worker memory
+
+The execution controller requests 1 GiB and has a 3 GiB container limit shared by its parent, market projection,
+decision worker and native buffers. The November 18 capacity check found 634.3 GiB available on Altra and
+855.7 GiB on Turin, with no memory pressure on either node. The existing scheduling request is unchanged.
+Reporting remains isolated from execution workers.
+
+The main process and both workers inherit `--max-old-space-size=640 --max-semi-space-size=16` through
+`NODE_OPTIONS`. Each V8 heap has a 688 MiB ceiling (640 MiB old generation plus three 16 MiB semi-spaces).
+Three ceilings total 2,064 MiB, leaving 1,008 MiB of the 3 GiB container budget for native memory and buffers.
+A native Node 24.11.1 probe confirmed that inherited heap flags also govern worker heaps despite smaller
+worker `resourceLimits`, so the budget must include all three isolates. These allowances do not bound process
+RSS; live isolate and process measurements remain necessary for acceptance.
+
+On November 17 at 17:59:33 UTC, the active ARM64 controller exhausted its previous 192 MiB old-generation
+allowance and exited with code 133. The final GC reported allocation failure near 189 MiB. The preceding
+eight-hour telemetry peaked at 190.9 MiB of main-isolate used heap and 708.3 MiB of process RSS, establishing
+isolate heap pressure well below the container limit. The subsequent 384 MiB old-generation allowance also
+exhausted the active ARM64 controller on November 18 at 19:59:31 UTC: V8 reported ineffective mark-compacts
+near its heap limit and JavaScript heap exhaustion, followed by exit code 133. The container was not OOM-killed.
+The preceding 15-minute sampled process RSS peaked at 1,083.75 MiB under the former 2 GiB container limit;
+the main and projection isolates each had a 432 MiB V8 ceiling. The larger finite budget provides allocation
+and GC headroom for this measured workload. It does not establish a resolved retention cause, a leak-free
+runtime or a complete-session upper bound.
+
+The shared process has an eight-core burst limit with its existing 250m request. The November 17 increase from two
+to four cores addressed measured throttling while increasing the bounded heap. During the November 18 session,
+the active ARM64 controller still accumulated 306 throttled seconds and throttled 21.7% of periods in the hour
+ending at 18:39 UTC. The node's four-hour maximum CPU utilization was 25.0%, leaving capacity for the owner,
+projection, decision worker and V8 GC to progress together. That CPU correction preserved the memory budget;
+the later heap correction is described above. Measure throttling and stage latency after
+rollout on a comparable active workload; these observations do not establish an isolated CPU contribution to
+the earlier combined resource correction or a whole-session latency guarantee.
+
+The existing parent OTLP exporter publishes `bayn_runtime_process_resident_memory_bytes` once per process and
+`bayn_runtime_memory_bytes{isolate,kind}` for the fixed `main`, `market-projection` and `decision-construction` roles.
+Kinds are `heap_used`, `heap_total`, `external`, `array_buffers` and `heap_limit`. `array_buffers` is included in
+`external`; `heap_used` is included in `heap_total`. These overlapping measures must not be added together.
+Projection memory travels in the bounded 15-second capture-health frame; decision memory travels in completed
+decision replies. Workers acquire no additional exporter or diagnostic request channel.
+
+Always display `time() - bayn_runtime_memory_sample_timestamp_seconds` beside worker memory. An idle decision
+worker retains its original sample time, and a replaced, failed or closed worker clears its sample timestamp to zero.
+Filter timestamp zero before treating a series as observed. Completion acceptance requires a representative session
+with zero OOMs, memory headroom and unchanged financial reconciliation; a healthy rollout alone establishes none
+of those session-long claims. Rollback uses a compatible prior verified Freight through Kargo.
+
 ## Private evidence reporting
 
 Run the private forward-performance command in the API workload, separately from the native controller.
 The API workload retains its existing CPU allocation and 256 MiB memory request; its 4 GiB memory limit supports
 large immutable evidence cuts. Use a 3 GiB Node heap for that command and stream stdout to a private file.
-A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The native controller's resource limits,
-original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
+A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. Reporting preserves the native controller's
+original deadlines and capital enforcement. Historical cuts and financial records are retained.
 
 ## Webull supplementary context
 

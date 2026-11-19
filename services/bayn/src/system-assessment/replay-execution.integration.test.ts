@@ -7,7 +7,7 @@ import { NodeServices } from '@effect/platform-node'
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Result, Schema } from 'effect'
 
 import { sha256 } from '../hash'
-import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { nativeReplayFixture as retainedReplayFixture } from '../testing/retained-replay-fixture'
 import { nativeReplayPolicyManifest } from '../intraday-replay/native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { testHash } from './fixtures.test-support'

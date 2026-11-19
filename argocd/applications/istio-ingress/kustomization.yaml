@@ -6,7 +6,7 @@ resources:
 helmCharts:
   - name: gateway
     repo: https://blob.istio.io/istio-release/charts
-    version: 1.31.0
+    version: 1.32.0
     releaseName: gateway
     namespace: istio-ingress
     valuesInline:

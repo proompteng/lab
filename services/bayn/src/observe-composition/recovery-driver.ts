@@ -1,4 +1,5 @@
 import { positionProtectionIntervalMs } from '../jev/exit-policy'
+import { ExecutionProtectionRelease } from '../execution/events'
 import { firstIntradayObservationAtMs, selectIntradayExecutionSession } from '../cycle/runner/calendar-decisions'
 import { strategyTradingProtocol } from '../strategy'
 import { continuousExecutionPolicy } from '../market-hours'
@@ -77,6 +78,7 @@ import {
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
   recoverExpiredEntryBeforeReconciliation,
+  executeProtectionReleaseClose,
   readUnfinishedMutationCycle,
 } from './execution-cycle'
 
@@ -373,6 +375,16 @@ const isPendingBrokerReconciliation = (error: CycleRunnerError): boolean =>
   error.cause.cause instanceof BrokerReadError &&
   error.cause.cause.kind === BrokerReadErrorKind.ObservationPending
 
+const isMissingBrokerObservation = (error: CycleRunnerError): boolean =>
+  error.operation === 'reconcile' &&
+  error.cause instanceof OperationalError &&
+  error.cause.operation === 'reconciliation' &&
+  error.cause.cause instanceof BrokerReadError &&
+  error.cause.cause.operation === 'preflight' &&
+  error.cause.cause.kind === BrokerReadErrorKind.Timeout &&
+  error.cause.cause.retryable &&
+  error.cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   maximumAgeMs: number,
@@ -385,7 +397,10 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
     if (
       decision._tag === 'RECONCILE' ||
-      (state.lastFailure !== undefined && isPendingBrokerReconciliation(state.lastFailure))
+      // A publication can repair local projection absence before the timer. Revalidate its durable
+      // fences on the admitted event; provider failures retain their existing recovery backoff.
+      (state.lastFailure !== undefined &&
+        (isPendingBrokerReconciliation(state.lastFailure) || isMissingBrokerObservation(state.lastFailure)))
     )
       return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
@@ -577,13 +592,19 @@ export const executionAdvanceDeadline = (
     if (Number.isSafeInteger(at)) deadlines.push({ at: Math.max(now + 1, at), reason })
   }
   const after = (delay: number, reason: ExecutionDeadlineReason) => add(now + Math.max(1, delay), reason)
+  // A post-mutation preflight can request its existing shorter continuation; the ordinary
+  // financial freshness cadence remains the upper bound when no earlier evidence arrives.
+  const brokerObservationDelayMs = Math.min(
+    advanced.nextDelayMs ?? policy.financialFreshnessMs,
+    policy.financialFreshnessMs,
+  )
   if (!Number.isSafeInteger(now)) return undefined
   if (advanced.nextWakeAt !== undefined) add(Date.parse(advanced.nextWakeAt), ExecutionDeadlineReason.Recovery)
   if (advanced.observation.result === 'FAILURE') {
     after(advanced.nextDelayMs ?? policy.recoveryDelayMs, ExecutionDeadlineReason.Recovery)
   } else if (advanced.result === undefined) {
     if (advanced.observation.waitReason === 'BROKER_OBSERVATION_PENDING')
-      after(policy.financialFreshnessMs, ExecutionDeadlineReason.FinancialFreshness)
+      after(brokerObservationDelayMs, ExecutionDeadlineReason.FinancialFreshness)
   } else {
     const result = advanced.result
     if (result.outcome === 'WINDOW_CLOSED' && result.closedEntryWindow !== undefined) {
@@ -628,7 +649,7 @@ export const executionAdvanceDeadline = (
         if (reason === 'AWAITING_SUBMISSION_OPEN')
           add(Date.parse(cycle.window.submissionOpenAt), ExecutionDeadlineReason.Eligibility)
         if (reason === 'BROKER_OBSERVATION_PENDING')
-          after(policy.financialFreshnessMs, ExecutionDeadlineReason.FinancialFreshness)
+          after(brokerObservationDelayMs, ExecutionDeadlineReason.FinancialFreshness)
         if (
           reason === 'JEV_POSITION_HELD' ||
           reason === 'JEV_POSITION_AWAITING_RECONCILIATION' ||
@@ -742,15 +763,7 @@ const makeRecoveryFirstCycleDriverEffect = (
         const observedAt = yield* currentUtcInstant
         const closeAt = yield* Ref.get(postExitCloseAt)
         const remaining = closeAt === undefined ? 0 : Date.parse(closeAt) - Date.parse(observedAt)
-        const missingPostExitCut =
-          remaining > 0 &&
-          error.operation === 'reconcile' &&
-          error.cause instanceof OperationalError &&
-          error.cause.operation === 'reconciliation' &&
-          error.cause.cause instanceof BrokerReadError &&
-          error.cause.cause.operation === 'preflight' &&
-          error.cause.cause.kind === BrokerReadErrorKind.Timeout &&
-          error.cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+        const missingPostExitCut = remaining > 0 && isMissingBrokerObservation(error)
         if (missingPostExitCut) yield* Ref.set(cadence, {})
         else yield* Ref.set(postExitCloseAt, undefined)
         const observation = yield* observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })
@@ -928,6 +941,16 @@ const makeRecoveryFirstCycleDriverEffect = (
             }).pipe(Effect.result)
       if (Result.isFailure(lookup)) return yield* observeCycleFailure(lookup.failure)
       const unfinished = capability._tag === 'RecoveryOnly' ? undefined : { cycle: lookup.success }
+      const release = yield* ExecutionProtectionRelease
+      if (release !== undefined) {
+        const accelerated = yield* runMutationPassWithinTimeout(
+          executeProtectionReleaseClose(input, unfinished?.cycle, policy, capability, release),
+          cyclePassTimeoutMs,
+        ).pipe(Effect.result)
+        if (Result.isFailure(accelerated)) return yield* observeCycleFailure(accelerated.failure)
+        if (accelerated.success?._tag === 'PostMutationReconciliation')
+          return yield* completeCycleAdvance(accelerated.success)
+      }
       const containment = yield* recoverExpiredEntryBeforeReconciliation(
         input,
         unfinished?.cycle,

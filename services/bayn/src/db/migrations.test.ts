@@ -16,6 +16,14 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [195, 'jev_inference_work'],
     [196, 'streaming_operational_controller'],
     [197, 'inference_expense_wakeups'],
+    [198, 'equity_short_accounting'],
+    [199, 'equity_short_observe_cutover'],
+    [200, 'native_equity_shorts'],
+    [201, 'not_dispatched_visual_evidence'],
+    [202, 'protection_release_proofs'],
+    [203, 'protection_read_allowance'],
+    [204, 'protection_close_plans'],
+    [205, 'inference_source_seals'],
   ])
   const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
 
@@ -29,6 +37,14 @@ test('runtime migration loader schedules atomic controller rotation after retire
     [195, 'jev_inference_work'],
     [196, 'streaming_operational_controller'],
     [197, 'inference_expense_wakeups'],
+    [198, 'equity_short_accounting'],
+    [199, 'equity_short_observe_cutover'],
+    [200, 'native_equity_shorts'],
+    [201, 'not_dispatched_visual_evidence'],
+    [202, 'protection_release_proofs'],
+    [203, 'protection_read_allowance'],
+    [204, 'protection_close_plans'],
+    [205, 'inference_source_seals'],
   ])
 })
 

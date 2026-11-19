@@ -17,6 +17,7 @@ import {
   makeStagedSkipReceipt,
   stageResponseIdentity,
   type StagedCheckpoint,
+  type StagedTerminalReceipt,
 } from './staged-checkpoint'
 import { decodeJevResponse, prepareJevRequest } from './contract'
 import { JevClient } from './client'
@@ -26,12 +27,13 @@ import { makeEntryJudgmentRequest } from './entry-questions'
 import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
-import { defaultJevProtocolDocument } from './protocol'
+import { defaultJevProtocolDocument, JevProtocolSchema } from './protocol'
 
 export const entryEvaluationRequestFixture = (
   observedAt = '2026-10-25T07:00:32.000Z',
   symbol = 'AAPL',
   selectionPolicy?: EntryAblationSelection,
+  protocol: typeof JevProtocolSchema.Type = defaultJevProtocolDocument,
 ) => {
   const windowEndAt = new Date(Math.floor(Date.parse(observedAt) / 60_000) * 60_000).toISOString()
   const bars = [
@@ -46,7 +48,7 @@ export const entryEvaluationRequestFixture = (
         ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       numericalState: {
-        schemaVersion: defaultJevProtocolDocument.inputDefinition,
+        schemaVersion: protocol.inputDefinition,
         webullContext: null,
         entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
         task: { decisionPurpose: 'ENTRY' },
@@ -54,7 +56,7 @@ export const entryEvaluationRequestFixture = (
         session: { completedBarWindowEndsAt: windowEndAt },
       },
       chartSource: { symbol, windowEndAt, bars },
-      protocol: defaultJevProtocolDocument,
+      protocol,
       funding: { bidMicros: '104000000', askMicros: '104020000', capitalMicros: '100000000000', cryptoFeeTier: null },
     }),
   )
@@ -66,7 +68,7 @@ export const entryEvaluationRequestFixture = (
       snapshotId: 'c'.repeat(64),
       symbol,
       observedAt,
-      expiresAt: new Date(Date.parse(observedAt) + defaultJevProtocolDocument.inferenceValidityMs).toISOString(),
+      expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
       request: prepared.input,
       requestHash: prepared.requestHash,
     }),
@@ -76,7 +78,8 @@ export const entryEvaluationRequestFixture = (
 export const chartInferenceFixture = (input: EntryInferenceMaterial, at: string) => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
   const prepared = Result.getOrThrow(
-    (input.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+    (input.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41'
       ? makeInitialChartStageRequest
       : retainedJevChartStages.makeInitialChartStageRequest)({
       chart,
@@ -215,7 +218,8 @@ export const nativeChartInference = (raw: unknown, at: string) => {
 
 export const chartAssessmentsFixture = (source: ChartDecisionSource, at = source.chart.windowEndAt) => {
   const stages =
-    source.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+    source.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+    source.protocol.schemaVersion === 'bayn.jev.protocol.v41'
       ? { makeInitialChartStageRequest, stagedChartAssessments }
       : retainedJevChartStages
   const initial = Result.getOrThrow(stages.makeInitialChartStageRequest(source))
@@ -305,11 +309,16 @@ export const entryCompletionFixture = (
   const base = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
   const skip = checkpoint.skips[0]
   const baseStart = base?.outcome ?? (skip === undefined ? null : { status: 'NOT_REQUESTED' as const, skip })
-  if (baseStart === null && request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v40')
+  if (
+    baseStart === null &&
+    request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v40' &&
+    request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41'
+  )
     throw new Error('Expected fixture base outcome')
   const nativeChart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const assessments = Result.getOrThrow(
-    (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+    (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41'
       ? stagedChartAssessments
       : retainedJevChartStages.stagedChartAssessments)(
       { chart: nativeChart, protocol: request.request.protocol, funding: request.request.funding },
@@ -376,10 +385,16 @@ export const stagedCheckpointFixture = (
     readonly request: EntryInferenceMaterial
   },
   at = request.observedAt,
-  stages: ChartCheckpointCodecs = request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+  stages: ChartCheckpointCodecs = request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+  request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41'
     ? { makeInitialChartStageRequest }
     : retainedJevChartStages,
-): StagedCheckpoint => {
+): Omit<StagedCheckpoint, 'terminals'> & {
+  readonly terminals: readonly Extract<
+    StagedTerminalReceipt,
+    { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }
+  >[]
+} => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const initial = Result.getOrThrow<
     Result.Result.Success<ReturnType<ChartStageCodecs['makeInitialChartStageRequest']>>,

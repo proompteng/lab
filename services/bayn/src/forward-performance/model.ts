@@ -3,6 +3,7 @@ import type { IsoDate } from '../schemas'
 import type { IntradaySnapshotManifest, IntradaySnapshotRequest } from '../market-data/intraday/model'
 import type { StreamingSnapshotManifest } from '../market-data/streaming/snapshot'
 import type { AccountingTransaction } from '../accounting/schema'
+import type { NativeProtection, Order, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 
 export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v4' as const
 
@@ -36,6 +37,7 @@ export type ForwardPerformanceExecutionQualityReasonCode =
   | 'FILL_EVIDENCE_GAP'
   | 'FILL_IDENTITY_DRIFT'
   | 'FILL_QUANTITY_MISMATCH'
+  | 'PROTECTIVE_REFERENCE_PRICE_EVIDENCE_GAP'
   | 'FILL_TIMESTAMP_GAP'
   | 'INVALID_EXECUTION_MICROS'
   | 'PLANNED_DECISION_EVIDENCE_GAP'
@@ -115,6 +117,7 @@ export interface ForwardPerformanceTransactionEvidence {
 }
 
 export interface ForwardPerformanceExecutionFillEvidence {
+  readonly sourceSequence?: string
   readonly brokerEventId: string
   readonly fillId: string
   readonly brokerOrderId: string
@@ -172,6 +175,21 @@ export interface ForwardPerformanceExecutionEvidence {
     readonly observedAt: string
   }
   readonly fills: readonly ForwardPerformanceExecutionFillEvidence[]
+  readonly nativeProtection?: {
+    readonly schemaVersion: 'bayn.forward-performance-native-protection.v1'
+    readonly target: {
+      readonly symbol: string
+      readonly side: OrderSide
+      readonly orderType: OrderType.Limit | OrderType.StopLimit
+      readonly timeInForce: TimeInForce.Day | TimeInForce.GoodUntilCanceled | TimeInForce.ImmediateOrCancel
+      readonly quantityAtoms: string
+    }
+    readonly limitPriceMicros: string
+    readonly protection: NativeProtection
+    readonly authorityGenerationHash: string
+    readonly orders: readonly { readonly eventId: string; readonly occurredAt: string; readonly order: Order }[]
+    readonly fills: readonly ForwardPerformanceExecutionFillEvidence[]
+  }
   readonly terminalReferencePrice?: {
     readonly schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1'
     readonly cycleId: string

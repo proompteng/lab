@@ -1,6 +1,6 @@
 import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind } from '../instruments'
-import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
+import { isShortExitPlan, type FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import { quantityScale } from '../quantity'
 
 export type BrokerProtectionMethod = 'BRACKET' | 'OCO' | 'STOP_LIMIT' | 'APPLICATION'
@@ -49,7 +49,8 @@ export const decidePositionProtection = (input: {
   readonly exitDue: boolean
   readonly observedAt: string
 }): PositionProtectionAction => {
-  const { plan, entry, quantityAtoms, protection } = input
+  const { plan, entry, protection } = input
+  const quantityAtoms = isShortExitPlan(plan) ? -input.quantityAtoms : input.quantityAtoms
   if (protection._tag === 'Unknown') return { _tag: 'Recover', intentId: protection.intentId }
   if (protection._tag === 'Canceling') return { _tag: 'Wait', reason: 'CANCEL_PENDING' }
   if (entry._tag === 'Working')
@@ -65,12 +66,19 @@ export const decidePositionProtection = (input: {
   if (quantityAtoms > BigInt(plan.maximumQuantityAtoms)) return { _tag: 'Block', reason: 'UNBOUND_POSITION' }
   const available = alpacaEntryProtectionMethod(plan.levels.symbol, quantityAtoms, input.observedAt)
   if (protection._tag === 'Armed') {
+    // A whole-share native parent can retain fractional inventory after a partial fill.
+    // New-order sizing restrictions do not invalidate its already verified children.
+    const methodMatches =
+      protection.method === 'STOP_LIMIT'
+        ? available === 'STOP_LIMIT'
+        : instrumentMarket(plan.levels.symbol) === MarketKind.Equity &&
+          equityClockSession(input.observedAt) === 'regular'
     const targetMatches =
       protection.method === 'STOP_LIMIT'
         ? protection.profitLimitPriceMicros === null
         : protection.profitLimitPriceMicros === BigInt(plan.levels.profitLimitPriceMicros)
     const exact =
-      (available === 'BRACKET' ? protection.method !== 'STOP_LIMIT' : protection.method === 'STOP_LIMIT') &&
+      methodMatches &&
       protection.quantityAtoms === quantityAtoms &&
       protection.stopPriceMicros === BigInt(plan.levels.stopPriceMicros) &&
       protection.stopLimitPriceMicros === BigInt(plan.levels.stopLimitPriceMicros) &&
@@ -93,7 +101,7 @@ export const entryBracketProtection = (
   if (plan === undefined || alpacaEntryProtectionMethod(symbol, BigInt(quantityAtoms), observedAt) !== 'BRACKET')
     return undefined
   return {
-    _tag: 'Bracket' as const,
+    _tag: isShortExitPlan(plan) ? ('EquityShortBracket' as const) : ('Bracket' as const),
     stopPriceMicros: plan.levels.stopPriceMicros,
     stopLimitPriceMicros: plan.levels.stopLimitPriceMicros,
     profitLimitPriceMicros: plan.levels.profitLimitPriceMicros,

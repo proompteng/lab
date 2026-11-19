@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import {
   persistVisualClaimFixture,
   persistVisualTransitionFixture,
@@ -84,7 +85,7 @@ const run = <A, E>(
 ) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))))
 const seed = (journal: Effect.Success<typeof setup>['journal']) =>
-  journal.batches.begin(plan, observation).pipe(Effect.asVoid)
+  beginRecordedJevBatch(journal.batches, plan, observation).pipe(Effect.asVoid)
 const receipt = (evaluationRequest = request) =>
   Result.getOrThrow(
     makeJevEvaluationReceipt(evaluationRequest, {
@@ -202,7 +203,7 @@ test('a durable pending claim forbids another call, expires once, and preserves 
       yield* seed(journal)
       yield* retainCheckpoint(journal)
       yield* persistHandoffFixture(journal.handoffs, entryCompletionFixture(request, observation.observedAt).handoff)
-      expect((yield* journal.batches.begin(plan, observation)).dispatches).toEqual([])
+      expect((yield* beginRecordedJevBatch(journal.batches, plan, observation)).dispatches).toEqual([])
       expect((yield* journal.batches.finish(plan.batchId)).result).toBeNull()
       yield* TestClock.setTime(Date.parse(plan.expiresAt))
       const expired = yield* journal.batches.finish(plan.batchId)
@@ -230,7 +231,9 @@ test.each([
       const path = `${directory}/observation-${plan.observationHash}.json`
       yield* fs.writeFileString(path, JSON.stringify(changed))
       expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
-      expect(Result.isFailure(yield* Effect.result(journal.batches.begin(plan, observation)))).toBeTrue()
+      expect(
+        Result.isFailure(yield* Effect.result(beginRecordedJevBatch(journal.batches, plan, observation))),
+      ).toBeTrue()
       yield* fs.writeFileString(path, JSON.stringify(observation))
       expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
     }),
