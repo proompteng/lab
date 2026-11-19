@@ -513,10 +513,10 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the enabled service image upgrade wave', () => {
-    expect(featureFlagsKustomization).toContain('version: 2.12.1')
-    expect(featureFlagsKustomization).toContain('newTag: v2.12.0')
+    expect(featureFlagsKustomization).toContain('version: 2.14.2')
+    expect(featureFlagsKustomization).toContain('newTag: v2.14.2')
     expect(featureFlagsKustomization).toContain(
-      'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
+      'digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8',
     )
     expect(cloudflaredDeployment).toContain(
       'cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39',
