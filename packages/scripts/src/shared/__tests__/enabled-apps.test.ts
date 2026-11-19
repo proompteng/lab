@@ -363,7 +363,7 @@ describe('enabled app inventory', () => {
       repoImages: [],
       hasHelmChart: false,
     })
-    expect(metricsServerEntry).toContain('targetRevision: v0.9.0')
+    expect(metricsServerEntry).toContain('targetRevision: v0.9.1')
     expect(entry('home-root')).toMatchObject({
       class: 'external-source',
       repoURL: 'git@github.com:gregkonush/home.git',
@@ -374,9 +374,9 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the identity and metrics controller upgrade wave', () => {
-    expect(certManagerKustomization).toContain('version: v1.21.1')
+    expect(certManagerKustomization).toContain('version: v1.21.3')
     expect(externalSecretsKustomization).toContain('version: 2.10.0')
-    expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
+    expect(platformApplicationSet).toContain('targetRevision: v0.9.1')
   })
 
   it('keeps database-critical Barman Cloud reconciliation manual', () => {
@@ -460,11 +460,11 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.6.1/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.6.2/manifests/ha/install.yaml')
     expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
-    expect(applicationSetsReadme.split('argo-cd/v3.6.1/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme.split('argo-cd/v3.6.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
     expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
-    expect(argoCdReadme).toContain('## Argo CD v3.6.1 upgrade')
+    expect(argoCdReadme).toContain('## Argo CD v3.6.2 upgrade')
     expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
     expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
     expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
@@ -519,7 +519,7 @@ describe('enabled app inventory', () => {
       'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39',
+      'cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d',
     )
     expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
