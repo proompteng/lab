@@ -28,7 +28,8 @@ let connections = 0
 let closes = 0
 let aborts = 0
 let phase = 'acquire'
-let stalled = mode !== 'idle' && mode !== 'startup-recover'
+let stalled = mode !== 'idle' && mode !== 'startup-recover' && mode !== 'startup-refused'
+let reopen: ReturnType<typeof setTimeout> | undefined
 const errors: unknown[] = []
 const server = createServer((socket) => {
   const closure = Promise.withResolvers<void>()
@@ -91,6 +92,10 @@ const guard = setTimeout(() => {
 }, 25_000)
 
 try {
+  if (mode === 'startup-refused') {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    reopen = setTimeout(() => server.listen(address.port, '127.0.0.1'), 6_500)
+  }
   const options = await valkeyClientOptions.pipe(
     Effect.provideService(
       ConfigProvider.ConfigProvider,
@@ -130,6 +135,13 @@ try {
       assert.equal(closes, startupAttempts - 1)
       assert.equal(client.isReady, true)
       assert(Option.isNone(yield* cache.get('bayn:recovered')))
+      return
+    }
+    if (mode === 'startup-refused') {
+      assert(aborts >= startupAttempts)
+      assert.equal(connections, 1)
+      assert.equal(client.isReady, true)
+      assert(Option.isNone(yield* cache.get('bayn:reappeared')))
       return
     }
     if (mode === 'idle') {
@@ -190,10 +202,12 @@ try {
   assert.equal(closes, connections)
   if (exhaustsStartup) assert.equal(aborts, startupAttempts)
   else if (mode === 'startup-recover') assert.equal(aborts, startupAttempts - 1)
+  else if (mode === 'startup-refused') assert(aborts >= startupAttempts)
   else assert.equal(aborts, mode === 'startup-interrupt' ? 1 : 0)
   console.log(JSON.stringify({ mode, connections, closes, errors: errors.length }))
 } finally {
   clearTimeout(guard)
+  if (reopen !== undefined) clearTimeout(reopen)
   for (const peer of peers) peer.destroy()
   await new Promise<void>((resolve) => server.close(() => resolve()))
 }
