@@ -21,7 +21,7 @@ import {
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlan } from '../app'
-import { startActivityFills } from '../broker/alpaca/activity-stream'
+import { startAccountActivityStream } from '../broker/alpaca/activity-stream'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer, make as makeAlpacaRead } from '../broker/alpaca/http'
 import {
@@ -182,11 +182,11 @@ export const acquireBrokerObservationRuntime = (
       Effect.sync(() => ManagedRuntime.make(persistenceResources)),
       (value) => value.disposeEffect,
     )
-    const activityFills =
+    const accountActivity =
       plan.config.alpaca.environment === BrokerEnvironment.Sandbox
         ? yield* Effect.gen(function* () {
             const read = yield* makeAlpacaRead(plan.config.alpaca)
-            return yield* startActivityFills(plan.config.alpaca, read.account)
+            return yield* startAccountActivityStream(plan.config.alpaca, read.account)
           }).pipe(
             Effect.provideContext(
               yield* Layer.build(alpacaHttpLayer(plan.config.alpaca).pipe(Layer.provideMerge(telemetry))).pipe(
@@ -350,9 +350,9 @@ export const acquireBrokerObservationRuntime = (
                         const session = yield* BrokerSession
                         sessionVerified = true
                         return yield* broker.capture(
-                          activityFills === undefined
+                          accountActivity === undefined
                             ? session.read
-                            : { ...session.read, activityFills: activityFills.read },
+                            : { ...session.read, accountActivity: accountActivity.read },
                           ticket,
                           captureTimeoutMs,
                         )

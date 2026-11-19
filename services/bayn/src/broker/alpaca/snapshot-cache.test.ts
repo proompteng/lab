@@ -15,6 +15,7 @@ import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtu
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
+import { decodeFeeActivityWitness } from './activity-fees'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import {
   AccountStatus,
@@ -806,14 +807,15 @@ describe('complete history reuse between broker captures', () => {
         const replayRead: BrokerReadShape = {
           ...read,
           fillActivities: () => Effect.die('unexpected REST fill read on PAPER stream'),
-          activityFills: currentUtcInstant.pipe(
+          accountActivity: currentUtcInstant.pipe(
             Effect.map((observedAt) => {
               source.calls.push('execution-stream-view')
               const evidence = { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt }
-              return { fills: fills.map((value) => ({ value, evidence })), evidence }
+              return { fills: fills.map((value) => ({ value, evidence })), feeCounts, evidence }
             }),
           ),
         }
+        const feeCounts = new Map([['["FEE","2026-11-12","-1","0"]', 401]])
         const previousOrder = orders[0]
         if (previousOrder === undefined) throw new Error('missing filled order')
         fills.push({
@@ -826,7 +828,8 @@ describe('complete history reuse between broker captures', () => {
         yield* TestClock.adjust(20_000)
         source.calls.length = 0
         const changed = yield* capture(replayRead, { generation: 4, startedAt: yield* currentUtcInstant }, 15_000)
-        expect(source.calls.filter((call) => call === 'execution-stream-view')).toHaveLength(2)
+        expect(source.calls.filter((call) => call === 'execution-stream-view')).toHaveLength(3)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(5)
         expect(changed.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
         expect(changed.snapshot.history.fees.map((row) => row.value)).toEqual(fees)
         const oldFill = fills[0]
@@ -845,7 +848,7 @@ describe('complete history reuse between broker captures', () => {
         expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
         const unavailableReplay = (kind: BrokerReadErrorKind) => ({
           ...read,
-          activityFills: Effect.fail(
+          accountActivity: Effect.fail(
             new BrokerReadError({ operation: 'activity-stream', kind, message: 'fixture', retryable: true }),
           ),
         })
@@ -861,6 +864,68 @@ describe('complete history reuse between broker captures', () => {
           15_000,
         ).pipe(Effect.result)
         expect(rateLimited).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.RateLimited } })
+      }),
+    )
+  })
+
+  test('reads PAPER fee identities and coin prices once per streamed change and rejects a fee gap', async () => {
+    const fees: FeeActivity[] = []
+    let feeCounts: ReadonlyMap<string, number> = new Map()
+    const source = fixture({ fees })
+    const read: BrokerReadShape = {
+      ...source.read,
+      fillActivities: () => Effect.die('unexpected REST fill read'),
+      accountActivity: currentUtcInstant.pipe(
+        Effect.map((observedAt) => ({
+          fills: [],
+          feeCounts,
+          evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
+        })),
+      ),
+    }
+    const publishedFee = Result.getOrThrow(
+      decodeFeeActivityWitness({
+        activity_type: 'CFEE',
+        ref_id: 'streamed-fee',
+        status: 'executed',
+        currency: 'USD',
+        net_amount: '0.0',
+        qty: '-0.000200',
+        price: '260.102',
+        settle_date: '2026-11-14',
+        details: { system_date: '2026-11-13' },
+      }),
+    )
+    const confirmed = {
+      accountId,
+      activityId: 'rest-fee',
+      date: '2026-11-13',
+      netAmountMicros: '0',
+      sourceCreatedAt: '2026-11-13T18:00:01.000Z',
+      coinDebit: { symbol: 'ETH/USD', quantityAtoms: '200000', priceAtoms: '260100000000' },
+    } satisfies FeeActivity
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-11-13T18:00:01.000Z'))
+        const capture = yield* makeBrokerObservationCapture
+        const observe = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => capture(read, { startedAt, generation }, 15_000)))
+        yield* observe(1)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        yield* observe(2)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        feeCounts = new Map([[publishedFee.key, 1]])
+        const missing = yield* observe(3).pipe(Effect.flip)
+        expect(missing.message).toBe('Alpaca Activity SSE and fee authority have not converged')
+        fees.push({ ...confirmed, coinDebit: { ...confirmed.coinDebit, quantityAtoms: '100000' } })
+        const incorrect = yield* observe(4).pipe(Effect.flip)
+        expect(incorrect.message).toBe(missing.message)
+        fees[0] = confirmed
+        const recovered = yield* observe(5)
+        expect(recovered.snapshot.history.fees.map(({ value }) => value)).toEqual([confirmed])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        yield* observe(6)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
       }),
     )
   })

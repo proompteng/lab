@@ -4,6 +4,7 @@ import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
 import { canonicalHashV1Result } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import type { BrokerConnection } from '../connection'
+import { decodeFeeActivityWitness } from './activity-fees'
 import { activityReplayStart, decodeFillExecution } from './activity-fills'
 import { BrokerReadError, BrokerReadErrorKind, statusError, transportError } from './failures'
 import { redactedHeaders, type FillActivity, type Observed, type ReadEvidence } from './model'
@@ -17,6 +18,7 @@ const eventHeader = Schema.decodeUnknownResult(
   Schema.Struct({
     event_id: Schema.String.check(Schema.isPattern(/^[0-9A-HJKMNP-TV-Z]{26}$/)),
     account_id: Schema.optionalKey(Schema.String),
+    activity_type: Schema.String.check(Schema.isMinLength(1)),
   }),
 )
 
@@ -102,12 +104,13 @@ export const fillActivityIdentity = (executionId: string, executedAt: string) =>
   return { activityId: `${eastern}${milliseconds}::${executionId}`, transactionTime }
 }
 
-export interface ActivityFillCut {
+export interface AccountActivityCut {
   readonly fills: readonly Observed<FillActivity>[]
+  readonly feeCounts: ReadonlyMap<string, number>
   readonly evidence: ReadEvidence
 }
 
-export const startActivityFills = (
+export const startAccountActivityStream = (
   connection: BrokerConnection,
   verifiedAccount: Effect.Effect<unknown, BrokerReadError>,
 ) =>
@@ -123,6 +126,9 @@ export const startActivityFills = (
     let fills: Observed<FillActivity>[] = []
     let view: readonly Observed<FillActivity>[] = []
     const executionIds = new Set<string>()
+    const feeRefs = new Set<string>()
+    const feeCounts = new Map<string, number>()
+    let feeView: ReadonlyMap<string, number> | undefined
     const fetchFrames = (params: Readonly<Record<string, string>>) =>
       Effect.gen(function* () {
         const url = new URL('/v2beta1/events/activities', connection.baseUrl)
@@ -182,10 +188,18 @@ export const startActivityFills = (
         }
         if (checkpoint !== undefined && id <= checkpoint.id)
           return yield* invalidStream('Alpaca activity cursor did not advance')
-        const execution = yield* Effect.fromResult(decodeFillExecution(raw, connection.expectedAccountId)).pipe(
-          Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary execution')),
-        )
-        if (execution !== undefined) {
+        if (header.activity_type === 'FEE' || header.activity_type === 'CFEE') {
+          const { refId, key } = yield* Effect.fromResult(decodeFeeActivityWitness(raw)).pipe(
+            Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary fee')),
+          )
+          if (feeRefs.has(refId)) return yield* invalidStream('Alpaca activity repeated a fee reference')
+          feeRefs.add(refId)
+          feeCounts.set(key, (feeCounts.get(key) ?? 0) + 1)
+          feeView = undefined
+        } else if (header.activity_type === 'TRD') {
+          const execution = yield* Effect.fromResult(decodeFillExecution(raw, connection.expectedAccountId)).pipe(
+            Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary execution')),
+          )
           const { executionId, ...body } = execution
           if (executionIds.has(executionId)) return yield* invalidStream('Alpaca activity repeated an execution ID')
           const observedAt = yield* currentUtcInstant
@@ -218,6 +232,9 @@ export const startActivityFills = (
           fills = []
           view = []
           executionIds.clear()
+          feeRefs.clear()
+          feeCounts.clear()
+          feeView = undefined
           yield* bootstrap
         }
         const anchor = checkpoint
@@ -276,12 +293,13 @@ export const startActivityFills = (
       Effect.forkScoped,
     )
 
-    const read: Effect.Effect<ActivityFillCut, BrokerReadError> = Effect.gen(function* () {
+    const read: Effect.Effect<AccountActivityCut, BrokerReadError> = Effect.gen(function* () {
       const observedAt = yield* currentUtcInstant
       if (!connected || evidence === undefined)
         return yield* observationUnavailable('Alpaca activity stream is not connected')
       if (fills.length !== view.length) view = fills.slice()
-      return { fills: view, evidence: { ...evidence, observedAt } }
+      feeView ??= new Map(feeCounts)
+      return { fills: view, feeCounts: feeView, evidence: { ...evidence, observedAt } }
     })
     return { read }
   })
