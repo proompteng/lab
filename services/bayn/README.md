@@ -204,10 +204,11 @@ Run it only in a separate research process; it is not part of the live service o
 
 ## Internal APIs
 
-The [accounting-verification benchmark](tools/benchmark-accounting-verification.md) measures complete reconstruction
-of synthetic accounting history. SHA-256 uses the runtime's one-shot function, and ledger identifiers parse the same
-first sixteen digest bytes directly as an integer. Canonical validation, hash bytes, and non-zero identifier rules
-retain their existing behavior.
+The reconciliation owner retains the last verified accounting history in memory. For each fresh PostgreSQL row,
+it compares the complete transaction, broker fill, and prior inventory before reusing an immutable ledger plan.
+Changed inputs require reconstruction. Each reconciliation verifies current receipts and reads TigerBeetle to
+check the complete account. The [accounting-verification benchmark](tools/benchmark-accounting-verification.md)
+measures reconstruction and reuse on the same synthetic history.
 
 The [fee-validation benchmark](tools/benchmark-fee-validation.md) measures dated fee and entry-economics work.
 Schema predicates are reused and fill totals are accumulated in one pass; exact fee caps, rounding, and separate

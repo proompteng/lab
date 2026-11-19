@@ -67,12 +67,13 @@ import {
 import {
   compareOpeningCash,
   decideReconciliation,
+  makeAccountingHistoryVerifier,
   projectIntentExpectations,
   reconciliationAlgebraFailureDetails,
   riskContextFromRow,
   validateReconciliationReadback,
   verifyAccountingReceipts,
-  verifyAccountingHistory,
+  type AccountingHistoryVerifier,
   type ReconciliationAlgebraFailure,
 } from '../reconciliation/algebra'
 
@@ -318,7 +319,7 @@ export const readAccountingHistory = (
   sql: PgClient.PgClient,
   accountId: string,
   observedFills: readonly Fill[],
-  ledger: number,
+  verify: AccountingHistoryVerifier,
 ) =>
   runStore(
     'reconcile',
@@ -384,13 +385,12 @@ export const readAccountingHistory = (
       const observed = new Map(observedFills.map((fill) => [fill.fillId, fill]))
       return yield* fromDecision(
         'reconcile',
-        verifyAccountingHistory(
+        verify(
           rows.map((row) => ({
             transaction: accountingTransactionFromRow(row),
             fill: observed.get(row.fill.fillId) ?? row.fill,
             prior: { quantityAtoms: row.prior_quantity_atoms, costMicros: row.prior_cost_micros },
           })),
-          ledger,
         ),
       )
     }),
@@ -646,6 +646,7 @@ export const makeReconciliation = (
   writerFence: WriterFenceService,
   clock: DatabaseClock = postgresWallClock(sql),
 ) => {
+  const verifyAccountingHistory = makeAccountingHistoryVerifier(config.tigerBeetle.ledger)
   const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
     runStore(
       'bindings',
@@ -755,7 +756,7 @@ export const makeReconciliation = (
         const intents: readonly IntentExpectation[] = [...projected.intents, ...childExpectations]
         const unknownMutationCount = projected.unknownMutationCount
 
-        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger).pipe(
+        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, verifyAccountingHistory).pipe(
           withObservedStage('bayn.reconciliation.accounting-history'),
         )
         const transactions = prepared.map(({ transaction }) => transaction)
