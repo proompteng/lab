@@ -4,10 +4,10 @@ import { Clock, Effect, Layer, Option, Result, Schema } from 'effect'
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { decodeJevBatchPlan, JevBatchPlanSchema, JevCandidatePlanStatus } from '../jev/batch'
+import { makeClaimedJevSource } from '../jev/batch-evaluation'
 import { makeJevDispatch } from '../jev/evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
 import { restoreJevObservation } from '../jev/observation'
-import { JevObservationSchema } from '../jev/observation-contract'
 import { StagedDispatchClaimSchema } from '../jev/staged-checkpoint'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
@@ -35,6 +35,7 @@ const WorkRow = Schema.Struct({
 const WorkClaimRow = Schema.Struct({
   plan: Schema.Unknown,
   source_matches: Schema.Boolean,
+  source_seal: Schema.NullOr(Sha256Schema),
   dispatches: Schema.Array(
     Schema.Struct({
       requestId: Sha256Schema,
@@ -215,7 +216,7 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
             AND NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${jobId})
           RETURNING batch_id, dispatches, source_sha256
         )
-        SELECT claimed.dispatches, plan.payload AS plan,
+        SELECT claimed.dispatches, plan.payload AS plan, encode(claimed.source_sha256, 'hex') AS source_seal,
           COALESCE(sha256(convert_to(observation.payload::text, 'UTF8')) = claimed.source_sha256, false) AS source_matches
         FROM claimed JOIN jev_batch_plans AS plan USING (batch_id)
         JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash`.pipe(
@@ -224,7 +225,8 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       )
       const row = rows[0]
       if (row === undefined) return null
-      if (!row.source_matches) return yield* failure('Claimed inference differs from its admission source seal')
+      if (!row.source_matches || row.source_seal === null)
+        return yield* failure('Claimed inference differs from its admission source seal')
       const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
       if (plan.batchId !== jobId) return yield* failure('Claimed inference differs from its immutable plan')
       const requests = plan.candidates.flatMap((candidate) =>
@@ -248,20 +250,10 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
           return dispatch
         }),
       ).pipe(withObservedStage('bayn.jev.worker.dispatch-replay'))
-      const loadObservation = Effect.gen(function* () {
-        const [row] = yield* Schema.decodeUnknownEffect(
-          Schema.Tuple([Schema.Struct({ observation: Schema.Unknown })]),
-          strictParseOptions,
-        )(
-          yield* sql`SELECT payload AS observation FROM intraday_candidate_observations
-          WHERE content_hash = ${plan.observationHash}`,
-        )
-        return row.observation
-      }).pipe(
-        Effect.mapError(failure),
-        withObservedStage('bayn.jev.worker.completion-source', { dependency: 'postgresql' }),
-      )
-      return { admission: { plan, result: null, dispatches }, loadObservation }
+      return {
+        admission: { plan, result: null, dispatches },
+        completionSource: makeClaimedJevSource(plan, row.source_seal),
+      }
     }).pipe(Effect.mapError(failure), withObservedStage('bayn.jev.worker.claim'))
 
   const resume = (cycleInput: string, generationInput: string) =>
@@ -270,10 +262,13 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const generation = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(generationInput)
       const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
       const rows = yield* Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ batch_id: Sha256Schema, observation: JevObservationSchema })),
+        Schema.Array(
+          Schema.Struct({ batch_id: Sha256Schema, observation_hash: Sha256Schema, source_matches: Schema.Boolean }),
+        ),
         strictParseOptions,
       )(
-        yield* sql`SELECT work.batch_id, observation.payload AS observation
+        yield* sql`SELECT work.batch_id, plan.observation_hash,
+          COALESCE(sha256(convert_to(observation.payload::text, 'UTF8')) = work.source_sha256, false) AS source_matches
         FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
         JOIN jev_batch_results AS result USING (batch_id)
         JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
@@ -284,8 +279,18 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       )
       const row = rows[0]
       if (row === undefined) return null
-      const restored = yield* Effect.fromResult(restoreJevObservation(row.observation))
-      return { batchId: row.batch_id, source: restored }
+      if (!row.source_matches) return yield* failure('Completed inference differs from its admission source seal')
+      const loadSource = Effect.gen(function* () {
+        const [source] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
+          strictParseOptions,
+        )(yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${row.observation_hash}`)
+        return yield* Effect.fromResult(restoreJevObservation(source.payload))
+      }).pipe(
+        Effect.mapError(failure),
+        withObservedStage('bayn.jev.decision-source-restore', { dependency: 'postgresql' }),
+      )
+      return { batchId: row.batch_id, loadSource }
     }).pipe(Effect.mapError(failure))
 
   return { read, pending, claim, resume, settleExpired } satisfies typeof JevInferenceWorkStore.Service

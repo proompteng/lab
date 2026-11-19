@@ -3,7 +3,12 @@ import { Clock, Context, Effect, Schema } from 'effect'
 import type { OperationalError } from '../errors'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
-import { evaluateAdmittedJevBatch, JevBatchStore, type JevBatchAdmission } from './batch-evaluation'
+import {
+  evaluateAdmittedJevBatch,
+  JevBatchStore,
+  type ClaimedJevSource,
+  type JevBatchAdmission,
+} from './batch-evaluation'
 import type { RestoredJevObservation } from './observation'
 
 const JobIdentity = {
@@ -55,11 +60,17 @@ export class JevInferenceWorkStore extends Context.Service<
     readonly resume: (
       cycleId: string,
       authorityGenerationHash: string,
-    ) => Effect.Effect<{ readonly batchId: string; readonly source: RestoredJevObservation } | null, OperationalError>
+    ) => Effect.Effect<
+      {
+        readonly batchId: string
+        readonly loadSource: Effect.Effect<RestoredJevObservation, OperationalError>
+      } | null,
+      OperationalError
+    >
     readonly claim: (jobId: string) => Effect.Effect<
       {
         readonly admission: JevBatchAdmission
-        readonly loadObservation: Effect.Effect<unknown, OperationalError>
+        readonly completionSource: ClaimedJevSource
       } | null,
       OperationalError
     >
@@ -85,7 +96,7 @@ export const executeJevInferenceWork = <E = never, R = never>(
         ? yield* batches.finish(job.batchId)
         : yield* evaluateAdmittedJevBatch(
             claimed.admission,
-            claimed.loadObservation,
+            claimed.completionSource,
             job.admissionDeadlineAt === undefined ? {} : { admissionDeadlineAt: job.admissionDeadlineAt },
           )
     const identity = {

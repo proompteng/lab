@@ -597,7 +597,9 @@ existing expense classification; a retry cannot invent a fresh validity window.
 PostgreSQL seals the retained observation bytes when admission inserts the work row. The worker reads compact job
 metadata for authority and scheduling, then verifies the source seal in the one-way SQL claim. The claim returns the
 original plan and staged claims. The worker checks each reconstructed chart against its original staged claim before
-provider dispatch. The completion path loads and hashes the original observation before sealing the result.
+provider dispatch. The same worker can carry its verified plan, result and source seal into completion. PostgreSQL
+rechecks the admitted observation's bytes against that seal in the transaction that commits the receipts and batch
+result. The worker avoids transferring the observation back through the application after inference.
 While a committed entry batch awaits its result, ordinary market hints wait until the earliest original batch or admission
 expiry. Broker observations and inference completion still wake the owner immediately. The expiry timer survives replay;
 market bursts cannot run redundant financial passes or move that deadline forward.
@@ -1155,6 +1157,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - `BaynEntryInference` runs against its scoped PostgreSQL and Jev services while the financial driver initializes
   or recovers. The worker checks current authority before claiming admitted work and commits the expense claim
   before any provider call. The financial driver reuses the same database and Jev services.
+- The account process retains its last admitted source and plan. When the result arrives, PostgreSQL checks the
+  original source seal and candidate receipts before selection. The owner reuses that preparation when it still
+  matches, and reconstructs stored evidence on a cold resume. `bayn.jev.entry-selection` records which path ran.
 - Execution acquires a scoped driver directly. Production and replay share one serialized generation-rebinding
   path: when authority changes, the next pass prepares its replacement before advancing. Failed or interrupted
   preparation retains the clients and retries preparation without running the stale driver. Production preparation

@@ -70,7 +70,7 @@ test.each(['success', 'validation', 'lock', 'receipts', 'evidence', 'result'])(
               if (query.includes('SELECT NOT EXISTS')) return phase('evidence').pipe(Effect.as([{ matches: true }]))
               if (query.includes('INSERT INTO jev_batch_results'))
                 return phase('result').pipe(Effect.as([{ matches: true }]))
-              throw new Error('Unexpected completion query')
+              return statement
             },
             get(target, property, receiver) {
               if (property === 'withTransaction')

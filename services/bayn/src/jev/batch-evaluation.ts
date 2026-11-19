@@ -1,6 +1,7 @@
 import { Clock, Context, Data, Effect, Exit } from 'effect'
 
 import type { OperationalError } from '../errors'
+import { freezeEvidence } from '../immutable-evidence'
 import {
   JevCandidatePlanStatus,
   JevCandidateResultStatus,
@@ -15,12 +16,40 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevEvidenceError } from './evidence'
 import { utcInstantFromEpochMillis } from '../time'
 import type { MarketSnapshotReference } from '../market-data/intraday/model'
-import type { PreparedJevBatch } from './trading-signals'
+import { isPreparedJevBatch, type PreparedJevBatch } from './trading-signals'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
   readonly result: JevBatchResult | null
 }
+
+const batchPreparations = new WeakMap<JevBatchEvidence, PreparedJevBatch>()
+
+export const retainJevBatchPreparation = (evidence: JevBatchEvidence, prepared: PreparedJevBatch) => {
+  if (isPreparedJevBatch(prepared) && evidence.plan.batchId === prepared.plan.batchId)
+    batchPreparations.set(evidence, prepared)
+  return evidence
+}
+
+export const retainedJevBatchPreparation = (evidence: JevBatchEvidence) => batchPreparations.get(evidence)
+
+const ClaimedJevSourceTypeId: unique symbol = Symbol('ClaimedJevSource')
+export type ClaimedJevSource = { readonly [ClaimedJevSourceTypeId]: true }
+
+const claimedSources = new WeakMap<object, { readonly plan: JevBatchPlan; readonly seal: string }>()
+const verifiedCompletions = new WeakMap<JevBatchResult, JevBatchPlan>()
+
+export const makeClaimedJevSource = (plan: JevBatchPlan, seal: string): ClaimedJevSource => {
+  const source = Object.freeze<ClaimedJevSource>({ [ClaimedJevSourceTypeId]: true })
+  claimedSources.set(source, { plan: freezeEvidence(plan), seal })
+  return source
+}
+
+export const readClaimedJevSource = (input: unknown) =>
+  typeof input === 'object' && input !== null ? claimedSources.get(input) : undefined
+
+export const isVerifiedJevCompletion = (plan: JevBatchPlan, result: JevBatchResult) =>
+  verifiedCompletions.get(result) === plan
 
 export interface JevBatchAdmission extends JevBatchEvidence {
   /** Null means admitted for durable inference; an empty array retains claimed-work recovery. */
@@ -69,13 +98,13 @@ export const evaluateJevBatch = (batch: PreparedJevBatch, options: JevBatchEvalu
     const store = yield* JevBatchStore
     const saved = yield* store.begin(batch, options)
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
-    return yield* evaluateAdmittedJevBatch(saved, Effect.succeed(batch.source.payload), options)
+    return yield* evaluateAdmittedJevBatch(saved, batch.source.payload, options)
   })
 
 /** The same admitted cohort is used by local replay and the provider-only durable worker. */
 export const evaluateAdmittedJevBatch = (
   saved: JevBatchAdmission,
-  loadObservation: Effect.Effect<unknown, OperationalError>,
+  observation: unknown,
   options: JevBatchEvaluationOptions = {},
 ) =>
   Effect.gen(function* () {
@@ -137,7 +166,9 @@ export const evaluateAdmittedJevBatch = (
           candidates,
         }),
       )
-      return yield* store.complete(saved.plan, yield* loadObservation, result)
+      if (readClaimedJevSource(observation)?.plan === saved.plan)
+        verifiedCompletions.set(freezeEvidence(result), saved.plan)
+      return yield* store.complete(saved.plan, observation, result)
     }).pipe(
       Effect.onExit((exit) =>
         Exit.isFailure(exit) && records.length > 0

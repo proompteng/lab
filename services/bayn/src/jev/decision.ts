@@ -2,6 +2,7 @@ import { JevBatchPlanVersion } from './batch'
 import { JevPositionExitPolicySchema, jevPositionExitPolicy } from './exit-policy'
 import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
+import { freezeEvidence } from '../immutable-evidence'
 
 import { canonicalHashV1Result } from '../hash'
 import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -13,7 +14,12 @@ import { selectSupportedEntryProposal } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
-import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import {
+  isPreparedJevBatch,
+  jevEntryQuoteExclusion,
+  reproduceJevTradingSignalBatchEvidence,
+  type PreparedJevBatch,
+} from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
 import { JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
 import { nativeEntryProposalExitPlan, isShortEntryProposal } from './native-entry-proposal'
@@ -29,13 +35,41 @@ export type JevDecisionEvidence = typeof JevDecisionEvidenceSchema.Type
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
+const decisionPreparations = new WeakMap<object, { evidence: JevDecisionEvidence; batch: PreparedJevBatch }>()
+
+export const prepareJevDecisionEvidence = (
+  batch: PreparedJevBatch,
+  result: JevDecisionEvidence['batchResult'],
+  decidedAt: string,
+) =>
+  Result.gen(function* () {
+    if (!isPreparedJevBatch(batch)) return yield* unavailable('Jev decision requires its owned batch preparation')
+    const clock = yield* Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(decidedAt)
+    const batchResult = yield* Schema.decodeUnknownResult(JevBatchResultSchema, strictParseOptions)(result)
+    const detachedResult = yield* Result.try({
+      try: () => structuredClone(batchResult),
+      catch: (cause) => new JevContractError({ message: 'Jev decision could not retain its exact result', cause }),
+    })
+    const { snapshot: _snapshot, contentHash: _contentHash, ...observation } = batch.source.verified
+    const evidence: JevDecisionEvidence = freezeEvidence({
+      observation,
+      batchPlan: batch.plan,
+      batchResult: detachedResult,
+      decidedAt: clock,
+    })
+    decisionPreparations.set(evidence, { evidence, batch })
+    return evidence
+  })
+
 export const reproduceDecisionEvidence = (input: unknown, expectedVersion: JevBatchPlanVersion) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input)
-    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(
-      evidence.observation,
-      evidence.batchPlan,
-    )
+    const prepared = typeof input === 'object' && input !== null ? decisionPreparations.get(input) : undefined
+    const evidence =
+      prepared?.evidence ?? (yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input))
+    const { observation, plan } =
+      prepared === undefined
+        ? yield* reproduceJevTradingSignalBatchEvidence(evidence.observation, evidence.batchPlan)
+        : { observation: prepared.batch.source.verified, plan: prepared.batch.plan }
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* unavailable('Native Jev decisions require native observations')
     const inferences = yield* usableEntryBatchInferences(

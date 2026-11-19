@@ -65,7 +65,12 @@ import {
   makeJevBatchResult,
   usableEntryBatchInferences,
 } from '../jev/batch'
-import { JevBatchExpired, JevBatchStore, type JevBatchAdmission } from '../jev/batch-evaluation'
+import {
+  JevBatchExpired,
+  JevBatchStore,
+  retainedJevBatchPreparation,
+  type JevBatchAdmission,
+} from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
@@ -402,7 +407,6 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(immediateDispatches(claimed.admission).length).toBe(
           plan.candidates.filter(({ status }) => status === JevCandidatePlanStatus.Requested).length,
         )
-        expect(yield* claimed.loadObservation).toEqual(fixture.observation.payload)
         expect(yield* work.claim(plan.batchId)).toBeNull()
         expect((yield* work.read(plan.batchId))?.status).toBe('Claimed')
         const sql = yield* PgClient.PgClient
@@ -475,6 +479,54 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect((yield* work.read(plan.batchId))?.status).toBe('Claimed')
         expect(yield* work.claim(plan.batchId)).toBeNull()
       }).pipe(atObservation),
+    )
+  })
+
+  test('completion rejects a copied source claim and a source changed after dispatch', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const work = yield* JevInferenceWorkStore
+        const sql = yield* PgClient.PgClient
+        yield* beginRecordedJevBatch(batches, plan, fixture.observation.payload, {
+          deferProviderDispatch: true,
+          sourceReference: streamingSnapshotReference(fixture.snapshot),
+        })
+        let attemptedCompletion = false
+        const run = yield* executeJevInferenceWork(plan.batchId).pipe(
+          Effect.provideService(JevBatchStore, {
+            ...batches,
+            complete: (sourcePlan, source, result) =>
+              Effect.gen(function* () {
+                if (typeof source !== 'object' || source === null) throw new Error('Missing claimed source')
+                expect(yield* batches.complete(sourcePlan, { ...source }, result).pipe(Effect.result)).toMatchObject({
+                  _tag: 'Failure',
+                })
+                yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER intraday_candidate_observations_immutable`
+                yield* sql`UPDATE intraday_candidate_observations SET payload=payload || '{"sourceChanged": true}'::jsonb
+                    WHERE content_hash = ${plan.observationHash}`
+                yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER intraday_candidate_observations_immutable`
+                yield* sql`ALTER TABLE jev_inference_work DISABLE TRIGGER guard_jev_inference_work`
+                yield* sql`UPDATE jev_inference_work
+                  SET source_sha256 = sha256(convert_to(observation.payload::text, 'UTF8'))
+                  FROM intraday_candidate_observations observation
+                  WHERE batch_id = ${plan.batchId} AND observation.content_hash = ${plan.observationHash}`
+                yield* sql`ALTER TABLE jev_inference_work ENABLE TRIGGER guard_jev_inference_work`
+                attemptedCompletion = true
+                return yield* batches.complete(sourcePlan, source, result)
+              }).pipe(
+                Effect.mapError((cause) =>
+                  operationalError({ component: 'database', operation: 'test', message: 'Completion rejected', cause }),
+                ),
+              ),
+          }),
+          Effect.result,
+        )
+        expect(attemptedCompletion).toBe(true)
+        expect(run).toMatchObject({ _tag: 'Failure' })
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
+        expect(yield* work.claim(plan.batchId)).toBeNull()
+      }).pipe(Effect.provideService(JevClient, entryProviderFixture(successful)), atObservation),
     )
   })
 
@@ -554,23 +606,30 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const completed = yield* execute
         expect(completed).toMatchObject({ status: 'Completed', expiresAt: plan.expiresAt })
         expect(startup.pollUnsafe()).toBeUndefined()
-        expect((yield* batches.read(plan.batchId))?.result?.resultHash).toBe(
-          completed?.status === 'Completed' ? completed.resultHash : undefined,
-        )
+        const recorded = yield* batches.read(plan.batchId)
+        expect(recorded?.result?.resultHash).toBe(completed?.status === 'Completed' ? completed.resultHash : undefined)
+        expect(recorded && retainedJevBatchPreparation(recorded)?.plan).toEqual(plan)
         const firstCalls = providerCalls
         expect(firstCalls).toBeGreaterThan(0)
         expect(yield* execute).toEqual(completed)
         expect(providerCalls).toBe(firstCalls)
-        expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toEqual({
-          batchId: plan.batchId,
-          source: {
-            observation: fixture.observation.payload,
-            snapshot: fixture.snapshot,
-            contentHash: plan.observationHash,
-          },
+        const resumed = yield* work.resume(plan.cycleId, plan.authorityGenerationHash)
+        expect(resumed?.batchId).toBe(plan.batchId)
+        if (resumed === null) throw Error('expected committed inference to resume')
+        expect(yield* resumed.loadSource).toEqual({
+          observation: fixture.observation.payload,
+          snapshot: fixture.snapshot,
+          contentHash: plan.observationHash,
         })
         expect(yield* work.resume(plan.cycleId, 'e'.repeat(64))).toBeNull()
         expect(yield* work.pending()).toEqual([])
+        yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER intraday_candidate_observations_immutable`
+        yield* sql`UPDATE intraday_candidate_observations SET payload = payload || '{"changedAfterCompletion":true}'::jsonb
+          WHERE content_hash = ${plan.observationHash}`
+        yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER intraday_candidate_observations_immutable`
+        expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+        })
         yield* TestClock.setTime(observed + 15_000)
         expect(yield* work.resume(plan.cycleId, plan.authorityGenerationHash)).toBeNull()
       }).pipe(
