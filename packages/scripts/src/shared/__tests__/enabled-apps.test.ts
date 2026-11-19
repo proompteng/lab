@@ -619,7 +619,7 @@ describe('enabled app inventory', () => {
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c',
+      'quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3',
     )
   })
 

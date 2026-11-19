@@ -1567,7 +1567,7 @@ identityTest(
         .rows[0]?.identity_subject,
     ).toBe(subjectBeforeFailover)
     console.log(
-      'PASS: two production Keycloak 26.7.4 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
+      'PASS: two production Keycloak 26.8.2 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
     )
 
     const challengesBeforeSso = webAuthnRequests.length
