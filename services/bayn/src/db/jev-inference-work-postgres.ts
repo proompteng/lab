@@ -8,7 +8,6 @@ import { makeJevDispatch } from '../jev/evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
 import { restoreJevObservation } from '../jev/observation'
 import { JevObservationSchema } from '../jev/observation-contract'
-import { prepareClaimedEntry } from '../jev/entry-inference'
 import { StagedDispatchClaimSchema } from '../jev/staged-checkpoint'
 import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import { utcInstantFromEpochMillis } from '../time'
@@ -233,21 +232,13 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
         Effect.gen(function* () {
           const retained = row.dispatches.find(({ requestId }) => requestId === request.requestId)
           if (retained === undefined) return yield* failure('Claimed inference request is absent from its cohort')
-          const prepared = yield* Effect.fromResult(
-            prepareClaimedEntry({
-              requestId: request.requestId,
-              input: request.request,
-              observedAt: request.observedAt,
-              expiresAt: request.expiresAt,
-              claimedAt: retained.claimedAt,
-            }),
-          )
+          const dispatch = yield* Effect.fromResult(makeJevDispatch({ request, claimedAt: retained.claimedAt }))
           if (
-            (yield* Effect.fromResult(canonicalHashV1Result(prepared.visualClaim))) !==
+            (yield* Effect.fromResult(canonicalHashV1Result(dispatch.visualClaim))) !==
             (yield* Effect.fromResult(canonicalHashV1Result(retained.visualClaim)))
           )
             return yield* failure('Claimed inference visual request differs from its original admission')
-          return makeJevDispatch({ request, claimedAt: retained.claimedAt, visualClaim: retained.visualClaim })
+          return dispatch
         }),
       )
       return { job, admission: { plan, result: null, dispatches }, observation: observation.observation }

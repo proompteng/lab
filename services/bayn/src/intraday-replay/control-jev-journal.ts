@@ -18,12 +18,7 @@ import {
   JevOutcome,
   type JevEvaluationRequest,
 } from '../jev/evidence'
-import {
-  EntryInferenceJournal,
-  prepareClaimedEntry,
-  type EntryHandoff,
-  type EntryStageTransition,
-} from '../jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff, type EntryStageTransition } from '../jev/entry-inference'
 import { JevFailure } from '../jev/contract'
 import { decodeStagedCheckpoint, type StagedDispatchClaim, type StagedTerminalReceipt } from '../jev/staged-checkpoint'
 import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
@@ -300,23 +295,13 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
               if (candidate.status === JevCandidatePlanStatus.Requested) {
                 yield* write('request', candidate.request.requestId, candidate.request)
                 plannedRequests.set(candidate.request.requestId, candidate.request)
-                const initial = yield* Effect.fromResult(
-                  prepareClaimedEntry({
-                    requestId: candidate.request.requestId,
-                    input: candidate.request.request,
-                    observedAt: candidate.request.observedAt,
-                    expiresAt: candidate.request.expiresAt,
-                    claimedAt,
-                  }),
-                )
-                if (initial.visualClaim !== null) {
-                  const admitted = yield* recordClaim(initial.visualClaim)
+                const dispatch = yield* Effect.fromResult(makeJevDispatch({ request: candidate.request, claimedAt }))
+                if (dispatch.visualClaim !== null) {
+                  const admitted = yield* recordClaim(dispatch.visualClaim)
                   if (!admitted.dispatchAllowed)
                     return yield* failure('Initial visual claim was not admitted with its request')
                 }
-                dispatches.push(
-                  makeJevDispatch({ request: candidate.request, claimedAt, visualClaim: initial.visualClaim }),
-                )
+                dispatches.push(dispatch)
               }
             }
             return { plan, result: null, dispatches }

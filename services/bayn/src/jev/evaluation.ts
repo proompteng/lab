@@ -1,8 +1,8 @@
-import { Clock, Context, Effect } from 'effect'
+import { Clock, Context, Effect, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
-import type { StagedDispatchClaim } from './staged-checkpoint'
+import { prepareClaimedEntry } from './entry-inference'
 import {
   decodeJevEvaluationRequest,
   JevEvidenceError,
@@ -27,25 +27,41 @@ export class JevEvaluationStore extends Context.Service<
   }
 >()('@proompteng/bayn/JevEvaluationStore') {}
 
-export interface JevDispatch {
-  readonly request: JevEvaluationRequest
-  readonly claimedAt: string
-  readonly visualClaim: StagedDispatchClaim | null
-  readonly consume: Effect.Effect<void, JevEvidenceError>
-}
+export const makeJevDispatch = (input: { readonly request: JevEvaluationRequest; readonly claimedAt: string }) =>
+  Result.gen(function* () {
+    const { request, claimedAt } = input
+    const entry = yield* prepareClaimedEntry({
+      requestId: request.requestId,
+      input: request.request,
+      observedAt: request.observedAt,
+      expiresAt: request.expiresAt,
+      claimedAt,
+    })
+    const detachedInput = entry.prepared.input
+    const visualClaim = entry.visualClaim === null ? null : Object.freeze(entry.visualClaim)
+    // Only the single-use dispatch can release the detached request and its verified chart.
+    const prepared = {
+      ...entry,
+      claim: { ...entry.claim, input: detachedInput },
+      request: { ...request, request: detachedInput },
+    }
+    let consumed = false
+    return Object.freeze({
+      request,
+      claimedAt,
+      visualClaim,
+      consume: Effect.suspend(() => {
+        if (consumed)
+          return Effect.fail(
+            new JevEvidenceError({ message: 'An admitted provider dispatch cannot be consumed twice' }),
+          )
+        consumed = true
+        return Effect.succeed(prepared)
+      }),
+    })
+  })
 
-export const makeJevDispatch = (input: Omit<JevDispatch, 'consume'>): JevDispatch => {
-  let consumed = false
-  return {
-    ...input,
-    consume: Effect.suspend(() => {
-      if (consumed)
-        return Effect.fail(new JevEvidenceError({ message: 'An admitted provider dispatch cannot be consumed twice' }))
-      consumed = true
-      return Effect.void
-    }),
-  }
-}
+export type JevDispatch = Result.Result.Success<ReturnType<typeof makeJevDispatch>>
 
 export const recoverExpiredJevEvaluation = (input: unknown) =>
   Effect.gen(function* () {
