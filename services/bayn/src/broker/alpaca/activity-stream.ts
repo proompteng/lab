@@ -5,12 +5,14 @@ import { canonicalHashV1Result } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import type { BrokerConnection } from '../connection'
 import { decodeFeeActivityWitness } from './activity-fees'
-import { activityReplayStart, decodeFillExecution } from './activity-fills'
+import { decodeFillExecution } from './activity-fills'
 import { BrokerReadError, BrokerReadErrorKind, statusError, transportError } from './failures'
 import { redactedHeaders, type FillActivity, type Observed, type ReadEvidence } from './model'
 import { observationUnavailable } from './observed-snapshot'
 
 const operation = 'activity-stream'
+// Earliest history Alpaca makes available through Activity SSE.
+const activityReplayStart = '2026-02-11T00:00:00.000Z'
 const invalidStream = (message: string) =>
   new BrokerReadError({ operation, kind: BrokerReadErrorKind.InvalidResponse, retryable: true, message })
 
@@ -119,20 +121,62 @@ export const startAccountActivityStream = (
     const key = Redacted.value(connection.key)
     const secret = Redacted.value(connection.secret)
     let checkpoint: { readonly id: string; readonly hash: string } | undefined
-    let bootstrapped = false
     let reconnectMs = 2_000
-    let connected = false
     let evidence: ReadEvidence | undefined
-    let fills: Observed<FillActivity>[] = []
+    const fills: Observed<FillActivity>[] = []
     let view: readonly Observed<FillActivity>[] = []
     const executionIds = new Set<string>()
     const feeRefs = new Set<string>()
     const feeCounts = new Map<string, number>()
     let feeView: ReadonlyMap<string, number> | undefined
-    const fetchFrames = (params: Readonly<Record<string, string>>) =>
+    const apply = (raw: unknown, requestId: string, anchor: typeof checkpoint) =>
       Effect.gen(function* () {
+        const header = yield* Effect.fromResult(eventHeader(raw)).pipe(
+          Effect.mapError(() => invalidStream('Alpaca activity event has an invalid cursor')),
+        )
+        if (header.account_id !== undefined && header.account_id !== connection.expectedAccountId)
+          return yield* invalidStream('Alpaca activity event belongs to a different account')
+        const id = header.event_id
+        const hash = yield* Effect.fromResult(canonicalHashV1Result(raw)).pipe(
+          Effect.mapError(() => invalidStream('Alpaca activity event cannot be hashed')),
+        )
+        if (anchor !== undefined) {
+          if (id !== anchor.id || hash !== anchor.hash)
+            return yield* invalidStream('Alpaca activity replay skipped or changed its inclusive checkpoint')
+          return
+        }
+        if (checkpoint !== undefined && id <= checkpoint.id)
+          return yield* invalidStream('Alpaca activity cursor did not advance')
+        if (header.activity_type === 'FEE' || header.activity_type === 'CFEE') {
+          const { refId, key } = yield* Effect.fromResult(decodeFeeActivityWitness(raw)).pipe(
+            Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary fee')),
+          )
+          if (feeRefs.has(refId)) return yield* invalidStream('Alpaca activity repeated a fee reference')
+          feeRefs.add(refId)
+          feeCounts.set(key, (feeCounts.get(key) ?? 0) + 1)
+          feeView = undefined
+        } else if (header.activity_type === 'TRD') {
+          const execution = yield* Effect.fromResult(decodeFillExecution(raw, connection.expectedAccountId)).pipe(
+            Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary execution')),
+          )
+          const { executionId, ...body } = execution
+          if (executionIds.has(executionId)) return yield* invalidStream('Alpaca activity repeated an execution ID')
+          const observedAt = yield* currentUtcInstant
+          const proof = { status: 200, requestId, contentHash: hash, observedAt }
+          const identity = fillActivityIdentity(executionId, body.transactionTime)
+          fills.push({ value: { ...body, ...identity }, evidence: proof })
+          executionIds.add(executionId)
+        }
+        checkpoint = { id, hash }
+      })
+
+    const connect = Effect.scoped(
+      Effect.gen(function* () {
+        yield* verifiedAccount
+        let pendingAnchor = checkpoint
         const url = new URL('/v2beta1/events/activities', connection.baseUrl)
-        url.search = new URLSearchParams(params).toString()
+        if (pendingAnchor === undefined) url.searchParams.set('since', activityReplayStart)
+        else url.searchParams.set('since_id', pendingAnchor.id)
         const response = yield* client
           .execute(
             HttpClientRequest.get(url, {
@@ -162,102 +206,23 @@ export const startAccountActivityStream = (
           requestId === ''
         )
           return yield* invalidStream('Alpaca activity response is missing its stream or request identity')
-        return {
-          requestId,
-          frames: activityFrames(
-            response.stream.pipe(Stream.mapError((cause) => transportError(operation, cause, [key, secret]))),
-          ),
-        }
-      })
-
-    const apply = (raw: unknown, requestId: string, anchor: typeof checkpoint, resume: boolean) =>
-      Effect.gen(function* () {
-        const header = yield* Effect.fromResult(eventHeader(raw)).pipe(
-          Effect.mapError(() => invalidStream('Alpaca activity event has an invalid cursor')),
-        )
-        if (header.account_id !== undefined && header.account_id !== connection.expectedAccountId)
-          return yield* invalidStream('Alpaca activity event belongs to a different account')
-        const id = header.event_id
-        const hash = yield* Effect.fromResult(canonicalHashV1Result(raw)).pipe(
-          Effect.mapError(() => invalidStream('Alpaca activity event cannot be hashed')),
-        )
-        if (resume) {
-          if (id !== anchor?.id || hash !== anchor.hash)
-            return yield* invalidStream('Alpaca activity replay skipped or changed its inclusive checkpoint')
-          return
-        }
-        if (checkpoint !== undefined && id <= checkpoint.id)
-          return yield* invalidStream('Alpaca activity cursor did not advance')
-        if (header.activity_type === 'FEE' || header.activity_type === 'CFEE') {
-          const { refId, key } = yield* Effect.fromResult(decodeFeeActivityWitness(raw)).pipe(
-            Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary fee')),
-          )
-          if (feeRefs.has(refId)) return yield* invalidStream('Alpaca activity repeated a fee reference')
-          feeRefs.add(refId)
-          feeCounts.set(key, (feeCounts.get(key) ?? 0) + 1)
-          feeView = undefined
-        } else if (header.activity_type === 'TRD') {
-          const execution = yield* Effect.fromResult(decodeFillExecution(raw, connection.expectedAccountId)).pipe(
-            Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary execution')),
-          )
-          const { executionId, ...body } = execution
-          if (executionIds.has(executionId)) return yield* invalidStream('Alpaca activity repeated an execution ID')
-          const observedAt = yield* currentUtcInstant
-          const proof = { status: 200, requestId, contentHash: hash, observedAt }
-          const identity = fillActivityIdentity(executionId, body.transactionTime)
-          fills.push({ value: { ...body, ...identity }, evidence: proof })
-          executionIds.add(executionId)
-        }
-        checkpoint = { id, hash }
-      })
-
-    const bootstrap = Effect.scoped(
-      Effect.gen(function* () {
-        const until = yield* currentUtcInstant
-        const { requestId, frames } = yield* fetchFrames({ since: activityReplayStart, until })
-        yield* frames.pipe(
-          Stream.runForEach((frame) =>
-            frame.type === 'Data' ? apply(frame.value, requestId, undefined, false) : Effect.void,
-          ),
-        )
-        bootstrapped = true
-      }),
-    ).pipe(Effect.timeout(connection.operationTimeoutMs))
-
-    const connect = Effect.scoped(
-      Effect.gen(function* () {
-        yield* verifiedAccount
-        if (!bootstrapped) {
-          checkpoint = undefined
-          fills = []
-          view = []
-          executionIds.clear()
-          feeRefs.clear()
-          feeCounts.clear()
-          feeView = undefined
-          yield* bootstrap
-        }
-        const anchor = checkpoint
-        const { requestId, frames } = yield* fetchFrames(
-          anchor === undefined ? { since: activityReplayStart } : { since_id: anchor.id },
-        )
-        let resume = anchor !== undefined
-        yield* frames.pipe(
+        yield* activityFrames(
+          response.stream.pipe(Stream.mapError((cause) => transportError(operation, cause, [key, secret]))),
+        ).pipe(
           Stream.timeout('25 seconds'),
           Stream.runForEach((frame) =>
             Effect.gen(function* () {
               if (frame.type === 'Data') {
-                yield* apply(frame.value, requestId, anchor, resume)
-                resume = false
+                yield* apply(frame.value, requestId, pendingAnchor)
+                pendingAnchor = undefined
               }
-              if (!resume && (connected || frame.type === 'Heartbeat')) {
+              if (pendingAnchor === undefined && (evidence !== undefined || frame.type === 'Heartbeat')) {
                 evidence = {
                   status: 200,
                   requestId,
                   contentHash: checkpoint?.hash ?? emptyHash,
                   observedAt: yield* currentUtcInstant,
                 }
-                connected = true
                 reconnectMs = 2_000
               }
             }),
@@ -270,16 +235,12 @@ export const startAccountActivityStream = (
     yield* connect.pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          connected = false
+          evidence = undefined
         }),
       ),
       Effect.catch((cause) =>
         Effect.logWarning('Alpaca activity stream unavailable; reconnecting').pipe(
-          Effect.annotateLogs(
-            cause instanceof BrokerReadError
-              ? { 'broker.failure_kind': cause.kind }
-              : { 'broker.failure_kind': 'BOOTSTRAP_TIMEOUT' },
-          ),
+          Effect.annotateLogs({ 'broker.failure_kind': cause.kind }),
         ),
       ),
       Effect.andThen(
@@ -295,8 +256,7 @@ export const startAccountActivityStream = (
 
     const read: Effect.Effect<AccountActivityCut, BrokerReadError> = Effect.gen(function* () {
       const observedAt = yield* currentUtcInstant
-      if (!connected || evidence === undefined)
-        return yield* observationUnavailable('Alpaca activity stream is not connected')
+      if (evidence === undefined) return yield* observationUnavailable('Alpaca activity stream is not connected')
       if (fills.length !== view.length) view = fills.slice()
       feeView ??= new Map(feeCounts)
       return { fills: view, feeCounts: feeView, evidence: { ...evidence, observedAt } }
