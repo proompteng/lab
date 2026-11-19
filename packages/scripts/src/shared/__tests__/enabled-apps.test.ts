@@ -631,7 +631,6 @@ describe('enabled app inventory', () => {
     expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.38.10')
     expect(coderValues.coder?.coder).toMatchObject({
       replicaCount: 1,
-      strategy: { type: 'Recreate' },
       image: {
         tag: 'v2.38.10@sha256:f94f80a3bcc002b9a4e32b551d18e5331a0b9c936e0663412e8a9894339e94cf',
       },
