@@ -375,7 +375,7 @@ describe('enabled app inventory', () => {
 
   it('pins the identity and metrics controller upgrade wave', () => {
     expect(certManagerKustomization).toContain('version: v1.21.3')
-    expect(externalSecretsKustomization).toContain('version: 2.10.0')
+    expect(externalSecretsKustomization).toContain('version: 2.15.0')
     expect(platformApplicationSet).toContain('targetRevision: v0.9.1')
   })
 
@@ -437,19 +437,19 @@ describe('enabled app inventory', () => {
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
-    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.1')
+    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.2')
     expect(metallbKustomization.images).toEqual([
       {
         name: 'quay.io/metallb/controller',
         newName: 'quay.io/metallb/controller',
-        newTag: 'v0.16.1',
-        digest: 'sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420',
+        newTag: 'v0.16.2',
+        digest: 'sha256:34a6f107f29c4fc6e9d084a7f3bdb781aae7b5ee2b534195a2775ab68c09c503',
       },
       {
         name: 'quay.io/metallb/speaker',
         newName: 'quay.io/metallb/speaker',
-        newTag: 'v0.16.1',
-        digest: 'sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc',
+        newTag: 'v0.16.2',
+        digest: 'sha256:01666518b091a6651d68891c802db84b2219495d7e0e41c2e61c46f9976be231',
       },
     ])
     expect(
@@ -484,10 +484,10 @@ describe('enabled app inventory', () => {
       /              - name: knative\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
 
-    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
+    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.10.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
     expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
-    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.1/operator.yaml')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.24.1/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeServingManifest).toContain('version: 1.23.0')
@@ -513,10 +513,10 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the enabled service image upgrade wave', () => {
-    expect(featureFlagsKustomization).toContain('version: 2.12.1')
-    expect(featureFlagsKustomization).toContain('newTag: v2.12.0')
+    expect(featureFlagsKustomization).toContain('version: 2.14.2')
+    expect(featureFlagsKustomization).toContain('newTag: v2.14.2')
     expect(featureFlagsKustomization).toContain(
-      'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
+      'digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8',
     )
     expect(cloudflaredDeployment).toContain(
       'cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d',
@@ -587,14 +587,14 @@ describe('enabled app inventory', () => {
 
   it('pins the Open WebUI migration wave to its immutable image', () => {
     expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
-      version: '18.0.0',
+      version: '18.4.0',
     })
     expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
       name: 'ghcr.io/open-webui/open-webui',
-      newTag: 'v0.13.3',
-      digest: 'sha256:46b59158e6558eeb980bc828e0f1b30238ad24d82ed84d5e5eda1dab2a082f14',
+      newTag: 'v0.13.4',
+      digest: 'sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901',
     })
-    expect(openWebUIValues.image?.tag).toBe('v0.13.3')
+    expect(openWebUIValues.image?.tag).toBe('v0.13.4')
   })
 
   it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
@@ -625,14 +625,14 @@ describe('enabled app inventory', () => {
 
   it('pins Coder to the immutable multi-architecture stable release', () => {
     expect(coderChart).toMatchObject({
-      appVersion: '2.36.4',
-      version: '2.36.4',
+      appVersion: '2.38.10',
+      version: '2.38.10',
     })
-    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.36.4')
+    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.38.10')
     expect(coderValues.coder?.coder).toMatchObject({
       replicaCount: 1,
       image: {
-        tag: 'v2.36.4@sha256:85e6d04d33ed4184ca689d6b736e305cc73eb8588e56657f6457835788092d6d',
+        tag: 'v2.38.10@sha256:f94f80a3bcc002b9a4e32b551d18e5331a0b9c936e0663412e8a9894339e94cf',
       },
     })
   })
