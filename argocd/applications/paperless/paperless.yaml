@@ -143,12 +143,18 @@ spec:
             httpGet:
               path: /
               port: http
+              httpHeaders:
+                - name: Host
+                  value: paperless.ide-newton.ts.net
             periodSeconds: 10
             failureThreshold: 120
           readinessProbe:
             httpGet:
               path: /
               port: http
+              httpHeaders:
+                - name: Host
+                  value: paperless.ide-newton.ts.net
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
