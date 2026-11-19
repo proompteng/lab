@@ -28,7 +28,7 @@ import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/prefligh
 import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
 import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
 import { make, alpacaHttpLayer } from './alpaca/http'
-import { activityFrames, fillActivityIdentity, startActivityFills } from './alpaca/activity-stream'
+import { activityFrames, fillActivityIdentity, startAccountActivityStream } from './alpaca/activity-stream'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -201,13 +201,25 @@ describe('Alpaca paper reads', () => {
       execution_type: 'fill',
     },
   })
+  const feeFrame = {
+    activity_type: 'CFEE',
+    event_id: activityCursor(3),
+    ref_id: 'b91fed24-9e79-4d01-b902-72bfc9701cba',
+    status: 'executed',
+    currency: 'USD',
+    net_amount: '0',
+    qty: '-0.0002',
+    price: '260.1020',
+    settle_date: '2026-11-19',
+    details: { system_date: '2026-11-18' },
+  }
   const frameText = (value: unknown) => `data: ${JSON.stringify(value)}
 
 `
   const sseResponse = (body: BodyInit) =>
     new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'activity-stream' } })
 
-  test('reads PAPER fills from an open stream and replays an inclusive cursor across reconnects', async () => {
+  test('reads PAPER fills and fees from an open stream and replays its inclusive cursor across reconnects', async () => {
     const requests: string[] = []
     let transport: ReadableStreamDefaultController<Uint8Array> | undefined
     const bytes = new TextEncoder()
@@ -222,7 +234,7 @@ describe('Alpaca paper reads', () => {
               controller.enqueue(
                 bytes.encode(
                   ': welcome to the Alpaca events\n\n' +
-                    frameText(fillFrame(requests.length === 2 ? 1 : 2)) +
+                    frameText(requests.length === 2 ? fillFrame(1) : feeFrame) +
                     ': heartbeat\n\n',
                 ),
               )
@@ -234,7 +246,7 @@ describe('Alpaca paper reads', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const { read: snapshot } = yield* startActivityFills(options, verified)
+          const { read: snapshot } = yield* startAccountActivityStream(options, verified)
           const read = snapshot.pipe(
             Effect.catch(() => Effect.sleep('1 millis').pipe(Effect.andThen(snapshot))),
             Effect.retry({ times: 50 }),
@@ -253,14 +265,25 @@ describe('Alpaca paper reads', () => {
             Effect.timeout('1 second'),
           )
           expect(second.fills).toHaveLength(2)
+          const feeCountsBefore = second.feeCounts
+          expect(feeCountsBefore.size).toBe(0)
+          transport?.enqueue(bytes.encode(frameText(feeFrame)))
+          const withFee = yield* snapshot.pipe(
+            Effect.repeat({ while: (cut) => cut.feeCounts.size === 0, schedule: Schedule.spaced('1 millis') }),
+            Effect.timeout('1 second'),
+          )
+          expect([...withFee.feeCounts]).toEqual([['["CFEE","2026-11-18","0","200000"]', 1]])
+          expect(feeCountsBefore.size).toBe(0)
           expect(requests).toHaveLength(2)
           transport?.close()
           yield* Effect.sleep('100 millis')
           expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
           yield* Effect.sleep('2 seconds')
-          expect((yield* read).fills).toHaveLength(2)
+          const reconnected = yield* read
+          expect(reconnected.fills).toHaveLength(2)
+          expect(reconnected.feeCounts).toBe(withFee.feeCounts)
           expect(requests).toHaveLength(3)
-          expect(new URLSearchParams(requests[2]).get('since_id')).toBe(activityCursor(2))
+          expect(new URLSearchParams(requests[2]).get('since_id')).toBe(activityCursor(3))
         }),
       ).pipe(Effect.provideService(HttpClient.HttpClient, client)),
     )
