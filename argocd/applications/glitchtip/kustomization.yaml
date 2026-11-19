@@ -6,6 +6,7 @@ resources:
   - app-secret.yaml
   - email-externalsecret.yaml
   - tailscale-ingress.yaml
+  - server-upgrade-backup.yaml
 
 configMapGenerator:
   - name: glitchtip-scheduler-health
@@ -18,7 +19,7 @@ configMapGenerator:
 helmCharts:
   - name: glitchtip
     repo: https://gitlab.com/api/v4/projects/16325141/packages/helm/stable
-    version: 9.0.1
+    version: 9.2.0
     releaseName: glitchtip
     namespace: glitchtip
     valuesFile: glitchtip-values.yaml
@@ -36,6 +37,10 @@ patches:
           argocd.argoproj.io/sync-wave: "-2"
           argocd.argoproj.io/sync-options: Prune=false,Delete=false
       spec:
+        backup:
+          volumeSnapshot:
+            className: rook-ceph-block
+            snapshotOwnerReference: backup
         postgresql:
           parameters:
             wal_buffers: 16MB
@@ -78,6 +83,9 @@ patches:
                   name: glitchtip-scheduler-health
             containers:
               - name: glitchtip
+                env:
+                  - name: GLITCHTIP_EMBED_WORKER
+                    $patch: delete
                 volumeMounts:
                   - name: scheduler-health
                     mountPath: /opt/glitchtip-health
