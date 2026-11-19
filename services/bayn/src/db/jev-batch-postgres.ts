@@ -1,5 +1,5 @@
 import { makeJevDispatch } from '../jev/evaluation'
-import { makeEntryInferenceWrites } from './entry-inference-postgres'
+import { recordEntryVisualClaim } from './entry-inference-postgres'
 import { recordJevEvaluationReceipts } from './jev-evaluation-postgres'
 import { PgClient } from '@effect/sql-pg'
 import { Array as Arr, Cause, Clock, Effect, Exit, Layer, Option, Schema } from 'effect'
@@ -224,14 +224,13 @@ export const makeJevBatchStore = Effect.gen(function* () {
                 payload: sql.json(request),
               })),
             )}`
-            const writes = makeEntryInferenceWrites(sql)
             const dispatches = []
             for (const request of requests) {
               const dispatch = yield* Effect.fromResult(makeJevDispatch({ request, claimedAt: checkedAt }))
               if (dispatch.visualClaim !== null) {
                 // This transaction inserted the request. Its checkpoint is empty and
                 // no other transaction can create dependent rows before this commit.
-                const admitted = yield* writes.recordClaim(dispatch.visualClaim, {
+                const admitted = yield* recordEntryVisualClaim(sql, dispatch.visualClaim, {
                   request,
                   checkpoint: { claims: [], terminals: [], skips: [] },
                 })
