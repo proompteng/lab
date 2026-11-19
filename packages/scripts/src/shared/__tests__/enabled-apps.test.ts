@@ -437,19 +437,19 @@ describe('enabled app inventory', () => {
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
-    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.1')
+    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.2')
     expect(metallbKustomization.images).toEqual([
       {
         name: 'quay.io/metallb/controller',
         newName: 'quay.io/metallb/controller',
-        newTag: 'v0.16.1',
-        digest: 'sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420',
+        newTag: 'v0.16.2',
+        digest: 'sha256:34a6f107f29c4fc6e9d084a7f3bdb781aae7b5ee2b534195a2775ab68c09c503',
       },
       {
         name: 'quay.io/metallb/speaker',
         newName: 'quay.io/metallb/speaker',
-        newTag: 'v0.16.1',
-        digest: 'sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc',
+        newTag: 'v0.16.2',
+        digest: 'sha256:01666518b091a6651d68891c802db84b2219495d7e0e41c2e61c46f9976be231',
       },
     ])
     expect(
