@@ -55,6 +55,9 @@ import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
+import { JevClient } from '../jev/client'
+import { EntryInferenceJournal } from '../jev/entry-inference'
+import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { AuthorityGenerationStore } from '../db/execution-store/contract'
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
@@ -70,6 +73,7 @@ import {
   executionControllerConfig,
   initializeNativeExecutionProjectionRuntime,
   makeExecutionCycleDriverLive,
+  makeNativeEntryInferenceRuntime,
   makeRecoveringManagedNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
@@ -851,24 +855,17 @@ describe('native execution runtime', () => {
     let claims = 0
     let settlements = 0
     const forbidden = () => Effect.die('queued dispatch must not mutate authority or financial state')
-    const captured = Context.make(AuthorityGenerationStore, {
-      readAuthorityState: Effect.sync(() => authority),
-      ensureAuthorityGeneration: forbidden,
-      readOrInitializeObserveAuthority: forbidden,
-      readResearchAuthorityGeneration: forbidden,
-      readAuthorityGenerationLineage: forbidden,
+    const captured = Context.make(JevInferenceWorkStore, {
+      pending: forbidden,
+      settleExpired: forbidden,
+      resume: forbidden,
+      read: () => Effect.succeed(job),
+      claim: () =>
+        Effect.sync(() => {
+          claims += 1
+          return null
+        }),
     }).pipe(
-      Context.add(JevInferenceWorkStore, {
-        pending: forbidden,
-        settleExpired: forbidden,
-        resume: forbidden,
-        read: () => Effect.succeed(job),
-        claim: () =>
-          Effect.sync(() => {
-            claims += 1
-            return null
-          }),
-      }),
       Context.add(JevBatchStore, {
         read: forbidden,
         pending: forbidden,
@@ -880,9 +877,14 @@ describe('native execution runtime', () => {
             return retained
           }),
       }),
-    ) as Context.Context<RecoveryFirstRuntime>
-    const bound = await Effect.runPromise(
-      bindRecoveryFirstCycleDriver(windowClosedDriver, executionBuild).pipe(Effect.provideContext(captured)),
+      Context.add(JevClient, { evaluate: forbidden }),
+      Context.add(EntryInferenceJournal, { recordVisualClaims: forbidden, recordTransitions: forbidden }),
+      Context.add(JevEvaluationStore, { read: forbidden, recordAll: forbidden, abandon: forbidden }),
+    )
+    await using runner = ManagedRuntime.make(Layer.succeedContext(captured))
+    const inference = makeNativeEntryInferenceRuntime(
+      runner,
+      Effect.sync(() => authority),
     )
     authority = {
       ...authority,
@@ -890,8 +892,7 @@ describe('native execution runtime', () => {
       kill: scenario.kill,
       generationHash: scenario.rotated ? hash('f') : authority.generationHash,
     }
-    if (bound.inference === undefined) throw new Error('admitted inference adapter was not bound')
-    const completed = await Effect.runPromise(bound.inference.execute(job.jobId))
+    const completed = await inference.executeInference(job.jobId, new AbortController().signal)
     expect(claims).toBe(scenario.claims)
     expect(settlements).toBe(1)
     expect(completed?.status).toBe('Completed')

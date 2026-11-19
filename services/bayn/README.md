@@ -1149,6 +1149,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
+- `BaynEntryInference` runs against its scoped PostgreSQL and Jev services while the financial driver initializes
+  or recovers. The worker checks current authority before claiming admitted work and commits the expense claim
+  before any provider call. The financial driver reuses the same database and Jev services.
 - Execution acquires a scoped driver directly. Production and replay share one serialized generation-rebinding
   path: when authority changes, the next pass prepares its replacement before advancing. Failed or interrupted
   preparation retains the clients and retries preparation without running the stale driver. Production preparation
