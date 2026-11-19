@@ -1453,7 +1453,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const monitored = new Proxy(sql, {
           apply(target, receiver, argumentsList) {
             const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
-            if (statement.compile()[0].includes('SELECT plan.batch_id FROM jev_batch_plans plan')) lookup = statement
+            if (statement.compile()[0].includes('WITH locked_plan AS MATERIALIZED')) lookup = statement
             return statement
           },
         })
@@ -1468,7 +1468,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             // Isolate query scaling from immutable source admission and its full market-data payloads.
             yield* sql`CREATE TEMP TABLE jev_batch_plans (
           batch_id text PRIMARY KEY,cycle_id text NOT NULL,authority_generation_hash text NOT NULL,
-          snapshot_id text NOT NULL,payload jsonb NOT NULL
+          observation_hash text NOT NULL,payload jsonb NOT NULL
         ) ON COMMIT DROP`
             yield* sql`INSERT INTO pg_temp.jev_batch_plans
           SELECT md5(n::text)||md5('batch-'||n::text),${plan.cycleId},${plan.authorityGenerationHash},
@@ -1477,10 +1477,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
               jsonb_build_object('requestId','historical-unrelated-request'))))
           FROM generate_series(1,10000) n`
             yield* sql`INSERT INTO pg_temp.jev_batch_plans
-          SELECT batch_id,cycle_id,authority_generation_hash,snapshot_id,payload
+          SELECT batch_id,cycle_id,authority_generation_hash,observation_hash,payload
           FROM public.jev_batch_plans WHERE batch_id=${plan.batchId}`
-            yield* sql`CREATE UNIQUE INDEX cohort_scope_lookup ON pg_temp.jev_batch_plans
-          (cycle_id,authority_generation_hash,snapshot_id)`
             yield* sql`ANALYZE pg_temp.jev_batch_plans`
             const explained = yield* sql.unsafe(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${query}`, parameters)
             const rows = yield* Schema.decodeUnknownEffect(
@@ -1493,15 +1491,17 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             const root = rows[0]?.['QUERY PLAN'][0]?.Plan
             if (root === undefined) throw new Error('Missing receipt-lock query plan')
             expect(root['Actual Rows']).toBe(1)
-            expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*snapshot_id/)
+            expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*batch_id/)
             const scan = Schema.Struct({
               'Node Type': Schema.String,
+              Alias: Schema.optionalKey(Schema.String),
               'Actual Loops': Schema.Number,
               Plans: Schema.optionalKey(Schema.Array(Schema.Unknown)),
             })
             const check = (value: unknown): void => {
               const node = Schema.decodeUnknownSync(scan)(value)
-              if (node['Node Type'] === 'Function Scan') expect(node['Actual Loops']).toBe(1)
+              if (node['Node Type'] === 'Function Scan' && node.Alias === 'candidate')
+                expect(node['Actual Loops']).toBe(1)
               for (const child of node.Plans ?? []) check(child)
             }
             check(root)
