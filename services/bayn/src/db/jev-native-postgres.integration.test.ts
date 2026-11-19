@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch, evaluateRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { DecisionConstruction } from '../decision-construction'
 import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
@@ -70,7 +71,7 @@ import {
   usableEntryBatchInferences,
 } from '../jev/batch'
 import { decideJevEntry, makeJevDefinition } from '../jev/decision'
-import { evaluateJevBatch, JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
+import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import {
@@ -525,7 +526,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
     expect(plan.candidates).toHaveLength(equityMarketProfile.candidateSymbols.length)
     expect(requested.map((candidate) => candidate.symbol)).toEqual([...symbols].sort())
-    const admission = yield* (yield* JevBatchStore).begin(plan, observation.payload)
+    const admission = yield* beginRecordedJevBatch(yield* JevBatchStore, plan, observation.payload)
     return { plan, requested, observation: observation.payload, admission }
   })
 
@@ -1108,7 +1109,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(yield* sql`SELECT request_id FROM jev_evaluation_resolutions`).toEqual([])
         expect((yield* requests.read(request.requestId))?.resolution).toBeNull()
         expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-        expect((yield* (yield* JevBatchStore).begin(plan, observation)).dispatches).toEqual([])
+        expect((yield* beginRecordedJevBatch(yield* JevBatchStore, plan, observation)).dispatches).toEqual([])
         yield* sql`ALTER TABLE jev_batch_results DROP CONSTRAINT fail_atomic_finalization`
         yield* batches.complete(plan, observation, expected)
         expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).not.toBeNull()
@@ -1254,7 +1255,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           complete: (...args: Parameters<typeof batches.complete>) =>
             batches.complete(...args).pipe(Effect.tap(() => TestClock.setTime(Date.parse(plan.expiresAt)))),
         }
-        const saved = yield* evaluateJevBatch(plan, observation).pipe(
+        const saved = yield* evaluateRecordedJevBatch(plan, observation).pipe(
           Effect.provideService(JevBatchStore, delayed),
           Effect.provideService(
             JevClient,
@@ -1538,7 +1539,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const wrongIdentity = Result.getOrThrow(
           makeJevBatchPlan({ ...rebound, observationHash: result.batchPlan.observationHash }),
         )
-        expect(Result.isFailure(yield* store.begin(wrongIdentity, result.observation).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(yield* beginRecordedJevBatch(store, wrongIdentity, result.observation).pipe(Effect.result)),
+        ).toBe(true)
         expect(yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans`).toEqual([{ count: 1 }])
       }).pipe(
         Effect.provideService(
@@ -2428,7 +2431,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         const store = yield* JevBatchStore
-        yield* store.begin(plan, fixture.observation.payload)
+        yield* beginRecordedJevBatch(store, plan, fixture.observation.payload)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([plan.batchId])
         expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([
           plan,
