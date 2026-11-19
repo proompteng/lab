@@ -487,7 +487,7 @@ describe('enabled app inventory', () => {
     expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.10.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
     expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
-    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.1/operator.yaml')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.24.1/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeServingManifest).toContain('version: 1.23.0')
