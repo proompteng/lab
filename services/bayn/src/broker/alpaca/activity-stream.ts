@@ -4,7 +4,7 @@ import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
 import { canonicalHashV1Result } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import type { BrokerConnection } from '../connection'
-import { activityReplayStart, decodeFillExecutions } from './activity-fills'
+import { activityReplayStart, decodeFillExecution } from './activity-fills'
 import { BrokerReadError, BrokerReadErrorKind, statusError, transportError } from './failures'
 import { redactedHeaders, type FillActivity, type Observed, type ReadEvidence } from './model'
 import { observationUnavailable } from './observed-snapshot'
@@ -117,6 +117,7 @@ export const startActivityFills = (
     const secret = Redacted.value(connection.secret)
     let checkpoint: { readonly id: string; readonly hash: string } | undefined
     let bootstrapped = false
+    let reconnectMs = 2_000
     let connected = false
     let evidence: ReadEvidence | undefined
     let fills: Observed<FillActivity>[] = []
@@ -181,7 +182,7 @@ export const startActivityFills = (
         }
         if (checkpoint !== undefined && id <= checkpoint.id)
           return yield* invalidStream('Alpaca activity cursor did not advance')
-        const [execution] = yield* Effect.fromResult(decodeFillExecutions([raw], connection.expectedAccountId)).pipe(
+        const execution = yield* Effect.fromResult(decodeFillExecution(raw, connection.expectedAccountId)).pipe(
           Effect.mapError(() => invalidStream('Alpaca activity cannot be applied as an ordinary execution')),
         )
         if (execution !== undefined) {
@@ -205,7 +206,6 @@ export const startActivityFills = (
             frame.type === 'Data' ? apply(frame.value, requestId, undefined, false) : Effect.void,
           ),
         )
-        evidence = { status: 200, requestId, contentHash: checkpoint?.hash ?? emptyHash, observedAt: until }
         bootstrapped = true
       }),
     ).pipe(Effect.timeout(connection.operationTimeoutMs))
@@ -241,6 +241,7 @@ export const startActivityFills = (
                   observedAt: yield* currentUtcInstant,
                 }
                 connected = true
+                reconnectMs = 2_000
               }
             }),
           ),
@@ -264,7 +265,13 @@ export const startActivityFills = (
           ),
         ),
       ),
-      Effect.andThen(Effect.sleep('2 seconds')),
+      Effect.andThen(
+        Effect.suspend(() => {
+          const delay = reconnectMs
+          reconnectMs = Math.min(reconnectMs * 2, 60_000)
+          return Effect.sleep(delay)
+        }),
+      ),
       Effect.forever,
       Effect.forkScoped,
     )
