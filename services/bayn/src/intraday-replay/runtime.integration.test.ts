@@ -20,7 +20,14 @@ import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
+import type { Order as BrokerOrder } from '../broker/alpaca/model'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
+import {
+  readProtectionReleaseBasis,
+  recordProtectionReleaseProof,
+  withCurrentProtectionReleaseProof,
+} from '../db/protection-release'
+import { readProtectionRelease } from '../execution/protection-release'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config/model'
@@ -2052,12 +2059,96 @@ durableTest.each(
                 })),
               ),
             ).toEqual([OrderSide.Buy])
+          let exactProtectionReadback = false
           for (let attempt = 0; attempt < 40; attempt++) {
             const advanced = yield* runtime.advance
+            if (
+              scenario === 'partial-exit-reentry' &&
+              !exactProtectionReadback &&
+              advanced.result?.outcome === 'RECOVERED'
+            ) {
+              const basis = yield* readProtectionReleaseBasis(accountId, advanced.result.cycle.identity.cycleId)
+              if (basis !== undefined) {
+                const proof = yield* readProtectionRelease(broker.read, basis, 5_000)
+                expect(proof._tag).toBe('VerifiedProtectionRelease')
+                if (proof._tag !== 'VerifiedProtectionRelease') throw new Error(proof.reason)
+                const proofId = yield* recordProtectionReleaseProof(basis, proof, 5_000)
+                expect(proofId).toMatch(/^[a-f0-9]{64}$/)
+                if (proofId === undefined) throw new Error('Expected a durable release proof')
+                const scope = { proofId, accountId, cycleId: basis.trigger.cycleId }
+                const readProof = withCurrentProtectionReleaseProof(scope, 5_000, (stored) =>
+                  Effect.succeed(stored.readback),
+                )
+                expect(yield* readProof).toEqual(proof)
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000)).toBe(proofId)
+                expect(
+                  yield* sql`SELECT count(*)::int AS count FROM protection_release_proofs WHERE proof_id = ${proofId}`,
+                ).toEqual([{ count: 1 }])
+                yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
+                  VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
+                expect(yield* readProof).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000)).toBeUndefined()
+
+                const readGroup = broker.read.orderByClientId(basis.protectionIntent.clientOrderId)
+                const changedGroup = (change: (order: BrokerOrder) => BrokerOrder) => ({
+                  ...broker.read,
+                  orderByClientId: () =>
+                    readGroup.pipe(Effect.map(({ evidence, value }) => ({ evidence, value: change(value) }))),
+                })
+                for (const alternative of [
+                  changedGroup((value) => ({ ...value, status: OrderStatus.PendingCancel })),
+                  changedGroup((value) => ({ ...value, filledQuantityAtoms: '1' })),
+                  changedGroup((value) => ({ ...value, replacedBy: value.brokerOrderId })),
+                ]) {
+                  expect(yield* readProtectionRelease(alternative, basis, 5_000)).toMatchObject({ _tag: 'Unproven' })
+                }
+                expect(
+                  yield* readProtectionRelease(
+                    {
+                      ...broker.read,
+                      positions: Effect.succeed({ ...proof.positions, value: [] }),
+                    },
+                    basis,
+                    5_000,
+                  ),
+                ).toEqual({ _tag: 'Unproven', reason: 'changed-account' })
+                expect(
+                  yield* readProtectionRelease(
+                    {
+                      ...broker.read,
+                      account: Effect.succeed({ ...proof.account, value: { ...proof.account.value, cashMicros: '0' } }),
+                    },
+                    basis,
+                    5_000,
+                  ),
+                ).toEqual({ _tag: 'Unproven', reason: 'changed-account' })
+
+                const reconciled = basis.trigger.evidence.portfolio.brokerState.reconciliation
+                const [authority] = yield* sql<{
+                  version: number
+                }>`SELECT version::integer AS version FROM authority_state WHERE singleton`
+                if (authority === undefined) throw new Error('Expected an active authority')
+                const version = {
+                  reconciliationId: reconciled.reconciliationId,
+                  reconciledAt: reconciled.reconciledAt,
+                  authorityGenerationHash: runtime.authorityGenerationHash,
+                  authorityVersion: authority.version,
+                }
+                expect(
+                  Result.isFailure(
+                    yield* verifyBrokerStateVersion(sql, accountId, version, basis.command.intentId, false).pipe(
+                      Effect.result,
+                    ),
+                  ),
+                ).toBe(true)
+                exactProtectionReadback = true
+              }
+            }
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
             const next = (yield* Clock.currentTimeMillis) + 1000
             yield* advanceMarketTo(next)
           }
+          if (scenario === 'partial-exit-reentry') expect(exactProtectionReadback).toBe(true)
           const state = yield* broker.snapshot
           expect(managementCalls).toBe(0)
           expect(state.fills[0]?.side).toBe(OrderSide.Buy)
