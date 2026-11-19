@@ -257,13 +257,10 @@ export const bindRecoveryFirstCycleDriver = (
                     }),
                   )
                 return Effect.provideContext(
-                  executeJevInferenceWork(
-                    jobId,
+                  executeJevInferenceWork(jobId, (job) =>
                     Effect.gen(function* () {
-                      const job = yield* work.value.read(jobId)
                       const authority = yield* Context.get(context, AuthorityGenerationStore).readAuthorityState
                       return (
-                        job !== null &&
                         job.authorityGenerationHash === authority.generationHash &&
                         authority.kill === KillState.Clear &&
                         authority.effective === authority.maximum
@@ -745,20 +742,21 @@ export const acquireNativeExecutionRuntime = (
       config,
       runtime,
       inferenceRuntime: {
-        executeInference: (jobId, signal) =>
-          ScopedRef.getUnsafe(managed).runPromise(
-            ExecutionCycleDriver.pipe(
-              Effect.flatMap(
-                (
-                  driver,
-                ): Effect.Effect<JevInferenceCompletion | null, NativeExecutionRuntimeError | OperationalError> =>
-                  driver.inference === undefined
-                    ? Effect.fail(runtimeError('binding', 'native execution driver has no admitted inference port'))
-                    : driver.inference.execute(jobId),
-              ),
+        executeInference: (jobId, signal) => {
+          const parent = currentOpenTelemetryParentSpan()
+          const execute = ExecutionCycleDriver.pipe(
+            Effect.flatMap(
+              (driver): Effect.Effect<JevInferenceCompletion | null, NativeExecutionRuntimeError | OperationalError> =>
+                driver.inference === undefined
+                  ? Effect.fail(runtimeError('binding', 'native execution driver has no admitted inference port'))
+                  : driver.inference.execute(jobId),
             ),
+          )
+          return ScopedRef.getUnsafe(managed).runPromise(
+            parent === undefined ? execute : execute.pipe(Effect.withParentSpan(parent)),
             { signal },
-          ),
+          )
+        },
       },
       readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
       startMarketWakeups: market.startWakeups,

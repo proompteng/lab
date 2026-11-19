@@ -13,7 +13,6 @@ import { evaluateClaimedEntryInferences, type EntryInferenceEvaluationOptions } 
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevEvidenceError } from './evidence'
-import type { JevObservation } from './observation'
 import { utcInstantFromEpochMillis } from '../time'
 import type { MarketSnapshotReference } from '../market-data/intraday/model'
 import type { PreparedJevBatch } from './trading-signals'
@@ -59,7 +58,7 @@ export class JevBatchStore extends Context.Service<
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
     readonly complete: (
       plan: JevBatchPlan,
-      observation: JevObservation,
+      observation: unknown,
       result: JevBatchResult,
     ) => Effect.Effect<JevBatchEvidence, OperationalError>
   }
@@ -70,13 +69,13 @@ export const evaluateJevBatch = (batch: PreparedJevBatch, options: JevBatchEvalu
     const store = yield* JevBatchStore
     const saved = yield* store.begin(batch, options)
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
-    return yield* evaluateAdmittedJevBatch(saved, batch.source.payload, options)
+    return yield* evaluateAdmittedJevBatch(saved, Effect.succeed(batch.source.payload), options)
   })
 
 /** The same admitted cohort is used by local replay and the provider-only durable worker. */
 export const evaluateAdmittedJevBatch = (
   saved: JevBatchAdmission,
-  sourceObservation: JevObservation,
+  loadObservation: Effect.Effect<unknown, OperationalError>,
   options: JevBatchEvaluationOptions = {},
 ) =>
   Effect.gen(function* () {
@@ -138,7 +137,7 @@ export const evaluateAdmittedJevBatch = (
           candidates,
         }),
       )
-      return yield* store.complete(saved.plan, sourceObservation, result)
+      return yield* store.complete(saved.plan, yield* loadObservation, result)
     }).pipe(
       Effect.onExit((exit) =>
         Exit.isFailure(exit) && records.length > 0
