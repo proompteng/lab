@@ -18,7 +18,7 @@ import { IntradayMarketData } from '../market-data/intraday/model'
 import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
-import { AutonomousRuntimeResourcesLive } from './resources'
+import { AutonomousRuntimeResourcesLive, type JevRuntimeServices } from './resources'
 import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
 import { makeObserveAutonomousCycleStartup } from '../observe-composition/startup'
 import { BrokerMutationError } from '../broker/alpaca-mutations/model'
@@ -36,7 +36,11 @@ import {
   refreshResearchCapitalActivationReconciliation,
 } from './capital-activation'
 
-export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeoutMs: number) =>
+export const makeExecutionCycleDriver = (
+  plan: ApplicationPlan,
+  preparationTimeoutMs: number,
+  inferenceContext: Context.Context<JevRuntimeServices>,
+) =>
   Effect.gen(function* () {
     const configured = yield* Effect.fromResult(configuredCapitalActivation(plan)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
@@ -49,7 +53,7 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
         execution: { ...readOnlyExecutionPolicy(plan), brokerIdentity: plan.config.alpaca.identity },
       },
     })
-    const runtimeContext = yield* Layer.build(AutonomousRuntimeResourcesLive(observePlan))
+    const runtimeContext = yield* Layer.build(AutonomousRuntimeResourcesLive(observePlan, inferenceContext))
     const services = yield* autonomousRuntimeServices.pipe(Effect.provideContext(runtimeContext))
     const cycleResources = makeAutonomousCycleResources(services, marketData, plan.config.operationTimeoutMs)
     const context = Context.merge(yield* Layer.build(cycleResources), runtimeContext)
