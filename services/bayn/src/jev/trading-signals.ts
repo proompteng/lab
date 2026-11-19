@@ -28,9 +28,15 @@ import {
   JevCandidatePlanStatus,
   JevEntryExclusion,
   makeJevBatchPlan,
+  type JevBatchPlan,
 } from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
-import { reproduceJevCandidateObservation } from './observation'
+import {
+  freezeJevEvidence,
+  isOwnedJevObservation,
+  reproduceJevCandidateObservation,
+  type OwnedJevObservation,
+} from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
@@ -559,6 +565,36 @@ export const makeJevTradingSignalBatch = (input: {
   reproduceJevCandidateObservation(input.observation).pipe(
     Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt, input.planVersion)),
   )
+
+const PreparedBatchTypeId: unique symbol = Symbol('PreparedJevBatch')
+
+export interface PreparedJevBatch {
+  readonly [PreparedBatchTypeId]: true
+  readonly plan: JevBatchPlan
+  readonly source: OwnedJevObservation
+}
+
+// Admission authenticates the original frozen object, including its plan and source pairing.
+const preparedBatches = new WeakSet<PreparedJevBatch>()
+
+export const isPreparedJevBatch = (batch: PreparedJevBatch) => preparedBatches.has(batch)
+
+export const prepareJevTradingSignalBatch = (
+  source: OwnedJevObservation,
+  expiresAt: string,
+  planVersion: JevBatchPlanVersion,
+) =>
+  Result.gen(function* () {
+    if (!isOwnedJevObservation(source)) return yield* unavailable('Jev batch requires an independently verified source')
+    const plan = yield* batchFromObservation(source.verified, expiresAt, planVersion)
+    const batch = Object.freeze({
+      [PreparedBatchTypeId]: true,
+      plan: freezeJevEvidence(plan),
+      source,
+    } satisfies PreparedJevBatch)
+    preparedBatches.add(batch)
+    return batch
+  })
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {

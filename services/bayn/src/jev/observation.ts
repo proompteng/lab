@@ -191,7 +191,45 @@ export const reproduceRetainedJevCandidateObservation = (input: unknown) =>
     Result.flatMap(reproduceObservation),
   )
 
-export const makeJevObservation = (input: {
+const OwnedObservationTypeId: unique symbol = Symbol('OwnedJevObservation')
+
+export interface OwnedJevObservation {
+  readonly [OwnedObservationTypeId]: true
+  readonly payload: JevObservation
+  readonly verified: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>
+}
+
+const ownedObservations = new WeakSet<OwnedJevObservation>()
+
+export const freezeJevEvidence = <A>(value: A): A => {
+  if (typeof value === 'object' && value !== null) {
+    for (const item of Object.values(value)) freezeJevEvidence(item)
+    Object.freeze(value)
+  }
+  return value
+}
+
+export const ownJevObservation = (input: JevObservation) =>
+  Result.gen(function* () {
+    const payload = yield* Result.try({
+      try: () => structuredClone(input),
+      catch: (cause) => invalidObservation(JevObservationCheck.Identity, cause),
+    })
+    const verified = yield* reproduceJevCandidateObservation(payload)
+    if ((yield* canonicalHashV1Result(payload)) !== verified.contentHash)
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
+    const source: OwnedJevObservation = freezeJevEvidence({
+      [OwnedObservationTypeId]: true,
+      payload,
+      verified,
+    })
+    ownedObservations.add(source)
+    return source
+  })
+
+export const isOwnedJevObservation = (observation: OwnedJevObservation) => ownedObservations.has(observation)
+
+const jevObservationPayload = (input: {
   readonly cycleId: string
   readonly authorityGenerationHash: string
   readonly protocol: JevProtocol
@@ -201,7 +239,7 @@ export const makeJevObservation = (input: {
 }) =>
   Result.gen(function* () {
     const rows = yield* persistIntradayRecordRows(input.snapshot)
-    const payload = {
+    return {
       schemaVersion: 'bayn.jev-observation.v1' as const,
       cycleId: input.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
@@ -212,11 +250,19 @@ export const makeJevObservation = (input: {
       manifest: input.snapshot.manifest,
       rows,
     }
-    const reproduced = yield* reproduceJevCandidateObservation(payload)
-    return { contentHash: reproduced.contentHash, payload }
   })
 
-export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']
+export type JevObservation = Result.Result.Success<ReturnType<typeof jevObservationPayload>>
+
+export const makeJevObservation = (input: Parameters<typeof jevObservationPayload>[0]) =>
+  jevObservationPayload(input).pipe(
+    Result.flatMap((payload) =>
+      Result.map(reproduceJevCandidateObservation(payload), ({ contentHash }) => ({ contentHash, payload })),
+    ),
+  )
+
+export const makeOwnedJevObservation = (input: Parameters<typeof jevObservationPayload>[0]) =>
+  jevObservationPayload(input).pipe(Result.flatMap(ownJevObservation))
 
 /** Restore the current typed graph while retaining the exact admitted source identity. */
 export const restoreVerifiedJevObservation = ({

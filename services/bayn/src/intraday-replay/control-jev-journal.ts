@@ -33,7 +33,11 @@ import {
   makeJevResolution,
   type JevEvaluationEvidence,
 } from '../jev/resolution'
-import { reproduceJevTradingSignalBatch, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
+import {
+  isPreparedJevBatch,
+  reproduceJevTradingSignalBatch,
+  reproduceJevTradingSignalBatchEvidence,
+} from '../jev/trading-signals'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -278,13 +282,12 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             return pending.sort()
           }),
         ),
-      begin: (raw, suppliedObservation) =>
+      begin: (batch) =>
         atomic(
           Effect.gen(function* () {
-            const decoded = yield* Effect.fromResult(decodeJevBatchPlan(raw))
-            yield* Effect.fromResult(reproduceJevTradingSignalBatch(suppliedObservation, decoded))
-            yield* recordObservation({ contentHash: decoded.observationHash, payload: suppliedObservation })
-            const plan = yield* readBatchSource(decoded)
+            if (!isPreparedJevBatch(batch)) return yield* failure('Jev control admission requires a prepared batch')
+            yield* recordObservation({ contentHash: batch.plan.observationHash, payload: batch.source.payload })
+            const plan = yield* readBatchSource(batch.plan)
             const saved = yield* readBatch(plan.batchId)
             if (saved !== null) return { ...saved, dispatches: [] }
             const claimedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)

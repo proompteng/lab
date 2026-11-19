@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
 import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
@@ -242,7 +243,9 @@ const retainReplayDispatch = Effect.gen(function* () {
   yield* (yield* CandidateObservationStore).record(replayFixture.observation)
   const admission = yield* TestClock.setTime(Date.parse(current.observedAt)).pipe(
     Effect.andThen(
-      Effect.flatMap(JevBatchStore, (store) => store.begin(replayBatch, replayFixture.observation.payload)),
+      Effect.flatMap(JevBatchStore, (store) =>
+        beginRecordedJevBatch(store, replayBatch, replayFixture.observation.payload),
+      ),
     ),
     Effect.provide(TestClock.layer()),
   )
@@ -298,7 +301,9 @@ integration('committed sequential provider handoff', () => {
         }
         yield* (yield* CandidateObservationStore).record(fixture.observation)
         return yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
-          Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
+          Effect.andThen(
+            Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
+          ),
           Effect.provide(TestClock.layer()),
         )
       }),
@@ -1671,7 +1676,9 @@ integration('committed sequential provider handoff', () => {
         yield* (yield* CandidateObservationStore).record(sourceFixture.observation)
         yield* TestClock.setTime(Date.parse(source.observedAt)).pipe(
           Effect.andThen(
-            Effect.flatMap(JevBatchStore, (store) => store.begin(sourceBatch, sourceFixture.observation.payload)),
+            Effect.flatMap(JevBatchStore, (store) =>
+              beginRecordedJevBatch(store, sourceBatch, sourceFixture.observation.payload),
+            ),
           ),
           Effect.provide(TestClock.layer()),
         )
