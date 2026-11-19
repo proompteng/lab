@@ -94,6 +94,7 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
           verifyNotification: () => {
             throw new Error('activation does not ingest signed notifications')
           },
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
           invalidate: async () => undefined,
           activate: async () => {
@@ -458,6 +459,7 @@ describeRestate('Real always-replay Restate execution deployment activation', ()
                   verifyNotification: () => {
                     throw new Error('activation does not ingest signed notifications')
                   },
+                  probeProtection: async () => undefined,
                   recordNotification: async () => ({ covered: false }),
                   invalidate: async () => undefined,
                   activate: () => Promise.resolve(),

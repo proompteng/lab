@@ -83,6 +83,7 @@ const handoff = (
       verifyNotification: () => {
         throw new Error('deployment activation does not ingest notifications')
       },
+      probeProtection: async () => undefined,
       recordNotification: async () => ({ covered: false }),
       invalidate: async () => undefined,
       activate: async () => {

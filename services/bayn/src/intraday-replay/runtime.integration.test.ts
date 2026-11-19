@@ -22,8 +22,12 @@ import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import type { Order as BrokerOrder } from '../broker/alpaca/model'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
+import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
+import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
+import { valkeyFixture } from '../testing/valkey-fixture'
 import {
   readProtectionReleaseBasis,
+  readProtectionReleaseReference,
   recordProtectionReleaseProof,
   withCurrentProtectionReleaseProof,
 } from '../db/protection-release'
@@ -2067,12 +2071,59 @@ durableTest.each(
               !exactProtectionReadback &&
               advanced.result?.outcome === 'RECOVERED'
             ) {
-              const basis = yield* readProtectionReleaseBasis(accountId, advanced.result.cycle.identity.cycleId)
-              if (basis !== undefined) {
+              const cycleId = advanced.result.cycle.identity.cycleId
+              const pending = yield* readProtectionReleaseBasis(accountId, cycleId)
+              if (pending !== undefined) {
+                const observationStore = makeBrokerObservationStore(
+                  sql,
+                  accountId,
+                  'a'.repeat(40),
+                  60_000,
+                  valkeyFixture().cache,
+                )
+                yield* observationStore.activate(0)
+                const ordinary = yield* observationStore.begin('original-poll', 0)
+                if (ordinary.status !== BrokerObservationClaimStatus.Reserved)
+                  throw new Error('Expected initial capture')
+                const publishedAtMs = Date.parse(ordinary.ticket.startedAt)
+                const ordinaryDueAtMs = publishedAtMs + 30_000
+                const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+                expect(
+                  yield* observationStore
+                    .publish(
+                      ordinary.ticket,
+                      observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt),
+                      ordinaryDueAtMs,
+                      { expiresAtMs: publishedAtMs + 60_000, requestCostMs: 600 },
+                    )
+                    .pipe(Effect.provideService(Clock.Clock, liveClock)),
+                ).toBe(true)
+                const basis = yield* readProtectionReleaseBasis(accountId, cycleId)
+                if (basis === undefined) throw new Error('Expected an exact cancellation basis')
+                const claims = yield* Effect.all(
+                  ['first-proof', 'duplicate-proof'].map((id) =>
+                    observationStore.reserveProtectionRead(basis.command, id, 1_800),
+                  ),
+                  { concurrency: 2 },
+                )
+                const winner = claims.findIndex((value) => value !== undefined)
+                expect(claims.filter((value) => value !== undefined)).toEqual([ordinaryDueAtMs + 2_400])
+                const blocked = yield* observationStore.begin('too-early', 0)
+                expect(blocked.status).toBe(BrokerObservationClaimStatus.QuotaWait)
+                expect(blocked.nextPollNotBeforeMs).toBe(ordinaryDueAtMs + 2_400)
                 const proof = yield* readProtectionRelease(broker.read, basis, 5_000)
                 expect(proof._tag).toBe('VerifiedProtectionRelease')
                 if (proof._tag !== 'VerifiedProtectionRelease') throw new Error(proof.reason)
-                const proofId = yield* recordProtectionReleaseProof(basis, proof, 5_000)
+                const winnerId = winner === 0 ? 'first-proof' : 'duplicate-proof'
+                const providerBackoffAtMs = ordinaryDueAtMs + 5_000
+                yield* observationStore.settleProtectionRead(winnerId, providerBackoffAtMs)
+                expect(yield* observationStore.begin('still-too-early', 0)).toEqual({
+                  status: BrokerObservationClaimStatus.QuotaWait,
+                  nextPollNotBeforeMs: providerBackoffAtMs,
+                })
+                expect(yield* readProtectionReleaseReference(accountId, cycleId, winnerId)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, 'unknown-claim')).toBeUndefined()
+                const proofId = yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)
                 expect(proofId).toMatch(/^[a-f0-9]{64}$/)
                 if (proofId === undefined) throw new Error('Expected a durable release proof')
                 const scope = { proofId, accountId, cycleId: basis.trigger.cycleId }
@@ -2080,14 +2131,20 @@ durableTest.each(
                   Effect.succeed(stored.readback),
                 )
                 expect(yield* readProof).toEqual(proof)
-                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000)).toBe(proofId)
+                expect(yield* readProtectionReleaseReference(accountId, cycleId, winnerId)).toEqual({
+                  proofId,
+                  cycleId,
+                  checkedAt: proof.checkedAt,
+                })
+                expect(yield* readProtectionReleaseReference(accountId, 'f'.repeat(64), winnerId)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBe(proofId)
                 expect(
                   yield* sql`SELECT count(*)::int AS count FROM protection_release_proofs WHERE proof_id = ${proofId}`,
                 ).toEqual([{ count: 1 }])
                 yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
                   VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
                 expect(yield* readProof).toBeUndefined()
-                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
 
                 const readGroup = broker.read.orderByClientId(basis.protectionIntent.clientOrderId)
                 const changedGroup = (change: (order: BrokerOrder) => BrokerOrder) => ({

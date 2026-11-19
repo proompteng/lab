@@ -1165,6 +1165,9 @@ export const deferPostMutationReconciliation = (pending: PostMutationReconciliat
   waitReason: 'POST_MUTATION_RECONCILIATION',
   observedAt: pending.observedAt,
   cycle: pending.cycle,
+  ...(pending.protectionReleaseCycleId === undefined
+    ? {}
+    : { protectionReleaseCycleId: pending.protectionReleaseCycleId }),
 })
 
 export const readUnfinishedMutationCycle = (

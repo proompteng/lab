@@ -3,9 +3,11 @@ import { Clock, Effect, Option, Result, Schema } from 'effect'
 
 import { IntentStore, NativeProtectionCancelCommandSchema } from '../execution/intents/domain'
 import { VerifiedProtectionReleaseSchema, type ProtectionReleaseBasis } from '../execution/protection-release'
+import { ProtectionReleaseReferenceSchema } from '../execution/events'
 import { withWriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { JevExitTargetSchema } from '../jev/exit'
+import { currentAccountPostingBasis } from './reconciliation'
 import {
   Sha256Schema,
   SignedMicrosSchema,
@@ -66,7 +68,7 @@ const readReleaseFrontier = (sql: PgClient.PgClient, accountId: string, cycleId:
         ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1) AS "reconciliationId",
       (SELECT generation::text FROM broker_observations WHERE account_id = ${accountId}) AS "observationGeneration",
       (SELECT count(*)::text FROM broker_events WHERE account_id = ${accountId}
-        AND observed_at >= ${reconciledAt}::timestamptz) AS "brokerEvents",
+        AND observed_at > ${reconciledAt}::timestamptz) AS "brokerEvents",
       (SELECT count(*)::text FROM mutation_events m JOIN intents i USING (intent_id) WHERE i.account_id = ${accountId}
         AND m.occurred_at >= ${reconciledAt}::timestamptz) AS mutations,
       (SELECT count(*)::text FROM native_protection_cancel_commands WHERE account_id = ${accountId}
@@ -80,6 +82,7 @@ const readReleaseFrontier = (sql: PgClient.PgClient, accountId: string, cycleId:
         AND recorded_at >= ${reconciledAt}::timestamptz) AS notifications
     FROM authority_state a CROSS JOIN autonomous_cycles c
     WHERE a.singleton AND c.account_id = ${accountId} AND c.cycle_id = ${cycleId} AND c.state = 'ACTIVE'
+      AND (${currentAccountPostingBasis(sql, accountId, reconciledAt)})
   `.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(FrontierRows, strictParseOptions)),
     Effect.map(([row]) => row),
@@ -120,6 +123,9 @@ export const readProtectionReleaseBasis = (accountId: string, cycleId: string) =
       frontier === undefined ||
       frontier.authorityGenerationHash !== stored.value.intent.authorityGenerationHash ||
       frontier.reconciliationId !== reconciliation.reconciliationId ||
+      frontier.brokerEvents !== '0' ||
+      frontier.mutations !== '0' ||
+      frontier.protectionCommands !== '1' ||
       !canonicalJsonEqualV1(frontier.latestCommand, latch.command)
     )
       return undefined
@@ -150,11 +156,25 @@ export const readProtectionReleaseBasis = (accountId: string, cycleId: string) =
 
 type RetainedReleaseBasis = NonNullable<Effect.Success<ReturnType<typeof readProtectionReleaseBasis>>>
 
+export const readProtectionReleaseReference = (accountId: string, cycleId: string, claimId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const [reference] = yield* sql`
+      SELECT proof_id AS "proofId", i.cycle_id AS "cycleId", evidence #>> '{readback,checkedAt}' AS "checkedAt"
+      FROM protection_release_proofs p JOIN intents i USING (intent_id)
+      WHERE i.account_id = ${accountId} AND i.cycle_id = ${cycleId} AND p.read_claim_id = ${claimId}
+    `.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ProtectionReleaseReferenceSchema), strictParseOptions)),
+    )
+    return reference
+  })
+
 /** Store readback evidence. The later order admission still needs to check its current frontier under the writer fence. */
 export const recordProtectionReleaseProof = (
   basis: RetainedReleaseBasis,
   verified: typeof VerifiedProtectionReleaseSchema.Type,
   maximumObservationAgeMs: number,
+  claimId: string,
 ) =>
   withWriterFence(
     Effect.gen(function* () {
@@ -183,12 +203,18 @@ export const recordProtectionReleaseProof = (
         readback: verified,
       } satisfies typeof ProtectionReleaseEvidence.Type
       const proofId = yield* Effect.fromResult(canonicalHashV1Result(evidence))
-      yield* sql`
-        INSERT INTO protection_release_proofs (proof_id, intent_id, broker_order_id, requested_at, evidence)
-        VALUES (${proofId}, ${command.intentId}, ${command.brokerOrderId}, ${command.requestedAt}::timestamptz, ${sql.json(evidence)})
-        ON CONFLICT (proof_id) DO NOTHING
+      const [inserted] = yield* sql`
+        INSERT INTO protection_release_proofs (proof_id, intent_id, broker_order_id, requested_at, evidence, read_claim_id)
+        SELECT ${proofId}, intent_id, broker_order_id, requested_at, ${sql.json(evidence)}, claim_id
+        FROM protection_release_read_claims WHERE claim_id = ${claimId}
+          AND intent_id = ${command.intentId} AND broker_order_id = ${command.brokerOrderId}
+          AND requested_at = ${command.requestedAt}::timestamptz
+        ON CONFLICT DO NOTHING
+        RETURNING proof_id
       `
-      return proofId
+      if (inserted !== undefined) return proofId
+      const existing = yield* readProtectionReleaseReference(command.accountId, trigger.cycleId, claimId)
+      return existing?.proofId === proofId ? proofId : undefined
     }),
   )
 

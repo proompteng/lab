@@ -1,3 +1,4 @@
+import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
 import protectionReleaseProofs from '../../migrations/0202_protection_release_proofs'
 import notDispatchedVisualEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
 import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
@@ -203,6 +204,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '203_protection_read_allowance': protectionReadAllowance,
   '202_protection_release_proofs': protectionReleaseProofs,
   '201_not_dispatched_visual_evidence': notDispatchedVisualEvidence,
   '197_inference_expense_wakeups': inferenceExpenseWakeups,

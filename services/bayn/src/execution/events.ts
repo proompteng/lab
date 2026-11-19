@@ -15,6 +15,18 @@ export const BrokerObservationWakeupSchema = Schema.TaggedStruct('BrokerObservat
   observedAt: UtcInstantSchema,
 })
 
+export const ProtectionReleaseReferenceSchema = Schema.Struct({
+  proofId: Sha256Schema,
+  cycleId: Sha256Schema,
+  checkedAt: UtcInstantSchema,
+})
+export type ProtectionReleaseReference = typeof ProtectionReleaseReferenceSchema.Type
+
+const ProtectionReleaseWakeupSchema = Schema.TaggedStruct('ProtectionRelease', {
+  ...envelope,
+  ...ProtectionReleaseReferenceSchema.fields,
+})
+
 export enum MarketChangeReason {
   Startup = 'Startup',
   Data = 'Data',
@@ -45,6 +57,7 @@ export const InferenceCompletedWakeupSchema = Schema.TaggedStruct('InferenceComp
 
 export const ExecutionWakeupSchema = Schema.Union([
   BrokerObservationWakeupSchema,
+  ProtectionReleaseWakeupSchema,
   MarketChangedSchema,
   InferenceCompletedWakeupSchema,
 ])

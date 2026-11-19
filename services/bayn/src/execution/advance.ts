@@ -7,6 +7,7 @@ import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { ExecutionStageTimings, type ExecutionStageTiming, withObservedSpan } from '../telemetry'
 import { operationCurrentTimeMillis } from '../operation-timeout'
 import type { JevInferenceJob } from '../jev/inference-work'
+import type { ProtectionReleaseReference } from './events'
 
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
@@ -22,6 +23,7 @@ export interface AdvanceExecutionCommand {
   readonly sequence: number
   readonly issuedAt: string
   readonly sourceRevision: string
+  readonly protectionRelease?: ProtectionReleaseReference
 }
 
 export type ExecutionBlocker =
@@ -123,6 +125,7 @@ const hashOutcome = (
     sequence: command.sequence,
     issuedAt: command.issuedAt,
     sourceRevision: command.sourceRevision,
+    ...(command.protectionRelease === undefined ? {} : { protectionRelease: command.protectionRelease }),
     outcome: outcome._tag,
     blocker: outcome._tag === 'Blocked' ? outcome.reason : null,
     ...(outcome._tag === 'Waiting' ? { waiting: outcome.reason } : {}),
@@ -134,6 +137,9 @@ const hashOutcome = (
             observedAt: observation.observedAt,
             ...(observation.recoveryAction === undefined ? {} : { recoveryAction: observation.recoveryAction }),
             ...(observation.waitReason === undefined ? {} : { waitReason: observation.waitReason }),
+            ...(observation.protectionReleaseCycleId === undefined
+              ? {}
+              : { protectionReleaseCycleId: observation.protectionReleaseCycleId }),
             ...(observation.readiness === undefined ? {} : { readiness: observation.readiness }),
             ...(observation.admissionProtection === undefined
               ? {}

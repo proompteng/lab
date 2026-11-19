@@ -255,6 +255,7 @@ describe('native Restate execution server', () => {
       { executeInference: async () => null },
       {
         runtime: {
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
           verifyNotification: () => {
             throw new Error('discovery does not verify notifications')
@@ -323,7 +324,7 @@ describe('native Restate execution server', () => {
       },
       {
         name: 'BaynBrokerObservations',
-        handlers: ['notify', 'accept', 'refresh', 'activate', 'capture', 'freshness', 'status'],
+        handlers: ['notify', 'accept', 'refresh', 'probeProtection', 'activate', 'capture', 'freshness', 'status'],
       },
       { name: 'BaynEntryInference', handlers: ['evaluate'] },
     ])
@@ -342,6 +343,10 @@ describe('native Restate execution server', () => {
       ingressPrivate: false,
       idempotencyRetention: 0,
       journalRetention: 0,
+    })
+    expect(services[1]?.handlers?.find(({ name }) => name === 'probeProtection')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: true,
     })
     expect(
       services[0]?.handlers
@@ -407,6 +412,7 @@ describe('native Restate execution server', () => {
       { executeInference: async () => null },
       {
         runtime: {
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
           verifyNotification: () => {
             throw new Error('discovery does not verify notifications')
