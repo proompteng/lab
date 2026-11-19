@@ -32,23 +32,6 @@ const decodeTrade = Schema.decodeUnknownResult(trade)
 
 const replayFailure = (message: string) => contractFailure({ reason: 'FILL_SHAPE', message })
 
-export const decodeActivityReplay = (
-  body: string,
-): Result.Result<readonly unknown[], ReturnType<typeof replayFailure>> =>
-  Result.try({
-    try: () => {
-      const rows: unknown[] = []
-      for (const line of body.split(/\r?\n/)) {
-        if (line === '' || line === ':heartbeat' || line === ': welcome to the Alpaca events') continue
-        // Drop and server-error notices are SSE comments. A successful HTTP response can still lose events.
-        if (!line.startsWith('data:')) throw new Error('unrecognized activity replay frame')
-        rows.push(JSON.parse(line.slice(5)))
-      }
-      return rows
-    },
-    catch: () => replayFailure('Alpaca activity replay contains a malformed or incomplete frame'),
-  })
-
 export const decodeFillExecutions = (
   rows: readonly unknown[],
   accountId: string,
@@ -60,7 +43,7 @@ export const decodeFillExecutions = (
       const header = yield* decodeActivity(row).pipe(Result.mapError(() => replayFailure('Invalid Alpaca activity')))
       if (header.activity_type !== 'TRD') continue
       const event = yield* decodeTrade(row).pipe(
-        // Corrections and busts need the full REST recovery cut.
+        // Corrections and busts must not be applied as new fills.
         Result.mapError(() => replayFailure('Alpaca trade activity cannot verify an ordinary execution')),
       )
       if (executionIds.has(event.ref_id))

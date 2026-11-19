@@ -1,14 +1,13 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Context, Effect, Layer, Redacted, Result, type Schema, Scope, Stream } from 'effect'
-import { Headers, HttpClient, type HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/http'
+import { Cause, Context, Effect, Layer, Redacted, Result, type Schema, Scope } from 'effect'
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { type BrokerConnection } from '../connection'
 import { BrokerEnvironment } from '../identity'
-import { activityReplayStart, decodeActivityReplay, decodeFillExecutions } from './activity-fills'
 import {
   BrokerReadContractFailure,
   BrokerReadError,
@@ -92,28 +91,6 @@ const marketCalendarTimeoutMs = 5_000
 // Retry a stuck read before it consumes the observation's whole freshness lead.
 // The read below still bounds headers, retries, body decoding and validation together.
 const readAttemptTimeoutMs = 5_000
-const activityReplayMaximumBytes = 4 * 1024 * 1024
-
-const readActivityReplay = (response: HttpClientResponse.HttpClientResponse) =>
-  Effect.gen(function* () {
-    if (response.headers['content-type']?.split(';')[0] !== 'text/event-stream')
-      return yield* contractFailure({ reason: 'FILL_SHAPE', message: 'Alpaca activity replay is not an event stream' })
-    const chunks: Uint8Array[] = []
-    let size = 0
-    yield* response.stream.pipe(
-      Stream.runForEach((chunk) => {
-        size += chunk.byteLength
-        if (size > activityReplayMaximumBytes)
-          return Effect.fail(
-            contractFailure({ reason: 'FILL_SHAPE', message: 'Alpaca activity replay exceeds its byte bound' }),
-          )
-        chunks.push(chunk)
-        return Effect.void
-      }),
-    )
-    return yield* Effect.fromResult(decodeActivityReplay(Buffer.concat(chunks, size).toString('utf8')))
-  })
-
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
 ) {}
@@ -196,7 +173,6 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       url: URL,
       decoder: (input: unknown) => Result.Result<A, E>,
       timeoutMs = connection.operationTimeoutMs,
-      readSuccess?: typeof readActivityReplay,
     ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> => {
       // A shorter whole-read deadline owns cancellation; an equal attempt timer can race it into another retry.
       const bounded =
@@ -204,9 +180,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       const client = bounded.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
       return Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
-          acceptJson: readSuccess === undefined,
+          acceptJson: true,
           headers: {
-            ...(readSuccess === undefined ? {} : { accept: 'text/event-stream' }),
             'APCA-API-KEY-ID': key,
             'APCA-API-SECRET-KEY': secret,
           },
@@ -226,14 +201,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             }),
           ),
         )
-        const body: Effect.Effect<unknown, BrokerReadContractFailure | HttpClientError.HttpClientError> =
-          readSuccess !== undefined && response.status === 200 ? readSuccess(response) : response.json
-        const raw = yield* body.pipe(
+        const raw = yield* response.json.pipe(
           withObservedStage('bayn.alpaca.read.body', { dependency: 'alpaca', operation, diagnosticOnly: true }),
           Effect.mapError((cause) =>
             invalidResponse({
               operation,
-              message: `Alpaca ${operation} response body is not valid ${readSuccess === undefined ? 'JSON' : 'event data'}`,
+              message: `Alpaca ${operation} response body is not valid JSON`,
               evidence: { status: response.status, requestId: headers['x-request-id'] },
               cause,
             }),
@@ -537,24 +510,6 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
-    const fillExecutions = (until: string) => {
-      const url = new URL('/v2beta1/events/activities', connection.baseUrl)
-      url.searchParams.set('since', activityReplayStart)
-      url.searchParams.set('until', until)
-      return readResponse(
-        'fill-executions',
-        url,
-        (rows) =>
-          Array.isArray(rows)
-            ? decodeFillExecutions(rows, connection.expectedAccountId)
-            : Result.fail(
-                contractFailure({ reason: 'FILL_SHAPE', message: 'Alpaca activity replay is not a collection' }),
-              ),
-        Math.min(connection.operationTimeoutMs, 8_000),
-        readActivityReplay,
-      ).pipe(Effect.map(({ value }) => value))
-    }
-
     return {
       account,
       accountConfiguration,
@@ -564,7 +519,6 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       orderById,
       orderByClientId,
       fillActivities,
-      ...(connection.identity.environment === BrokerEnvironment.Sandbox ? { fillExecutions } : {}),
       feeActivities,
       marketCalendar,
     }
