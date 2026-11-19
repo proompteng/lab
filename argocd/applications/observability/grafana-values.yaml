@@ -13,8 +13,8 @@ grafana.ini:
     org_role: Viewer
 replicas: 1
 image:
-  tag: 13.3.1
-  sha: 0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
+  tag: 13.2.1
+  sha: f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
 shadowBundledPlugins: true
 plugins:
   - elasticsearch@12.8.1

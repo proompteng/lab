@@ -550,14 +550,14 @@ describe('enabled app inventory', () => {
 
   it('pins the Temporal upgrade wave to immutable multi-architecture images', () => {
     expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
-      version: '1.8.0',
+      version: '1.6.0',
     })
     expect(temporalKustomization.images).toEqual([
       {
         name: 'temporal-worker-runtime',
         newName: 'mirror.gcr.io/temporalio/server',
-        newTag: '1.32.2',
-        digest: 'sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670',
+        newTag: '1.31.2',
+        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
       },
       {
         name: 'docker.elastic.co/elasticsearch/elasticsearch',
@@ -567,20 +567,20 @@ describe('enabled app inventory', () => {
       {
         name: 'mirror.gcr.io/temporalio/server',
         newName: 'mirror.gcr.io/temporalio/server',
-        newTag: '1.32.2',
-        digest: 'sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670',
+        newTag: '1.31.2',
+        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
       },
       {
         name: 'mirror.gcr.io/temporalio/admin-tools',
         newName: 'mirror.gcr.io/temporalio/admin-tools',
-        newTag: '1.32.2',
-        digest: 'sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754',
+        newTag: '1.31.2',
+        digest: 'sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107',
       },
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.58.1',
-        digest: 'sha256:ac3c13eddb4547d830991bb5eee93a5d97140134522b7297fdb2be1fe25ef925',
+        newTag: '2.54.0',
+        digest: 'sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932',
       },
     ])
   })

@@ -871,12 +871,10 @@ class CassandraDeleteWireTests(unittest.TestCase):
                         "body": json.loads(self.rfile.read(length)),
                     }
                 )
-                body = b'{"kind":"Status","message":"fixture"}'
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                self.wfile.write(b'{"kind":"Status","message":"fixture"}')
 
             def log_message(self, *args):
                 pass
