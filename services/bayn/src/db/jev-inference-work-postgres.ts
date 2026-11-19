@@ -3,23 +3,38 @@ import { Clock, Effect, Layer, Option, Result, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { decodeJevBatchPlan, JevCandidatePlanStatus, type JevBatchPlan } from '../jev/batch'
+import { decodeJevBatchPlan, JevBatchPlanSchema, JevCandidatePlanStatus } from '../jev/batch'
 import { makeJevDispatch } from '../jev/evaluation'
 import { JevInferenceWorkStore, type JevInferenceJob } from '../jev/inference-work'
-import { restoreJevObservation, restoreVerifiedJevObservation } from '../jev/observation'
+import { restoreJevObservation } from '../jev/observation'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { StagedDispatchClaimSchema } from '../jev/staged-checkpoint'
-import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import { utcInstantFromEpochMillis } from '../time'
+import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { makeJevBatchStore } from './jev-batch-postgres'
 
 const WorkRow = Schema.Struct({
-  plan: Schema.Unknown,
+  batch_id: Sha256Schema,
+  cycle_id: Sha256Schema,
+  authority_generation_hash: Sha256Schema,
+  observed_at: UtcInstantSchema,
+  expires_at: UtcInstantSchema,
+  plan_version: JevBatchPlanSchema.fields.schemaVersion,
   claimed: Schema.Boolean,
   admission_deadline_at: Schema.NullOr(UtcDatabaseInstantSchema),
-})
+}).check(
+  Schema.makeFilter(
+    (row) => {
+      const lifetime = Date.parse(row.expires_at) - Date.parse(row.observed_at)
+      return lifetime > 0 && lifetime <= 10_000
+    },
+    { expected: 'a sealed inference job with a bounded validity window' },
+  ),
+)
 const WorkClaimRow = Schema.Struct({
+  plan: Schema.Unknown,
+  source_matches: Schema.Boolean,
   dispatches: Schema.Array(
     Schema.Struct({
       requestId: Sha256Schema,
@@ -29,13 +44,13 @@ const WorkClaimRow = Schema.Struct({
   ),
 })
 
-const jobFromRow = (plan: JevBatchPlan, row: typeof WorkRow.Type): JevInferenceJob => ({
+const jobFromRow = (row: typeof WorkRow.Type): JevInferenceJob => ({
   schemaVersion: 'bayn.jev-inference-job.v1',
-  jobId: plan.batchId,
-  batchId: plan.batchId,
-  cycleId: plan.cycleId,
-  authorityGenerationHash: plan.authorityGenerationHash,
-  expiresAt: plan.expiresAt,
+  jobId: row.batch_id,
+  batchId: row.batch_id,
+  cycleId: row.cycle_id,
+  authorityGenerationHash: row.authority_generation_hash,
+  expiresAt: row.expires_at,
   ...(row.admission_deadline_at === null ? {} : { admissionDeadlineAt: Date.parse(row.admission_deadline_at) }),
   status: row.claimed ? 'Claimed' : 'Prepared',
 })
@@ -56,17 +71,18 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const jobId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
       const rows = yield* decodeRows(
         yield* sql`
-        SELECT plan.payload AS plan, work.claimed_at IS NOT NULL AS claimed,
+        SELECT work.batch_id, plan.cycle_id, plan.authority_generation_hash,
+          plan.payload->>'observedAt' AS observed_at, plan.payload->>'expiresAt' AS expires_at,
+          plan.payload->>'schemaVersion' AS plan_version, work.claimed_at IS NOT NULL AS claimed,
           to_char(work.admission_deadline_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admission_deadline_at
         FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
         WHERE work.batch_id = ${jobId}`,
       )
       const row = rows[0]
       if (row === undefined) return null
-      const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
-      if (plan.batchId !== jobId) return yield* failure('Jev inference work differs from its plan identity')
-      return jobFromRow(plan, row)
-    }).pipe(Effect.mapError(failure))
+      if (row.batch_id !== jobId) return yield* failure('Jev inference work differs from its plan identity')
+      return jobFromRow(row)
+    }).pipe(Effect.mapError(failure), withObservedStage('bayn.jev.worker.job-read', { dependency: 'postgresql' }))
 
   const pending = (input?: string) =>
     Effect.gen(function* () {
@@ -77,19 +93,19 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
       const rows = yield* decodeRows(
         yield* sql`
         WITH unresolved AS MATERIALIZED (
-          SELECT work.batch_id, work.claimed_at, work.admission_deadline_at, plan.payload
+          SELECT work.batch_id, plan.cycle_id, plan.authority_generation_hash, work.claimed_at, work.admission_deadline_at, plan.payload
           FROM jev_inference_work AS work JOIN jev_batch_plans AS plan USING (batch_id)
           WHERE ${generation === undefined ? sql`true` : sql`plan.authority_generation_hash = ${generation}`}
             AND NOT EXISTS (SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = work.batch_id)
         )
-        SELECT payload AS plan, claimed_at IS NOT NULL AS claimed,
+        SELECT batch_id, cycle_id, authority_generation_hash,
+          payload->>'observedAt' AS observed_at, payload->>'expiresAt' AS expires_at,
+          payload->>'schemaVersion' AS plan_version, claimed_at IS NOT NULL AS claimed,
           to_char(admission_deadline_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admission_deadline_at
         FROM unresolved WHERE payload->>'expiresAt' > ${now}
         ORDER BY payload->>'expiresAt', batch_id LIMIT 64`,
       )
-      return yield* Effect.forEach(rows, (row) =>
-        Effect.fromResult(decodeJevBatchPlan(row.plan)).pipe(Effect.map((plan) => jobFromRow(plan, row))),
-      )
+      return rows.map(jobFromRow)
     }).pipe(Effect.mapError(failure))
 
   const settleExpired = (input: string) =>
@@ -193,28 +209,24 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
         Schema.Array(WorkClaimRow),
         strictParseOptions,
       )(
-        yield* sql`UPDATE jev_inference_work SET claimed_at = clock_timestamp()
-        WHERE batch_id = ${jobId} AND claimed_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${jobId})
-        RETURNING dispatches`,
+        yield* sql`WITH claimed AS (
+          UPDATE jev_inference_work SET claimed_at = clock_timestamp()
+          WHERE batch_id = ${jobId} AND claimed_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${jobId})
+          RETURNING batch_id, dispatches, source_sha256
+        )
+        SELECT claimed.dispatches, plan.payload AS plan,
+          COALESCE(sha256(convert_to(observation.payload::text, 'UTF8')) = claimed.source_sha256, false) AS source_matches
+        FROM claimed JOIN jev_batch_plans AS plan USING (batch_id)
+        JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash`.pipe(
+          withObservedStage('bayn.jev.worker.source-seal', { dependency: 'postgresql' }),
+        ),
       )
       const row = rows[0]
       if (row === undefined) return null
-      const sources = yield* Schema.decodeUnknownEffect(
-        Schema.Tuple([Schema.Struct({ plan: Schema.Unknown, observation: Schema.Unknown })]),
-        strictParseOptions,
-      )(
-        yield* sql`SELECT plan.payload AS plan, observation.payload AS observation
-        FROM jev_batch_plans AS plan
-        JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
-        WHERE plan.batch_id = ${jobId}`,
-      )
-      const { plan, observation: verified } = yield* Effect.fromResult(
-        reproduceJevTradingSignalBatchEvidence(sources[0].observation, sources[0].plan),
-      )
-      const observation = yield* Effect.fromResult(restoreVerifiedJevObservation(verified))
-      if (plan.batchId !== jobId || observation.contentHash !== plan.observationHash)
-        return yield* failure('Claimed inference differs from its immutable source')
+      if (!row.source_matches) return yield* failure('Claimed inference differs from its admission source seal')
+      const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
+      if (plan.batchId !== jobId) return yield* failure('Claimed inference differs from its immutable plan')
       const requests = plan.candidates.flatMap((candidate) =>
         candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
       )
@@ -235,9 +247,22 @@ export const makeJevInferenceWorkStore = Effect.gen(function* () {
             return yield* failure('Claimed inference visual request differs from its original admission')
           return dispatch
         }),
+      ).pipe(withObservedStage('bayn.jev.worker.dispatch-replay'))
+      const loadObservation = Effect.gen(function* () {
+        const [row] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ observation: Schema.Unknown })]),
+          strictParseOptions,
+        )(
+          yield* sql`SELECT payload AS observation FROM intraday_candidate_observations
+          WHERE content_hash = ${plan.observationHash}`,
+        )
+        return row.observation
+      }).pipe(
+        Effect.mapError(failure),
+        withObservedStage('bayn.jev.worker.completion-source', { dependency: 'postgresql' }),
       )
-      return { admission: { plan, result: null, dispatches }, observation: observation.observation }
-    }).pipe(Effect.mapError(failure))
+      return { admission: { plan, result: null, dispatches }, loadObservation }
+    }).pipe(Effect.mapError(failure), withObservedStage('bayn.jev.worker.claim'))
 
   const resume = (cycleInput: string, generationInput: string) =>
     Effect.gen(function* () {

@@ -35,7 +35,6 @@ import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
 import { recordReproducedJevObservation } from './candidate-observation-postgres'
-import type { JevObservation } from '../jev/observation'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
 const StoredEvaluationRow = Schema.Struct({
@@ -548,7 +547,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       return rows.map((row) => row.batch_id)
     }).pipe(Effect.mapError(persistError))
 
-  const complete = (sourcePlan: JevBatchPlan, observation: JevObservation, sourceResult: JevBatchResult) =>
+  const complete = (sourcePlan: JevBatchPlan, observation: unknown, sourceResult: JevBatchResult) =>
     Effect.gen(function* () {
       yield* requireAutocommit
       const { plan, result } = yield* Effect.gen(function* () {
