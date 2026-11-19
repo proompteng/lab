@@ -1,6 +1,9 @@
 coder:
   coder:
     replicaCount: 1
+    # Schema migrations require exclusive database access.
+    strategy:
+      type: Recreate
     image:
       tag: v2.38.10@sha256:f94f80a3bcc002b9a4e32b551d18e5331a0b9c936e0663412e8a9894339e94cf
     env:
