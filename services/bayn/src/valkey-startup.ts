@@ -3,8 +3,12 @@ import { Effect, Exit, Fiber, Layer, Schedule, Scope } from 'effect'
 import { RedisError } from 'effect/persistence/Redis'
 import { ConnectionTimeoutError } from 'redis'
 
-const startupConnectionRefused = (error: RedisError) =>
-  isNativeError(error.cause) && Object.getOwnPropertyDescriptor(error.cause, 'code')?.value === 'ECONNREFUSED'
+const startupRetryCode = ({ cause }: RedisError) => {
+  if (!isNativeError(cause)) return undefined
+  if (Object.getPrototypeOf(cause) === ConnectionTimeoutError.prototype) return 'CONNECTION_TIMEOUT'
+  if (Object.getOwnPropertyDescriptor(cause, 'code')?.value === 'ECONNREFUSED') return 'ECONNREFUSED'
+  return undefined
+}
 
 export const withValkeyStartupRetry = <A, R>(makeLayer: (signal: AbortSignal) => Layer.Layer<A, RedisError, R>) =>
   Layer.effectContext(
@@ -37,14 +41,19 @@ export const withValkeyStartupRetry = <A, R>(makeLayer: (signal: AbortSignal) =>
         )
       })
       return yield* attempt.pipe(
-        Effect.tapError((error) =>
-          startupConnectionRefused(error)
-            ? Effect.logWarning('Valkey startup connection refused').pipe(
-                Effect.annotateLogs({ dependency: 'valkey', operation: 'connect', code: 'ECONNREFUSED' }),
+        Effect.tapError((error) => {
+          const code = startupRetryCode(error)
+          return code === undefined
+            ? Effect.void
+            : Effect.logWarning('Valkey startup connection failed').pipe(
+                Effect.annotateLogs({ dependency: 'valkey', operation: 'connect', code }),
               )
-            : Effect.void,
-        ),
-        Effect.retry({ while: startupConnectionRefused, times: 2, schedule: Schedule.spaced('1 second') }),
+        }),
+        Effect.retry({
+          while: (error) => startupRetryCode(error) !== undefined,
+          times: 2,
+          schedule: Schedule.spaced('1 second'),
+        }),
       )
     }),
   )
