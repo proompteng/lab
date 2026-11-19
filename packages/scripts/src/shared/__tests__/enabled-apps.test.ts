@@ -375,7 +375,7 @@ describe('enabled app inventory', () => {
 
   it('pins the identity and metrics controller upgrade wave', () => {
     expect(certManagerKustomization).toContain('version: v1.21.3')
-    expect(externalSecretsKustomization).toContain('version: 2.10.0')
+    expect(externalSecretsKustomization).toContain('version: 2.15.0')
     expect(platformApplicationSet).toContain('targetRevision: v0.9.1')
   })
 
