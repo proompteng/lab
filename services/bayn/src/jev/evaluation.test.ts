@@ -58,13 +58,18 @@ const memoryStore = () => {
   return { store, receipts }
 }
 
-test('copies of one admitted dispatch share its single-use provider right', async () => {
-  const dispatch = makeJevDispatch({ request, claimedAt: request.observedAt, visualClaim: null })
+test('copies of one admitted dispatch share its detached preparation and single-use provider right', async () => {
+  const input = structuredClone(request)
+  const dispatch = Result.getOrThrow(makeJevDispatch({ request: input, claimedAt: request.observedAt }))
   const copy = { ...dispatch }
+  Object.assign(input.request.chartSource, { symbol: 'MSFT' })
   const results = await Effect.runPromise(
     Effect.all([dispatch.consume.pipe(Effect.result), copy.consume.pipe(Effect.result)], { concurrency: 2 }),
   )
-  expect(results.filter(Result.isSuccess)).toHaveLength(1)
+  const accepted = results.filter(Result.isSuccess)
+  expect(accepted).toHaveLength(1)
+  expect(accepted[0]?.success.request).toEqual(request)
+  expect(accepted[0]?.success.claim.input).toEqual(request.request)
   expect(results.filter(Result.isFailure)).toHaveLength(1)
 })
 

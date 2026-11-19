@@ -311,22 +311,23 @@ const mixedDispatches = () => {
   }
   return [direct, base].map((claim) => {
     const prepared = Result.getOrThrow(prepareClaimedEntry(claim))
-    return makeJevDispatch({
-      claimedAt: claim.claimedAt,
-      visualClaim: prepared.visualClaim,
-      request: {
-        schemaVersion: 'bayn.jev-evaluation-request.v3',
-        requestId: claim.requestId,
-        cycleId: 'a'.repeat(64),
-        authorityGenerationHash: 'b'.repeat(64),
-        snapshotId: 'c'.repeat(64),
-        symbol: 'AAPL',
-        observedAt: claim.observedAt,
-        expiresAt: claim.expiresAt,
-        request: prepared.prepared.input,
-        requestHash: prepared.prepared.requestHash,
-      },
-    })
+    return Result.getOrThrow(
+      makeJevDispatch({
+        claimedAt: claim.claimedAt,
+        request: {
+          schemaVersion: 'bayn.jev-evaluation-request.v3',
+          requestId: claim.requestId,
+          cycleId: 'a'.repeat(64),
+          authorityGenerationHash: 'b'.repeat(64),
+          snapshotId: 'c'.repeat(64),
+          symbol: 'AAPL',
+          observedAt: claim.observedAt,
+          expiresAt: claim.expiresAt,
+          request: prepared.prepared.input,
+          requestHash: prepared.prepared.requestHash,
+        },
+      }),
+    )
   })
 }
 
@@ -348,16 +349,7 @@ const lateDispatches = () =>
         request: dispatch.request.request,
       }),
     )
-    const prepared = Result.getOrThrow(
-      prepareClaimedEntry({
-        requestId: request.requestId,
-        input: request.request,
-        observedAt,
-        expiresAt,
-        claimedAt,
-      }),
-    )
-    return makeJevDispatch({ claimedAt, visualClaim: prepared.visualClaim, request })
+    return Result.getOrThrow(makeJevDispatch({ claimedAt, request }))
   })
 
 test('an expired chart does not erase a paid sibling in the same parallel batch', async () => {
