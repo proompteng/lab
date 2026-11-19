@@ -80,7 +80,7 @@ describe('Signal publisher GitOps authority contract', () => {
     const decisionSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY']
     const channels = csv(websocketConfig.data.ALPACA_MARKET_DATA_CHANNELS)
     const symbolsByChannel = {
-      bars: coreSymbols,
+      bars: csv(websocketConfig.data.ALPACA_MARKET_DATA_BARS_SYMBOLS),
       quotes: csv(websocketConfig.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS),
       trades: csv(websocketConfig.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS),
     }
@@ -95,7 +95,11 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(schedulerSymbols.every((symbol) => coreSymbols.includes(symbol))).toBe(true)
     expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
-    expect(coreSymbols).toHaveLength(16)
+    expect(symbolsByChannel.bars).toHaveLength(16)
+    const restBars = csv(websocketConfig.data.ALPACA_LATEST_BAR_SYMBOLS)
+    expect(restBars).toEqual(['GOOGL', 'INTC', 'META', 'MSFT', 'NFLX', 'TSLA'])
+    expect(restBars.some((symbol) => symbolsByChannel.bars.includes(symbol))).toBe(false)
+    expect([...symbolsByChannel.bars, ...restBars].sort()).toEqual(coreSymbols)
     expect(channels).toEqual(['trades', 'quotes', 'bars'])
     expect(symbolsByChannel.quotes).toEqual(decisionSymbols)
     expect(symbolsByChannel.trades).toEqual(decisionSymbols)
@@ -151,6 +155,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'signal_publisher/select_sequential_consistency': 1,
     })
     expect(users['signal_publisher/grants/query']).toEqual([
+      'GRANT INSERT ON signal.webull_market_events_v1',
       'GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT, INSERT ON signal.exchange_sessions_v1',
       'GRANT INSERT ON signal.intraday_bars_1m_v1',
@@ -173,6 +178,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.intraday_trades_v1',
       'GRANT SELECT ON signal.intraday_features_v1',
       'GRANT SELECT ON signal.crypto_market_events_v1',
+      'GRANT SELECT ON signal.webull_research_events_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])
@@ -182,9 +188,9 @@ describe('Signal publisher GitOps authority contract', () => {
   test('orders schema creation before the publisher and wires every owned resource', () => {
     const schema = parse(read('signal-schema-job.yaml'))
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
-    const migration = schema.spec.template.spec.containers[0].args[0] as string
+    const migration = read('schema/adjusted-daily.sql')
     const kustomization = parse(read('kustomization.yaml'))
-    const shellSyntax = spawnSync('bash', ['-n'], { input: migration, encoding: 'utf8' })
+    const shellSyntax = spawnSync('bash', ['-n'], { input: read('schema/reconcile.sh'), encoding: 'utf8' })
 
     expect(shellSyntax.stderr).toBe('')
     expect(shellSyntax.status).toBe(0)
@@ -203,19 +209,20 @@ describe('Signal publisher GitOps authority contract', () => {
   })
 
   test('creates a replicated bounded intraday archive schema for Bayn reads', () => {
-    const schema = parse(read('intraday-bars-schema-job.yaml'))
-    const migration = schema.spec.template.spec.containers[0].args[0] as string
+    const schema = parse(read('signal-schema-job.yaml'))
+    const migration = read('schema/intraday-bars.sql') + read('schema/intraday-bars.verify.sql')
+    const backfill = read('backfill-intraday-bars-v2.sql')
     const kustomization = parse(read('kustomization.yaml'))
-    const shellSyntax = spawnSync('bash', ['-n'], { input: migration, encoding: 'utf8' })
+    const shellSyntax = spawnSync('bash', ['-n'], { input: read('schema/reconcile.sh'), encoding: 'utf8' })
 
     expect(shellSyntax).toMatchObject({ status: 0, stderr: '' })
     expect(schema.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('3')
-    expect(migration).toContain('signal.intraday_bars_1m_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.intraday_bars_1m_v2 ON CLUSTER default')
-    expect(migration).toContain('signal.intraday_quotes_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.intraday_trades_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.crypto_market_events_v1 ON CLUSTER default')
-    expect(migration).toContain('signal.crypto_market_features_v1 ON CLUSTER default')
+    expect(migration).toContain('signal.intraday_bars_1m_v1')
+    expect(migration).toContain('signal.intraday_bars_1m_v2')
+    expect(migration).toContain('signal.intraday_quotes_v1')
+    expect(migration).toContain('signal.intraday_trades_v1')
+    expect(migration).toContain('signal.crypto_market_events_v1')
+    expect(migration).toContain('signal.crypto_market_features_v1')
     expect(migration).toContain('TTL toDateTime(window_end) + INTERVAL 30 DAY DELETE')
     expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 30 DAY DELETE')
     expect(migration.match(/event_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(3)
@@ -225,13 +232,14 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset')
     expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE')
     expect(migration.match(/TTL toDateTime\(event_ts\) \+ INTERVAL 120 DAY DELETE/g)).toHaveLength(2)
-    expect(migration).toContain('for host in "${hosts[@]}"; do')
+    expect(read('schema/reconcile.sh')).toContain('for host in "${hosts[@]}"; do')
     expect(migration).toContain('FROM system.tables')
     expect(migration).toContain('FROM system.columns')
-    expect(migration).toContain('FROM signal.intraday_bars_1m_v1 AS src FINAL')
-    expect(migration).toContain('LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst')
-    expect(migration).toContain('Signal immutable intraday-bars backfill is incomplete')
-    expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
+    expect(backfill).toContain('FROM signal.intraday_bars_1m_v1 AS src FINAL')
+    expect(backfill).toContain('LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst')
+    expect(backfill).toContain('Signal immutable intraday-bars backfill is incomplete')
+    expect(kustomization.resources).toContain('signal-schema-job.yaml')
+    expect(kustomization.configMapGenerator[0].files).toContain('schema/intraday-bars.sql')
   })
 
   test('runs the IEX archive from a fresh current-session consumer generation', () => {
@@ -287,7 +295,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',
       ARCHIVE_CORE_QUOTES_TOPIC: 'torghut.quotes.v1',
       ARCHIVE_CORE_TRADES_TOPIC: 'torghut.trades.v1',
-      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v2',
+      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v3',
       ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH: expectedCoreArchiveHash,
       ARCHIVE_DELAYED_SIP_BARS_TOPIC: 'bayn.market-data.delayed-sip.bars.1m.v1',
       ARCHIVE_DELAYED_SIP_QUOTES_TOPIC: 'bayn.market-data.delayed-sip.quotes.v1',
@@ -306,7 +314,9 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(csv(websocket.data.ALPACA_MARKET_DATA_QUOTES_SYMBOLS)).toEqual(liveDecisionSymbols)
     expect(csv(websocket.data.ALPACA_MARKET_DATA_TRADES_SYMBOLS)).toEqual(liveDecisionSymbols)
     expect(liveCoreChannels).toEqual(['trades', 'quotes', 'bars'])
-    expect(liveCoreSymbols.length + liveDecisionSymbols.length * 2).toBe(30)
+    const websocketBars = csv(websocket.data.ALPACA_MARKET_DATA_BARS_SYMBOLS)
+    expect(websocketBars.length + liveDecisionSymbols.length * 2).toBe(30)
+    expect([...websocketBars, ...csv(websocket.data.ALPACA_LATEST_BAR_SYMBOLS)].sort()).toEqual(coreArchiveSymbols)
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
@@ -345,7 +355,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'argocd.argoproj.io/sync-wave': '5',
     })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-jev-latest-iex-v1',
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-iex-single-session-qualification-v1',
     })
   })
 

@@ -20,12 +20,12 @@ export const requiredInferenceInputs = (strategy: ExecutionDecisionDocument['str
         inputs.push({ contentHash: disposition.failure.responseHash, availableAt: completion.handoff.recordedAt })
     } else if (disposition.status !== 'SOURCE_INFEASIBLE')
       inputs.push({ contentHash: disposition.visual.responseHash, availableAt: disposition.visual.completedAt })
-    const baseStart = completion.handoff.baseStart
-    if (baseStart.status === 'RECEIVED')
+    const baseStart = 'baseStart' in completion.handoff ? completion.handoff.baseStart : undefined
+    if (baseStart?.status === 'RECEIVED')
       inputs.push({ contentHash: baseStart.inference.responseHash, availableAt: baseStart.inference.completedAt })
-    else if (baseStart.status === 'FAILED' && baseStart.failure.responseHash !== null)
+    else if (baseStart?.status === 'FAILED' && baseStart.failure.responseHash !== null)
       inputs.push({ contentHash: baseStart.failure.responseHash, availableAt: completion.handoff.recordedAt })
-    else if (baseStart.status === 'NOT_REQUESTED')
+    else if (baseStart?.status === 'NOT_REQUESTED')
       inputs.push({ contentHash: baseStart.skip.skipHash, availableAt: baseStart.skip.recordedAt })
     const jev = completion.jev
     if (jev.status === 'RECEIVED')

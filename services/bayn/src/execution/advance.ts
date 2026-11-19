@@ -1,12 +1,12 @@
 import { Cause, Data, Effect, Exit } from 'effect'
 
 import { CycleState } from '../cycle/model'
-import type { CycleRunnerError } from '../cycle/runner/model'
-import type { CycleRunResult } from '../cycle/runner/model'
+import type { CycleRunResult, CycleRunnerError } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { ExecutionStageTimings, type ExecutionStageTiming, withObservedSpan } from '../telemetry'
 import { operationCurrentTimeMillis } from '../operation-timeout'
+import { ExecutionProtectionRelease, type ProtectionReleaseReference } from './events'
 
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
@@ -21,6 +21,7 @@ export interface AdvanceExecutionCommand {
   readonly sequence: number
   readonly issuedAt: string
   readonly sourceRevision: string
+  readonly protectionRelease?: ProtectionReleaseReference
 }
 
 export type ExecutionBlocker =
@@ -31,7 +32,9 @@ export type ExecutionBlocker =
       readonly failure: CycleRunnerError['failure']
     }
 
-export type AdvanceOutcome = { readonly nextWakeAt?: string } & (
+export type AdvanceOutcome = {
+  readonly nextWakeAt?: string
+} & (
   | {
       readonly _tag: 'Completed'
       readonly receiptHash: string
@@ -105,9 +108,12 @@ const hashOutcome = (
   const { observation, result } = advance
   const material = {
     schemaVersion:
-      observation.jevObservationReferences === undefined
-        ? 'bayn.execution-advance-receipt.v1'
-        : 'bayn.execution-advance-receipt.v2',
+      observation.executionBuild !== undefined
+        ? 'bayn.execution-advance-receipt.v3'
+        : observation.jevObservationReferences === undefined
+          ? 'bayn.execution-advance-receipt.v1'
+          : 'bayn.execution-advance-receipt.v2',
+    ...(observation.executionBuild === undefined ? {} : { executionBuild: observation.executionBuild }),
     ...(observation.jevObservationReferences === undefined
       ? {}
       : { jevObservationReferences: observation.jevObservationReferences }),
@@ -116,6 +122,7 @@ const hashOutcome = (
     sequence: command.sequence,
     issuedAt: command.issuedAt,
     sourceRevision: command.sourceRevision,
+    ...(command.protectionRelease === undefined ? {} : { protectionRelease: command.protectionRelease }),
     outcome: outcome._tag,
     blocker: outcome._tag === 'Blocked' ? outcome.reason : null,
     ...(outcome._tag === 'Waiting' ? { waiting: outcome.reason } : {}),
@@ -127,6 +134,9 @@ const hashOutcome = (
             observedAt: observation.observedAt,
             ...(observation.recoveryAction === undefined ? {} : { recoveryAction: observation.recoveryAction }),
             ...(observation.waitReason === undefined ? {} : { waitReason: observation.waitReason }),
+            ...(observation.protectionReleaseCycleId === undefined
+              ? {}
+              : { protectionReleaseCycleId: observation.protectionReleaseCycleId }),
             ...(observation.readiness === undefined ? {} : { readiness: observation.readiness }),
             ...(observation.admissionProtection === undefined
               ? {}
@@ -160,10 +170,10 @@ const hashOutcome = (
   )
 }
 
-export const advanceExecutionOnce = <R>(
+export const advanceExecutionOnce = <E, R>(
   command: AdvanceExecutionCommand,
   driver: {
-    readonly advance: Effect.Effect<AdvancePass, CycleRunnerError, R>
+    readonly advance: Effect.Effect<AdvancePass, E, R>
     readonly nextDelayMs: number
   },
 ): Effect.Effect<AdvanceOutcome, TransientExecutionFailure, R> =>
@@ -171,6 +181,7 @@ export const advanceExecutionOnce = <R>(
     const startedAt = yield* operationCurrentTimeMillis
     const stageTimings = new Map<string, ExecutionStageTiming>()
     return yield* driver.advance.pipe(
+      Effect.provideService(ExecutionProtectionRelease, command.protectionRelease),
       Effect.mapError(
         (cause) =>
           new TransientExecutionFailure({

@@ -12,7 +12,6 @@ describe('Bayn egress proxy contract', () => {
       openCodeAllowedHosts: ['opencode.ai'],
       allowedHosts: [
         'api.alpaca.markets',
-        'api.openai.com',
         'api.typesafe.ai',
         'data.alpaca.markets',
         'data.sec.gov',
@@ -35,8 +34,8 @@ describe('Bayn egress proxy contract', () => {
     ['wildcard TypeSafe domain', deployedConfig.replace('api.typesafe.ai', '.typesafe.ai')],
     ['wildcard OpenCode domain', deployedConfig.replace('opencode.ai', '.opencode.ai')],
     ['unlisted OpenCode host', deployedConfig.replace('opencode.ai', 'console.opencode.ai')],
-    ['wildcard OpenAI domain', deployedConfig.replace('api.openai.com', '.openai.com')],
-    ['unrelated OpenAI frontend', deployedConfig.replace('api.openai.com', 'chatgpt.com')],
+    ['wildcard OpenAI domain', deployedConfig.replace('api.typesafe.ai', '.openai.com')],
+    ['unrelated OpenAI frontend', deployedConfig.replace('api.typesafe.ai', 'api.openai.com')],
     ['duplicate replacing TypeSafe', deployedConfig.replace('api.typesafe.ai', 'api.alpaca.markets')],
     ['wildcard SEC domain', deployedConfig.replace('www.sec.gov', '.sec.gov')],
     ['unrelated research domain', deployedConfig.replace('www.bls.gov', 'example.com')],

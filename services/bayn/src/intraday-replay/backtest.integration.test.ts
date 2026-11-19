@@ -1,10 +1,11 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { nativeReplayPolicyIdentity } from './native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
@@ -29,7 +30,7 @@ import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import {
-  retainedReplayFixture,
+  nativeReplayFixture as retainedReplayFixture,
   retainedReplayCaptureFixture,
   momentumTradeReplayFixture,
 } from '../testing/retained-replay-fixture'
@@ -52,31 +53,10 @@ import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayInferenceTiming } from './inference-timing'
 import { makeReplayTimeline } from './session'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { withLatencyCliPhase } from './latency-cli-progress.test-support'
+import { writeCompiledReplayCommand } from './replay-cli.test-support'
+import { decodeEquityExecutionTape, EquityExecutionTapeReferenceSchema } from './equity-execution-tape'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
-
-const writeCompiledReplayCommand = (path: string, entrypoint = `${import.meta.dir}/../backtest-command.ts`) =>
-  Effect.gen(function* () {
-    const compiled = yield* Effect.promise(() =>
-      Bun.build({
-        entrypoints: [entrypoint],
-        target: 'node',
-        external: ['tigerbeetle-node', '@platformatic/kafka'],
-        define: {
-          __BAYN_BUILD_SOURCE_REVISION__: JSON.stringify(config.build.sourceRevision),
-          __BAYN_BUILD_IMAGE_REPOSITORY__: JSON.stringify(config.build.imageRepository),
-          __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__: JSON.stringify(config.build.strategyBehaviorHash),
-          __BAYN_BUILD_STRATEGY_PARAMETER_HASH__: JSON.stringify(config.build.strategyParameterHash),
-        },
-      }),
-    )
-    expect(compiled.success).toBe(true)
-    const output = compiled.outputs[0]
-    if (output === undefined || compiled.outputs.length !== 1) throw new Error('Missing compiled replay executable')
-    const fs = yield* FileSystem.FileSystem
-    yield* fs.writeFile(path, new Uint8Array(yield* Effect.promise(() => output.arrayBuffer())))
-  })
 
 durableTest(
   'measured cleanup consumes closing arrivals before valuing residual inventory',
@@ -201,8 +181,10 @@ durableTest(
         const timing = yield* makeReplayInferenceTiming({
           budget: makeReplayInferenceBudget(1000),
           providers: {
-            jev: { evaluate: () => Effect.die('Closing-cut regression does not infer') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('Closing-cut regression does not infer') },
+              chartProviderFixture,
+            ),
           },
           providerClock,
           advanceTo,
@@ -261,6 +243,7 @@ durableTest.each([
   'retained-responses',
   'momentum-measured',
   'momentum-trading',
+  'momentum-trading-sip',
 ] as const)(
   'native backtest retains %s polling through measured bootstrap and cleanup latency',
   async (boundary) => {
@@ -273,7 +256,7 @@ durableTest.each([
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
-    const trading = boundary === 'momentum-trading'
+    const trading = boundary === 'momentum-trading' || boundary === 'momentum-trading-sip'
     const retained = trading ? momentumTradeReplayFixture() : retainedReplayFixture()
     const openMs = Date.parse(
       trading
@@ -283,6 +266,41 @@ durableTest.each([
           : '2026-09-04T23:59:30Z',
     )
     const closeMs = openMs + (trading ? 40_000 : 60_000)
+    const tapeRange = { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() }
+    const fixtureQuotes = new Map(retained.input.snapshot.quotes.map((quote) => [quote.symbol, quote]))
+    const tapeText =
+      boundary === 'momentum-trading-sip'
+        ? JSON.stringify({
+            schemaVersion: 'bayn.historical-sip-execution-tape.v1',
+            ...tapeRange,
+            events: Array.from({ length: 41 }, (_, second) =>
+              equityMarketProfile.universe.map((symbol) => {
+                const quote = fixtureQuotes.get(symbol)
+                const mark = symbol === 'AAPL' && second >= 10 ? 1.04 : 1
+                return {
+                  kind: 'quote',
+                  symbol,
+                  at: new Date(openMs + second * 1000).toISOString(),
+                  bid: quote === undefined ? 0 : quote.bidPrice * mark - 0.01,
+                  ask: quote === undefined ? 0 : quote.askPrice * mark - 0.01,
+                  bidSize: 100,
+                  askSize: 100,
+                }
+              }),
+            ).flat(),
+          })
+        : undefined
+    const tapeReference = tapeText === undefined ? undefined : { sha256: sha256(tapeText), ...tapeRange }
+    const tape =
+      tapeReference === undefined || tapeText === undefined
+        ? undefined
+        : Result.getOrThrow(
+            decodeEquityExecutionTape(tapeText, tapeReference, {
+              universeId: equityMarketProfile.universeId,
+              universeSymbolHash: equityMarketProfile.universeSymbolHash,
+              symbols: equityMarketProfile.universe,
+            }),
+          )
     const source = {
       ...retained.manifest,
       coverageStartMs: Math.min(openMs, retained.manifest.coverageStartMs),
@@ -310,7 +328,7 @@ durableTest.each([
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v10',
+          schemaVersion: 'bayn.backtest.v11',
           policy,
           latencyStress: null,
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -324,8 +342,8 @@ durableTest.each([
                 }
               : { mode: 'measured-providers' }),
             maximumCalls: 1000,
-            models: { jev: jevModel, chart: 'gpt-6-luna' },
-            inputDefinition: 'bayn.jev-entry-state.v23',
+            models: { jev: jevModel },
+            inputDefinition: 'bayn.jev-entry-state.v24',
             costs: replayRateCardFixture({
               jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
               chart: {
@@ -337,7 +355,8 @@ durableTest.each([
             }),
           },
           allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : trading ? '1000000000' : '0',
-          interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
+          interval: tapeRange,
+          ...(tapeReference === undefined ? {} : { equityExecutionTape: tapeReference }),
           source,
           openingCashMicros: '100000000000',
           fractionalTrading: false,
@@ -421,9 +440,12 @@ durableTest.each([
           boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum
             ? null
             : {
-                chart: chartProviderFixture,
-                jev: { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+                jev: entryProviderFixture(
+                  { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+                  chartProviderFixture,
+                ),
               },
+          tape,
         ).pipe(
           Effect.provide(TestClock.layer()),
           Effect.provideService(OperationDeadlineClock, {
@@ -479,6 +501,7 @@ durableTest.each([
           ),
         ).toBe(true)
         expect(report.processedRecords).toBe(source.recordCount)
+        expect(report.comparisonInput.equityExecutionTape).toEqual(tapeReference)
         expect(report.inference.calls).toEqual([])
         if (boundary === 'unknown-data-cost') {
           expect(report.completion).toBe('INCOMPLETE')
@@ -496,6 +519,10 @@ durableTest.each([
           expect(report.sessions.every((session) => session.schedule.unavailableDecisionPassCount === 0)).toBe(true)
           expect(report.brokerState.fills.some((fill) => fill.side === BrokerOrderSide.Buy)).toBe(true)
           expect(report.brokerState.fills.some((fill) => fill.side === BrokerOrderSide.Sell)).toBe(true)
+          if (tape !== undefined)
+            expect(new Set(report.brokerState.ledger.fills.map((fill) => fill.quoteSource.topic))).toEqual(
+              new Set(['bayn.research.alpaca-sip.quotes.v1']),
+            )
           expect(report.momentumObservations.length).toBeGreaterThan(0)
           const executionProfit = report.reconciledExecutionPnlAfterCostsMicros
           const netProfit = report.reconciledNetPnlAfterCostsMicros
@@ -511,6 +538,7 @@ durableTest.each([
           const inputPath = `${directory}/input.json`
           const receiptPath = `${directory}/source-receipt.json`
           const outputPath = `${directory}/command-output`
+          const tapePath = `${directory}/execution-tape.json`
           const commandPath = trading ? `${directory}/backtest-command.js` : `${import.meta.dir}/../backtest-command.ts`
           const commandRuntime = trading ? Bun.which('node') : process.execPath
           if (commandRuntime === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
@@ -521,6 +549,7 @@ durableTest.each([
             JSON.stringify({ ...prepared.input, replicate: `${prepared.input.replicate}-cli` }),
           )
           yield* fs.writeFileString(receiptPath, receipt)
+          if (tapeText !== undefined) yield* fs.writeFileString(tapePath, tapeText)
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
           const child = yield* spawner.spawn(
             ChildProcess.make(
@@ -537,11 +566,11 @@ durableTest.each([
                 sha256(receipt),
                 '--output',
                 outputPath,
+                ...(tapeText === undefined ? [] : ['--equity-execution-tape', tapePath]),
               ],
               {
                 env: {
-                  BAYN_PUBLIC_INFORMATION_PROXY: '',
-                  BAYN_OPENAI_API_KEY: '',
+                  BAYN_EGRESS_PROXY: '',
                   BAYN_JEV_API_KEY: '',
                   BAYN_BACKTEST_POSTGRES_URL: baynTestPostgresUrl,
                   BAYN_BACKTEST_TIGERBEETLE_ADDRESS: baynTestTigerBeetleAddress,
@@ -566,6 +595,9 @@ durableTest.each([
                     executableSha256: Schema.String,
                     reconciledExecutionPnlAfterCostsMicros: Schema.String,
                     reconciledNetPnlAfterCostsMicros: Schema.NullOr(Schema.String),
+                    comparisonInput: Schema.Struct({
+                      equityExecutionTape: Schema.optionalKey(EquityExecutionTapeReferenceSchema),
+                    }),
                     brokerCheckpoint: ReplayBrokerCheckpointSchema,
                     inference: Schema.Struct({
                       providerDispatchCount: Schema.Number,
@@ -577,6 +609,7 @@ durableTest.each([
             ),
           )
           expect(cliReport.inference).toEqual({ providerDispatchCount: 0, retainedCallCount: 0 })
+          expect(cliReport.comparisonInput.equityExecutionTape).toEqual(tapeReference)
           expect(cliReport.brokerCheckpoint.state.ledger.openingCashMicros).toBe('100000000000')
           if (trading) {
             expect(cliReport.executableSha256).toBe(sha256(yield* fs.readFile(commandPath)))
@@ -584,6 +617,10 @@ durableTest.each([
             expect(cliReport.brokerCheckpoint.state.ledger.positions).toEqual([])
             expect(cliReport.brokerCheckpoint.state.fills.some((fill) => fill.side === BrokerOrderSide.Buy)).toBe(true)
             expect(cliReport.brokerCheckpoint.state.fills.some((fill) => fill.side === BrokerOrderSide.Sell)).toBe(true)
+            if (tape !== undefined)
+              expect(
+                new Set(cliReport.brokerCheckpoint.state.ledger.fills.map((fill) => fill.quoteSource.topic)),
+              ).toEqual(new Set(['bayn.research.alpaca-sip.quotes.v1']))
             expect(BigInt(cliReport.reconciledExecutionPnlAfterCostsMicros)).toBeGreaterThan(0n)
             expect(cliReport.reconciledNetPnlAfterCostsMicros).toBe(
               (BigInt(cliReport.reconciledExecutionPnlAfterCostsMicros) - 1_000_000_000n).toString(),
@@ -596,76 +633,4 @@ durableTest.each([
     )
   },
   120000,
-)
-
-durableTest.each([
-  { policy: JevResearchPolicy.Candidate, trading: false },
-  { policy: JevResearchPolicy.Ablation, trading: false },
-  { policy: JevResearchPolicy.Momentum, trading: false },
-  { policy: JevResearchPolicy.Momentum, trading: true },
-])(
-  'native $policy latency CLI retains twenty sessions with trading=$trading',
-  async ({ policy, trading }) => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
-        const directory = yield* fs.makeTempDirectoryScoped({
-          directory: `${import.meta.dir}/../../node_modules`,
-          prefix: '.latency-cli-test-',
-        })
-        const executablePath = `${directory}/backtest-command.js`
-        const workerPath = `${directory}/latency-cli.js`
-        yield* Effect.gen(function* () {
-          yield* writeCompiledReplayCommand(executablePath, `${import.meta.dir}/replay-phase-command.test-support.ts`)
-          yield* writeCompiledReplayCommand(workerPath, `${import.meta.dir}/latency-cli.test-support.ts`)
-        }).pipe(withLatencyCliPhase('compile'))
-        const node = Bun.which('node')
-        if (node === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-        const child = yield* spawner.spawn(
-          ChildProcess.make(node, [workerPath, policy, trading ? 'trading' : 'missing', directory, executablePath], {
-            stdin: 'ignore',
-            stdout: 'inherit',
-            stderr: 'inherit',
-          }),
-        )
-        yield* child.exitCode.pipe(
-          Effect.tap((code) => Effect.sync(() => expect(Number(code)).toBe(0))),
-          withLatencyCliPhase('worker'),
-        )
-        const result = yield* fs.readFileString(`${directory}/acceptance.json`).pipe(
-          Effect.flatMap(
-            Schema.decodeUnknownEffect(
-              Schema.fromJsonString(
-                Schema.Struct({
-                  policy: Schema.String,
-                  trading: Schema.Boolean,
-                  sessionCount: Schema.Number,
-                  filledSessions: Schema.Number,
-                  executionProfitMicros: Schema.String,
-                  qualificationProfitMicros: Schema.String,
-                  complete: Schema.Boolean,
-                  providerDispatchCount: Schema.Number,
-                  receiptEconomicsComplete: Schema.Boolean,
-                  executableHash: Schema.String,
-                }),
-              ),
-            ),
-          ),
-        )
-        expect(result).toMatchObject({
-          policy,
-          trading,
-          sessionCount: 20,
-          filledSessions: trading ? 20 : 0,
-          complete: true,
-          providerDispatchCount: 0,
-          receiptEconomicsComplete: false,
-          executableHash: sha256(yield* fs.readFile(executablePath)),
-        })
-        expect(BigInt(result.qualificationProfitMicros)).toBe(BigInt(result.executionProfitMicros) - 20_000_000n)
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    )
-  },
-  600000,
 )

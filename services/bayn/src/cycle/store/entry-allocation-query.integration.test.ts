@@ -77,6 +77,19 @@ describePostgres('retained entry allocation SQL attribution', () => {
             expect(facts.priorRecordedTurnoverMicros).toBe('1000000')
             expect(describeEntryAllocation(facts)).toBe(EntryAllocationReason.TurnoverBudgetExhausted)
             expect(yield* read('other-account')).toEqual([])
+            const { brokerState, ...plannerFacts } = document.plannerInput
+            const compact = {
+              ...document,
+              plannerInput: plannerFacts,
+              strategyDecision: { evidence: { observation: { portfolio: { purpose: 'ENTRY', brokerState } } } },
+            }
+            yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document=${sql.json(compact)}`
+            const [compactRow] = yield* read('fixture-account')
+            expect(compactRow?.facts).toEqual(row?.facts)
+            const { plannerInput: _input, ...missingPlanner } = compact
+            yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document=${sql.json(missingPlanner)}`
+            expect(yield* read('fixture-account')).toEqual([])
+            yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document=${sql.json(compact)}`
             yield* sql`DELETE FROM accounting_receipts WHERE intent_id = 'sell'`
             const [withoutReceipt] = yield* read('fixture-account')
             const incomplete = yield* Schema.decodeUnknownEffect(EntryAllocationFactsSchema)(withoutReceipt?.facts)

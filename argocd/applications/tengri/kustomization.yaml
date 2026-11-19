@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: tengri
+transformers:
+  - namespace-transformer.yaml
 resources:
   - observability.yaml
   - mesh-security.yaml
@@ -9,6 +10,7 @@ resources:
   - rbac.yaml
   - deployment.yaml
   - run-worker.yaml
+  - run-reader.yaml
   - services.yaml
   - ingressroute.yaml
   - resource-quota.yaml

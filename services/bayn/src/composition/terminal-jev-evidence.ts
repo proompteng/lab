@@ -5,7 +5,12 @@ import { isTerminalCycleState } from '../cycle/transitions'
 import type { JevBatchStore } from '../jev/batch-evaluation'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
-/** Best-effort evidence closure after a newly committed terminal transition, never a historical sweep. */
+/**
+ * Best-effort evidence closure after a newly committed terminal transition.
+ * Historical batches that are still inside their original window are left pending;
+ * the account-bound native inference-expense projection performs the durable expiry
+ * sweep after a later pass or process restart.
+ */
 export const withTerminalJevEvidence = (
   store: CycleStoreShape,
   batches: typeof JevBatchStore.Service,

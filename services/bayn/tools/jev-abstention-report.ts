@@ -5,7 +5,8 @@ import { canonicalHashV1Result, sha256 } from '../src/hash'
 import { decideJevEntry, JevEntryTargetSchema } from '../src/jev/decision'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
-import { entryProposalExitPlan } from '../src/jev/strategy-exit-plan'
+import { nativeEntryProposalExitPlan } from '../src/jev/native-entry-proposal'
+import { isShortExitPlan } from '../src/strategy/funded-exit-plan'
 import { PositiveMicrosSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../src/schemas'
 import { jevProtectiveStopCrossed } from '../src/jev/exit'
 import { jevMarketForSymbol } from '../src/jev/markets'
@@ -105,13 +106,14 @@ export const reportJevRealizedEvidence = (input: unknown) => {
     if (outcome !== null) {
       const first = trades.find((trade) => trade.transactionId === outcome.openingTransactionId)
       const last = trades.find((trade) => trade.transactionId === outcome.closingTransactionId)
+      const short = first?.schemaVersion === 'bayn.equity-short-accounting-transaction.v1'
       const buys = trades.filter((trade) => trade.side === 'BUY')
       const sum = (key: 'notionalMicros' | 'realizedPnlMicros', values = trades) =>
         values.reduce((n, t) => n + BigInt(t[key]), 0n)
       if (
         row.state !== 'COMPLETED' ||
-        first?.side !== 'BUY' ||
-        last?.side !== 'SELL' ||
+        first?.side !== (short ? 'SELL' : 'BUY') ||
+        last?.side !== (short ? 'BUY' : 'SELL') ||
         first.symbol !== outcome.symbol ||
         trades.some(
           (trade) =>
@@ -188,7 +190,7 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-state.v23'),
+  schemaVersion: Schema.Literals(['bayn.jev-entry-state.v23', 'bayn.jev-entry-state.v24']),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({
     maximumEntryFeeBps: NonNegative,
@@ -257,17 +259,28 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
     const evaluation =
       disposition?.status === 'READY' || disposition?.status === 'NO_FUNDED_PROPOSALS' ? disposition.evaluation : null
     const plans = (evaluation?.proposals ?? []).map((proposal) => {
-      const plan = entryProposalExitPlan(proposal)
-      const acquisition = BigInt(plan.acquisitionCostMicros)
-      const loss = acquisition - BigInt(plan.estimatedStopNetMicros)
-      const profit = BigInt(plan.estimatedTargetNetMicros) - acquisition
+      const plan = nativeEntryProposalExitPlan(proposal)
+      const loss = isShortExitPlan(plan)
+        ? -BigInt(plan.estimatedStopPnlMicros)
+        : BigInt(plan.acquisitionCostMicros) - BigInt(plan.estimatedStopNetMicros)
+      const profit = isShortExitPlan(plan)
+        ? BigInt(plan.estimatedTargetPnlMicros)
+        : BigInt(plan.estimatedTargetNetMicros) - BigInt(plan.acquisitionCostMicros)
       if (loss <= 0n || profit <= 0n) throw new Error('Funded plan has invalid net economics')
       return {
         proposalId: proposal.proposalId,
         setup: proposal.source.setup,
         source: proposal.source,
-        targetRiseFromBidBps:
-          (Number(plan.levels.profitLimitPriceMicros) / 1_000_000 / state.candidate.quote.bid - 1) * 10_000,
+        ...(isShortExitPlan(plan)
+          ? {
+              positionSide: 'SHORT',
+              targetFallFromAskBps:
+                (1 - Number(plan.levels.profitLimitPriceMicros) / 1_000_000 / state.candidate.quote.ask) * 10_000,
+            }
+          : {
+              targetRiseFromBidBps:
+                (Number(plan.levels.profitLimitPriceMicros) / 1_000_000 / state.candidate.quote.bid - 1) * 10_000,
+            }),
         estimatedLossUsd: Number(loss) / 1_000_000,
         estimatedProfitUsd: Number(profit) / 1_000_000,
         netRewardRisk: Number(profit) / Number(loss),
@@ -286,7 +299,12 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
       rejection: target.entryPlanRejections[candidate.symbol] ?? null,
       proposalRejections: evaluation?.rejections ?? null,
       fundedPlanCount: evaluation === null ? null : plans.length,
-      targetRiseFromBidBps: range(plans.map((plan) => plan.targetRiseFromBidBps)),
+      targetRiseFromBidBps: range(
+        plans.flatMap((plan) => ('targetRiseFromBidBps' in plan ? [plan.targetRiseFromBidBps] : [])),
+      ),
+      targetFallFromAskBps: range(
+        plans.flatMap((plan) => ('targetFallFromAskBps' in plan ? [plan.targetFallFromAskBps] : [])),
+      ),
       netRewardRisk: range(plans.map((plan) => plan.netRewardRisk)),
       horizonMinutes: state.task.horizonMinutes,
       entryEconomics: state.entryEconomics,
@@ -295,6 +313,7 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
         ? {}
         : {
             feeSensitivity: hypotheticalCryptoFeeSensitivity({
+              feeAt: request.chartSource.windowEndAt,
               symbol: candidate.symbol,
               protocol: target.evidence.observation.protocol,
               economics: Result.getOrThrow(
@@ -382,7 +401,7 @@ export const reportJevPlanPath = (input: {
       ? disposition.evaluation.proposals.find((value) => value.proposalId === assumptions.proposalId)
       : undefined
   if (proposal === undefined) throw new Error('Plan path requires an exact funded proposal from the committed handoff')
-  const plan = entryProposalExitPlan(proposal)
+  const plan = nativeEntryProposalExitPlan(proposal)
   const quantity = BigInt(assumptions.quantityAtoms)
   const instrument = Result.getOrThrow(replayInstrument(assumptions.symbol, assumptions.instruments))
   if (
@@ -403,7 +422,10 @@ export const reportJevPlanPath = (input: {
   )
     throw new Error('Declared clock is outside the sealed request or differs from its anchor')
   const endMs = startMs + plan.levels.maximumHoldingMinutes * 60_000
-  type Crossing = { availableAtMs: number; sequence: number; recordHash: string; bidMicros: string }
+  type Crossing = { availableAtMs: number; sequence: number; recordHash: string } & (
+    | { bidMicros: string }
+    | { askMicros: string }
+  )
   let firstTarget: Crossing | null = null
   let firstStop: Crossing | null = null
   let previousAt = -Infinity
@@ -440,15 +462,26 @@ export const reportJevPlanPath = (input: {
     firstAt ??= quote.availableAtMs
     largestGapMs = Math.max(largestGapMs, quote.availableAtMs - (lastAt ?? startMs))
     lastAt = quote.availableAtMs
-    const bid = Result.getOrThrow(priceNumberToMicros(quote.value.bidPrice, 'path.bid', 'DOWN'))
+    const short = isShortExitPlan(plan)
+    const bid = Result.getOrThrow(
+      priceNumberToMicros(
+        short ? quote.value.askPrice : quote.value.bidPrice,
+        'path.exit-price',
+        short ? 'UP' : 'DOWN',
+      ),
+    )
     const crossing = {
       availableAtMs: quote.availableAtMs,
       sequence: quote.sequence,
       recordHash: quote.recordHash,
-      bidMicros: bid.toString(),
+      ...(short ? { askMicros: bid.toString() } : { bidMicros: bid.toString() }),
     }
     if (firstStop === null && jevProtectiveStopCrossed(bid, plan.levels)) firstStop = crossing
-    if (firstTarget === null && bid >= BigInt(plan.levels.profitLimitPriceMicros)) firstTarget = crossing
+    if (
+      firstTarget === null &&
+      (short ? bid <= BigInt(plan.levels.profitLimitPriceMicros) : bid >= BigInt(plan.levels.profitLimitPriceMicros))
+    )
+      firstTarget = crossing
   }
   largestGapMs = Math.max(largestGapMs, endMs - (lastAt ?? startMs))
   return {

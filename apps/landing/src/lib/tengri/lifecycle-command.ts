@@ -3,7 +3,7 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { type MessageInitShape } from '@bufbuild/protobuf'
 import * as grpc from '@grpc/grpc-js'
-import type { TengriIdentity } from './auth'
+import type { PlatformIdentity } from '../platform/auth'
 import { humanContext } from './authorization'
 import {
   TengriAuthorizationService,
@@ -11,7 +11,7 @@ import {
   ExecuteCommandRequestSchema,
   type CommandReceipt,
 } from './generated/proompteng/authz/v1/authz_pb'
-import { OfzError, ofzCall } from './ofz'
+import { OfzError, ofzCall } from '../platform/ofz'
 
 type LifecycleCommand = MessageInitShape<typeof ExecuteCommandRequestSchema>['command']
 
@@ -28,7 +28,7 @@ function requestHash(intent: LifecycleIntent) {
 }
 
 export async function recoverLifecycleCommand(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: LifecycleIntent,
   phase: string,
   workspaceUid = '',
@@ -45,7 +45,7 @@ export async function recoverLifecycleCommand(
 }
 
 function readLifecycleCommand(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: LifecycleIntent,
   phase: string,
   workspaceUid: string,
@@ -59,7 +59,7 @@ function readLifecycleCommand(
 }
 
 export async function workspaceRemovalComplete(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: Exclude<LifecycleIntent, { action: 'create' }>,
 ) {
   const response = await readLifecycleCommand(identity, intent, 'remove', intent.workspaceUid)
@@ -67,7 +67,7 @@ export async function workspaceRemovalComplete(
   return response.workspaceRemoved
 }
 
-export function lifecycleId(identity: TengriIdentity, operationId: string, phase: string) {
+export function lifecycleId(identity: PlatformIdentity, operationId: string, phase: string) {
   const bytes = createHash('sha256')
     .update(`tengri.lifecycle.v1\n${identity.session.humanId}\n${operationId}\n${phase}`)
     .digest()
@@ -79,7 +79,7 @@ export function lifecycleId(identity: TengriIdentity, operationId: string, phase
 }
 
 export async function lifecycleCommand(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: LifecycleIntent,
   phase: string,
   command: LifecycleCommand,

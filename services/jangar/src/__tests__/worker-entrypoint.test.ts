@@ -45,7 +45,7 @@ describe('worker entrypoint', () => {
     expect(matches).toHaveLength(2)
   })
 
-  it('preserves the retained Bumba SDK dependency and verifies both runtime images', () => {
+  it('includes the workspace Bumba SDK and verifies both runtime images', () => {
     const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
     const bumbaCopy = 'COPY --from=jangar-build /app/services/bumba ./services/bumba'
     const nodeModulesCopy =
@@ -60,6 +60,11 @@ describe('worker entrypoint', () => {
     expect(runtimeBumbaCopies).toHaveLength(2)
     expect(dependencyCopies).toHaveLength(2)
     expect(runtimeChecks).toHaveLength(2)
+    expect(dockerfile).toContain('RUN bun --cwd=packages/temporal-bun-sdk run build')
+    for (const path of ['package.json', 'dist']) {
+      const sdkCopy = `COPY --from=jangar-build /app/packages/temporal-bun-sdk/${path} ./packages/temporal-bun-sdk/${path}`
+      expect(dockerfile.split(sdkCopy)).toHaveLength(3)
+    }
     expect(dockerfile).not.toContain('ln -s /app/node_modules /app/services/bumba/node_modules')
   })
 

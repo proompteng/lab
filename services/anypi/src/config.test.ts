@@ -55,7 +55,7 @@ describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
     const config = resolveConfig({})
     expect(config.provider).toBe('flamingo')
-    expect(config.model).toBe('qwen36-flamingo')
+    expect(config.model).toBe('qwen38-flamingo')
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
     expect(config.modelReadyTimeoutSeconds).toBe(1800)
     expect(config.piPromptTimeoutSeconds).toBe(1800)
@@ -87,7 +87,7 @@ describe('Anypi config', () => {
             maxTokensField: 'max_tokens',
             thinkingFormat: 'qwen-chat-template',
           },
-          models: [{ id: 'qwen36-flamingo', reasoning: true, contextWindow: 229376, maxTokens: 32768 }],
+          models: [{ id: 'qwen38-flamingo', reasoning: true, contextWindow: 229376, maxTokens: 32768 }],
         },
       },
     })
@@ -241,8 +241,8 @@ describe('Anypi prompt contract', () => {
         startedAt: '2026-06-16T00:00:00.000Z',
         runName: 'anypi-eval-runner-repair-20260616',
         namespace: 'agents',
-        model: 'qwen36-flamingo',
-        providerModel: 'flamingo/qwen36-flamingo',
+        model: 'qwen38-flamingo',
+        providerModel: 'flamingo/qwen38-flamingo',
         thinkingLevel: 'medium',
         contextWindow: 229376,
         maxTokens: 32768,
@@ -777,8 +777,8 @@ describe('Anypi prompt contract', () => {
           startedAt: '2026-06-16T00:00:00.000Z',
           runName: 'anypi-foo',
           namespace: 'agents',
-          model: 'qwen36-flamingo',
-          providerModel: 'flamingo/qwen36-flamingo',
+          model: 'qwen38-flamingo',
+          providerModel: 'flamingo/qwen38-flamingo',
           thinkingLevel: 'medium' as const,
           contextWindow: 229376,
           maxTokens: 32768,

@@ -11,7 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { AgentsDatabase } from './db'
-import { createPostgresMemoriesStore } from './memory-notes-store'
+import { createPostgresMemoriesStore, rankMemoryNotes } from './memory-notes-store'
 
 type SqlCall = { sql: string; params: readonly unknown[] }
 
@@ -306,5 +306,65 @@ describe('memories store', () => {
       call.sql.toLowerCase().includes('select extname from pg_extension'),
     ).length
     expect(extensionLookupCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('rejects the unrelated tail observed in MCTS retrieval and unrelated queries', () => {
+    const note = (id: string, content: string, distance: number) => ({
+      id,
+      content,
+      distance,
+      summary: content,
+      namespace: 'test',
+      tags: [],
+      metadata: {},
+      createdAt: '2026-11-10T00:00:00Z',
+      retiredAt: null,
+      retirementReason: null,
+      replacementId: null,
+    })
+    const records = [
+      note(
+        'mcts',
+        'MCTS nodes bind candidate expression, metrics, factor and evaluation references to one design.',
+        0.324,
+      ),
+      note('synthesis', 'Synthesis mobile detail AgentRun submission succeeded.', 0.409),
+      note('feed', 'Manual feed curation saved ten items using local embeddings.', 0.395),
+    ]
+    expect(
+      rankMemoryNotes(records, 'MCTS selected expression wrong metrics multiple designs candidate evidence', 5).map(
+        (row) => row.id,
+      ),
+    ).toEqual(['mcts'])
+    expect(
+      rankMemoryNotes(
+        records.map((row) => ({ ...row, distance: 0.55 })),
+        'kitchen faucet dishwasher filter replacement',
+        5,
+      ),
+    ).toEqual([])
+  })
+
+  it('uses lexical evidence to rank the specific partial-output failure above generic verification', () => {
+    const note = (id: string, content: string, distance: number) => ({
+      id,
+      content,
+      distance,
+      summary: content,
+      namespace: 'test',
+      tags: [],
+      metadata: {},
+      createdAt: '2026-11-10T00:00:00Z',
+      retiredAt: null,
+      retirementReason: null,
+      replacementId: null,
+    })
+    const records = [
+      note('audit', 'Independent qualification audit performs verification of evaluation inputs.', 0.406),
+      note('copy', 'Copy verification must abort on partial database output and preserve the source.', 0.409),
+    ]
+    expect(
+      rankMemoryNotes(records, 'copy verification returns partial database output', 5).map((row) => row.id),
+    ).toEqual(['copy'])
   })
 })

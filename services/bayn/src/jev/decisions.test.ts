@@ -1,16 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Fiber, Layer, Redacted, Result } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
-import { TestClock } from 'effect/testing'
+import { Result } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
-import {
-  DecisionsClient,
-  DecisionsClientLive,
-  decodeDecisionsResponse,
-  decisionsEndpoint,
-  prepareDecisionsRequest,
-} from './decisions'
+import { decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { renderNativeCandlesPng } from './chart-evidence'
 
 const bars = Array.from({ length: 6 }, (_, index) => ({
@@ -70,12 +61,7 @@ const response = {
   ],
   usage,
 } as const
-const layerFor = (http: HttpClient.HttpClient, timeout = 1_000) =>
-  DecisionsClientLive(Redacted.make('private-key'), timeout).pipe(
-    Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-  )
-
-describe('native OpenAI Decisions contract', () => {
+describe('retained OpenAI Decisions evidence contract', () => {
   test('retains named predicates and source-anchor choices without a setup label', () => {
     const result = Result.getOrThrow(decodeDecisionsResponse(prepared().request, response))
     expect(result.answers).toEqual(response.answers)
@@ -165,91 +151,4 @@ describe('native OpenAI Decisions contract', () => {
     ])
       expect(Result.isFailure(prepareDecisionsRequest(changed))).toBe(true)
   })
-
-  test('dispatches the exact sealed request and returns reproducible response hashes', async () => {
-    const bodies: string[] = []
-    const http = HttpClient.make((sent, url) => {
-      expect(url.toString()).toBe(decisionsEndpoint)
-      expect(sent.method).toBe('POST')
-      if (sent.body._tag !== 'Uint8Array') throw new Error('Expected serialized request')
-      bodies.push(new TextDecoder().decode(sent.body.body))
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          sent,
-          new Response(JSON.stringify({ ...response, output_tokens_details: { reasoning_tokens: 0 } })),
-        ),
-      )
-    })
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        return yield* (yield* DecisionsClient).evaluate(request, 1000)
-      }).pipe(Effect.provide(layerFor(http))),
-    )
-    expect(bodies).toEqual([prepared().body])
-    expect(result.requestHash).toBe(prepared().requestHash)
-    expect(result.responseHash).toBe(Result.getOrThrow(canonicalHashV1Result(result.response)))
-  })
-
-  test('retains observed metering on unsuccessful status and malformed successful answers', async () => {
-    for (const status of [429, 200]) {
-      const http = HttpClient.make((sent) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            sent,
-            new Response(JSON.stringify({ ...response, answers: [], error: 'do not retain provider text' }), {
-              status,
-            }),
-          ),
-        ),
-      )
-      const result = await Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* (yield* DecisionsClient).evaluate(request, 1000).pipe(Effect.result)
-        }).pipe(Effect.provide(layerFor(http))),
-      )
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) {
-        expect(result.failure.status).toBe(status)
-        expect(result.failure.usage).toEqual(usage)
-        expect(result.failure.category).toBe(status === 200 ? 'RESPONSE' : 'STATUS')
-        expect(JSON.stringify(result.failure)).not.toContain('private-key')
-        expect(JSON.stringify(result.failure)).not.toContain('do not retain provider text')
-      }
-    }
-  })
-
-  test.each([250, 1000])(
-    'cancels transport at its remaining %sms deadline without retrying or fabricating usage',
-    async (budgetMs) => {
-      let dispatches = 0
-      let interrupted = 0
-      const http = HttpClient.make(() =>
-        Effect.gen(function* () {
-          dispatches++
-          return yield* Effect.never.pipe(
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                interrupted++
-              }),
-            ),
-          )
-        }),
-      )
-      const result = await Effect.runPromise(
-        Effect.gen(function* () {
-          const client = yield* DecisionsClient
-          const fiber = yield* client.evaluate(request, budgetMs).pipe(Effect.result, Effect.forkChild)
-          yield* TestClock.adjust(budgetMs)
-          return yield* Fiber.join(fiber)
-        }).pipe(Effect.provide(layerFor(http)), Effect.provide(TestClock.layer())),
-      )
-      expect(dispatches).toBe(1)
-      expect(interrupted).toBe(1)
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) {
-        expect(result.failure.category).toBe('DEADLINE')
-        expect(result.failure.usage).toBeUndefined()
-      }
-    },
-  )
 })

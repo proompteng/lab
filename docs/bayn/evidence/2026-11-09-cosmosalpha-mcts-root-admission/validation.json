@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-root-admission-repair.v1",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "repairSha256": "4e71f9f07c32368f1c4125956e692805bed3ef3f01ef232c8172f1237c324cbb",
+  "registeredSourceInventoryId": "d881fb60c4cb560e5aafce650291ed50dd2ca3d8db99a7eac1eadac1dd99f778",
+  "sourceFiles": 101,
+  "changedInstalledFilesSinceStoppedTrial": ["src/cosmosalpha/pipeline/mcts/controller.py"],
+  "observedFailure": {
+    "experimentId": "c740ee37abba862ecffafd7c8f74838389d0a0a72bfad2cb2a7388fb18c36b20",
+    "status": "HALTED_INVALID_MCTS_ROOT",
+    "failedRootExperimentId": "experiment-41edfb96745dc040634682dc",
+    "failedRootRecordSha256": "a3ef1a0f0eef32ad6addae08a9b96711bd1322775b272676146b81be09425882",
+    "rootEvaluationCount": 0,
+    "placeholder": "chain-root",
+    "subsequentRequestNumber": 5,
+    "subsequentRequestSha256": "0f929747cf03017541f771d90a7ba600bd4dc63d0e2d8f38c427d3b9d7710421",
+    "printedRankIR": 0.0,
+    "printedDiversity": 1.0,
+    "mctsRequestsStarted": 11,
+    "mctsResponsesRecorded": 10,
+    "unsettledMctsRequests": [11],
+    "heldOutModelsStarted": false,
+    "scientificStudyStarted": false
+  },
+  "regression": "NativeContracts.test_failed_root_is_charged_and_regenerated_before_search",
+  "regressionFile": "packages/scripts/src/bayn/check_cosmosalpha_experiment_native.py",
+  "before": {
+    "missingExpressionAndMetric": "FAIL",
+    "missingMetricWithExpression": "FAIL",
+    "missingExpressionWithZeroMetric": "FAIL",
+    "rootGenerationCalls": 1,
+    "expectedRootGenerationCalls": 2
+  },
+  "after": {
+    "failedRootRoundCharged": 1,
+    "rootGenerationCalls": 2,
+    "searchedTrees": 1,
+    "searchedTreeId": "mcts-multi-tree002",
+    "measuredZeroRankICAccepted": true,
+    "nativeContractsPassed": 10,
+    "sourceRegressionsPassed": 19,
+    "portableCasesPassed": 30,
+    "bunWrapperPassed": 1
+  },
+  "sourcePatchChainReproducesInstalledMCTS": true,
+  "regressionInferenceCalls": 0,
+  "scope": "Reject failed roots before node construction and search; remove placeholder identity/expression fallbacks. Scoring formulas and common qualified-factor quotas are unchanged. Offline proof does not qualify a live acceptance or scientific study."
+}

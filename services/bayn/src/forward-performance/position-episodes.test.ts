@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { AccountingInventorySide, coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
@@ -21,6 +21,9 @@ import { measurePositionEpisodes, PositionEpisodeEvidenceSchema, PositionEpisode
 import { EpisodeCostReason } from './position-outcomes'
 import { supportedAssessmentFixture } from '../system-assessment/fixtures.test-support'
 import { evaluateSystemAssessment } from '../system-assessment/assessment'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { prepareValuationInventory } from '../system-assessment/valuation'
+import { makeForwardPerformanceReceipt } from './domain'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
@@ -108,6 +111,82 @@ const evidence = (
 })
 
 const roundTrip = () => [transaction(1, OrderSide.Buy, 2), transaction(2, OrderSide.Sell, 2)]
+
+test('explicit short episodes report cover profits and losses without treating proceeds as profit or claiming costs', () => {
+  let prior = { quantityAtoms: '0', costMicros: '0' }
+  const history = (
+    [
+      [OrderSide.Sell, 3n, 100n],
+      [OrderSide.Buy, 1n, 90n],
+      [OrderSide.Buy, 2n, 350n],
+    ] as const
+  ).map(([side, quantity, price], i) => {
+    const prepared = success(
+      prepareAccounting(
+        `${i + 1}`.repeat(64),
+        {
+          schemaVersion: 'bayn.fill.v2',
+          accountId: 'episode-account',
+          fillId: `short-${i}`,
+          brokerOrderId: `short-${i}`,
+          clientOrderId: `short-${i}`,
+          symbol: 'AAPL',
+          side,
+          quantityAtoms: (quantity * 1_000_000_000n).toString(),
+          priceAtoms: (price * 1_000_000_000n).toString(),
+          feeMicros: '10000',
+          occurredAt: `2026-09-18T15:0${i}:00.000Z`,
+        },
+        prior,
+        7001,
+        AccountingInventorySide.Short,
+      ),
+    )
+    prior = {
+      quantityAtoms: (BigInt(prior.quantityAtoms) + BigInt(prepared.transaction.quantityDeltaAtoms)).toString(),
+      costMicros: (BigInt(prior.costMicros) + BigInt(prepared.transaction.costBasisDeltaMicros)).toString(),
+    }
+    return prepared.transaction
+  })
+  const result = success(measurePositionEpisodes(evidence(history)))
+  expect(success(makeForwardPerformanceReceipt(evidence(history))).counts.realizedCloseCount).toBe(2)
+  expect(success(makeForwardPerformanceReceipt(evidence(history.slice(0, 1)))).counts.realizedCloseCount).toBe(0)
+  const inventory = success(prepareValuationInventory(evidence(history)))
+  expect(inventory.at('2026-09-18T14:59:59.000Z')).toEqual([])
+  expect(inventory.at('2026-09-18T15:00:00.000Z')).toEqual([
+    { symbol: 'AAPL', quantityAtoms: '-3000000000', costBasisMicros: '-300000000' },
+  ])
+  expect(inventory.at('2026-09-18T15:01:00.000Z')).toEqual([
+    { symbol: 'AAPL', quantityAtoms: '-2000000000', costBasisMicros: '-200000000' },
+  ])
+  expect(inventory.at('2026-09-18T15:02:00.000Z')).toEqual([])
+  expect(inventory.at('2026-09-18T15:00:00.000Z')?.[0]?.quantityAtoms).toBe('-3000000000')
+  expect(result.status).toBe('MEASURED')
+  if (result.status !== 'MEASURED') throw new Error('Short episode missing')
+  expect(result.completedCount).toBe(1)
+  expect(result.openCount).toBe(0)
+  expect(result.completed[0]).toMatchObject({
+    grossRealizedPnlMicros: '-490000000',
+    buyFillCount: 2,
+    sellFillCount: 1,
+    costs: {
+      status: 'UNDETERMINED',
+      reason: EpisodeCostReason.NonCryptoAllocationUnavailable,
+      allInProfitMicros: null,
+    },
+  })
+  const opening = history[0]
+  if (opening === undefined) throw new Error('Short opening missing')
+  const open = success(measurePositionEpisodes(evidence([opening], [opening], { openPositionCount: 1 })))
+  expect(open).toMatchObject({ status: 'MEASURED', openCount: 1, completedCount: 0 })
+  const mixed = history.map((t, i) =>
+    i === 1 ? { ...t, schemaVersion: 'bayn.accounting-transaction.v2' as const } : t,
+  )
+  expect(success(measurePositionEpisodes(evidence(mixed)))).toMatchObject({
+    status: 'UNDETERMINED',
+    reason: PositionEpisodeReason.InvalidHistory,
+  })
+})
 
 const cashAccrual = (
   fills: readonly AccountingTransaction[],
@@ -1031,6 +1110,8 @@ describe('position episodes', () => {
       missingQuoteCount: 0,
       unverifiedRequestCount: 0,
       gapRequestCount: 0,
+      matchedQuoteHashes: ['c'.repeat(64)],
+      requestsWithCoverageIssues: [],
       completeMeteredCoverage: true,
       exactSessionLedger: true,
       ledgerTimestampMax: '1791050000000000000',
@@ -1085,7 +1166,7 @@ describe('position episodes', () => {
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v8')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
@@ -1128,7 +1209,7 @@ describe('position episodes', () => {
   })
 })
 
-test('v6 exposes complete operating costs only for the attached registered assessment scope', () => {
+test('exposes complete operating costs only for the attached registered assessment scope', () => {
   const { input, verifiedSources } = supportedAssessmentFixture()
   const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
   const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, assessment))
@@ -1140,4 +1221,56 @@ test('v6 exposes complete operating costs only for the attached registered asses
   })
   expect(report.systemAssessment?.profitability.netEconomicPnlMicros).toBe('20000000000')
   expect(Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [])).operatingCostScope).toBeNull()
+})
+
+test('keeps operating cost coverage incomplete without candidate session evidence', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const missingCandidate = {
+    ...assessment,
+    policies: assessment.policies.filter((policy) => policy.policy !== JevResearchPolicy.Candidate),
+  }
+  const emptyCandidate = {
+    ...assessment,
+    policies: assessment.policies.map((policy) =>
+      policy.policy === JevResearchPolicy.Candidate ? { ...policy, sessions: [] } : policy,
+    ),
+  }
+
+  for (const attached of [null, missingCandidate, emptyCandidate]) {
+    const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, attached))
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+    const { reportHash, ...material } = report
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
+  }
+})
+
+test('requires complete costs for every candidate session', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const candidate = assessment.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  expect(candidate?.sessions.length).toBeGreaterThan(1)
+
+  for (const missingCosts of [true, false]) {
+    const incomplete = {
+      ...assessment,
+      policies: assessment.policies.map((policy) =>
+        policy.policy !== JevResearchPolicy.Candidate
+          ? policy
+          : {
+              ...policy,
+              sessions: policy.sessions.map((session, index) =>
+                index !== 0
+                  ? session
+                  : {
+                      ...session,
+                      costs: missingCosts || session.costs === null ? null : { ...session.costs, fullyCosted: false },
+                    },
+              ),
+            },
+      ),
+    }
+    const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, incomplete))
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  }
 })

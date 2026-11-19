@@ -6,7 +6,7 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import { jevEntryEconomics } from './entry-economics'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
-import type { ChartAssessments } from './chart-questions'
+import type { ChartAssessments } from './/chart-assessments'
 
 const sourceIsFeasible = (input: Parameters<typeof makeEntrySourceCandidates>[0]) =>
   makeEntrySourceCandidates(input).pipe(
@@ -30,6 +30,7 @@ const check = (symbol: string, values: readonly { high: number; low: number }[],
   )
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: request.request.protocol,
       symbol,
       bidMicros: BigInt(bid),
@@ -116,6 +117,7 @@ describe('pre-chart source feasibility', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence({ ...request.request.chartSource, bars }))
     const economics = Result.getOrThrow(
       jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
         protocol: request.request.protocol,
         symbol: chart.symbol,
         bidMicros: 104_000_000n,
@@ -176,6 +178,7 @@ describe('pre-chart source feasibility', () => {
       )
       const economics = Result.getOrThrow(
         jevEntryEconomics({
+          feeAt: '2026-09-04T14:15:00.000Z',
           protocol: request.request.protocol,
           symbol: chart.symbol,
           bidMicros: 101_500_000n,

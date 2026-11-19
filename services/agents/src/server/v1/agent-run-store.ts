@@ -122,10 +122,9 @@ type AgentRunStoreServiceDefinition = {
   readonly close: (store: AgentRunsApiStore) => Effect.Effect<void>
 }
 
-export class AgentRunStoreService extends Context.Tag('agents/AgentRunStoreService')<
-  AgentRunStoreService,
-  AgentRunStoreServiceDefinition
->() {}
+export class AgentRunStoreService extends Context.Service<AgentRunStoreService, AgentRunStoreServiceDefinition>()(
+  'agents/AgentRunStoreService',
+) {}
 
 export const makeAgentRunStoreService = (storeFactory: () => AgentRunsApiStore): AgentRunStoreServiceDefinition => ({
   open: Effect.try({
@@ -166,7 +165,7 @@ export const closeAgentRunsStoreEffect = (store: AgentRunsApiStore) =>
     try: () => store.close(),
     catch: (cause) => new AgentRunStorageError({ operation: 'close-store', cause }),
   }).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.sync(() => {
         console.warn('[agents] failed to close AgentRun API store', error)
       }),
@@ -178,7 +177,7 @@ export const waitForAgentRunsStoreReadyEffect = (store: AgentRunsApiStore) =>
 
 export const listAgentRunsWithStoreEffect = (store: AgentRunsApiStore, input: AgentRunListInput) =>
   waitForAgentRunsStoreReadyEffect(store).pipe(
-    Effect.zipRight(storeEffect('list-runs', () => store.listAgentRuns(input))),
+    Effect.andThen(storeEffect('list-runs', () => store.listAgentRuns(input))),
   )
 
 export const listAgentRunsWithServicesEffect = (
@@ -188,7 +187,7 @@ export const listAgentRunsWithServicesEffect = (
     const stores = yield* AgentRunStoreService
     return yield* Effect.acquireUseRelease(
       stores.open,
-      (store) => stores.ready(store).pipe(Effect.zipRight(stores.listRuns(store, input))),
+      (store) => stores.ready(store).pipe(Effect.andThen(stores.listRuns(store, input))),
       stores.close,
     )
   })

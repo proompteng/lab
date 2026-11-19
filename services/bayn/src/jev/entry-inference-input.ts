@@ -7,6 +7,9 @@ import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
 import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
+import { WebullEntryContextSchema, verifyWebullEntryContext } from './webull-entry-context'
+import { EquityShortEligibilitySchema, equityShortIsEligible } from '../execution/equity-short'
+import { equityClockSession } from '../equity-hours'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const CandidateEntryInferenceInputSchema = Schema.Struct({
@@ -19,6 +22,8 @@ export const CandidateEntryInferenceInputSchema = Schema.Struct({
     askMicros: Price,
     capitalMicros: Price,
     cryptoFeeTier: Schema.NullOr(CryptoFeeTierSchema),
+    equityShortEligibility: Schema.optionalKey(EquityShortEligibilitySchema),
+    accountId: Schema.optionalKey(Schema.NonEmptyString),
   }),
 })
 export enum EntryAblationSelection {
@@ -45,6 +50,7 @@ export type EntryInferenceMaterial =
         | 'bayn.entry-inference-input.v5'
         | 'bayn.entry-inference-input.v6'
         | 'bayn.entry-inference-input.v7'
+        | 'bayn.entry-inference-input.v8'
       readonly protocol: JevProtocolMaterial
     })
   | (Omit<typeof AblationEntryInferenceInputSchema.Type, 'protocol'> & {
@@ -66,6 +72,24 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
     const session = yield* Schema.decodeUnknownResult(Schema.Struct({ completedBarWindowEndsAt: UtcInstantSchema }))(
       value.numericalState['session'],
     )
+    if (value.funding.equityShortEligibility !== undefined) {
+      const timing = yield* Schema.decodeUnknownResult(Schema.Struct({ observedAt: UtcInstantSchema }))(
+        value.numericalState['session'],
+      )
+      if (
+        value.protocol.schemaVersion !== 'bayn.jev.protocol.v41' ||
+        equityClockSession(timing.observedAt) !== 'regular' ||
+        !equityShortIsEligible(
+          value.funding.equityShortEligibility,
+          value.funding.accountId ?? '',
+          source.symbol,
+          timing.observedAt,
+        )
+      )
+        return yield* Result.fail(
+          new JevContractError({ message: 'Short funding requires fresh eligible account-bound broker observations' }),
+        )
+    }
     if (
       candidate.symbol !== source.symbol ||
       session.completedBarWindowEndsAt !== source.windowEndAt ||
@@ -80,6 +104,35 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Chart and numerical evidence must contain the same source bars' }),
       )
+    if (value.protocol.inputDefinition === 'bayn.jev-entry-state.v24') {
+      const context = yield* Schema.decodeUnknownResult(
+        WebullEntryContextSchema,
+        strictParseOptions,
+      )(value.numericalState['webullContext'])
+      const timing = yield* Schema.decodeUnknownResult(
+        Schema.Struct({ observedAt: Schema.optionalKey(UtcInstantSchema) }),
+      )(value.numericalState['session'])
+      if (!verifyWebullEntryContext(context, candidate.symbol, source.windowEndAt, timing.observedAt))
+        return yield* Result.fail(
+          new JevContractError({
+            message: 'Supplemental Webull context differs from the candidate or point-in-time source cut',
+          }),
+        )
+    }
+    if (
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+    ) {
+      yield* Schema.decodeUnknownResult(
+        Schema.NullOr(
+          Schema.Struct({
+            maximumEntryQuoteDriftBps: Schema.Literal(0),
+            maximumEntryLimitSlippageBps: Schema.Literal(0),
+          }),
+        ),
+      )(value.numericalState['entryEconomics'])
+    }
     const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(value)
     if (Buffer.byteLength(body) > 128_000)
       return yield* Result.fail(

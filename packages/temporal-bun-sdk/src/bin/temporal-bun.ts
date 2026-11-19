@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { Cause, Effect, Exit } from 'effect'
+import { Cause, Effect, Exit, Schema } from 'effect'
 import { buildCodecsFromConfig, createDefaultDataConverter, type DataConverter } from '../common/payloads'
 import { makeDefaultClientInterceptors } from '../interceptors/client'
 import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
@@ -408,14 +408,19 @@ export type Template = {
   contents: string
 }
 
-const scaffoldSdkVersion = (): string => {
+const scaffoldDependencies = (): { '@proompteng/temporal-bun-sdk': string; effect: string } => {
   for (const path of [
     resolve(import.meta.dir, '../../package.json'),
     resolve(import.meta.dir, '../../../package.json'),
   ]) {
     if (!existsSync(path)) continue
-    const metadata = JSON.parse(readFileSync(path, 'utf8')) as { name?: string; version?: string }
-    if (metadata.name === '@proompteng/temporal-bun-sdk' && metadata.version) return `^${metadata.version}`
+    const metadata: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (typeof metadata !== 'object' || metadata === null || !('name' in metadata)) continue
+    if (metadata.name !== '@proompteng/temporal-bun-sdk') continue
+    const sdk = Schema.decodeUnknownSync(
+      Schema.Struct({ version: Schema.String, dependencies: Schema.Struct({ effect: Schema.String }) }),
+    )(metadata)
+    return { '@proompteng/temporal-bun-sdk': `^${sdk.version}`, effect: sdk.dependencies.effect }
   }
   throw new Error('Unable to resolve the installed Temporal Bun SDK version for scaffolding')
 }
@@ -435,10 +440,7 @@ export function projectTemplates(name: string): Template[] {
             'worker:start': 'bun run src/worker.ts',
             'docker:build': 'bun run scripts/build-docker.ts --tag temporal-worker:latest',
           },
-          dependencies: {
-            '@proompteng/temporal-bun-sdk': scaffoldSdkVersion(),
-            effect: '4.0.0',
-          },
+          dependencies: scaffoldDependencies(),
           devDependencies: {
             'bun-types': '^1.4.2',
           },

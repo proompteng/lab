@@ -13,12 +13,12 @@ export type WorktreeStateService = {
   clearWorktree: (chatId: string) => Effect.Effect<void, Error>
 }
 
-export class WorktreeState extends Context.Tag('WorktreeState')<WorktreeState, WorktreeStateService>() {}
+export class WorktreeState extends Context.Service<WorktreeState, WorktreeStateService>()('WorktreeState') {}
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-export const WorktreeStateLive = Layer.scoped(
+export const WorktreeStateLive = Layer.effect(
   WorktreeState,
   Effect.gen(function* () {
     let store: WorktreeStore | null = null
@@ -27,7 +27,7 @@ export const WorktreeStateLive = Layer.scoped(
       if (!store) return Effect.void
       return pipe(
         store.shutdown(),
-        Effect.catchAll((error) => {
+        Effect.catch((error) => {
           console.warn('[chat] failed to close worktree store', { error: String(error) })
           return Effect.void
         }),

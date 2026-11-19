@@ -130,12 +130,16 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
-  test('routes runtime package dependencies through package and Agents validation', () => {
+  test('routes runtime package dependencies through their package and service consumers', () => {
     expect(selectImpactPlan(['packages/otel/src/api.ts'], map).delegatedWorkflows).toEqual(['agents-ci', 'otel'])
     expect(selectImpactPlan(['packages/temporal-bun-sdk/src/index.ts'], map).delegatedWorkflows).toEqual([
       'agents-ci',
+      'jangar-ci',
       'temporal-bun-sdk',
     ])
+    for (const path of ['packages/temporal-bun-sdk/tests/client.test.ts', 'packages/temporal-bun-sdk/README.md']) {
+      expect(selectImpactPlan([path], map).delegatedWorkflows).not.toContain('jangar-ci')
+    }
   })
 
   test('does not fan agentctl changes into the broader agents workflow', () => {

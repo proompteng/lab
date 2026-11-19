@@ -17,7 +17,8 @@ export const codexRunStateSchema = z.discriminatedUnion('phase', [
   z.strictObject({ phase: z.literal('succeeded'), turnId }),
   z.strictObject({ phase: z.literal('failed'), turnId, reason }),
   z.strictObject({ phase: z.literal('cancelled'), turnId: z.string().max(160) }),
-  z.strictObject({ phase: z.literal('needs_reconciliation'), reason }),
+  z.strictObject({ phase: z.literal('needs_reconciliation'), turnId: turnId.nullable(), reason }),
+  z.strictObject({ phase: z.literal('authorization_required'), turnId: turnId.nullable(), reason }),
   z.strictObject({ phase: z.literal('rejected'), reason }),
 ])
 
@@ -32,6 +33,19 @@ export type TengriCodexRun = z.infer<typeof codexRunSchema>
 
 export function codexRunIsTerminal(run: TengriCodexRun) {
   return ['succeeded', 'failed', 'cancelled', 'rejected'].includes(run.state.phase)
+}
+
+export function codexRunCanStop(
+  run: TengriCodexRun | null,
+  identity: { agentId: string; threadId: string; runId: string },
+) {
+  return Boolean(
+    run &&
+    run.agentId === identity.agentId &&
+    run.threadId === identity.threadId &&
+    run.runId === identity.runId &&
+    !codexRunIsTerminal(run),
+  )
 }
 
 export function recoveredCodexRun(

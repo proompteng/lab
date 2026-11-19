@@ -648,7 +648,13 @@ const reduceShadowDelta = (
     })
   }
   return Result.succeed({
-    reservedBuyingPower: accumulator.reservedBuyingPower + (targetIntent.side === OrderSide.Buy ? orderNotional : 0n),
+    reservedBuyingPower:
+      accumulator.reservedBuyingPower +
+      (protection?._tag === 'EquityShortBracket'
+        ? (orderNotional * 3n + 1n) / 2n
+        : targetIntent.side === OrderSide.Buy
+          ? orderNotional
+          : 0n),
     dailyTradedNotional: accumulator.dailyTradedNotional + orderNotional,
     projectedPositions: projectTargetPosition(
       accumulator.projectedPositions,
@@ -900,7 +906,7 @@ const reduceObserveShadowDecision = (
     ),
   )
 
-export const buildObserveShadowDecision = (
+export const constructObserveShadowDecision = (
   input: unknown,
 ): Effect.Effect<ObserveShadowDecisionDocument, ShadowDecisionError> =>
   Effect.suspend(() => Effect.fromResult(reduceObserveShadowDecision(input))).pipe(
@@ -924,6 +930,24 @@ const assembleExecutionDecisionDocument = (
     (cause) => error('contract', 'planning broker state hash could not be derived', cause),
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
+  const sourceDecision = input.compiledDecision
+  const repeatsObservationState = isProtectedEntryTarget(sourceDecision)
+    ? Result.gen(function* () {
+        const planned = yield* hashValue(
+          input.plannerInput.brokerState,
+          'contract',
+          'planning broker state is not canonicalizable',
+        )
+        const observed = yield* hashValue(
+          sourceDecision.evidence.observation.portfolio.brokerState,
+          'contract',
+          'observation broker state is not canonicalizable',
+        )
+        return planned === observed
+      })
+    : Result.succeed(false)
+  if (Result.isFailure(repeatsObservationState)) return Result.fail(repeatsObservationState.failure)
+  const { brokerState: _brokerState, ...plannerFacts } = input.plannerInput
   return Result.mapError(
     makeExecutionDecisionDocument({
       schemaVersion: executionCycleDecisionSchemaVersion,
@@ -954,7 +978,7 @@ const assembleExecutionDecisionDocument = (
       ...(input.executionMarketDataRows === undefined
         ? {}
         : { executionMarketDataRows: input.executionMarketDataRows }),
-      plannerInput: input.plannerInput,
+      plannerInput: repeatsObservationState.success ? plannerFacts : input.plannerInput,
       riskPolicy: input.policy,
       ...(entryLimitSlippageBps === undefined ? {} : { entryLimitSlippageBps }),
       ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
@@ -971,7 +995,7 @@ const assembleExecutionDecisionDocument = (
   )
 }
 
-export const buildExecutionDecision = (
+export const constructExecutionDecision = (
   input: ExecutionDecisionInput,
 ): Effect.Effect<ExecutionDecisionDocument, ShadowDecisionError> =>
   Effect.suspend(() =>

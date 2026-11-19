@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import type { DynamicToolSpec } from '@proompteng/codex'
 import { describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { Cause, Effect } from 'effect'
 
 import { CodexProtocolError } from './errors'
 import { CodexSessionService, decodeProtocolMessage, makeCodexSessionLayer } from './codex-app-session'
@@ -74,7 +74,7 @@ setInterval(() => {}, 1000)
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
-            model: 'gpt-6-astra',
+            model: 'gpt-6.2-sol',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -100,16 +100,16 @@ setInterval(() => {}, 1000)
 
           yield* session.runTurn('hang forever').pipe(
             Effect.flatMap(() => Effect.fail(new Error('expected turn timeout'))),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               error instanceof CodexProtocolError && error.code === 'turn_timeout' ? Effect.void : Effect.fail(error),
             ),
           )
         }),
       ).pipe(
         Effect.provide(makeCodexSessionLayer(createStubLogger())),
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: 2_000,
-          onTimeout: () => new Error('scoped codex session did not shut down'),
+          orElse: () => Effect.fail(new Error('scoped codex session did not shut down')),
         }),
       )
 
@@ -166,7 +166,7 @@ rl.on('line', (line) => {
   }
 
   if (message.method === 'thread/start') {
-    if (message.params?.model !== 'gpt-6-astra') {
+    if (message.params?.model !== 'gpt-6.2-sol') {
       console.log(JSON.stringify({
         id: message.id,
         error: { code: -32602, message: 'thread/start must receive the configured model' },
@@ -215,7 +215,7 @@ rl.on('line', (line) => {
   }
 
   if (message.method === 'turn/start') {
-    if (message.params?.model !== 'gpt-6-astra') {
+    if (message.params?.model !== 'gpt-6.2-sol') {
       console.log(JSON.stringify({
         id: message.id,
         error: { code: -32602, message: 'turn/start must receive the configured model' },
@@ -251,7 +251,7 @@ rl.on('line', (line) => {
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
-            model: 'gpt-6-astra',
+            model: 'gpt-6.2-sol',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -356,7 +356,7 @@ rl.on('line', (line) => {
             const sessions = yield* CodexSessionService
             const session = yield* sessions.createSession({
               command: `SYMPHONY_SANDBOX_CASE=${threadSandbox} node ${JSON.stringify(scriptPath)}`,
-              model: 'gpt-6-astra',
+              model: 'gpt-6.2-sol',
               cwd: tempDir,
               approvalPolicy: null,
               threadSandbox,
@@ -445,7 +445,7 @@ rl.on('line', (line) => {
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
-            model: 'gpt-6-astra',
+            model: 'gpt-6.2-sol',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -474,7 +474,7 @@ rl.on('line', (line) => {
       const exit = await Effect.runPromiseExit(program)
       expect(exit._tag).toBe('Failure')
       if (exit._tag === 'Failure') {
-        const failure = JSON.parse(JSON.stringify(exit)).cause?.failure ?? null
+        const failure = Cause.squash(exit.cause)
         expect(failure).toMatchObject({
           code: 'turn_failed',
           causeValue: {

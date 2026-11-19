@@ -8,19 +8,9 @@ on:
     branches:
       - main
     paths:
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/hermes-toolchain-build-push.yml'
-      - '.github/workflows/hermes-agent-mirror.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'flake.lock'
       - 'flake.nix'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
       - 'nix/images/hermes-toolchain.nix'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'nix/packages.nix'
       - 'argocd/applications/hermes/**'
   workflow_dispatch:

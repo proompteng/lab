@@ -1,7 +1,7 @@
-import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result, Schema, Stream } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/http'
+// Historical OpenAI Decisions evidence codec. Active inference uses JevClient only.
+import { Data, Redacted, Result, Schema } from 'effect'
 
-import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
+import { canonicalJsonWithHashV1Result } from '../hash'
 import {
   NonNegativeIntegerSchema,
   Sha256Schema,
@@ -9,9 +9,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { utcInstantFromEpochMillis } from '../time'
 
-export const decisionsEndpoint = 'https://api.openai.com/v1/decisions'
 export const decisionsModel = 'gpt-6-luna'
 
 const Name = Schema.NonEmptyString.check(Schema.isMaxLength(64))
@@ -81,6 +79,10 @@ export class DecisionsError extends Data.TaggedError('DecisionsError')<{
   readonly requestHash?: string
   readonly status?: number
   readonly responseHash?: string
+  readonly providerErrorCode?: string
+  readonly providerErrorType?: string
+  readonly providerRequestId?: string
+  readonly providerRetryAtMs?: number
   readonly usage?: typeof DecisionsUsageSchema.Type
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
@@ -200,134 +202,3 @@ export const DecisionsInferenceSchema = Schema.Struct({
   response: DecisionsResponseSchema,
 })
 export type DecisionsInference = typeof DecisionsInferenceSchema.Type
-
-export class DecisionsClient extends Context.Service<
-  DecisionsClient,
-  {
-    readonly evaluate: (request: unknown, budgetMs: number) => Effect.Effect<DecisionsInference, DecisionsError>
-  }
->()('@proompteng/bayn/DecisionsClient') {}
-
-const metering = Schema.Struct({ model: Schema.Literal(decisionsModel), usage: DecisionsUsageSchema })
-
-export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: number) =>
-  Layer.effect(
-    DecisionsClient,
-    Effect.gen(function* () {
-      const http = yield* HttpClient.HttpClient
-      if (Redacted.value(key).length === 0 || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000)
-        return yield* new DecisionsError({
-          category: 'REQUEST',
-          message: 'Decisions requires a key and a 1-10000ms timeout',
-        })
-      return {
-        evaluate: (input: unknown, budgetMs: number) =>
-          Effect.gen(function* () {
-            if (!Number.isSafeInteger(budgetMs) || budgetMs <= 0 || budgetMs > 10_000)
-              return yield* new DecisionsError({
-                category: 'REQUEST',
-                message: 'Decisions requires a remaining deadline of 1-10000ms',
-              })
-            const remainingMs = Math.min(timeoutMs, budgetMs)
-            const prepared = yield* Effect.fromResult(prepareDecisionsRequest(input))
-            const started = yield* Clock.currentTimeMillis
-            let status: number | undefined
-            let usage: typeof DecisionsUsageSchema.Type | undefined
-            let responseHash: string | undefined
-            return yield* Effect.gen(function* () {
-              const response = yield* http.execute(
-                HttpClientRequest.post(decisionsEndpoint).pipe(
-                  HttpClientRequest.bearerToken(key),
-                  HttpClientRequest.bodyText(prepared.body, 'application/json'),
-                  HttpClientRequest.acceptJson,
-                ),
-              )
-              status = response.status
-              const raw = yield* response.stream.pipe(
-                Stream.runFoldEffect(
-                  () => Buffer.alloc(0),
-                  (body, chunk) =>
-                    body.byteLength + chunk.byteLength > 262_144
-                      ? Effect.fail(
-                          new DecisionsError({
-                            category: 'RESPONSE',
-                            message: 'Decisions response exceeds its transport budget',
-                          }),
-                        )
-                      : Effect.succeed(Buffer.concat([body, chunk])),
-                ),
-                Effect.flatMap((body) =>
-                  Effect.try({
-                    try: (): unknown => JSON.parse(body.toString('utf8')),
-                    catch: (cause) =>
-                      new DecisionsError({
-                        category: 'RESPONSE',
-                        message: 'Decisions response is not JSON',
-                        cause: Redacted.make(cause),
-                      }),
-                  }),
-                ),
-              )
-              const hash = canonicalHashV1Result(raw)
-              if (Result.isSuccess(hash)) responseHash = hash.success
-              const observedUsage = Schema.decodeUnknownResult(metering)(raw)
-              if (Result.isSuccess(observedUsage) && validDecisionsUsage(observedUsage.success.usage))
-                usage = observedUsage.success.usage
-              if (response.status !== 200)
-                return yield* new DecisionsError({
-                  category: 'STATUS',
-                  message: 'Decisions returned an unsuccessful status',
-                })
-              const decoded = yield* Effect.fromResult(decodeDecisionsResponse(prepared.request, raw))
-              const verifiedHash = yield* Effect.fromResult(canonicalHashV1Result(decoded)).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new DecisionsError({
-                      category: 'RESPONSE',
-                      message: 'Decisions response cannot be hashed',
-                      cause: Redacted.make(cause),
-                    }),
-                ),
-              )
-              const completed = yield* Clock.currentTimeMillis
-              if (completed < started || completed - started >= remainingMs)
-                return yield* new DecisionsError({
-                  category: 'DEADLINE',
-                  message: 'Decisions response arrived outside its deadline',
-                })
-              return {
-                requestHash: prepared.requestHash,
-                responseHash: verifiedHash,
-                startedAt: utcInstantFromEpochMillis(started),
-                completedAt: utcInstantFromEpochMillis(completed),
-                response: decoded,
-              }
-            }).pipe(
-              Effect.timeout(`${remainingMs} millis`),
-              Effect.mapError(
-                (cause) =>
-                  new DecisionsError({
-                    category:
-                      cause instanceof DecisionsError
-                        ? cause.category
-                        : Cause.isTimeoutError(cause)
-                          ? 'DEADLINE'
-                          : 'TRANSPORT',
-                    message:
-                      cause instanceof DecisionsError
-                        ? cause.message
-                        : Cause.isTimeoutError(cause)
-                          ? 'Decisions inference deadline elapsed'
-                          : 'Decisions transport failed',
-                    requestHash: prepared.requestHash,
-                    ...(status === undefined ? {} : { status }),
-                    ...(usage === undefined ? {} : { usage }),
-                    ...(responseHash === undefined ? {} : { responseHash }),
-                    cause: Redacted.make(cause),
-                  }),
-              ),
-            )
-          }),
-      }
-    }),
-  )

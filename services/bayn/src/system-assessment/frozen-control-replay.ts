@@ -26,7 +26,7 @@ import {
   latencyReplayExecutionModelHash,
 } from './latency-replay'
 import { frozenControlOrigin, frozenDeployedControlIdentity } from './frozen-control-identity'
-import { systemQualificationPolicy } from './policy'
+import { registeredAllocationMicros } from './policy'
 
 const Universe = Schema.Struct({
   universeId: StrictNonEmptyStringSchema,
@@ -154,6 +154,8 @@ export const prepareFrozenControlReplay = (raw: unknown, captureText: string, ca
     const capture = yield* Schema.decodeUnknownResult(Schema.fromJsonString(Capture), strictParseOptions)(captureText)
     const stress = yield* prepareSystemLatencyReplay(input.latencyStress)
     const registration = stress.registration
+    if (registration.obligations.configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+      return yield* fail('Frozen polling replay cannot establish a streaming runtime registration')
     const definition = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Deployed)
     const first = registration.calendar.sessions[0]
     const last = registration.calendar.sessions.at(-1)
@@ -168,7 +170,7 @@ export const prepareFrozenControlReplay = (raw: unknown, captureText: string, ca
       input.backtest.build.imageDigest !== `sha256:${definition.imageDigest}` ||
       input.backtest.build.strategyBehaviorHash !== definition.strategyHash ||
       input.backtest.build.strategyParameterHash !== definition.parametersHash ||
-      input.backtest.openingCashMicros !== systemQualificationPolicy.allocationMicros ||
+      input.backtest.openingCashMicros !== registeredAllocationMicros(registration) ||
       input.latencyStress.p95FullBatchMs !== stress.p95FullBatchMs ||
       input.backtest.replicate !== (yield* frozenReplayReplica(input, captureHash)) ||
       (yield* latencyReplayExecutionModelHash({

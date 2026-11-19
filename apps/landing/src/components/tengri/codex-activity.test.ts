@@ -1,6 +1,16 @@
 import { expect, test } from 'bun:test'
 import { codexActivityTitle, groupCodexActivity } from './codex-activity'
 
+test('keeps image generation and its preview outside collapsed tool groups', () => {
+  const groups = groupCodexActivity([
+    { id: 'tool', kind: 'tool-call' },
+    { id: 'generating', kind: 'tool-call', imageGeneration: { status: 'generating' } },
+    { id: 'image', kind: 'tool-output', imageGeneration: { status: 'completed', path: '/workspace/cat.png' } },
+    { id: 'answer', kind: 'assistant-text' },
+  ])
+  expect(groups.map((group) => group.activity)).toEqual([true, false, false, false])
+})
+
 test('groups adjacent tools without moving messages, approvals, or errors', () => {
   const groups = groupCodexActivity([
     { id: 'intro', kind: 'assistant-text' },

@@ -108,6 +108,68 @@ test('controller identity reaches the mounted SPIFFE workload API', () => {
   })
 })
 
+test('run reads stay private without giving controllers Restate admin access', () => {
+  const reader = cutoverManifest('tengri', 'Deployment', 'tengri-run-reader')
+  const controller = cutoverManifest('tengri', 'Deployment', 'tengri')
+  expect(reader.getIn(['metadata', 'namespace'])).toBe('restate')
+  expect(controller.getIn(['metadata', 'namespace'])).toBe('tengri')
+  const pod = reader.getIn(['spec', 'template', 'spec'])
+  if (!isMap(pod)) throw new Error('Missing reader Pod')
+  expect(pod.get('automountServiceAccountToken')).toBe(false)
+  expect(pod.get('serviceAccountName')).toBe('tengri-run-reader')
+  expect(pod.get('volumes')).toBeUndefined()
+  expect(pod.getIn(['containers', 0, 'env']).toJSON()).toEqual([
+    { name: 'TENGRI_RESTATE_ADMIN', value: 'http://restate.restate.svc.cluster.local:9070/' },
+  ])
+  expect(pod.getIn(['containers', 0, 'args']).toJSON()).toEqual(['run-reader'])
+  expect(pod.getIn(['containers', 0, 'image'])).toBe(
+    controller.getIn(['spec', 'template', 'spec', 'containers', 0, 'image']),
+  )
+  expect(cutoverManifest('tengri', 'PeerAuthentication', 'tengri-run-reader').getIn(['spec', 'mtls', 'mode'])).toBe(
+    'STRICT',
+  )
+  expect(
+    cutoverManifest('tengri', 'AuthorizationPolicy', 'tengri-run-reader').getIn(['spec', 'rules']).toJSON(),
+  ).toEqual([
+    {
+      from: [{ source: { principals: ['proompteng.ai/ns/tengri/sa/tengri'] } }],
+      to: [{ operation: { ports: ['8080'], methods: ['POST'], paths: ['/status', '/active'] } }],
+    },
+  ])
+  const policy = cutoverManifest('tengri', 'NetworkPolicy', 'tengri-run-reader')
+  expect(policy.getIn(['metadata', 'namespace'])).toBe('restate')
+  expect(policy.getIn(['spec', 'ingress']).toJSON()).toEqual([
+    {
+      from: [
+        {
+          namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'tengri' } },
+          podSelector: {
+            matchLabels: { 'app.kubernetes.io/name': 'tengri', 'app.kubernetes.io/component': 'control-plane' },
+          },
+        },
+      ],
+      ports: [{ protocol: 'TCP', port: 8080 }],
+    },
+  ])
+  const controllerPolicy = networkPolicies.find((entry) => entry.metadata?.name === 'tengri-control-plane')
+  expect(controllerPolicy?.spec?.egress?.flatMap((entry) => entry.ports ?? []).some((port) => port.port === 9070)).toBe(
+    false,
+  )
+  const identity = manifest('argocd/applications/spire-server/values.yaml').getIn([
+    'spire-server',
+    'controllerManager',
+    'identities',
+    'clusterSPIFFEIDs',
+    'tengri-run-reader-proxy',
+  ])
+  if (!isMap(identity)) throw new Error('Missing private reader mesh identity')
+  expect(identity.get('spiffeIDTemplate')).toBe('spiffe://{{ .TrustDomain }}/ns/restate/sa/tengri-run-reader')
+  expect(identity.get('workloadSelectorTemplates').toJSON()).toEqual([
+    'k8s:sa:tengri-run-reader',
+    'k8s:container-name:istio-proxy',
+  ])
+})
+
 test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'tengri-promotion-')))
   const image = `registry.ide-newton.ts.net/lab/nanoagent@sha256:${'e'.repeat(64)}`
@@ -143,7 +205,7 @@ test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
   }
 })
 
-test('the namespace can admit six slot leases with rolling-upgrade headroom', () => {
+test('the namespace can admit six slots with rolling-upgrade headroom', () => {
   const quota = manifest('argocd/applications/tengri/resource-quota.yaml')
   const source = readFileSync(new URL('../../../../services/tengri/src/controller.rs', import.meta.url), 'utf8')
   const slots = /const SLOT_COUNT: usize = (\d+);/.exec(source)
@@ -151,6 +213,14 @@ test('the namespace can admit six slot leases with rolling-upgrade headroom', ()
   expect(Number(quota.getIn(['spec', 'hard', 'count/leases.coordination.k8s.io']))).toBeGreaterThanOrEqual(
     Number(slots[1]) + 1,
   )
+  for (const [resource, headroomGiB] of [
+    ['requests.memory', 3],
+    ['limits.memory', 9],
+  ] as const) {
+    const quantity = String(quota.getIn(['spec', 'hard', resource]))
+    expect(quantity).toMatch(/^\d+Gi$/)
+    expect(Number(quantity.slice(0, -2))).toBeGreaterThanOrEqual(Number(slots[1]) * 12 + headroomGiB)
+  }
 })
 
 test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {
@@ -425,11 +495,11 @@ test('active deployments use the complete Ofz cutover contract', () => {
     const active = manifest(`argocd/applications/${app}/deployment.yaml`).toString()
     expect(active).toContain('OFZ_GRPC_ENDPOINT')
     expect(active).toContain('tengri-internal-request-key')
-    expect(active).toContain('ofz-database-ca')
+    if (app === 'tengri') expect(active).toContain('ofz-database-ca')
   }
 })
 
-test('the BFF cutover includes every required Ofz, identity and TLS database setting', () => {
+test('the web gateway uses Ofz for sign-in and carries no database access', () => {
   const deployment = cutoverManifest('proompteng', 'Deployment', 'proompteng')
   const pod = deployment.getIn(['spec', 'template', 'spec'])
   if (!isMap(pod)) throw new Error('BFF pod required')
@@ -438,30 +508,25 @@ test('the BFF cutover includes every required Ofz, identity and TLS database set
       expect.objectContaining({
         env: expect.arrayContaining([
           { name: 'OFZ_GRPC_ENDPOINT', value: 'ofz-api.ofz.svc.cluster.local:9443' },
-          { name: 'TENGRI_OIDC_ISSUER', value: 'https://auth.proompteng.ai/realms/tengri' },
-          { name: 'TENGRI_OIDC_CLIENT_SECRET_FILE', value: '/var/run/tengri/oidc/client-secret' },
-          {
-            name: 'TENGRI_DATABASE_DSN',
-            value: 'postgres://tengri_bff@ofz-db-rw.ofz.svc.cluster.local:5432/tengri_control',
-          },
-          { name: 'TENGRI_DATABASE_PASSWORD_FILE', value: '/var/run/tengri/database/password' },
-          { name: 'TENGRI_DATABASE_CA_FILE', value: '/var/run/tengri/database-ca/ca.crt' },
+          { name: 'PLATFORM_WEB_ORIGIN', value: 'https://proompteng.ai' },
+          { name: 'PLATFORM_OIDC_ISSUER', value: 'https://auth.proompteng.ai/realms/tengri' },
+          { name: 'PLATFORM_OIDC_CLIENT_ID', value: 'tengri-bff' },
+          { name: 'PLATFORM_OIDC_CLIENT_SECRET_FILE', value: '/var/run/tengri/oidc/client-secret' },
         ]),
-        volumeMounts: expect.arrayContaining([
-          { name: 'oidc', mountPath: '/var/run/tengri/oidc', readOnly: true },
-          { name: 'database', mountPath: '/var/run/tengri/database', readOnly: true },
-          { name: 'database-ca', mountPath: '/var/run/tengri/database-ca', readOnly: true },
-        ]),
+        volumeMounts: expect.arrayContaining([{ name: 'oidc', mountPath: '/var/run/tengri/oidc', readOnly: true }]),
       }),
     ],
     volumes: expect.arrayContaining([
       { name: 'oidc', secret: { secretName: 'tengri-oidc-client', defaultMode: 0o440 } },
-      { name: 'database', secret: { secretName: 'tengri-bff-db', defaultMode: 0o440 } },
-      { name: 'database-ca', secret: { secretName: 'ofz-database-ca', defaultMode: 0o440 } },
     ]),
   })
   const policies = cutoverManifest('proompteng', 'NetworkPolicy', 'proompteng-web').toJSON() as NetworkPolicy
-  for (const port of [9443, 5432, 8443]) {
+  const configuration = JSON.stringify(pod.toJSON())
+  expect(configuration).not.toContain('TENGRI_DATABASE_')
+  expect(configuration).not.toContain('tengri-bff-db')
+  expect(configuration).not.toContain('ofz-database-ca')
+  for (const port of [9443, 8443]) {
     expect(policies.spec?.egress?.some((rule) => rule.ports?.some((entry) => entry.port === port))).toBe(true)
   }
+  expect(policies.spec?.egress?.some((rule) => rule.ports?.some((entry) => entry.port === 5432))).toBe(false)
 })

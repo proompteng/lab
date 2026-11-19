@@ -3,23 +3,26 @@ import { beforeEach, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { connectionRequestSchema, type RelayIdentity } from './connections'
-import { SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
 import {
+  SessionSchema,
   PlatformConnectionSchema,
   PlatformDecisionSchema,
   ListPlatformConnectionsResponseSchema,
+  ProviderConnectionState,
+  ProviderConnectionSchema,
+  type ProviderConnection,
   type PlatformConnection,
 } from './generated/proompteng/authz/v1/platform_pb'
 import { ConnectorOperationSchema } from './generated/proompteng/relay/v1/relay_pb'
-import type { TengriIdentity } from './auth'
+import type { PlatformIdentity } from '../platform/auth'
 
 void mock.module('server-only', () => ({}))
-const { OfzError } = await import('./ofz')
+const { OfzError } = await import('../platform/ofz')
 const { TengriUnavailableError } = await import('./grpc')
 const workspace = '11111111-1111-4111-8111-111111111111'
 const connectionId = '22222222-2222-4222-8222-222222222222'
 const firstRuntime = '33333333-3333-4333-8333-333333333333'
-const identity: TengriIdentity = {
+const identity: PlatformIdentity = {
   subject: '7',
   user: { id: '7', name: 'Fixture', email: 'fixture@example.test', image: null },
   session: create(SessionSchema, {
@@ -38,6 +41,7 @@ const operation = create(ConnectorOperationSchema, {
 })
 let connection: PlatformConnection | undefined
 let precedingConnections: PlatformConnection[] = []
+let providers: ProviderConnection[] = []
 let catalog = [operation]
 let generation = BigInt(10)
 let recoveryGeneration = BigInt(3)
@@ -56,9 +60,10 @@ const revokedDelegations = new Set<string>()
 const decision = () =>
   create(PlatformDecisionSchema, { allowed: true, auditReceiptId: randomUUID(), recoveryGeneration: BigInt(3) })
 
-void mock.module('./ofz', () => ({
+void mock.module('../platform/ofz', () => ({
   OfzError,
   ofzCall: async (method: { name: string }, input: unknown) => {
+    if (method.name === 'ListProviderConnections') return { connections: providers }
     const body = z.record(z.string(), z.unknown()).parse(input)
     events.push({ name: method.name, body })
     expect(body.issuer).toEqual({ humanId: 'github:7', sessionId: workspace, origin: 'https://proompteng.ai' })
@@ -158,7 +163,22 @@ void mock.module('./ofz', () => ({
   },
 }))
 void mock.module('../platform/relay', () => ({
-  relayCall: async () => {
+  relayCall: async (method: { name: string }, input: unknown) => {
+    if (method.name === 'Execute') {
+      if (!permitted) throw new OfzError(403)
+      const body = z.object({ body: z.instanceof(Uint8Array) }).parse(input)
+      events.push({ name: 'Execute', body: JSON.parse(new TextDecoder().decode(body.body)) })
+      return { result: new TextEncoder().encode('{}') }
+    }
+    expect(input).toEqual({
+      subject: {
+        clientService: 'tengri-web',
+        identity: {
+          case: 'human',
+          value: { humanId: 'github:7', sessionId: workspace, origin: 'https://proompteng.ai' },
+        },
+      },
+    })
     events.push({ name: 'catalog', body: {} })
     return { operations: catalog }
   },
@@ -200,7 +220,8 @@ void mock.module('./grpc', () => ({
     throw new Error('Unexpected guest fixture action')
   },
 }))
-const { saveConnection, reconcileConnections, disconnectConnection } = await import('./connection-lifecycle')
+const { saveConnection, reconcileConnections, disconnectConnection, runConnectionCommand } =
+  await import('./connection-lifecycle')
 const save = () =>
   connectionRequestSchema.options[0].parse({
     kind: 'save',
@@ -219,6 +240,7 @@ beforeEach(() => {
   identity.session.idleDeadlineUnixMs = BigInt(Date.now() + 3_600_000)
   connection = undefined
   precedingConnections = []
+  providers = []
   catalog = [operation]
   generation = BigInt(10)
   recoveryGeneration = BigInt(3)
@@ -234,7 +256,7 @@ beforeEach(() => {
   completed.clear()
   revocations.clear()
   revokedDelegations.clear()
-  process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+  process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
 })
 
 test('BFF keeps idle workspaces untouched and activates only after exact guest acknowledgement', async () => {
@@ -257,6 +279,39 @@ test('BFF keeps idle workspaces untouched and activates only after exact guest a
   expect(
     JSON.stringify(result, (_key, value: unknown) => (typeof value === 'bigint' ? String(value) : value)),
   ).not.toContain('b'.repeat(43))
+})
+
+test('an unconnected provider prevents consent and credential installation, then resumes the same intent', async () => {
+  providers = [
+    create(ProviderConnectionSchema, {
+      profileId: 'inventory',
+      connectorId: 'galactic',
+      state: ProviderConnectionState.RECONNECT,
+    }),
+  ]
+  const request = save()
+  await expect(saveConnection(identity, request)).rejects.toMatchObject({ code: 'provider_reconnect_required' })
+  expect(events.some((event) => event.name === 'PutPlatformConnection')).toBe(false)
+  expect(installed).toHaveLength(0)
+  providers[0]!.state = ProviderConnectionState.READY
+  const result = await saveConnection(identity, request)
+  expect(result.connections[0]?.id).toBe(request.connectionId)
+  expect(result.connections[0]?.credentialActive).toBe(true)
+})
+
+test('a provider needing repair is not shown active or renewed with a guest credential', async () => {
+  await saveConnection(identity, save())
+  providers = [
+    create(ProviderConnectionSchema, {
+      profileId: 'inventory',
+      connectorId: 'galactic',
+      state: ProviderConnectionState.RECONNECT,
+    }),
+  ]
+  events.length = 0
+  const result = await reconcileConnections(identity, 'microvm-fixture')
+  expect(result.connections[0]?.credentialActive).toBe(false)
+  expect(events.some((event) => event.name === 'CreatePlatformDelegation')).toBe(false)
 })
 
 for (const [status, code] of [
@@ -498,4 +553,50 @@ test('revoked intent uses the current recovery epoch to retire retained guest st
   await reconcileConnections(identity, 'microvm-fixture')
   expect(events.find((event) => event.name === 'remove')?.body.recoveryGeneration).toBe('4')
   expect(connection?.enabled).toBe(false)
+})
+
+test('run card actions use the current connection, exact target and fresh Relay authorization', async () => {
+  const resource = { kind: 'agents.target', id: 'agents/lab' }
+  catalog = ['get_result', 'cancel_run'].map((name) =>
+    create(ConnectorOperationSchema, {
+      connectorId: 'agents',
+      name,
+      action: name === 'cancel_run' ? 'agents.runs.cancel' : 'agents.runs.read',
+      readOnly: name !== 'cancel_run',
+      targets: [{ name: 'Lab', resource }],
+    }),
+  )
+  connection = create(PlatformConnectionSchema, {
+    id: connectionId,
+    enabled: true,
+    clientReference: workspace + '/agents',
+    actions: ['agents.runs.read', 'agents.runs.cancel'],
+    resources: [resource],
+  })
+  const command = {
+    agentId: 'microvm-fixture',
+    targetId: resource.id,
+    runId: randomUUID(),
+    operationId: randomUUID(),
+    operation: 'cancel_run' as const,
+  }
+  expect((await runConnectionCommand(identity, command)).canCancel).toBe(true)
+  expect(events.find((event) => event.name === 'Execute')?.body).toMatchObject({
+    operationId: command.operationId,
+    connectorId: 'agents',
+    operation: 'cancel_run',
+    arguments: { runId: command.runId },
+    binding: { service: 'tengri', id: workspace, generation: runtime },
+    delegationId: null,
+  })
+  events.length = 0
+  await expect(runConnectionCommand(identity, { ...command, targetId: 'agents/another' })).rejects.toMatchObject({
+    status: 403,
+  })
+  connection.enabled = false
+  await expect(runConnectionCommand(identity, command)).rejects.toMatchObject({ status: 403 })
+  connection.enabled = true
+  permitted = false
+  await expect(runConnectionCommand(identity, command)).rejects.toMatchObject({ status: 403 })
+  expect(events.filter((event) => event.name === 'Execute')).toHaveLength(0)
 })

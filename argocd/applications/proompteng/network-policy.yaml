@@ -99,16 +99,6 @@ spec:
             matchLabels:
               app.kubernetes.io/name: ofz-api
     - ports:
-        - port: 5432
-          protocol: TCP
-      to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ofz
-          podSelector:
-            matchLabels:
-              cnpg.io/cluster: ofz-db
-    - ports:
         - port: 443
           protocol: TCP
       to:

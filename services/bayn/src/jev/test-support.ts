@@ -35,7 +35,7 @@ export const responseFixture = () =>
     usage: { input_tokens: 250, output_tokens: 80 },
   }) satisfies JevResponse
 
-export const evaluationRequestFixture = () => entryEvaluationRequestFixture('1970-01-01T00:00:00.000Z')
+export const evaluationRequestFixture = () => entryEvaluationRequestFixture()
 
 export const inferenceFixture = (at = '1970-01-01T00:00:00.000Z') => ({
   requestHash: Result.getOrThrow(canonicalHashV1Result(requestFixture)),

@@ -10,7 +10,7 @@ import {
   normalizeTrade,
   type PersistedIntradaySnapshotRows,
 } from '../intraday/verification'
-import { bootstrapKafkaPartitions, canonicalPositions } from './bootstrap'
+import { canonicalPositions } from './bootstrap'
 import {
   SimulatedSnapshotEvidenceSchema,
   SimulatedSnapshotSourceSchema,
@@ -33,6 +33,7 @@ import {
   type StreamingSnapshotManifest,
 } from './snapshot'
 import type { StreamingUniverse } from './raw-events'
+import { restoreWebullBars } from './webull-projection'
 import { StrategySnapshotManifestSchema } from './manifest-schema'
 import type { StrategyMarketSnapshot } from './snapshot'
 
@@ -40,6 +41,24 @@ const fail = (message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason: 'hash', message, ...(cause === undefined ? {} : { cause }) })
 const coordinate = (topic: string, partition: number, offset: string) =>
   `${topicPartitionKey(topic, partition)}:${offset}`
+
+const matchesReproducedManifest = (
+  manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
+  reproduced: StreamingSnapshotManifest | SimulatedSnapshotManifest,
+) =>
+  Result.gen(function* () {
+    const { contentHash, snapshotId, ...material } = manifest
+    // Construction already commits every reproduced field. Bind all supplied material once,
+    // including the complete input cut, rather than hashing both large manifests and subtrees again.
+    const supplied = yield* canonicalHashV1Result(material).pipe(
+      Result.mapError((cause) => fail('Snapshot manifest is not canonical', cause)),
+    )
+    return (
+      supplied === reproduced.contentHash &&
+      contentHash === reproduced.contentHash &&
+      snapshotId === reproduced.snapshotId
+    )
+  })
 
 export const reproduceStrategySnapshot = (
   input: unknown,
@@ -50,18 +69,9 @@ export const reproduceStrategySnapshot = (
       StrategySnapshotManifestSchema,
       strictParseOptions,
     )(input).pipe(Result.mapError((cause) => fail('Recorded market snapshot manifest is invalid', cause)))
-    const snapshot = yield* manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+    return yield* manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
       ? reproduceStreamingSnapshot(manifest, rows)
       : reproduceSimulatedSnapshot(manifest, rows)
-    const supplied = yield* canonicalHashV1Result(manifest).pipe(
-      Result.mapError((cause) => fail('Snapshot manifest is not canonical', cause)),
-    )
-    const reproduced = yield* canonicalHashV1Result(snapshot.manifest).pipe(
-      Result.mapError((cause) => fail('Reproduced snapshot manifest is not canonical', cause)),
-    )
-    if (supplied !== reproduced)
-      return yield* Result.fail(fail('Recorded snapshot metadata differs from its reproduced source'))
-    return snapshot
   })
 
 /** Reproduces a saved cut; this does not grant a replay document live source authority. */
@@ -74,35 +84,22 @@ export const reproduceStreamingSnapshot = (
       manifest.streaming,
       strictParseOptions,
     ).pipe(Result.mapError((cause) => fail('Invalid recorded streaming evidence', cause)))
-    const bounds = yield* Result.try({
-      try: () =>
-        bootstrapKafkaPartitions(
-          evidence.bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.logStartOffset })),
-          evidence.bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.endOffset })),
-          evidence.bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.startOffset })),
-        ),
-      catch: (cause) => fail('Invalid recorded Kafka bootstrap bounds', cause),
-    })
-    if (
-      (yield* canonicalHashV1Result(bounds).pipe(
-        Result.mapError((cause) => fail('Invalid bootstrap bounds hash', cause)),
-      )) !==
-        (yield* canonicalHashV1Result(evidence.bootstrap.partitions).pipe(
-          Result.mapError((cause) => fail('Invalid recorded bootstrap hash', cause)),
-        )) ||
-      canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index])
-    )
-      return yield* Result.fail(fail('Recorded Kafka bounds are not canonical'))
     const featureTopics = [...new Set(evidence.features.map((feature) => feature.topic))]
     const rawTopics = new Set(Object.values(manifest.sourceTopics))
     const bootstrapFeatureTopics = [
       ...new Set(evidence.bootstrap.partitions.map((partition) => partition.topic)),
-    ].filter((topic) => !rawTopics.has(topic) && topic !== evidence.technical?.topic)
+    ].filter(
+      (topic) => !rawTopics.has(topic) && topic !== evidence.technical?.topic && topic !== evidence.webull?.topic,
+    )
     const featureTopic = bootstrapFeatureTopics[0]
     if (
       (evidence.technical !== undefined &&
         (rawTopics.has(evidence.technical.topic) ||
           !evidence.bootstrap.partitions.some((partition) => partition.topic === evidence.technical?.topic))) ||
+      (evidence.webull !== undefined &&
+        (rawTopics.has(evidence.webull.topic) ||
+          evidence.webull.topic === evidence.technical?.topic ||
+          !evidence.bootstrap.partitions.some((partition) => partition.topic === evidence.webull?.topic))) ||
       bootstrapFeatureTopics.length !== 1 ||
       featureTopic === undefined ||
       featureTopics.some((topic) => topic !== featureTopic)
@@ -116,6 +113,7 @@ export const reproduceStreamingSnapshot = (
         ...manifest.sourceTopics,
         features: featureTopic,
         ...(evidence.technical === undefined ? {} : { technicalFeatures: evidence.technical.topic }),
+        ...(evidence.webull === undefined ? {} : { webullBars: evidence.webull.topic }),
       },
     }
     const projection = yield* restoreRecordedProjection(manifest, rows, evidence, universe, evidence.bootstrap.epoch)
@@ -148,16 +146,7 @@ export const reproduceStreamingSnapshot = (
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
       query,
     )
-    if (
-      (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
-        Result.mapError((cause) => fail('Invalid reproduced cut hash', cause)),
-      )) !==
-        (yield* canonicalHashV1Result(evidence).pipe(
-          Result.mapError((cause) => fail('Invalid supplied cut hash', cause)),
-        )) ||
-      reproduced.manifest.contentHash !== manifest.contentHash ||
-      reproduced.manifest.snapshotId !== manifest.snapshotId
-    )
+    if (!(yield* matchesReproducedManifest(manifest, reproduced.manifest)))
       return yield* Result.fail(fail('Recorded inputs do not reproduce the bound streaming snapshot'))
     return reproduced
   })
@@ -165,7 +154,10 @@ export const reproduceStreamingSnapshot = (
 const restoreRecordedProjection = (
   manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
   rows: PersistedIntradaySnapshotRows,
-  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence' | 'technical' | 'barPublications'>,
+  evidence: Pick<
+    StreamingSnapshotEvidence,
+    'records' | 'features' | 'sequence' | 'technical' | 'webull' | 'barPublications'
+  >,
   universe: StreamingUniverse,
   epoch: string,
   simulation?: typeof SimulatedSnapshotSourceSchema.Type,
@@ -191,7 +183,7 @@ const restoreRecordedProjection = (
     if (byCoordinate.size !== values.length || records.length !== values.length)
       return yield* Result.fail(fail('Recorded rows and receipts must have exactly one matching source coordinate'))
     let projection = {
-      ...emptyStreamingProjection(epoch, universe.topics.technicalFeatures),
+      ...emptyStreamingProjection(epoch, universe.topics.technicalFeatures, universe.topics.webullBars),
       availabilityMode: simulation === undefined ? ('observed' as const) : ('simulated' as const),
     }
     const receiptKeys = new Set<string>()
@@ -199,6 +191,7 @@ const restoreRecordedProjection = (
       ...records.map((receipt) => ({ kind: 'raw' as const, receipt })),
       ...evidence.features.map((receipt) => ({ kind: 'feature' as const, receipt })),
       ...(evidence.technical?.features ?? []).map((receipt) => ({ kind: 'technical' as const, receipt })),
+      ...(evidence.webull?.captures ?? []).map((receipt) => ({ kind: 'webull' as const, receipt })),
     ].toSorted((a, b) => a.receipt.sequence - b.receipt.sequence)
     let previousSequence = 0
     for (const delivery of deliveries) {
@@ -211,7 +204,14 @@ const restoreRecordedProjection = (
         return yield* Result.fail(fail('Recorded delivery sequence or availability lies outside the snapshot cut'))
       previousSequence = receipt.sequence
       projection = { ...projection, sequence: receipt.sequence - 1 }
-      if (delivery.kind === 'raw') {
+      if (delivery.kind === 'webull') {
+        projection = incorporateMarketRecord(
+          projection,
+          delivery.receipt.record,
+          universe,
+          delivery.receipt.availableAtMs,
+        )
+      } else if (delivery.kind === 'raw') {
         const raw = delivery.receipt
         const key = coordinate(raw.sourceTopic, raw.sourcePartition, raw.sourceOffset)
         const value = byCoordinate.get(key)
@@ -241,6 +241,20 @@ const restoreRecordedProjection = (
         )
       }
     }
+    if (evidence.webull !== undefined) {
+      const bars = yield* restoreWebullBars(
+        evidence.webull,
+        Date.parse(manifest.rangeEndAt),
+        Date.parse(manifest.observedAt),
+      ).pipe(Result.mapError((message) => fail(message)))
+      if (bars.some((bar) => !manifest.symbols.includes(bar.value.symbol)))
+        return yield* Result.fail(fail('Recorded Webull symbol lies outside the snapshot'))
+      // A compacted cut retains positive observations only, including their native proof.
+      projection = {
+        ...projection,
+        webull: { ...projection.webull, bars: new Map(bars.map((bar) => [bar.value.symbol, [bar]])) },
+      }
+    }
     projection = { ...projection, sequence: evidence.sequence }
     return projection
   })
@@ -264,11 +278,16 @@ export const reproduceSimulatedSnapshot = (
       barPublicationPolicy: _barPublicationPolicy,
       features: _features,
       technical: _technical,
+      webull: _webull,
       sequence: _sequence,
       ...source
     } = evidence
     const universe = evidence.marketSources.find((source) => source.universeId === manifest.universeId)
-    if (universe === undefined || universe.topics.technicalFeatures !== evidence.technical?.topic)
+    if (
+      universe === undefined ||
+      universe.topics.technicalFeatures !== evidence.technical?.topic ||
+      universe.topics.webullBars !== evidence.webull?.topic
+    )
       return yield* Result.fail(fail('Technical source differs from the simulated input cut'))
     const bounds = new Map(
       evidence.positions.map((position) => [
@@ -289,6 +308,7 @@ export const reproduceSimulatedSnapshot = (
         ),
         ...evidence.features,
         ...(evidence.technical?.features ?? []),
+        ...(evidence.webull?.captures ?? []).map((capture) => capture.record),
       ].some(
         (receipt) => BigInt(receipt.offset) >= (bounds.get(topicPartitionKey(receipt.topic, receipt.partition)) ?? -1n),
       )
@@ -355,16 +375,7 @@ export const reproduceSimulatedSnapshot = (
       source,
       query,
     )
-    if (
-      (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
-        Result.mapError((cause) => fail('Invalid reproduced cut hash', cause)),
-      )) !==
-        (yield* canonicalHashV1Result(evidence).pipe(
-          Result.mapError((cause) => fail('Invalid supplied cut hash', cause)),
-        )) ||
-      reproduced.manifest.contentHash !== manifest.contentHash ||
-      reproduced.manifest.snapshotId !== manifest.snapshotId
-    )
+    if (!(yield* matchesReproducedManifest(manifest, reproduced.manifest)))
       return yield* Result.fail(fail('Recorded inputs do not reproduce the simulated snapshot'))
     return reproduced
   })

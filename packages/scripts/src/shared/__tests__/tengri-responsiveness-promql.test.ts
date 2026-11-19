@@ -6,7 +6,13 @@ import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
 
-const alertNames = ['CephOsdQueueWaitHigh', 'TengriTerminalHeartbeatLatencyHigh', 'TengriGuestConnectLatencyHigh']
+const alertNames = [
+  'CephOsdQueueWaitHigh',
+  'TengriTerminalHeartbeatLatencyHigh',
+  'TengriGuestConnectLatencyHigh',
+  'TengriRunStatusFailures',
+  'TengriRunRecoveryBlocked',
+]
 
 const stringMap = (value: unknown): Record<string, string> => {
   if (!YAML.isMap(value)) throw new Error('Alert metadata must be a map')
@@ -121,6 +127,15 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       },
       ...counters('tengri_terminal_heartbeat_seconds'),
       ...counters('tengri_guest_connect_seconds'),
+      ...[
+        ['tengri_run_read_failures_total', 'tengri', ''],
+        ['tengri_run_recovery_observations_total', 'tengri-run-worker', ',phase="authorization_required"'],
+      ].map(([metric, job, phase]) => ({
+        series: `${metric}{job="${job}",namespace="${scenario.namespace}"${phase}}`,
+        values: values((index) =>
+          scenario.slow && scenario.step >= 1 ? Math.max(0, Math.min(index, scenario.recovered ? 30 : 90) - 6) : 0,
+        ),
+      })),
     ]
     return {
       name: scenario.name,
@@ -145,7 +160,11 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
             exp_alerts: firing
               ? [
                   {
-                    exp_labels: { ...rule.labels, ...(ceph ? { node: 'turin', ceph_daemon: 'osd.1' } : {}) },
+                    exp_labels: {
+                      ...rule.labels,
+                      ...(ceph ? { node: 'turin', ceph_daemon: 'osd.1' } : {}),
+                      ...(rule.alert === 'TengriRunRecoveryBlocked' ? { phase: 'authorization_required' } : {}),
+                    },
                     exp_annotations: annotations,
                   },
                 ]

@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { makeMomentumEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
@@ -161,7 +161,7 @@ export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt:
     const market: Pick<ControlMarket, 'advanceTo' | 'snapshot'> = {
       advanceTo: (atMs) =>
         source
-          .advanceTo(atMs)
+          .advanceTo(atMs, (work) => work)
           .pipe(
             Effect.mapError((cause) => new ControlStudyFailure({ message: 'Cannot advance preflight source', cause })),
           ),

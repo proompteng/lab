@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Scope, Tracer } from 'effect'
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Tracer } from 'effect'
 import { SqlClient, Statement } from 'effect/sql'
 import { SqlError, UnknownError } from 'effect/sql/SqlError'
 import { TestClock } from 'effect/testing'
@@ -27,17 +27,16 @@ const fixture = (
   const transaction = SqlClient.makeWithTransaction({
     transactionService: Context.Service<readonly [number, number]>('bayn/TransactionPhaseFixture'),
     spanAttributes: [['db.system.name', 'postgresql']],
-    acquireConnection: Effect.gen(function* () {
-      const scope = yield* Scope.make()
-      yield* Scope.addFinalizer(
-        scope,
-        control('RELEASE').pipe(
-          Effect.andThen(TestClock.adjust(30)),
-          Effect.andThen(options.releaseDefects ? Effect.die(releaseDefect) : Effect.void),
-        ),
-      )
-      return [scope, 17] as const
-    }),
+    acquireConnection: () =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          control('RELEASE').pipe(
+            Effect.andThen(TestClock.adjust(30)),
+            Effect.andThen(options.releaseDefects ? Effect.die(releaseDefect) : Effect.void),
+          ),
+        )
+        return 17
+      }),
     begin: () => control('BEGIN'),
     savepoint: () => control('SAVEPOINT'),
     releaseSavepoint: () => control('RELEASE SAVEPOINT'),
@@ -73,42 +72,38 @@ const fixture = (
   return { calls, spans, transaction, run, parent, commitFailure, rollbackFailure, releaseDefect }
 }
 
-test('distinguishes commit latency from connection release without extra controls or spans', async () => {
+const phase = (f: ReturnType<typeof fixture>, name: string) => {
+  const span = f.spans.find((span) => span.attributes.get('db.operation.name') === name)
+  if (span === undefined || span.status._tag !== 'Ended') throw new Error(`Missing completed ${name} span`)
+  expect(span.parent._tag === 'Some' && span.parent.value.spanId).toBe(f.parent().spanId)
+  return { span, status: span.status }
+}
+
+const duration = (status: Tracer.SpanStatus) => {
+  if (status._tag !== 'Ended') throw new Error('Span did not end')
+  return status.endTime - status.startTime
+}
+
+test('native control spans distinguish commit latency from connection release', async () => {
   const f = fixture()
   expect(await f.run(f.transaction(Effect.succeed(42)))).toEqual(Exit.succeed(42))
   expect(f.calls).toEqual(['BEGIN', 'COMMIT', 'RELEASE'])
-  expect(f.spans).toHaveLength(1)
-  const events = f.parent().events
-  expect(events.map(([name, , attributes]) => ({ name, attributes }))).toEqual([
-    { name: 'db.transaction.commit', attributes: {} },
-    { name: 'db.transaction.commit.completed', attributes: { 'db.transaction.outcome': 'succeeded' } },
-    { name: 'db.transaction.connection.release.started', attributes: {} },
-    {
-      name: 'db.transaction.connection.release.completed',
-      attributes: { 'db.transaction.outcome': 'succeeded' },
-    },
-  ])
-  const times = events.map(([, time]) => time)
-  expect(times[1] - times[0]).toBe(100_000_000n)
-  expect(times[3] - times[2]).toBe(30_000_000n)
+  expect(f.spans).toHaveLength(3)
+  const commit = phase(f, 'COMMIT')
+  expect(Exit.isSuccess(commit.status.exit)).toBe(true)
+  expect(duration(commit.status)).toBe(100_000_000n)
+  expect(duration(f.parent().status)).toBe(130_000_000n)
+  const parent = f.parent().status
+  if (parent._tag === 'Ended') expect(parent.endTime - commit.status.endTime).toBe(30_000_000n)
 })
 
-test('preserves a failed commit and marks its phase failed before releasing once', async () => {
+test('preserves a failed commit and its failed control span before releasing once', async () => {
   const f = fixture({ commitFails: true })
   const exit = await f.run(f.transaction(Effect.succeed(42)))
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(f.commitFailure)
   expect(f.calls).toEqual(['BEGIN', 'COMMIT', 'RELEASE'])
-  const events = f.parent().events
-  expect(events.find(([name]) => name === 'db.transaction.commit.completed')?.[2]).toEqual({
-    'db.transaction.outcome': 'failed',
-  })
-  expect(events.find(([name]) => name === 'db.transaction.connection.release.completed')?.[2]).toEqual({
-    'db.transaction.outcome': 'succeeded',
-  })
-  expect(JSON.stringify(events, (_, value) => (typeof value === 'bigint' ? value.toString() : value))).not.toContain(
-    'private-commit-fixture',
-  )
+  expect(Exit.isFailure(phase(f, 'COMMIT').status.exit)).toBe(true)
 })
 
 test('preserves a body failure and measures its rollback before releasing once', async () => {
@@ -118,60 +113,46 @@ test('preserves a body failure and measures its rollback before releasing once',
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(failure)
   expect(f.calls).toEqual(['BEGIN', 'ROLLBACK', 'RELEASE'])
-  const events = f.parent().events
-  expect(events.map(([name]) => name)).toEqual([
-    'db.transaction.rollback',
-    'db.transaction.rollback.completed',
-    'db.transaction.connection.release.started',
-    'db.transaction.connection.release.completed',
-  ])
-  expect(events[1][1] - events[0][1]).toBe(20_000_000n)
+  const rollback = phase(f, 'ROLLBACK')
+  expect(Exit.isSuccess(rollback.status.exit)).toBe(true)
+  expect(duration(rollback.status)).toBe(20_000_000n)
+  expect(duration(f.parent().status)).toBe(50_000_000n)
 })
 
-test('retains a release defect and distinguishes it from a successful commit', async () => {
+test('retains a release defect independently of a successful commit', async () => {
   const f = fixture({ releaseDefects: true })
   const exit = await f.run(f.transaction(Effect.succeed(42)))
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(f.releaseDefect)
   expect(f.calls).toEqual(['BEGIN', 'COMMIT', 'RELEASE'])
-  const events = f.parent().events
-  expect(events.find(([name]) => name === 'db.transaction.commit.completed')?.[2]).toEqual({
-    'db.transaction.outcome': 'succeeded',
-  })
-  expect(events.find(([name]) => name === 'db.transaction.connection.release.completed')?.[2]).toEqual({
-    'db.transaction.outcome': 'failed',
-  })
+  expect(Exit.isSuccess(phase(f, 'COMMIT').status.exit)).toBe(true)
+  expect(f.parent().status).toMatchObject({ _tag: 'Ended', exit: { _tag: 'Failure' } })
 })
 
-test('a failed rollback remains failed and still releases the connection once', async () => {
+test('a failed rollback retains its failed control span and releases once', async () => {
   const f = fixture({ rollbackFails: true })
   const exit = await f.run(f.transaction(Effect.fail('body fixture failure')))
   expect(Exit.isFailure(exit)).toBe(true)
   expect(f.calls).toEqual(['BEGIN', 'ROLLBACK', 'RELEASE'])
-  const events = f.parent().events
-  expect(events.find(([name]) => name === 'db.transaction.rollback.completed')?.[2]).toEqual({
-    'db.transaction.outcome': 'failed',
-  })
-  expect(events.find(([name]) => name === 'db.transaction.connection.release.completed')?.[2]).toEqual({
-    'db.transaction.outcome': 'succeeded',
-  })
+  expect(Exit.isFailure(phase(f, 'ROLLBACK').status.exit)).toBe(true)
 })
 
-test('commit recovery stays after failed commit completion and before connection release', async () => {
+test('commit recovery runs after the failed commit and before connection release', async () => {
   const f = fixture({ commitFails: true, recoverCommit: true })
   const exit = await f.run(f.transaction(Effect.succeed(42)))
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(f.commitFailure)
   expect(f.calls).toEqual(['BEGIN', 'COMMIT', 'RECOVER', 'RELEASE'])
-  const events = f.parent().events
-  const completed = events.find(([name]) => name === 'db.transaction.commit.completed')
-  const releaseStarted = events.find(([name]) => name === 'db.transaction.connection.release.started')
-  if (completed === undefined || releaseStarted === undefined) throw new Error('Transaction phase trace is missing')
-  expect(completed[2]).toEqual({ 'db.transaction.outcome': 'failed' })
-  expect(releaseStarted[1] - completed[1]).toBe(10_000_000n)
+  const commit = phase(f, 'COMMIT')
+  const recovery = phase(f, 'ROLLBACK')
+  expect(Exit.isFailure(commit.status.exit)).toBe(true)
+  expect(recovery.status.startTime).toBe(commit.status.endTime)
+  expect(duration(recovery.status)).toBe(10_000_000n)
+  const parent = f.parent().status
+  if (parent._tag === 'Ended') expect(parent.endTime - recovery.status.endTime).toBe(30_000_000n)
 })
 
-test('interruption rolls back and completes the owned release without committing', async () => {
+test('interruption rolls back and releases the connection without committing', async () => {
   const f = fixture()
   const exit = await f.run(
     Effect.gen(function* () {
@@ -186,29 +167,26 @@ test('interruption rolls back and completes the owned release without committing
   )
   expect(exit).toMatchObject({ _tag: 'Success', value: { _tag: 'Failure' } })
   expect(f.calls).toEqual(['BEGIN', 'ROLLBACK', 'RELEASE'])
-  expect(f.parent().events.map(([name]) => name)).toEqual([
-    'db.transaction.rollback',
-    'db.transaction.rollback.completed',
-    'db.transaction.connection.release.started',
-    'db.transaction.connection.release.completed',
-  ])
+  expect(Exit.isSuccess(phase(f, 'ROLLBACK').status.exit)).toBe(true)
 })
 
-test('nested savepoints keep their existing controls and the outer connection owns release', async () => {
+test('nested savepoints retain their own control spans and one outer connection release', async () => {
   const f = fixture()
   expect(await f.run(f.transaction(f.transaction(Effect.succeed(42))))).toEqual(Exit.succeed(42))
   expect(f.calls).toEqual(['BEGIN', 'SAVEPOINT', 'RELEASE SAVEPOINT', 'COMMIT', 'RELEASE'])
-  expect(f.spans).toHaveLength(2)
-  const nested = f.spans[1]
-  expect(nested.events.map(([name]) => name)).toEqual(['db.transaction.savepoint'])
-  expect(f.parent().events.filter(([name]) => name === 'db.transaction.connection.release.completed')).toHaveLength(1)
+  const transactions = f.spans.filter((span) => span.name === 'sql.transaction')
+  expect(transactions).toHaveLength(2)
+  const nested = transactions[1]
+  const controls = f.spans.filter((span) => span.parent._tag === 'Some' && span.parent.value.spanId === nested?.spanId)
+  expect(controls.map((span) => span.attributes.get('db.operation.name'))).toEqual(['SAVEPOINT', 'RELEASE SAVEPOINT'])
 })
 
-test('default SQL clients retain the existing event contract', async () => {
+test('default SQL clients retain native control spans without connection-wait attributes', async () => {
   const f = fixture()
   expect(await f.run(f.transaction(Effect.succeed(42)), false)).toEqual(Exit.succeed(42))
   expect(f.calls).toEqual(['BEGIN', 'COMMIT', 'RELEASE'])
-  expect(f.parent().events.map(([name]) => name)).toEqual(['db.transaction.commit'])
+  expect(Exit.isSuccess(phase(f, 'COMMIT').status.exit)).toBe(true)
+  expect(f.parent().attributes.has('db.client.connection.wait_time_ms')).toBe(false)
 })
 
 test('disabling tracing keeps the same transaction controls without recording spans', async () => {

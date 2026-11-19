@@ -8,9 +8,9 @@ Kargo delivery path.
 
 ## Coding and cluster inspection
 
-The primary and active auxiliary tasks use the named `flamingo` provider and `qwen36-flamingo`. Its configured context
-matches the server's `262144` tokens. The request body uses Qwen's recommended precise coding parameters: temperature
-`0.6`, top-p `0.95`, top-k `20`, min-p `0`, presence penalty `0`, and repetition penalty `1`. Thinking stays enabled for
+The primary and active auxiliary tasks use the named `flamingo` provider and `qwen38-flamingo`. Its configured context
+matches the server's `262144` tokens. The request body uses Qwen3.8's recommended thinking parameters: temperature
+`1.0`, top-p `0.95`, top-k `20`, min-p `0`, presence penalty `0`, and repetition penalty `1`. Thinking stays enabled for
 coding. Title generation disables thinking. Compression and session-query rewriting each admit one auxiliary request
 at a time, per process and per task. These limits do not impose a global GPU semaphore.
 
@@ -97,5 +97,5 @@ This release defines 98 root categories.
 - [Managed scope](https://hermes-agent.nousresearch.com/docs/user-guide/managed-scope) describes native managed-install guards and managed overlays.
 - [Memory](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory/), [skills](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills), and [plugins](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins/) describe the runtime learning and extension boundaries.
 - [Web dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard/) documents configuration and authentication behavior.
-- [Qwen3.6-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) supplies the precise coding sampling settings.
+- [Qwen3.8-27B model card](https://huggingface.co/Qwen/Qwen3.8-27B) supplies the thinking-mode sampling settings.
 - [v2026.9.24 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.24) identifies the selected stable upgrade. Development branches are not release candidates for this deployment.

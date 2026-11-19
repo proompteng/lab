@@ -1,7 +1,9 @@
+import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 
 import {
   ackAgentRunTerminalEventViaAgentsService,
+  cancelAgentRunViaAgentsService,
   fetchAgentRunFromAgentsService,
   fetchAgentRunLogsFromAgentsService,
   fetchAgentRunResourcesFromAgentsService,
@@ -63,6 +65,7 @@ export type AgentRunsMcpService = {
   create: (input: AgentsAgentRunSubmitInput) => Effect.Effect<unknown, Error>
   list: (input: AgentsAgentRunListInput) => Effect.Effect<unknown, Error>
   get: (input: AgentsAgentRunGetInput) => Effect.Effect<unknown, Error>
+  cancel: (input: AgentsAgentRunGetInput) => Effect.Effect<unknown, Error>
   listResources: (input: AgentsAgentRunResourceListInput) => Effect.Effect<unknown, Error>
   getLogs: (input: AgentsAgentRunLogsInput) => Effect.Effect<unknown, Error>
   listTerminalEvents: (input: AgentsAgentRunTerminalEventsListInput) => Effect.Effect<unknown, Error>
@@ -70,8 +73,8 @@ export type AgentRunsMcpService = {
   rerun: (input: AgentsAgentRunRerunSubmitInput) => Effect.Effect<unknown, Error>
 }
 
-export class MemoryNotesMcp extends Context.Tag('agents/MemoryNotesMcp')<MemoryNotesMcp, MemoryNotesMcpService>() {}
-export class AgentRunsMcp extends Context.Tag('agents/AgentRunsMcp')<AgentRunsMcp, AgentRunsMcpService>() {}
+export class MemoryNotesMcp extends Context.Service<MemoryNotesMcp, MemoryNotesMcpService>()('agents/MemoryNotesMcp') {}
+export class AgentRunsMcp extends Context.Service<AgentRunsMcp, AgentRunsMcpService>()('agents/AgentRunsMcp') {}
 
 const MCP_SESSION_HEADER = 'Mcp-Session-Id'
 const MCP_PROTOCOL_VERSION = '2024-11-05'
@@ -143,7 +146,7 @@ const toolsListResult = {
     {
       name: 'create_agent_run',
       description:
-        'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId. For VCS runs, set payload.parameters.repository plus secretBindingRef or payload.policy.secretBindingRef.',
+        'Create a run with a stable deliveryId. VCS needs payload.parameters.repository and secretBindingRef.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -224,6 +227,19 @@ const toolsListResult = {
       },
     },
     {
+      name: 'cancel_agent_run',
+      description: 'Cancel an AgentRun by projection id. Preserve its record; poll get_agent_run for completion.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Required AgentRun projection id' },
+          namespace: { type: 'string', description: 'Optional namespace, defaults to agents' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    },
+    {
       name: 'list_agent_runs',
       description: 'List AgentRun projection records by agent name or status.',
       inputSchema: {
@@ -238,7 +254,7 @@ const toolsListResult = {
     },
     {
       name: 'get_agent_run',
-      description: 'Get one AgentRun projection record and its live Kubernetes resource when available.',
+      description: 'Read an AgentRun projection and its Kubernetes resource.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -266,7 +282,7 @@ const toolsListResult = {
     },
     {
       name: 'get_agent_run_logs',
-      description: 'Fetch a non-streaming AgentRun log snapshot. Use tailLines for last-N-line reads.',
+      description: 'Read an AgentRun log snapshot; tailLines limits the tail.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -663,11 +679,13 @@ const buildConfigResource = (request: Request) => {
   }
 }
 
-const successToolResponse = (id: JsonRpcId, baseUrl: URL, toolName: string, result: unknown) =>
-  asJsonRpcResponse(
-    id,
-    toTextToolResult(JSON.stringify({ ok: true, result, mcp: { server: baseUrl.origin, tool: toolName } }, null, 2)),
-  )
+const successToolResponse = (id: JsonRpcId, baseUrl: URL, toolName: string, result: unknown) => {
+  const structuredContent = { ok: true, result, mcp: { server: baseUrl.origin, tool: toolName } }
+  return asJsonRpcResponse(id, {
+    ...toTextToolResult(JSON.stringify(structuredContent, null, 2)),
+    structuredContent,
+  })
+}
 
 const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string, args: Record<string, unknown>) =>
   Effect.gen(function* () {
@@ -679,14 +697,14 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
       const parsed = parsePersistMemoryNoteInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
 
-      const recordResult = yield* Effect.either(memories.persist(parsed.value))
-      if (recordResult._tag === 'Left') return toolError(id, recordResult.left.message, { tool: toolName })
+      const recordResult = yield* Effect.result(memories.persist(parsed.value))
+      if (recordResult._tag === 'Failure') return toolError(id, recordResult.failure.message, { tool: toolName })
 
       return asJsonRpcResponse(
         id,
         toTextToolResult(
           JSON.stringify(
-            { ok: true, memory: recordResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+            { ok: true, memory: recordResult.success, mcp: { server: baseUrl.origin, tool: toolName } },
             null,
             2,
           ),
@@ -698,14 +716,14 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
       const parsed = parseRetrieveMemoryNotesInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
 
-      const recordsResult = yield* Effect.either(memories.retrieve(parsed.value))
-      if (recordsResult._tag === 'Left') return toolError(id, recordsResult.left.message, { tool: toolName })
+      const recordsResult = yield* Effect.result(memories.retrieve(parsed.value))
+      if (recordsResult._tag === 'Failure') return toolError(id, recordsResult.failure.message, { tool: toolName })
 
       return asJsonRpcResponse(
         id,
         toTextToolResult(
           JSON.stringify(
-            { ok: true, memories: recordsResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+            { ok: true, memories: recordsResult.success, mcp: { server: baseUrl.origin, tool: toolName } },
             null,
             2,
           ),
@@ -716,65 +734,73 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
     if (toolName === 'create_agent_run') {
       const parsed = parseCreateAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.create(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.create(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'list_agent_runs') {
       const parsed = parseListAgentRunsInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.list(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.list(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'get_agent_run') {
       const parsed = parseGetAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.get(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.get(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
+    }
+
+    if (toolName === 'cancel_agent_run') {
+      const parsed = parseGetAgentRunInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.result(agents.cancel(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'list_agent_run_resources') {
       const parsed = parseListAgentRunResourcesInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.listResources(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.listResources(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'get_agent_run_logs') {
       const parsed = parseGetAgentRunLogsInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.getLogs(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.getLogs(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'list_agent_run_terminal_events') {
       const parsed = parseListTerminalEventsInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.listTerminalEvents(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.listTerminalEvents(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'ack_agent_run_terminal_event') {
       const parsed = parseAckTerminalEventInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.ackTerminalEvent(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.ackTerminalEvent(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     if (toolName === 'rerun_agent_run') {
       const parsed = parseRerunAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
-      const result = yield* Effect.either(agents.rerun(parsed.value))
-      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
-      return successToolResponse(id, baseUrl, toolName, result.right)
+      const result = yield* Effect.result(agents.rerun(parsed.value))
+      if (result._tag === 'Failure') return toolError(id, result.failure.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.success)
     }
 
     return asJsonRpcError(id, { code: -32601, message: `Unknown tool: ${toolName}` })
@@ -909,6 +935,8 @@ export const AgentRunsMcpLive = Layer.succeed(AgentRunsMcp, {
     agentsResultEffect('list_agent_runs', () => fetchAgentRunsFromAgentsService(input, resolveAgentsMcpEnv())),
   get: (input) =>
     agentsResultEffect('get_agent_run', () => fetchAgentRunFromAgentsService(input, resolveAgentsMcpEnv())),
+  cancel: (input) =>
+    agentsResultEffect('cancel_agent_run', () => cancelAgentRunViaAgentsService(input, resolveAgentsMcpEnv())),
   listResources: (input) =>
     agentsResultEffect('list_agent_run_resources', () =>
       fetchAgentRunResourcesFromAgentsService(input, resolveAgentsMcpEnv()),
@@ -931,3 +959,19 @@ const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesMcpLive, Ag
 
 export const handleMcpRequest = (request: Request): Promise<Response> =>
   handlerRuntime.runPromise(handleMcpRequestEffect(request))
+
+export const getAgentRunMcpToolDefinitions = () =>
+  toolsListResult.tools.filter(({ name }) => name.includes('agent_run'))
+
+export const invokeAgentRunMcpTool = async (
+  name: string,
+  args: Record<string, unknown>,
+  requestUrl: string,
+): Promise<CallToolResult> => {
+  if (!getAgentRunMcpToolDefinitions().some((tool) => tool.name === name)) {
+    throw new Error(`Unknown AgentRun tool: ${name}`)
+  }
+  const response = await handlerRuntime.runPromise(handleToolCallEffect(new Request(requestUrl), 1, name, args))
+  if (response.error) throw new Error(response.error.message)
+  return CallToolResultSchema.parse(response.result)
+}

@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next'
 
-import { isTengriAuthConfigured } from '@/lib/tengri/auth'
+import { isPlatformAuthConfigured } from '@/lib/platform/auth'
 import { shouldRenderTengriDesktop } from '@/lib/tengri/desktop-gate'
 import { isTengriControlPlaneConfigured } from '@/lib/tengri/grpc'
 import { createProductManifest } from '@/lib/tengri/product-identity'
@@ -8,6 +8,6 @@ import { createProductManifest } from '@/lib/tengri/product-identity'
 export const dynamic = 'force-dynamic'
 
 export default function manifest(): MetadataRoute.Manifest {
-  const tengriAvailable = shouldRenderTengriDesktop(isTengriAuthConfigured(), isTengriControlPlaneConfigured())
+  const tengriAvailable = shouldRenderTengriDesktop(isPlatformAuthConfigured(), isTengriControlPlaneConfigured())
   return createProductManifest(tengriAvailable)
 }

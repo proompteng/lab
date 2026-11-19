@@ -1,0 +1,115 @@
+{
+  "kind": "native-flow-artifact-check",
+  "sourceExperimentId": "aed249f8285f2955eeeab8727ce005a8a2b30e21c7444c585fb78bd6e94507d5",
+  "runs": [
+    {
+      "arm": "graph",
+      "selectorAudits": [
+        {
+          "sha256": "84c6d688a29813b902851468e12e6aff81ce667bd6c536c8ae1d7963ee591c86",
+          "roundId": 6,
+          "nodes": 4,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        },
+        {
+          "sha256": "5312566732854645e9a1e5cd1757a6119b63ac43d1e8b2fb8743964713da3844",
+          "roundId": 3,
+          "nodes": 4,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        },
+        {
+          "sha256": "ead6e17ae383b4e1a418a64725f3b4b1355c31c69c1ad96d205cf94d2259902a",
+          "roundId": 5,
+          "nodes": 4,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        },
+        {
+          "sha256": "cabc22987551fbe50a436e39553ba99f9ff6508d1550fdc303878c59d3ca0df9",
+          "roundId": 1,
+          "nodes": 4,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        },
+        {
+          "sha256": "a35a36b823fd9cbda3131e57eef09ca51f88649ee62526bff7676bfb515714aa",
+          "roundId": 2,
+          "nodes": 4,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        },
+        {
+          "sha256": "5adb9d9e88bd522cbadfd98e1d7b4e622f9a1598a0149f12df2546500daecb65",
+          "roundId": 0,
+          "nodes": 2,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        },
+        {
+          "sha256": "40476404ae665482bd15307b6a63d2e7bc1ba0bf3bc30ffbb2ed44079435ecd2",
+          "roundId": 4,
+          "nodes": 4,
+          "rawEqualsPropagated": false,
+          "flowConverged": true
+        }
+      ]
+    },
+    {
+      "arm": "no-flow",
+      "selectorAudits": [
+        {
+          "sha256": "c9db0b63549b2bdbd94099b7d12f2bcc8dfaa1875c822176e2f54f147a1e2d5f",
+          "roundId": 2,
+          "nodes": 4,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        },
+        {
+          "sha256": "61ad454590b3160595989ed5e9dfac47ea0b5e7c2a0352a69bb9bf5bab8f5533",
+          "roundId": 4,
+          "nodes": 4,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        },
+        {
+          "sha256": "2ce352f8225d93452aef916a4c996a61d554cd32ef6ccb829d11ce7a33945709",
+          "roundId": 6,
+          "nodes": 4,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        },
+        {
+          "sha256": "fa3c02c1bdc64b88762a134c2cac24732749c8f207f4fbd915101d86ffd0adff",
+          "roundId": 5,
+          "nodes": 4,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        },
+        {
+          "sha256": "8b3fba601278341d8d5e988f0889a68e2466f5afb46eb2ad2b0f47f97c1c5669",
+          "roundId": 1,
+          "nodes": 4,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        },
+        {
+          "sha256": "fe5d606aa03b12f202e0f2fca39371ec0b212103790db9022d765be8e09b7734",
+          "roundId": 3,
+          "nodes": 4,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        },
+        {
+          "sha256": "7121cbfc8d9502bb858ddee44c29dde5f5dafd0eb4b4ca626ec4e985c654cd23",
+          "roundId": 0,
+          "nodes": 2,
+          "rawEqualsPropagated": true,
+          "flowConverged": true
+        }
+      ]
+    }
+  ],
+  "scope": "Observed no-Flow identity and nontrivial Graph propagation; not an independent recomputation of all quality, fertility, relation or Pareto mathematics."
+}

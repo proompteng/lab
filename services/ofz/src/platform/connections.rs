@@ -1,6 +1,6 @@
-use super::{authorization, catalog, onboarding};
+use super::{authorization, catalog, onboarding, workspaces};
 use crate::{
-    native::{Check, Native, Relationship, Update},
+    native::{Check, Native},
     proto::{self, platform_subject},
     registry::{self, ServiceRegistration},
     store::{self, Database, sql_error},
@@ -27,8 +27,20 @@ pub(crate) async fn scope_authority(
         ));
     }
     let catalog = catalog::configured()?;
+    let workspace = workspaces::resource_workspace_id(resources)?;
     let mut checks = authorization::binding_checks(database, client, binding, human).await?;
     checks.push(Check::new("platform", "lab", "admit", "human", human));
+    if !workspace.is_empty() {
+        checks.extend(client.identities.iter().map(|identity| {
+            Check::new(
+                "platform_workspace",
+                &workspace,
+                "use",
+                "workload",
+                &crate::policy::workload_object_id(identity),
+            )
+        }));
+    }
     let mut unique_actions = std::collections::BTreeSet::new();
     for action in actions {
         if !unique_actions.insert(action) {
@@ -45,7 +57,7 @@ pub(crate) async fn scope_authority(
             ));
         }
         for resource in matching {
-            checks.push(authorization::resource_check(
+            checks.extend(authorization::resource_checks(
                 resource, action, "human", human,
             )?);
         }
@@ -73,96 +85,6 @@ pub(crate) async fn scope_authority(
     Ok(())
 }
 
-pub(crate) async fn connection_changes(
-    database: &Database,
-    native: &Native,
-    client: &ServiceRegistration,
-    request: &proto::PutPlatformConnectionRequest,
-    human: &str,
-) -> Result<Vec<Update>, Status> {
-    match scope_authority(
-        database,
-        native,
-        client,
-        &request.actions,
-        &request.resources,
-        request.binding.as_ref(),
-        human,
-    )
-    .await
-    {
-        Ok(()) => return Ok(Vec::new()),
-        Err(error) if error.code() != tonic::Code::PermissionDenied => return Err(error),
-        Err(_) => {}
-    }
-    if !client
-        .roles
-        .iter()
-        .any(|role| role == "platform.administration")
-    {
-        return Err(Status::permission_denied(
-            "administrator approval required for this connection scope",
-        ));
-    }
-    let mut checks =
-        authorization::binding_checks(database, client, request.binding.as_ref(), human).await?;
-    checks.push(Check::new("platform", "lab", "admit", "human", human));
-    checks.push(Check::new(
-        "platform",
-        "lab",
-        "manage_targets",
-        "human",
-        human,
-    ));
-    if !native.check(&checks).await?.0 {
-        return Err(Status::permission_denied(
-            "administrator approval required for this connection scope",
-        ));
-    }
-    let catalog = catalog::configured()?;
-    let mut changes = Vec::new();
-    let mut keys = std::collections::BTreeSet::new();
-    for action in &request.actions {
-        let action = catalog.action(action)?;
-        let resource = catalog.resource(&action.resource_kind)?;
-        let relation = action
-            .grant_relation
-            .as_ref()
-            .and_then(|name| {
-                resource.relations.iter().find(|relation| {
-                    &relation.name == name
-                        && relation.subjects.iter().any(|subject| subject == "human")
-                })
-            })
-            .ok_or_else(|| {
-                Status::permission_denied(
-                    "selected action requires a separately assigned permission",
-                )
-            })?;
-        for target in request
-            .resources
-            .iter()
-            .filter(|target| target.kind == action.resource_kind)
-        {
-            if keys.insert((&resource.native_type, &target.id, &relation.name)) {
-                changes.push(Update::touch(Relationship::new(
-                    &resource.native_type,
-                    &target.id,
-                    &relation.name,
-                    "human",
-                    human,
-                )));
-            }
-        }
-    }
-    if changes.len() > 128 {
-        return Err(Status::invalid_argument(
-            "connection permission changes exceed their limit",
-        ));
-    }
-    Ok(changes)
-}
-
 pub(crate) async fn list(
     database: &Database,
     native: &Native,
@@ -178,12 +100,7 @@ pub(crate) async fn list(
         identity: Some(platform_subject::Identity::Human(issuer.clone())),
     };
     let client = authorization::caller(peer, &subject, registry::configured()?)?;
-    if !client
-        .roles
-        .iter()
-        .any(|role| role == "platform.human-session")
-        || !client.origins.contains(&issuer.origin)
-    {
+    if !client.allows_origin(&issuer.origin) {
         return Err(Status::permission_denied(
             "registered human gateway required",
         ));
@@ -212,14 +129,14 @@ pub(crate) async fn list(
             "invalid connection binding filter",
         ));
     }
-    let connections = {
+    let mut connections = {
         let connection = database
             .pool
             .get()
             .await
             .map_err(|_| Status::unavailable("connection database unavailable"))?;
         let rows = connection.query(
-            "SELECT c.id,c.client_reference,c.actions,c.resources,c.binding_service,c.binding_id,c.version,c.enabled,c.last_delegation_id,c.credential_generation,c.recovery_generation,d.binding,d.proof_key_thumbprint,d.expires_at_ms,COALESCE(c.enabled AND d.active AND NOT d.revoked AND d.connection_version=c.version AND d.recovery_generation=$5 AND d.expires_at_ms>ofz.now_ms(),false) FROM ofz.platform_connections c LEFT JOIN ofz.platform_delegations d ON d.id=c.last_delegation_id WHERE c.issuer_id=$1 AND c.client_service=$2 AND ($3='' OR (c.binding_service=$3 AND c.binding_id=$4)) ORDER BY c.client_reference,c.id LIMIT 129",
+            "SELECT c.id,c.client_reference,c.actions,c.resources,c.binding_service,c.binding_id,c.version,c.enabled,c.last_delegation_id,c.credential_generation,c.recovery_generation,d.binding,d.proof_key_thumbprint,d.expires_at_ms,COALESCE(c.enabled AND d.active AND NOT d.revoked AND d.connection_version=c.version AND d.recovery_generation=$5 AND d.expires_at_ms>ofz.now_ms(),false),c.workspace_id FROM ofz.platform_connections c LEFT JOIN ofz.platform_delegations d ON d.id=c.last_delegation_id WHERE c.issuer_id=$1 AND c.client_service=$2 AND ($3='' OR (c.binding_service=$3 AND c.binding_id=$4)) ORDER BY c.client_reference,c.id LIMIT 129",
             &[&issuer.human_id, &client.id, &binding_service, &binding_id, &(initial.recovery_generation as i64)],
         ).await.map_err(sql_error)?;
         if rows.len() > 128 {
@@ -267,10 +184,45 @@ pub(crate) async fn list(
                     proof_key_thumbprint: row.get::<_, Option<String>>(12).unwrap_or_default(),
                     expires_at_unix_ms: expiry,
                     credential_active: row.get(14),
+                    workspace_id: row
+                        .get::<_, Option<Uuid>>(15)
+                        .map(|id| id.to_string())
+                        .unwrap_or_default(),
                 })
             })
             .collect::<Result<Vec<_>, Status>>()?
     };
+    let available_scopes =
+        super::discovery::scopes(native, client, "human", &issuer.human_id).await?;
+    let requestable_scopes = super::requests::requestable(native, client, &issuer.human_id).await?;
+    let access_requests = {
+        let connection = database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("access request database unavailable"))?;
+        super::requests::for_member(
+            &connection,
+            &issuer.human_id,
+            &client.id,
+            &requestable_scopes,
+        )
+        .await?
+    };
+    for connection in &mut connections {
+        connection.credential_active &= connection.resources.iter().all(|resource| {
+            available_scopes.iter().any(|scope| {
+                scope.workspace_id == connection.workspace_id
+                    && scope.resource.as_ref().is_some_and(|allowed| {
+                        allowed.kind == resource.kind && allowed.id == resource.id
+                    })
+                    && connection
+                        .actions
+                        .iter()
+                        .all(|action| scope.actions.contains(action))
+            })
+        });
+    }
     let (_, current, _) = authorization::human_context(database, &issuer, &trace, false).await?;
     if current.version != initial.version
         || current.recovery_generation != initial.recovery_generation
@@ -284,5 +236,8 @@ pub(crate) async fn list(
     Ok(proto::ListPlatformConnectionsResponse {
         connections,
         recovery_generation: current.recovery_generation,
+        available_scopes,
+        requestable_scopes,
+        access_requests,
     })
 }

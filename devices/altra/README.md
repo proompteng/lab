@@ -5,7 +5,7 @@ This directory contains a reproducible runbook and patches for the `altra` node.
 Inventory:
 
 - Node: `altra` (`192.168.1.85`)
-- BMC/IPMI: `192.168.0.100`
+- BMC/IPMI: `100.100.244.132` (provider DHCP, MAC `00:30:64:33:87:e5`)
 - Joined cluster: `ryzen` (kubeconfig context: `galactic`)
 - Kubernetes API endpoint (behind the NUC LB): `https://nuc:6443` (also `https://192.168.1.130:6443`)
 - Install disk: `/dev/nvme0n1`

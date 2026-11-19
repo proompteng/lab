@@ -1,5 +1,5 @@
 import { browserErrorConfig, glitchTipDsn } from '@/lib/observability/errors'
-import { requireSameOrigin } from '@/lib/tengri/http'
+import { requireSameOrigin } from '@/lib/platform/http'
 import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'

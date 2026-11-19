@@ -1,6 +1,5 @@
-import { DecisionsClient } from '../jev/decisions'
-import { chartProviderFixture } from '../jev/entry-inference.test-support'
-import { equityMarketProfile } from '../jev/markets'
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { makeReplayCheckpointStore } from './checkpoint-store.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -24,7 +23,7 @@ import { canonicalJsonV1Result } from '../hash'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import type { RuntimeConfig } from '../config/model'
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
-import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { nativeSimulationFixture as simulationFixture } from '../testing/simulated-streaming-fixture'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayExecutionRuntime } from './runtime'
@@ -102,7 +101,7 @@ const main = Effect.scoped(
         runId,
         sourceManifestHash: source.sourceManifestHash,
         openingCashMicros: '100000000000',
-        protocol: fixture.protocol,
+        protocol: { ...fixture.protocol, ...equityMarketProfile },
         assumptions: { latencyMs: 10, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
         fractionalTrading: false,
         calendar: Result.getOrThrow(Schema.decodeUnknownResult(MarketCalendarResponseSchema)(fixture.input.calendar)),
@@ -194,13 +193,15 @@ const main = Effect.scoped(
         { flag: 'wx' },
       )
     }).pipe(
-      Effect.provideService(DecisionsClient, chartProviderFixture),
-      Effect.provideService(JevClient, {
-        evaluate: (request) =>
-          Clock.currentTimeMillis.pipe(
-            Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
-          ),
-      }),
+      Effect.provideService(
+        JevClient,
+        entryProviderFixture({
+          evaluate: (request) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
+            ),
+        }),
+      ),
       Effect.provide(Layer.mergeAll(stores, TestClock.layer())),
     )
   }),

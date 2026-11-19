@@ -78,7 +78,7 @@ test('unused-entry expiry cannot consume a bound decision or precede the executa
   expect(unusedEntryExpiresAt(beforeOpen)).toBe(Date.parse(beforeOpen.window.submissionOpenAt) + 60_000)
 })
 
-test('an expired unused equity slot releases to crypto under the same approved contract after cooldown', () => {
+test('an expired unused equity slot releases to crypto under the same approved contract after expiry', () => {
   const blocked = {
     ...active,
     state: CycleState.Blocked,
@@ -94,7 +94,14 @@ test('an expired unused equity slot releases to crypto under the same approved c
   if (next === null) throw new Error('Expected continuous window')
   expect(canRearmUnusedCycle(blocked, candidate, continuousMarketHours, next, nextAt)).toBe(true)
   expect(nextIntradayEntryAttemptOrdinal(blocked, nextAt, next.entryCutoffAt, true)).toBe(2)
-  expect(nextIntradayEntryAttemptOrdinal(blocked, '2026-10-14T17:20:26.334Z', next.entryCutoffAt, true)).toBeUndefined()
+  expect(
+    nextIntradayEntryAttemptOrdinal(
+      blocked,
+      new Date(Date.parse(expiresAt) - 1).toISOString(),
+      next.entryCutoffAt,
+      true,
+    ),
+  ).toBeUndefined()
   expect(canRearmUnusedCycle(blocked, { ...candidate, accountId: 'other' }, continuousMarketHours, next, nextAt)).toBe(
     false,
   )

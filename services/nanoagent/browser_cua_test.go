@@ -49,6 +49,102 @@ func TestComputerActionValidation(t *testing.T) {
 	}
 }
 
+func TestBrowserDriverOwnershipSurvivesCallsAndYieldsToHuman(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	defer browser.close()
+	if err := browser.listenCUA(); err != nil {
+		t.Fatal(err)
+	}
+	first, second := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	browser.cuaMu.Lock()
+	if err := browser.claimDriver(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := browser.claimDriver(second); err == nil {
+		t.Fatal("a competing agent acquired the shared browser")
+	}
+	browser.driver.expiresAt = time.Now().Add(-time.Second)
+	if err := browser.claimDriver(second); err != nil {
+		t.Fatalf("an expired driver must not strand the browser: %v", err)
+	}
+	browser.cuaMu.Unlock()
+	if _, err := browser.perform(context.Background(), first, computerAction{Action: "release"}); err == nil {
+		t.Fatal("a different agent released the current driver")
+	}
+	if _, err := browser.perform(context.Background(), second, computerAction{Action: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	browser.cuaMu.Lock()
+	if err := browser.claimDriver(first); err != nil {
+		t.Fatal(err)
+	}
+	browser.cuaMu.Unlock()
+	request := httptest.NewRequest(http.MethodPost, "http://preview/control", strings.NewReader(`{"userControl":true}`))
+	response := httptest.NewRecorder()
+	browser.serve(response, request, "/control")
+	if response.Code != http.StatusOK || browser.driver.id != "" {
+		t.Fatal("human takeover must revoke the active agent driver")
+	}
+	if _, err := browser.perform(context.Background(), first, computerAction{Action: "screenshot"}); err == nil || browser.current != nil {
+		t.Fatal("takeover allowed an agent screenshot or launched the browser")
+	}
+	request = httptest.NewRequest(http.MethodPost, "http://preview/control", strings.NewReader(`{"userControl":false}`))
+	response = httptest.NewRecorder()
+	browser.serve(response, request, "/control")
+	browser.cuaMu.Lock()
+	defer browser.cuaMu.Unlock()
+	if response.Code != http.StatusOK || browser.userControl {
+		t.Fatal("returning browser control failed")
+	}
+	if err := browser.claimDriver(second); err != nil {
+		t.Fatalf("a new agent cannot acquire the browser after human handback: %v", err)
+	}
+}
+
+func TestBrowserTakeoverCancelsInputWaitingForStartup(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	if err := browser.listenCUA(); err != nil {
+		t.Fatal(err)
+	}
+	run := &browserRun{ready: make(chan struct{}), done: make(chan struct{})}
+	browser.current, browser.running = run, true
+	defer browser.close()
+	defer close(run.done)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	driver := strings.Repeat("a", 64)
+	finished := make(chan error, 1)
+	go func() {
+		_, err := browser.perform(ctx, driver, computerAction{Action: "type", Text: "must not run after handback"})
+		finished <- err
+	}()
+	for {
+		browser.cuaMu.Lock()
+		claimed := browser.driver.id == driver
+		browser.cuaMu.Unlock()
+		if claimed {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("the request never reached browser startup")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	for _, control := range []bool{true, false} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "http://preview/control", strings.NewReader(fmt.Sprintf(`{"userControl":%t}`, control)))
+		browser.serve(response, request, "/control")
+		if response.Code != http.StatusOK {
+			t.Fatalf("could not change user control: %d", response.Code)
+		}
+	}
+	close(run.ready)
+	if err := <-finished; err == nil || !strings.Contains(err.Error(), "taken control") {
+		t.Fatalf("the old input survived takeover and handback: %v", err)
+	}
+}
+
 func TestBrowserMCPUsesPrivateSocketAndHonorsUserTakeover(t *testing.T) {
 	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
 	if err := browser.listenCUA(); err != nil {
@@ -100,7 +196,7 @@ func TestBrowserMCPUsesPrivateSocketAndHonorsUserTakeover(t *testing.T) {
 	if !restarted.userControl {
 		t.Fatal("takeover must survive a guest restart")
 	}
-	if _, err := browser.perform(context.Background(), computerAction{Action: "status"}); err != nil {
+	if _, err := browser.perform(context.Background(), strings.Repeat("a", 64), computerAction{Action: "status"}); err != nil {
 		t.Fatal(err)
 	}
 }

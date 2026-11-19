@@ -1,16 +1,23 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { coinRoundTrip } from '../forward-performance/coin-fee-episodes.test-support'
 import type { ForwardPerformanceEvidenceInput } from '../forward-performance/model'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
-import { accountMarkValue, prepareValuationInventory } from './valuation'
-import { executableBid } from './valuation-quotes'
+import { AccountMarkSchema, accountMarkValue, prepareValuationInventory } from './valuation'
+import { executableValuationQuote } from './valuation-quotes'
 import { testHash } from './fixtures.test-support'
 import { capturedAccountsFixture } from './source-cut.test-support'
 import { bindSystemSourceCut } from './bind-source'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile, equityMarketProfile } from '../jev/markets'
+
+const executableBid = (
+  quote: ObservedMarketValue<IntradayQuote> | undefined,
+  symbol: string,
+  at: string,
+  age: number,
+) => executableValuationQuote(quote, symbol, at, age, equityMarketProfile, '1')
 
 const mark = {
   accountBindingHash: testHash('account'),
@@ -112,6 +119,65 @@ test('executable marks use causal fresh bids with positive liquidity and conserv
     { askPrice: Infinity },
   ])
     expect(executableBid({ ...quote, value: { ...quote.value, ...change } }, 'AAPL', mark.at, 10_000)).toBeNull()
+})
+
+test('registered v3 marks accept their exact universe and price short liabilities at the executable ask', () => {
+  const current = {
+    ...quote,
+    value: {
+      ...quote.value,
+      universeId: currentEquityMarketProfile.universeId,
+      universeSymbolHash: currentEquityMarketProfile.universeSymbolHash,
+      askPrice: 101.0000001,
+    },
+  }
+  const value = (
+    q: ObservedMarketValue<IntradayQuote> = current,
+    profile = currentEquityMarketProfile,
+    quantity = '-1500000001',
+  ) => executableValuationQuote(q, 'AAPL', mark.at, 10000, profile, quantity)
+  expect(value()).toEqual({ askPriceMicros: '101000001', quoteSourceHash: quote.recordHash })
+  expect(value(current, currentEquityMarketProfile, '1')).toEqual({
+    bidPriceMicros: '100000000',
+    quoteSourceHash: quote.recordHash,
+  })
+  expect(executableValuationQuote(current, 'AAPL', mark.at, 10000, equityMarketProfile, '1')).toBeNull()
+  expect(value(quote)).toBeNull()
+  expect(value({ ...current, value: { ...current.value, universeSymbolHash: testHash('wrong universe') } })).toBeNull()
+  expect(value({ ...current, value: { ...current.value, askSize: 0 } })).toBeNull()
+  expect(value({ ...current, availableAtMs: quote.availableAtMs + 1 })).toBeNull()
+  expect(executableValuationQuote(current, 'AAPL', mark.at, 10000, undefined, '-1')).toBeNull()
+})
+
+test('signed account marks subtract ask-side cover liabilities with conservative rounding and reject direction drift', () => {
+  const short = {
+    symbol: 'AAPL',
+    quantityAtoms: '-1500000001',
+    askPriceMicros: '100000001',
+    costBasisMicros: '-150000000',
+    quoteSourceHash: testHash('short quote'),
+  }
+  const shortMark = Schema.decodeUnknownSync(AccountMarkSchema)({
+    ...mark,
+    cashMicros: '200000000',
+    valuation: { ...mark.valuation, positions: [short] },
+  })
+  expect(accountMarkValue(shortMark)).toEqual({ equityMicros: '49999998', unrealizedPnlMicros: '-2', positionCount: 1 })
+  for (const change of [
+    { quantityAtoms: '1500000001' },
+    { costBasisMicros: '150000000' },
+    { askPriceMicros: '0' },
+    { symbol: 'BTC/USD' },
+  ])
+    expect(
+      accountMarkValue({ ...shortMark, valuation: { ...shortMark.valuation!, positions: [{ ...short, ...change }] } }),
+    ).toBeNull()
+  expect(
+    accountMarkValue({
+      ...shortMark,
+      valuation: { ...shortMark.valuation!, positions: [short, mark.valuation.positions[0]!] },
+    }),
+  ).toBeNull()
 })
 
 test('a later coin settlement cannot invent the earlier inventory debit instant or deduct it twice', () => {

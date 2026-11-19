@@ -155,11 +155,25 @@ export const makeResearchStore = (sql: PgClient.PgClient) => {
     sql`UPDATE research_inference_receipts SET verified_at = transaction_timestamp() WHERE run_id = ${runId} AND verified_at IS NULL`.pipe(
       Effect.asVoid,
     )
+  const continuation = sql`SELECT EXISTS (
+    SELECT 1 FROM research_inference_receipts
+    WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL
+  ) AS pending, NULL::text AS "nextWakeAt"`.pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Tuple([Schema.Struct({ pending: Schema.Boolean, nextWakeAt: Schema.Null })]),
+        strictParseOptions,
+      ),
+    ),
+    Effect.map(([row]) => row),
+  )
   const coverage = sql`SELECT
-    (SELECT count(*)::int FROM research_inference_receipts WHERE payload->>'costPicoUsd' IS NULL) AS unpriced,
-    (SELECT count(*)::int FROM research_inference_receipts WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL) AS pending,
-    (SELECT COALESCE(max(extract(epoch FROM statement_timestamp() - created_at)), 0)::double precision FROM research_inference_receipts WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL) AS lag,
+    count(*) FILTER (WHERE payload->>'costPicoUsd' IS NULL)::int AS unpriced,
+    count(*) FILTER (WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL)::int AS pending,
+    COALESCE(max(extract(epoch FROM statement_timestamp() - created_at))
+      FILTER (WHERE verified_at IS NULL AND payload->>'costPicoUsd' IS NOT NULL), 0)::double precision AS lag,
     (SELECT count(*)::int FROM research_inference_runs r WHERE claimed_at < statement_timestamp() - interval '180 seconds' AND NOT EXISTS (SELECT 1 FROM research_inference_receipts c WHERE c.run_id = r.run_id)) AS ambiguous
+    FROM research_inference_receipts
   `.pipe(
     Effect.flatMap(
       Schema.decodeUnknownEffect(
@@ -170,7 +184,7 @@ export const makeResearchStore = (sql: PgClient.PgClient) => {
     ),
     Effect.map(([row]) => row),
   )
-  return { read, claim, finish, pending, acknowledge, coverage }
+  return { read, claim, finish, pending, acknowledge, coverage, continuation }
 }
 export type ResearchStore = ReturnType<typeof makeResearchStore>
 

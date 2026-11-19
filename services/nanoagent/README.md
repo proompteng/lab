@@ -56,6 +56,12 @@ The Chrome display reconnects a dropped VNC transport against the same authentic
 backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
 failures stop immediately; closing the viewer cancels any retry without reporting an application error.
 
+The browser's stdio and authenticated HTTP MCP transports share one `computer` implementation and exclusive agent
+driver. Human takeover blocks screenshots and input and invalidates requests still awaiting browser startup.
+[Private ChatGPT connection](../../docs/tengri/browser.md#private-chatgpt-connection) documents the owner-approved
+connection download, bounded preview grant and local OpenAI tunnel helper. Run its validation with
+`python3 -m unittest discover -s services/nanoagent -p browser_mcp_tunnel_test.py` from the repository root.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
@@ -140,6 +146,10 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Desktop replay replaces inline MCP, dynamic-tool and native image-generation bytes with an image marker before
+applying its event-size limit. Generated-image completion keeps its status, saved path and prompt. The native image
+and conversation remain unchanged; omitting binary data from replay does not mean generation failed.
 
 Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
 start or resume, including automatic recovery after a native process restart. This excludes remote execution apps
@@ -252,7 +262,7 @@ guest has Linux administration capabilities inside the VM. The host VMM runs wit
 default seccomp filter, and with no host namespace or filesystem mounts in its Pod. Codex threads and turns use
 `danger-full-access` inside the guest.
 
-Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
+Nanoagent starts Codex with `gpt-6.2-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
 The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot sleep/resume retains its changes and running
@@ -262,7 +272,7 @@ installed system packages consume root-filesystem space. Image builds exercise p
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Its `--runtime` mode requires an independently provisioned real guest to exercise mounts and network administration;
 the container-based KVM fixture has been removed.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.170.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,

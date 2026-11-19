@@ -71,9 +71,12 @@ mod tests {
             Some(Action::AuditRead)
         );
         assert_eq!(
-            operation_action("bff_access", "emergency").unwrap(),
-            Some(Action::MembersManage)
+            operation_action("ofz_platform", "ReadWorkspaceActivity").unwrap(),
+            Some(Action::AuditRead)
         );
+        for retired in ["membership", "quota", "emergency"] {
+            assert!(operation_action("bff_access", retired).is_err());
+        }
         assert_eq!(
             operation_action("bff_auth", "POST /api/auth/logout").unwrap(),
             Some(Action::SessionRevoke)

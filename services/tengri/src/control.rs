@@ -27,6 +27,7 @@ const MIGRATIONS: &[(i32, &[u8])] = &[
         include_bytes!("../migrations/0006_preview_lease_identity.sql"),
     ),
     (7, include_bytes!("../migrations/0007_ephemeral_oauth.sql")),
+    (8, include_bytes!("../migrations/0008_platform_sign_in.sql")),
 ];
 
 #[derive(Clone)]

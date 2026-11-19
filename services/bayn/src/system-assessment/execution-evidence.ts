@@ -1,8 +1,9 @@
 import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
-import { OrderSchema, OrderSide, OrderStatus, TimeInForce } from '../execution/contracts'
+import { OrderSchema, OrderSide, OrderStatus, TimeInForce, isBracketProtection } from '../execution/contracts'
 import {
+  decisionSourceRows,
   isSnapshotExecutionMarketDataBinding,
   reconstructBoundIntradaySnapshot,
   reconciledPositionLiquidationBindingSchemaVersion,
@@ -12,7 +13,7 @@ import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { ExecutionEvidenceKind, type FillRealismSchema } from './realism'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
-import { executionOrderPlans, type ExecutionOrderPlan } from './execution-plans'
+import { executionOrderPlans, executionPositionDirections, type ExecutionOrderPlan } from './execution-plans'
 import type { ObservedExecutionFillSchema } from './execution-capture'
 import { resolveExecutionOrderTerms } from './execution-order-terms'
 
@@ -102,6 +103,7 @@ export const bindExecutionEvidence = (
 ) =>
   Result.gen(function* () {
     const plans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
+    const directions = executionPositionDirections(plans)
     const missing: string[] = []
     const sources = new Set<string>()
     const fills = suppliedFills.filter((f) => !cut.fills.some((actual) => actual.fillId === f.fillId))
@@ -150,7 +152,11 @@ export const bindExecutionEvidence = (
       const ownedPlan = plans.get(actual.intentId)
       if (ownedPlan !== undefined) {
         const owned = inventory.get(ownedPlan.positionOwnerDecisionId) ?? 0n
-        const balance = owned + (actual.side === OrderSide.Buy ? 1n : -1n) * BigInt(actual.quantityAtoms)
+        const balance =
+          owned +
+          (directions.get(ownedPlan.positionOwnerDecisionId) ?? 1n) *
+            (actual.side === OrderSide.Buy ? 1n : -1n) *
+            BigInt(actual.quantityAtoms)
         if (balance < 0n)
           return yield* Result.fail(
             new SystemAssessmentError({ message: 'Execution fills exceed the owned chronological inventory' }),
@@ -246,7 +252,7 @@ export const bindExecutionEvidence = (
       if (plan.protectionIntent !== null) sources.add(plan.protectionIntent.sourceHash)
       for (const row of [root, ...group]) sources.add(row.sourceHash)
       const binding = document.bindings.executionMarketData
-      const rows = document.executionMarketDataRows ?? document.decisionMarketDataRows
+      const rows = document.executionMarketDataRows ?? decisionSourceRows(document)
       const snapshot =
         binding !== undefined && rows !== undefined && isSnapshotExecutionMarketDataBinding(binding)
           ? reconstructBoundIntradaySnapshot(binding, rows)
@@ -301,23 +307,45 @@ export const bindExecutionEvidence = (
       if (routing === undefined || routing.requestDispatchedAt === null)
         missing.push(`MISSING_BROKER_ROUTING:${actual.fillId}`)
       else fill = { ...fill, routingStartedAt: routing.startedAt, requestDispatchedAt: routing.requestDispatchedAt }
-      if (plan.protectionIntent !== null) {
+      const shortOwner = directions.get(plan.positionOwnerDecisionId) === -1n
+      if (
+        plan.protectionIntent !== null ||
+        (isBracketProtection(plan.risk.protection) && actual.brokerOrderId !== root.order.brokerOrderId)
+      ) {
+        const protectionSource = plan.protectionIntent?.sourceHash ?? document.contentHash
+        sources.add(protectionSource)
         fill = {
           ...fill,
           pricing: {
             _tag: 'NativeProtection',
-            sourceHash: plan.protectionIntent.sourceHash,
-            availableAt: plan.protectionIntent.riskDecision.decidedAt,
+            sourceHash: protectionSource,
+            availableAt: plan.protectionIntent?.riskDecision.decidedAt ?? document.createdAt,
+            ...(shortOwner ? { positionSide: 'SHORT' as const } : {}),
           },
         }
       } else if (binding?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
-        if (actual.side !== OrderSide.Sell || document.targetPlan.executionTerms?.executionPurpose === undefined)
+        const held = binding.positions.find((position) => position.symbol === target.symbol)
+        const heldQuantity = BigInt(held?.quantityAtoms ?? '0')
+        if (
+          heldQuantity === 0n ||
+          actual.side !== (heldQuantity < 0n ? OrderSide.Buy : OrderSide.Sell) ||
+          quantity > (heldQuantity < 0n ? -heldQuantity : heldQuantity) ||
+          document.targetPlan.executionTerms?.executionPurpose === undefined
+        )
           return yield* Result.fail(
             new SystemAssessmentError({ message: 'Reconciled liquidation cannot price an entry' }),
           )
         const sourceHash = yield* canonicalHashV1Result(binding)
         sources.add(sourceHash)
-        fill = { ...fill, pricing: { _tag: 'ReconciledLiquidation', sourceHash, availableAt: binding.observedAt } }
+        fill = {
+          ...fill,
+          pricing: {
+            _tag: 'ReconciledLiquidation',
+            sourceHash,
+            availableAt: binding.observedAt,
+            ...(heldQuantity < 0n ? { positionSide: 'SHORT' as const } : {}),
+          },
+        }
       } else if (
         quote === undefined ||
         quoteSource === undefined ||

@@ -220,7 +220,7 @@ function printHelp(): void {
 
 Environment:
   PI_FLAMINGO_BASE_URL             OpenAI-compatible base URL (default: http://flamingo.ide-newton.ts.net/v1)
-  PI_FLAMINGO_MODEL                Model id (default: qwen36-flamingo)
+  PI_FLAMINGO_MODEL                Model id (default: qwen38-flamingo)
   PI_FLAMINGO_API_KEY              Provider API key (default: flamingo-local)
   PI_FLAMINGO_SERVER_CONTEXT       Expected vLLM max_model_len (default: 262144)
   PI_FLAMINGO_CLIENT_CONTEXT       Pi models.json contextWindow (default follows rollout table)
@@ -249,7 +249,7 @@ async function main(): Promise<void> {
 
   const baseUrl = process.env.PI_FLAMINGO_BASE_URL ?? 'http://flamingo.ide-newton.ts.net/v1'
   const provider = process.env.PI_FLAMINGO_PROVIDER ?? 'flamingo'
-  const model = process.env.PI_FLAMINGO_MODEL ?? 'qwen36-flamingo'
+  const model = process.env.PI_FLAMINGO_MODEL ?? 'qwen38-flamingo'
   const apiKey = process.env.PI_FLAMINGO_API_KEY ?? 'flamingo-local'
   const serverContext = parseInteger('PI_FLAMINGO_SERVER_CONTEXT', 262144)
   const clientContext = parseInteger('PI_FLAMINGO_CLIENT_CONTEXT', defaultClientContext(serverContext))
@@ -326,7 +326,7 @@ async function main(): Promise<void> {
               models: [
                 {
                   id: model,
-                  name: 'Qwen3.6 Flamingo',
+                  name: 'Qwen3.8 Flamingo',
                   reasoning: true,
                   input: ['text'],
                   contextWindow: clientContext,

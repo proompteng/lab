@@ -1,14 +1,14 @@
 import { observeRequest } from '@/lib/observability/server'
-import { handleTengriAuth } from '@/lib/tengri/auth'
+import { handlePlatformAuth } from '@/lib/platform/auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
-  return observeRequest(request, 'auth.request', () => handleTengriAuth(request))
+  return observeRequest(request, 'auth.request', () => handlePlatformAuth(request))
 }
 
 export async function POST(request: Request) {
-  return observeRequest(request, 'auth.request', () => handleTengriAuth(request))
+  return observeRequest(request, 'auth.request', () => handlePlatformAuth(request))
 }
 
 export function HEAD() {

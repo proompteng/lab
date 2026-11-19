@@ -192,8 +192,10 @@ const handleRequest = async (request: JsonObject) => {
             threadId,
             turn: {
               id: turnId,
+              rootTurnId: turnId,
               status: 'completed',
               items: [],
+              itemsView: 'full',
               error: null,
               startedAt,
               completedAt: nowMs(),

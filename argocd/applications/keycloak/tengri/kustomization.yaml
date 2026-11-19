@@ -5,6 +5,7 @@ resources:
   - bootstrap-job.yaml
   - keycloak-tengri-broker-sealedsecret.yaml
   - keycloak-tengri-bff-sealedsecret.yaml
+  - keycloak-platform-admin-sealedsecret.yaml
 configMapGenerator:
   - name: keycloak-tengri-realm
     files:

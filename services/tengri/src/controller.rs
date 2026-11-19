@@ -363,11 +363,13 @@ pub async fn converge(
     supervisor.install_fence(leadership.fence()?).await?;
     let status = supervisor.status().await?;
     ensure!(
-        matches!(status.state, SlotState::Vacant { .. })
-            || status
-                .state
-                .claim()
-                .is_some_and(|claim| claim.allocation() == allocation),
+        matches!(
+            status.state,
+            SlotState::Preparing | SlotState::Vacant { .. }
+        ) || status
+            .state
+            .claim()
+            .is_some_and(|claim| claim.allocation() == allocation),
         "slot owner or epoch changed"
     );
     if microvm.spec.desired_state == MicroVMDesiredState::Running
@@ -394,8 +396,9 @@ pub async fn converge(
         authorization.stop_runtime(&claimed).await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
-    let state = match microvm.spec.desired_state {
-        MicroVMDesiredState::Running => {
+    let state = match (&status.state, microvm.spec.desired_state) {
+        (SlotState::Preparing | SlotState::Failed { .. } | SlotState::Stopped { .. }, _) => status,
+        (_, MicroVMDesiredState::Running) => {
             let claim = claim_for(&microvm)?;
             if status.state.serves(&claim) {
                 status
@@ -412,7 +415,7 @@ pub async fn converge(
                     .await?
             }
         }
-        MicroVMDesiredState::Sleeping => {
+        (_, MicroVMDesiredState::Sleeping) => {
             tickets
                 .remove_agent(&microvm.uid().context("workspace UID required")?)
                 .await?;
@@ -2443,8 +2446,27 @@ mod tests {
         };
         use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-        for (after_status, old_awake) in [(7, false), (8, false), (9, false), (6, false), (6, true)]
-        {
+        #[derive(Clone, Copy)]
+        enum ObservedSlot {
+            Sleeping,
+            PreviousAwake,
+            Preparing,
+            Failed,
+            Stopped,
+        }
+        use ObservedSlot::*;
+
+        for (after_status, observed_slot) in [
+            (7, Sleeping),
+            (8, Sleeping),
+            (9, Sleeping),
+            (6, Sleeping),
+            (6, PreviousAwake),
+            (6, Preparing),
+            (6, Failed),
+            (6, Stopped),
+        ] {
+            let old_awake = matches!(observed_slot, PreviousAwake);
             let mode = Arc::new(AtomicU8::new(6));
             let restores = Arc::new(AtomicUsize::new(0));
             let sleeps = Arc::new(AtomicUsize::new(0));
@@ -2467,15 +2489,22 @@ mod tests {
                     firecracker_version: crate::slot::FIRECRACKER_VERSION.into(),
                     cpu: "fixture-cpu".into(),
                 },
-                state: if old_awake {
-                    SlotState::Awake {
+                state: match observed_slot {
+                    Preparing => SlotState::Preparing,
+                    Failed => SlotState::Failed {
+                        claim: Some(claim.clone()),
+                        message: "guest lifecycle timed out".into(),
+                    },
+                    Stopped => SlotState::Stopped {
+                        claim: claim.clone(),
+                    },
+                    PreviousAwake => SlotState::Awake {
                         claim: previous.clone(),
-                    }
-                } else {
-                    SlotState::Sleeping {
+                    },
+                    Sleeping => SlotState::Sleeping {
                         claim: previous.clone(),
                         snapshot: crate::slot::Snapshot { generation: 1 },
-                    }
+                    },
                 },
             };
             let before_restore = status.clone();
@@ -2567,7 +2596,11 @@ mod tests {
             server.abort();
             if after_status == 6 {
                 result.expect("fresh unchanged authority must still restore after the initial decision expires");
-                assert_eq!(restores.load(Ordering::SeqCst), 1);
+                assert_eq!(
+                    restores.load(Ordering::SeqCst),
+                    usize::from(matches!(observed_slot, Sleeping | PreviousAwake)),
+                    "only a prepared committed snapshot may restore"
+                );
                 assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
                 assert!(pending.lock().unwrap().is_empty());
             } else {

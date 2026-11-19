@@ -10,7 +10,13 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   taskID: torghut-keeper-26-8-20260910
+  reconciling:
+    cleanup:
+      unknownObjects:
+        pvc: Retain
   configuration:
+    settings:
+      keeper_server/enable_reconfiguration: "true"
     clusters:
       - name: default
         layout:
@@ -42,8 +48,10 @@ spec:
           resources:
             requests:
               storage: 1Gi
-          storageClassName: rook-ceph-block
+          storageClassName: local-path
   defaults:
+    storageManagement:
+      reclaimPolicy: Retain
     templates:
       podTemplate: chk-default
       volumeClaimTemplate: chk-data

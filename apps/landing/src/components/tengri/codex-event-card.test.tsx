@@ -7,6 +7,32 @@ import { CodexEventCard } from './codex-event-card'
 import { WorkspaceFileLinkProvider } from './workspace-file-link'
 
 describe('Codex event rows', () => {
+  test('shows generated images and progress outside command output', () => {
+    const path = '/home/nanoagent/.codex/generated_images/thread-cat/exec-cat.png'
+    const html = renderToString(
+      createElement(
+        WorkspaceFileLinkProvider,
+        { agentId: 'microvm-ada' },
+        createElement(CodexEventCard, {
+          kind: 'tool-call',
+          text: 'Generate image',
+          imageGeneration: { status: 'generating' },
+        }),
+        createElement(CodexEventCard, {
+          kind: 'tool-output',
+          text: path,
+          imageGeneration: { status: 'completed', path },
+        }),
+        createElement(CodexEventCard, { kind: 'assistant-text', text: `[Preview the cat image](${path})` }),
+      ),
+    )
+    expect(html).toContain('Generating image…')
+    expect(html).toContain('alt="Generated image"')
+    expect(html).toContain('/api/tengri/generated-images?')
+    expect(html).toContain('href="/api/tengri/generated-images?')
+    expect(html).not.toContain('<pre')
+  })
+
   test('renders local references as preview controls and web references as external links', () => {
     const html = renderToString(
       createElement(
@@ -80,6 +106,22 @@ describe('Codex event rows', () => {
     expect(html.match(/<img /g)).toHaveLength(4)
     expect(html).toContain('preview limit reached')
     expect(html).toContain('repeated image')
+  })
+
+  test('applies the same preview budget to native generated image references', () => {
+    const text = Array.from(
+      { length: 8 },
+      (_, index) => `![Cat ${index}](/home/nanoagent/.codex/generated_images/thread-cat/exec-${index}.png)`,
+    ).join('\n\n')
+    const html = renderToString(
+      createElement(
+        WorkspaceFileLinkProvider,
+        { agentId: 'microvm-ada' },
+        createElement(CodexEventCard, { kind: 'assistant-text', text }),
+      ),
+    )
+    expect(html.match(/<img /g)).toHaveLength(4)
+    expect(html).toContain('preview limit reached')
   })
 
   test('recognizes Mermaid fences while retaining source for server rendering and loading', () => {

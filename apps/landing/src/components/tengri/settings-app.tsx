@@ -87,7 +87,11 @@ export function SettingsApp({
 
   useEffect(() => {
     try {
-      if (!sessionStorage.getItem(pendingConnectionKey(user.id, agent.uid))) return
+      if (
+        !sessionStorage.getItem(pendingConnectionKey(user.id, agent.uid)) &&
+        !new URL(window.location.href).searchParams.has('platform_connection')
+      )
+        return
     } catch {
       return
     }

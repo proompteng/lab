@@ -1,4 +1,4 @@
-import { MAX_CODEX_IMAGES } from '@/lib/tengri/codex-images'
+import { MAX_CODEX_IMAGES, parseCodexGeneratedImagePath } from '@/lib/tengri/codex-images'
 import { parseWorkspaceFileLink } from './workspace-file-link-model'
 
 type MarkdownNode = {
@@ -30,7 +30,7 @@ export function remarkWorkspaceImageBudget(options: { basePath?: string } = {}) 
             : child.type === 'imageReference'
               ? definitions.get(identifier(child.identifier ?? ''))
               : undefined
-        const file = url ? parseWorkspaceFileLink(url, options.basePath) : null
+        const file = url ? (parseWorkspaceFileLink(url, options.basePath) ?? parseCodexGeneratedImagePath(url)) : null
         if (file) {
           const duplicate = seen.has(file.path)
           if (duplicate || seen.size >= MAX_CODEX_IMAGES)

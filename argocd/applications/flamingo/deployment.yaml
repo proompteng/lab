@@ -44,20 +44,20 @@ spec:
             - --port
             - "8000"
             - --model
-            - unsloth/Qwen3.6-35B-A3B-NVFP4
+            - nvidia/Qwen3.8-27B-NVFP4
             - --revision
-            - 739af1e7aac320af1682ed1e0cce369af4c5265d
+            - 482ca0f3832238542f8f5295dde86b5f22711d80
             - --tokenizer-revision
-            - 739af1e7aac320af1682ed1e0cce369af4c5265d
+            - 482ca0f3832238542f8f5295dde86b5f22711d80
             - --served-model-name
-            - qwen36-flamingo
+            - qwen38-flamingo
             - --trust-remote-code
             - --dtype
             - bfloat16
             - --max-model-len
             - "262144"
             - --gpu-memory-utilization
-            - "0.60"
+            - "0.90"
             - --kv-cache-dtype
             - fp8
             - --max-num-seqs
@@ -113,11 +113,11 @@ spec:
           resources:
             requests:
               cpu: "4"
-              memory: 32Gi
+              memory: 40Gi
               nvidia.com/gpu: "1"
             limits:
               cpu: "8"
-              memory: 40Gi
+              memory: 48Gi
               nvidia.com/gpu: "1"
           securityContext:
             allowPrivilegeEscalation: false

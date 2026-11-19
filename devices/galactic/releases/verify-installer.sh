@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 release_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-receipt="$release_dir/talos-v1.14.0.json"
+receipt="$release_dir/talos-v1.14.5.json"
 release_lock="$release_dir/../../nuc/image-factory/release.json"
 profile="${1:?usage: verify-installer.sh <ryzen|turin|altra> <evidence-directory>}"
 evidence_dir="${2:?provide an evidence directory}"

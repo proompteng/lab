@@ -8,10 +8,10 @@ spec:
     count/leases.coordination.k8s.io: "7"
     count/microvms.runtime.proompteng.ai: "6"
     limits.cpu: "42"
-    limits.memory: 63Gi
+    limits.memory: 81Gi
     persistentvolumeclaims: "6"
     pods: "17"
     requests.cpu: "27"
-    requests.memory: 57Gi
+    requests.memory: 75Gi
     requests.storage: 192Gi
     secrets: "12"

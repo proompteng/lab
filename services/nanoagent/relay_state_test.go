@@ -12,13 +12,14 @@ import (
 )
 
 func relayFixtureConfiguration(delegation string, recovery, generation uint64) relayConfiguration {
+	readOnly := true
 	return relayConfiguration{
 		ConnectionID: "11111111-1111-4111-8111-111111111111",
 		DelegationID: delegation, relayGeneration: relayGeneration{RecoveryGeneration: recovery, CredentialGeneration: generation},
 		ConnectorID: "galactic", ClientService: "tengri-web",
 		Binding:  relayBinding{Service: "tengri", ID: "44444444-4444-4444-8444-444444444444", Generation: "55555555-5555-4555-8555-555555555555"},
 		Endpoint: "https://proompteng.ai/api/platform/relay/agent", Credential: strings.Repeat("a", 43),
-		Operations: []relayOperation{{Name: "status", Description: "Read pod status", InputSchema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
+		Operations: []relayOperation{{Name: "status", Description: "Read pod status", InputSchema: json.RawMessage(`{"type":"object"}`), ReadOnly: &readOnly}},
 	}
 }
 

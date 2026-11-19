@@ -330,7 +330,8 @@ def from_environment() -> Exporter:
         keepalives_idle="5",
         keepalives_interval="2",
         keepalives_count="3",
-        options="-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c idle_session_timeout=15000",
+        # A batch can make four sequential S3 requests between SQL statements.
+        options="-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c idle_session_timeout=90000",
     )
     database = psycopg.connect(**config, autocommit=True, row_factory=dict_row)
     storage = CephArchive(
@@ -340,7 +341,7 @@ def from_environment() -> Exporter:
         secure=False,
         region="us-east-1",
         http_client=urllib3.PoolManager(
-            timeout=urllib3.Timeout(total=8, connect=2, read=5),
+            timeout=urllib3.Timeout(total=22, connect=2, read=20),
             retries=False,
             maxsize=2,
         ),

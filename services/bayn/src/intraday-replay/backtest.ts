@@ -1,6 +1,7 @@
-import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
+import { registeredReplayInferenceTariff } from './inference-costs'
+import { InferenceRateCardSchema } from '../inference-costs'
 import { ReplayInstrumentsSchema } from './execution-core'
-import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { jevInstructions } from '../jev/instructions'
 import { decodeJevBatchPlan, decodeJevBatchResult } from '../jev/batch'
@@ -31,19 +32,14 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import {
-  loadActiveStrategyProtocol,
-  makeActiveStrategyRuntime,
-  makeEntryAblationRuntime,
-  makeRepeatedMomentumRuntime,
-} from '../strategy'
+import { loadActiveStrategyProtocol, makeActiveStrategyRuntime } from '../strategy'
+import { makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from './strategy'
 import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import { NativeReplayIdentitySchema, NativeReplayPolicySchema, nativeReplayPolicyIdentity } from './native-policy'
 import { JevClient } from '../jev/client'
-import { DecisionsClient, decisionsModel } from '../jev/decisions'
 import { jevModel } from '../jev/contract'
 import {
   makeReplayInferenceBudget,
@@ -71,6 +67,7 @@ import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerState, type Rep
 import type { CycleRunResult } from '../cycle/runner/model'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayTimeline, driveReplaySession } from './session'
+import { EquityExecutionTapeReferenceSchema, type EquityExecutionTape } from './equity-execution-tape'
 import type { RuntimeConfig } from '../config/model'
 import type { RecordAutonomousCyclePass } from '../app'
 import type { OperationalError } from '../errors'
@@ -136,13 +133,13 @@ export const assessBacktestSession = (input: {
 }
 
 const inferenceFields = {
-  models: Schema.Struct({ jev: Schema.Literal(jevModel), chart: Schema.Literal(decisionsModel) }),
+  models: Schema.Struct({ jev: Schema.Literal(jevModel) }),
   inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
   costs: InferenceRateCardSchema,
   maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
 }
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v10'),
+  schemaVersion: Schema.Literal('bayn.backtest.v11'),
   policy: NativeReplayPolicySchema,
   latencyStress: Schema.NullOr(SystemLatencyReplaySchema),
   jevInstructionsHash: Sha256Schema,
@@ -159,8 +156,18 @@ export const BacktestInputSchema = Schema.Struct({
   replicate: StrictNonEmptyStringSchema,
   interval: Schema.Struct({ startAt: UtcInstantSchema, endAt: UtcInstantSchema }),
   source: BacktestSourceManifestSchema,
+  equityExecutionTape: Schema.optionalKey(EquityExecutionTapeReferenceSchema),
   openingCashMicros: PositiveMicrosSchema,
   fractionalTrading: Schema.Boolean,
+  equityShortAccount: Schema.optionalKey(
+    Schema.Struct({
+      shortingEnabled: Schema.Boolean,
+      noShorting: Schema.Boolean,
+      observedAt: UtcInstantSchema,
+      sourceHash: Sha256Schema,
+      policy: Schema.Literals(['retained-as-of-session', 'counterfactual-current-account-eligibility']),
+    }),
+  ),
   calendar: MarketCalendarResponseSchema,
   assets: Schema.Array(AssetResponseSchema).check(Schema.isMinLength(1)),
   assetObservationAt: UtcInstantSchema,
@@ -199,15 +206,17 @@ export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) 
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
-    const { rates } = yield* prepareInferenceRateCard(supplied.inference.costs)
+    const costs = yield* registeredReplayInferenceTariff(
+      supplied.inference.costs,
+      supplied.interval,
+      supplied.policy,
+      defaultJevProtocolDocument,
+    )
     const decoded = {
       ...supplied,
       inference: {
         ...supplied.inference,
-        costs: {
-          ...supplied.inference.costs,
-          rates: rates.toSorted((a, b) => a.rateHash.localeCompare(b.rateHash)).map(({ rate }) => rate),
-        },
+        costs,
       },
       assets: [...supplied.assets].sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
       calendar: [...supplied.calendar].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
@@ -272,7 +281,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const protocol = baselineProtocol
     const parameterHash = policyIdentity.strategy.parameterHash
     for (const source of decoded.source.marketSources) {
-      const profile = jevMarketProfiles.find((profile) => profile.universeId === source.universeId)
+      const profile = protocol.marketProfiles.find((profile) => profile.universeId === source.universeId)
       if (profile === undefined)
         return yield* Result.fail(new ReplayBrokerFailure({ message: 'Replay source market is outside the strategy' }))
       const universe = {
@@ -285,6 +294,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           ...(source.topics.technicalFeatures === undefined
             ? {}
             : { technicalFeatures: source.topics.technicalFeatures }),
+          ...(source.topics.webullBars === undefined ? {} : { webullBars: source.topics.webullBars }),
         },
       }
       if ((yield* canonicalHashV1Result(universe)) !== (yield* canonicalHashV1Result(source)))
@@ -302,6 +312,20 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(new ReplayBrokerFailure({ message: 'Backtest calendar contains duplicate sessions' }))
     const openMs = Date.parse(decoded.interval.startAt)
     const closeMs = Date.parse(decoded.interval.endAt)
+    const equityTape = decoded.equityExecutionTape
+    if (
+      equityTape !== undefined &&
+      (decoded.latencyStress !== null ||
+        !decoded.source.marketSources.some((source) => source.universeId === equityMarketProfile.universeId) ||
+        Date.parse(equityTape.startAt) > openMs ||
+        Date.parse(equityTape.endAt) < closeMs)
+    )
+      return yield* Result.fail(
+        new ReplayBrokerFailure({
+          message:
+            'A historical equity execution tape requires an unregistered equity replay and complete interval coverage',
+        }),
+      )
     if (openMs >= closeMs)
       return yield* Result.fail(new ReplayBrokerFailure({ message: 'Backtest interval must have a positive duration' }))
     if (!calendar.sessions.some((session) => Date.parse(session.openAt) > closeMs))
@@ -321,6 +345,13 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     if (decoded.assetObservationPolicy === 'retained-as-of-session' && Date.parse(decoded.assetObservationAt) > openMs)
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Retained asset observation was not available at market open' }),
+      )
+    if (
+      decoded.equityShortAccount?.policy === 'retained-as-of-session' &&
+      Date.parse(decoded.equityShortAccount.observedAt) > openMs
+    )
+      return yield* Result.fail(
+        new ReplayBrokerFailure({ message: 'Retained short account observation was not available at market open' }),
       )
     if (decoded.source.coverageStartMs > openMs || decoded.source.coverageEndMs < closeMs)
       return yield* Result.fail(
@@ -419,6 +450,12 @@ export const backtestBrokerEvidenceConfig = (prepared: PreparedBacktest) =>
         },
         assumptions: prepared.input.assumptions,
         fractionalTrading: prepared.input.fractionalTrading,
+        ...(prepared.input.equityShortAccount === undefined
+          ? {}
+          : {
+              shortingEnabled:
+                prepared.input.equityShortAccount.shortingEnabled && !prepared.input.equityShortAccount.noShorting,
+            }),
         assets: prepared.assets,
         calendar: prepared.input.calendar,
       }),
@@ -459,7 +496,9 @@ export type BacktestPass = Parameters<RecordAutonomousCyclePass>[0] & {
 }
 
 export const qualifiesReplayValuation = (valuation: ReplayValuationEvidence) =>
-  valuation.marks.every((mark) => !mark.staleForExecution && mark.bidLiquidityAvailable)
+  valuation.marks.every(
+    (mark) => !mark.staleForExecution && (mark.coverLiquidityAvailable ?? mark.bidLiquidityAvailable),
+  )
 
 /** One engine, broker, portfolio, and durable account span every declared calendar session. */
 export const runBacktest = (
@@ -469,8 +508,20 @@ export const runBacktest = (
   recordPass: (pass: BacktestPass) => Effect.Effect<void, OperationalError>,
   recordInference: (call: ReplayInferenceCall) => Effect.Effect<void, ReplayBrokerFailure>,
   liveProviders: ReplayInferenceProviders | null,
+  equityExecutionTape?: EquityExecutionTape,
 ) =>
   Effect.gen(function* () {
+    if (
+      prepared.input.equityExecutionTape?.sha256 !== equityExecutionTape?.hash ||
+      (equityExecutionTape !== undefined &&
+        (prepared.input.equityExecutionTape?.startAt !== equityExecutionTape.startAt ||
+          prepared.input.equityExecutionTape.endAt !== equityExecutionTape.endAt ||
+          equityExecutionTape.universeId !== equityMarketProfile.universeId ||
+          equityExecutionTape.universeSymbolHash !== equityMarketProfile.universeSymbolHash))
+    )
+      return yield* new ReplayBrokerFailure({
+        message: 'Replay equity execution tape differs from its declared content',
+      })
     if (
       prepared.latencyStress !== null &&
       databases.operationTimeoutMs !== prepared.latencyStress.registration.obligations.configuration.operationTimeoutMs
@@ -501,7 +552,16 @@ export const runBacktest = (
       return yield* new ReplayBrokerFailure({ message: 'Native replay requires an independent elapsed-time clock' })
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash, providerClock)
     const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
-      { advanceTo: (atMs) => clock.excludeSourceTime(source.advanceTo(atMs)) },
+      {
+        advanceTo: (atMs) =>
+          source.advanceTo(atMs, (work) =>
+            clock
+              .excludeSourceTime(work)
+              .pipe(
+                Effect.mapError((cause) => new ReplaySourceFailure({ message: 'Replay source clock failed', cause })),
+              ),
+          ),
+      },
       clock,
       prepared.closeMs + databases.operationTimeoutMs + 10_000,
     )
@@ -542,19 +602,27 @@ export const runBacktest = (
       timing.run(operation).pipe(Effect.tap(() => recorded?.assertSupported ?? Effect.void))
     const broker = yield* makeReplayBroker({
       ...(yield* Effect.fromResult(backtestBrokerEvidenceConfig(prepared))),
+      ...(equityExecutionTape === undefined ? {} : { equityExecutionTape }),
       submissionTime: timing.currentUtcInstant,
       advanceToArrival: advanceTo,
       quoteAt: (symbol, atMs, quoteSource) =>
         source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs, quoteSource))),
     })
+    let equityTapeIndex = 0
     yield* source.observeBroker((atMs, quote) =>
-      broker
-        .observeMarket(atMs, quote)
-        .pipe(
-          Effect.mapError(
-            (cause) => new ReplaySourceFailure({ message: 'Replay broker rejected source advancement', cause }),
-          ),
+      Effect.gen(function* () {
+        // The strategy clock advances both sources, while the broker's equity fills consume only its own tape.
+        let entry = equityExecutionTape?.entry(equityTapeIndex)
+        while (entry !== undefined && entry.atMs <= atMs) {
+          yield* broker.observeEquityExecution(equityTapeIndex)
+          entry = equityExecutionTape?.entry(++equityTapeIndex)
+        }
+        yield* broker.observeMarket(atMs, quote)
+      }).pipe(
+        Effect.mapError(
+          (cause) => new ReplaySourceFailure({ message: 'Replay broker rejected source advancement', cause }),
         ),
+      ),
     )
     const runtime = yield* makeReplayExecutionRuntime({
       decisionLatencyStress:
@@ -582,11 +650,7 @@ export const runBacktest = (
       clock,
       recordPass: () => Effect.void,
       ...prepared.input.cadence,
-    }).pipe(
-      Effect.provideService(JevClient, timing.clients.jev),
-      Effect.provideService(DecisionsClient, timing.clients.chart),
-      run,
-    )
+    }).pipe(Effect.provideService(JevClient, timing.clients.jev), run)
     const initializationCompletedAtMs = yield* Clock.currentTimeMillis
     if (initializationCompletedAtMs > prepared.openMs)
       return yield* new ReplayBrokerFailure({ message: 'Replay initialization missed the first session open' })

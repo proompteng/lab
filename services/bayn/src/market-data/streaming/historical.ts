@@ -213,7 +213,11 @@ export const createHistoricalMarketCursor = (
         ? {}
         : { regeneratedTechnicalFeaturesRecordedAtMs: provenance.regeneratedTechnicalFeaturesRecordedAtMs }),
       projection: {
-        ...emptyStreamingProjection(`historical-${runId}`, technicalTopics[0]),
+        ...emptyStreamingProjection(
+          `historical-${runId}`,
+          technicalTopics[0],
+          marketSources.find((source) => source.topics.webullBars !== undefined)?.topics.webullBars,
+        ),
         availabilityMode: 'simulated',
       },
       processedRecords: 0,

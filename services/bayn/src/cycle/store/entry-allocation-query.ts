@@ -9,7 +9,7 @@ export const lastEntryAllocationQuery = (sql: PgClient.PgClient) => sql`
       AS weight(symbol, value) WHERE weight.value::numeric > 0
     ),
     'flat', NOT EXISTS (
-      SELECT 1 FROM jsonb_array_elements(decision.document #> '{plannerInput,brokerState,positions}') AS position
+      SELECT 1 FROM jsonb_array_elements(planning.broker_state -> 'positions') AS position
       WHERE (position ->> 'quantityAtoms')::numeric <> 0
     ),
     'allocationCapitalMicros', decision.document #>> '{plannerInput,allocationCapitalMicros}',
@@ -31,8 +31,16 @@ export const lastEntryAllocationQuery = (sql: PgClient.PgClient) => sql`
   ) AS facts
   FROM last_cycle AS cycle
   JOIN autonomous_cycle_shadow_decisions AS decision ON decision.cycle_id = cycle.cycle_id
+  CROSS JOIN LATERAL (
+    SELECT coalesce(
+      decision.document #> '{plannerInput,brokerState}',
+      CASE WHEN decision.document #>> '{strategyDecision,evidence,observation,portfolio,purpose}' = 'ENTRY'
+        THEN decision.document #> '{strategyDecision,evidence,observation,portfolio,brokerState}' END
+    ) AS broker_state
+  ) AS planning
   WHERE cycle.account_id = (SELECT account_id FROM selected_account)
     AND cycle.state = 'NO_TRADE'
+    AND jsonb_typeof(decision.document -> 'plannerInput') = 'object'
     AND decision.document #>> '{bindings,accountId}' = cycle.account_id
-    AND jsonb_typeof(decision.document #> '{plannerInput,brokerState,positions}') = 'array'
+    AND jsonb_typeof(planning.broker_state -> 'positions') = 'array'
 `

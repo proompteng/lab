@@ -22,16 +22,16 @@ class ArchiveTimestampPrecisionIntegrationTest {
     require(guard.matches(Regex("[0-9a-f]{32}")))
     val schemaPath =
       generateSequence(Path.of("").toAbsolutePath()) { it.parent }
-        .map { it.resolve("argocd/applications/torghut/clickhouse/intraday-bars-schema-job.yaml") }
+        .map { it.resolve("argocd/applications/torghut/clickhouse/schema/intraday-bars.sql") }
         .first { Files.exists(it) }
     val schema = Files.readString(schemaPath)
-    val createPrefix = "CREATE TABLE IF NOT EXISTS signal.intraday_bars_1m_v2 ON CLUSTER default"
+    val createPrefix = "CREATE TABLE IF NOT EXISTS signal.intraday_bars_1m_v2"
     require(schema.contains(createPrefix))
     val columns = schema.substringAfter(createPrefix).substringBefore("ENGINE =")
     val migrations =
-      Regex("ALTER TABLE signal\\.intraday_bars_1m_v2 ON CLUSTER default[\\s\\S]+?;")
+      Regex("ALTER TABLE signal\\.intraday_bars_1m_v2[\\s\\S]+?;")
         .findAll(schema)
-        .map { it.value.replace(" ON CLUSTER default", "") }
+        .map { it.value }
         .toList()
     require(migrations.isNotEmpty())
     DriverManager.getConnection("jdbc:clickhouse:$endpoint/default", "default", "").use { connection ->

@@ -57,8 +57,8 @@ scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile
 
 Acceptance checks:
 
-- `kubectl -n lab-delivery get warehouse,freight,stage`
-- `kubectl -n lab-delivery get stage/torghut -o yaml`
+- `kubectl -n <project>-release get warehouse,freight,stage`
+- `kubectl -n <project>-release get stage/torghut -o yaml`
 - `kubectl -n argocd get application torghut-hyperliquid-runtime`
 - `kubectl -n argocd get application torghut-hyperliquid-runtime -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'`
 - `kubectl -n torghut rollout status deploy/torghut-hyperliquid-runtime --timeout=180s`

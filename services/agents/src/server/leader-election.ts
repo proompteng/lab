@@ -47,7 +47,7 @@ export type LeaderElectionService = {
   stop: Effect.Effect<void, never>
 }
 
-export class LeaderElection extends Context.Tag('LeaderElection')<LeaderElection, LeaderElectionService>() {}
+export class LeaderElection extends Context.Service<LeaderElection, LeaderElectionService>()('LeaderElection') {}
 
 const DEFAULT_CONFIG: Omit<LeaderElectionConfig, 'leaseNamespace'> & { leaseNamespace: '' } = {
   enabled: true,
@@ -473,7 +473,7 @@ export const createLeaderElectionService = (): LeaderElectionService => ({
   stop: Effect.sync(() => stopLeaderElectionRuntime()),
 })
 
-export const LeaderElectionLive = Layer.scoped(
+export const LeaderElectionLive = Layer.effect(
   LeaderElection,
   Effect.gen(function* () {
     const service = createLeaderElectionService()

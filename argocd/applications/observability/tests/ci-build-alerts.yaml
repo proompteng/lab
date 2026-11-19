@@ -2,6 +2,105 @@ rule_files:
   - rules.yaml
 evaluation_interval: 1m
 tests:
+  - name: cache upload and download failures fire without a median sample gate and recover
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x12
+      - series: ci_nix_cache_events{workflow="ofz.yaml",architecture="arm64",event="push",window="1h",kind="attic_upload_failures"}
+        values: 1+0x4 0+0x8
+      - series: ci_nix_cache_events{workflow="ofz.yaml",architecture="arm64",event="push",window="1h",kind="nixos_download_failures"}
+        values: 1+0x4 0+0x8
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AtticCacheUploadFailed",alertstate="firing"}) or vector(0)
+        eval_time: 2m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="NixCacheDownloadFailed",alertstate="firing"}) or vector(0)
+        eval_time: 2m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname=~"AtticCacheUploadFailed|NixCacheDownloadFailed",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: a single running build alerts while active and clears after completion
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x12
+      - series: ci_job_oldest_execution_seconds{workflow="ofz.yaml",architecture="arm64",runner_pool="arc",job_role="build",event="push"}
+        values: 1200+60x4 0+0x8
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiBuildStalled",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="CiBuildStalled",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: finalization is diagnosed without requiring a slow build phase
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x6
+      - series: ci_job_oldest_execution_seconds{workflow="bayn-build-push.yml",architecture="arm64",runner_pool="arc",job_family="image",job_role="build",event="push"}
+        values: 1500+60x6
+      - series: ci_job_current_phase_age_seconds{workflow="bayn-build-push.yml",architecture="arm64",runner_pool="arc",job_family="image",job_role="build",event="push",phase="finalizing"}
+        values: 600+60x6
+      - series: ci_job_current_phase_age_seconds{workflow="other.yml",architecture="arm64",runner_pool="arc",job_family="image",job_role="build",event="push",phase="build"}
+        values: 4000+60x6
+    alert_rule_test:
+      - alertname: CiBuildStalled
+        eval_time: 3m
+        exp_alerts:
+          - exp_labels:
+              workflow: bayn-build-push.yml
+              architecture: arm64
+              runner_pool: arc
+              job_family: image
+              job_role: build
+              event: push
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            exp_annotations:
+              summary: An image job has exceeded twenty minutes
+              description: "bayn-build-push.yml on arm64 is still running after twenty minutes. Oldest active phases: finalizing=780s; Build, cache upload, artifact upload and GitHub finalization all count toward job age. Inspect the active job; this alert does not require a median regression."
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+              runbook_url: argocd/applications/observability/ci/README.md
+  - name: cache metadata probe failure fires and recovery clears it
+    interval: 1m
+    input_series:
+      - series: probe_success{job="integrations/blackbox/attic-cache"}
+        values: 0+0x4 1+0x8
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AtticCacheUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="AtticCacheUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: missing cache probe cannot silently disable availability alerts
+    interval: 1m
+    input_series: []
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="AtticCacheUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 1
   - name: a sustained queue fires and recovery clears it
     interval: 1m
     input_series:

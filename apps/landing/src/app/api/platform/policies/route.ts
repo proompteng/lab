@@ -7,39 +7,37 @@ import {
   WritePolicyRelationshipsResponseSchema,
   ReadPolicyRelationshipsResponseSchema,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
-import { humanContext } from '@/lib/tengri/authorization'
+import { requireAdminIdentity } from '@/lib/platform/admin'
+import { platformSession } from '@/lib/platform/auth'
 import {
   noStoreHeaders,
-  readTengriJsonBody,
+  readPlatformJsonBody,
   requireSameOrigin,
   requireSameOriginGet,
-  requireTengriIdentity,
-  tengriRouteError,
-} from '@/lib/tengri/http'
-import { ofzCall } from '@/lib/tengri/ofz'
+  platformRouteError,
+} from '@/lib/platform/http'
+import { ofzCall } from '@/lib/platform/ofz'
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
     requireSameOriginGet(request)
-    const identity = await requireTengriIdentity(request)
+    const identity = await requireAdminIdentity(request)
     const query = new URL(request.url).searchParams
     if (query.size) {
       const input = z
         .strictObject({
+          workspaceId: z.uuid(),
           kind: z.string().min(1).max(128),
           id: z.string().min(1).max(256),
-          subjectKind: z.enum(['human', 'workload']),
+          subjectKind: z.enum(['human', 'workload', 'workspace']),
           subjectId: z.string().min(1).max(512),
         })
         .parse(Object.fromEntries(query))
       const result = await ofzCall(
         PlatformAuthorizationService.method.readPolicyRelationships,
         {
-          administrator: {
-            humanId: identity.session.humanId,
-            sessionId: identity.session.id,
-            origin: humanContext(identity).origin,
-          },
+          administrator: platformSession(identity),
+          workspaceId: input.workspaceId,
           resource: { kind: input.kind, id: input.id },
           subjectKind: input.subjectKind,
           subjectId: input.subjectId,
@@ -53,23 +51,22 @@ export async function GET(request: Request) {
   } catch (error) {
     if (error instanceof z.ZodError)
       return Response.json({ error: 'Invalid policy read request' }, { status: 400, headers: noStoreHeaders() })
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
 }
 export async function POST(request: Request) {
   try {
     requireSameOrigin(request)
-    const identity = await requireTengriIdentity(request)
+    const identity = await requireAdminIdentity(request)
     const body = policyWriteSchema.parse(
-      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: 65_536 }),
+      await readPlatformJsonBody(request, { subject: identity.subject, maxBytes: 65_536 }),
     )
-    const context = humanContext(identity)
     const result = await ofzCall(
       PlatformAuthorizationService.method.writePolicyRelationships,
       {
         ...body,
         expectedPolicyVersion: BigInt(body.expectedPolicyVersion),
-        administrator: { humanId: identity.session.humanId, sessionId: identity.session.id, origin: context.origin },
+        administrator: platformSession(identity),
       },
       request.signal,
     )
@@ -77,6 +74,6 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof z.ZodError)
       return Response.json({ error: 'Invalid policy relationship request' }, { status: 400, headers: noStoreHeaders() })
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
 }

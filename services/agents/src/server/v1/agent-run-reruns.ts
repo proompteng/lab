@@ -32,10 +32,10 @@ type AgentRunRerunRuntimeConfigServiceDefinition = {
   readonly env: Record<string, string | undefined>
 }
 
-class AgentRunRerunRuntimeConfigService extends Context.Tag('agents/AgentRunRerunRuntimeConfigService')<
+class AgentRunRerunRuntimeConfigService extends Context.Service<
   AgentRunRerunRuntimeConfigService,
   AgentRunRerunRuntimeConfigServiceDefinition
->() {}
+>()('agents/AgentRunRerunRuntimeConfigService') {}
 
 const makeAgentRunRerunRuntimeConfigLayer = (runtimeConfig?: AgentRunRerunRuntimeConfigOptions) =>
   Layer.succeed(AgentRunRerunRuntimeConfigService, { env: runtimeConfig?.env ?? process.env })
@@ -390,7 +390,7 @@ export const submitAgentRunRerunEffect = (
                   error: describeOrchestrationSubmitError(error),
                 }),
               ).pipe(
-                Effect.zipRight(
+                Effect.andThen(
                   updateParentStatus(store, parent.run, 'needs_human', {
                     attempt: parsed.attempt,
                     deliveryId,
@@ -485,9 +485,9 @@ export const postAgentRunRerunsHandler = async (
   const leaderResponse = deps.requireLeaderForMutation?.() ?? null
   if (leaderResponse) return leaderResponse
 
-  const result = await Effect.runPromise(submitAgentRunRerunEffect(agentRunId, request, deps).pipe(Effect.either))
-  if (result._tag === 'Right') return okResponse(result.right, result.right.idempotent === true ? 200 : 201)
-  return errorResponse(describeRerunError(result.left), rerunStatus(result.left))
+  const result = await Effect.runPromise(submitAgentRunRerunEffect(agentRunId, request, deps).pipe(Effect.result))
+  if (result._tag === 'Success') return okResponse(result.success, result.success.idempotent === true ? 200 : 201)
+  return errorResponse(describeRerunError(result.failure), rerunStatus(result.failure))
 }
 
 export const __test__ = {

@@ -1,3 +1,4 @@
+import type { ChartStageInferenceSchema, ChartStageUsageSchema } from './chart-stage-contract'
 import { Context, Data, type Effect, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
@@ -9,34 +10,34 @@ import {
   type StagedTerminalReceipt,
   type BaseStartEvidence,
 } from './staged-checkpoint'
-import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-questions'
+import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-assessments'
 import { makeInitialChartStageRequest, stagedChartAssessments } from './staged-chart-questions'
 import type { JevInference } from './client'
 import { JevFailure, JevResponseSchema, type JevRequest } from './contract'
-import type { DecisionsError, DecisionsInference, DecisionsUsageSchema } from './decisions'
+import type { DecisionsError } from './decisions'
+type ChartStageInference = typeof ChartStageInferenceSchema.Type
 import { jevEntryEconomics } from './entry-economics'
+import { makeShortEntryProposals, mayHaveFundableShortSource } from './short-entry'
+import { isLongEntryProposal, type NativeEntryProposal } from './native-entry-proposal'
+import { makeNativeEntryJudgmentRequest } from './short-entry-questions'
 import {
   prepareEntryInferenceInput,
   type EntryInferenceInput,
   type EntryInferenceMaterial,
 } from './entry-inference-input'
-import {
-  makeEntrySourceCandidates,
-  makeEntryProposals,
-  EntrySetup,
-  ProposalRejection,
-  type EntryProposal,
-} from './entry-proposals'
+import { makeEntrySourceCandidates, makeEntryProposals, EntrySetup, ProposalRejection } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
+import type { JevProviderDiagnostics } from './provider-diagnostics'
 
 export type VisualFailureEvidence = {
   readonly category: DecisionsError['category']
   readonly httpStatus: number | null
   readonly responseHash: string | null
-  readonly usage: typeof DecisionsUsageSchema.Type | null
+  readonly usage: typeof ChartStageUsageSchema.Type | null
+  readonly providerDiagnostics?: JevProviderDiagnostics
 }
 type ProposalEvaluation = {
-  readonly proposals: readonly EntryProposal[]
+  readonly proposals: readonly NativeEntryProposal[]
   readonly rejections: readonly { readonly setup: EntrySetup; readonly reason: ProposalRejection }[]
 }
 type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
@@ -44,18 +45,18 @@ type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
   | { readonly status: 'VISUAL_FAILED'; readonly failure: VisualFailureEvidence }
   | {
       readonly status: 'PREPARATION_FAILED'
-      readonly visual: DecisionsInference
+      readonly visual: ChartStageInference
       readonly reason: 'VISUAL_RECEIPT_MISMATCH' | 'DERIVATION_CONTRACT' | 'BASE_START_FAILED'
     }
   | {
       readonly status: 'NO_FUNDED_PROPOSALS'
-      readonly visual: DecisionsInference
+      readonly visual: ChartStageInference
       readonly assessments: A
       readonly evaluation: ProposalEvaluation
     }
   | {
       readonly status: 'READY'
-      readonly visual: DecisionsInference
+      readonly visual: ChartStageInference
       readonly assessments: A
       readonly evaluation: ProposalEvaluation
       readonly jevRequest: JevRequest
@@ -64,32 +65,36 @@ type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
 
 type HandoffDisposition = HandoffDispositionFor<ChartAssessments>
 
-export interface EntryHandoff {
-  readonly schemaVersion: 'bayn.entry-handoff.v4'
+export interface CurrentEntryHandoff {
+  readonly schemaVersion: 'bayn.entry-handoff.v5'
   readonly requestId: string
   readonly inputHash: string
   readonly visualRequestHash: string
   readonly recordedAt: string
   readonly disposition: HandoffDisposition
-  readonly baseStart: BaseStartEvidence
   readonly handoffHash: string
 }
+export type EntryHandoff =
+  | CurrentEntryHandoff
+  | (Omit<CurrentEntryHandoff, 'schemaVersion'> & {
+      readonly schemaVersion: 'bayn.entry-handoff.v4'
+      readonly baseStart: BaseStartEvidence
+    })
+
 export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVersion' | 'baseStart'> & {
   readonly schemaVersion:
     | 'bayn.entry-handoff.v1'
     | 'bayn.entry-handoff.v2'
     | 'bayn.entry-handoff.v3'
     | 'bayn.entry-handoff.v4'
+    | 'bayn.entry-handoff.v5'
   readonly disposition: HandoffDispositionFor<ChartAssessmentsMaterial>
   readonly baseStart?: BaseStartEvidence
 }
 
 export type VisualTransition = {
   readonly terminal: StagedTerminalReceipt
-  readonly successor:
-    | { readonly kind: 'NONE' }
-    | { readonly kind: 'VISUAL'; readonly claim: StagedDispatchClaim }
-    | { readonly kind: 'HANDOFF'; readonly handoff: EntryHandoff }
+  readonly successor: { readonly kind: 'NONE' } | { readonly kind: 'HANDOFF'; readonly handoff: EntryHandoff }
 }
 
 export type EntryStageTransition =
@@ -141,8 +146,8 @@ export const prepareClaimedEntry = (claim: EntryInferenceClaim) =>
       protocol: prepared.input.protocol,
       funding: prepared.input.funding,
     })
-    const feasible = yield* hasFeasibleEntrySource(prepared.input, chart)
-    const visualClaim = feasible
+    const sourceFeasibility = yield* evaluateEntrySourceFeasibility(prepared.input, chart)
+    const visualClaim = sourceFeasibility.feasible
       ? yield* makeStagedDispatchClaim({
           schemaVersion: 'bayn.staged-dispatch-claim.v1',
           stage: 'CHART',
@@ -154,7 +159,7 @@ export const prepareClaimedEntry = (claim: EntryInferenceClaim) =>
           expiresAt: claim.expiresAt,
         })
       : null
-    return { claim, prepared, chart, visualRequest, visualClaim }
+    return { claim, prepared, chart, visualRequest, visualClaim, sourceFeasibility }
   })
 
 export class EntryInferenceError extends Data.TaggedError('EntryInferenceError')<{
@@ -174,18 +179,34 @@ export type EntryInferenceCompletion = {
         readonly httpStatus: number | null
         readonly responseHash: string | null
         readonly usage: typeof JevResponseSchema.fields.usage.Type | null
+        readonly providerDiagnostics?: JevProviderDiagnostics
       }
     | { readonly status: 'NOT_REQUESTED' }
     | { readonly status: 'NOT_DISPATCHED' }
     | { readonly status: 'OMITTED_BY_POLICY' }
 }
 
-export const hasFeasibleEntrySource = (
+export enum EntrySourceFeasibilityReason {
+  Feasible = 'FEASIBLE',
+  NoExecutableQuantity = 'NO_EXECUTABLE_QUANTITY',
+  NoFundedSourceStructure = 'NO_FUNDED_SOURCE_STRUCTURE',
+}
+
+export interface EntrySourceFeasibility {
+  readonly feasible: boolean
+  readonly reason: EntrySourceFeasibilityReason
+  readonly supportBarCount: number
+  readonly resistanceBarCount: number
+  readonly baseWindowCount: number
+}
+
+export const evaluateEntrySourceFeasibility = (
   input: Pick<EntryInferenceMaterial, 'protocol' | 'funding'>,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
 ) =>
   Result.gen(function* () {
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol: input.protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(input.funding.bidMicros),
@@ -193,24 +214,49 @@ export const hasFeasibleEntrySource = (
       capitalMicros: input.funding.capitalMicros,
       cryptoFeeTier: input.funding.cryptoFeeTier,
     })
-    if (economics === null) return false
+    if (economics === null)
+      return {
+        feasible: false,
+        reason: EntrySourceFeasibilityReason.NoExecutableQuantity,
+        supportBarCount: 0,
+        resistanceBarCount: 0,
+        baseWindowCount: 0,
+      } satisfies EntrySourceFeasibility
     const candidates = yield* makeEntrySourceCandidates({
       chart,
       economics,
       protocol: input.protocol,
       bidMicros: BigInt(input.funding.bidMicros),
     })
-    return (
+    const shortFeasible =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+        ? yield* mayHaveFundableShortSource({
+            chart,
+            protocol: input.protocol,
+            bidMicros: BigInt(input.funding.bidMicros),
+            askMicros: BigInt(input.funding.askMicros),
+            capitalMicros: input.funding.capitalMicros,
+          })
+        : false
+    const feasible =
+      shortFeasible ||
       candidates.baseWindows.length > 0 ||
       (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0)
-    )
+    return {
+      feasible,
+      reason: feasible ? EntrySourceFeasibilityReason.Feasible : EntrySourceFeasibilityReason.NoFundedSourceStructure,
+      supportBarCount: candidates.supportBarIds.length,
+      resistanceBarCount: candidates.resistanceBarIds.length,
+      baseWindowCount: candidates.baseWindows.length,
+    } satisfies EntrySourceFeasibility
   })
 
-export const deriveEntryHandoffDisposition = (
-  input: EntryInferenceInput,
-  visual: DecisionsInference,
-  baseStart: DecisionsInference | null = null,
-) =>
+export const hasFeasibleEntrySource = (
+  input: Pick<EntryInferenceMaterial, 'protocol' | 'funding'>,
+  chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
+) => evaluateEntrySourceFeasibility(input, chart).pipe(Result.map((result) => result.feasible))
+
+export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: ChartStageInference) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
     return yield* deriveEntryDispositionForChart(
@@ -220,7 +266,6 @@ export const deriveEntryHandoffDisposition = (
       yield* stagedChartAssessments(
         { chart, protocol: input.protocol, funding: input.funding },
         stageResponseIdentity(visual),
-        baseStart === null ? null : stageResponseIdentity(baseStart),
       ),
       makeEntryJudgmentRequest,
     )
@@ -228,13 +273,14 @@ export const deriveEntryHandoffDisposition = (
 
 export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMaterial>(
   input: Pick<EntryInferenceMaterial, 'numericalState' | 'protocol' | 'funding'>,
-  visual: DecisionsInference,
+  visual: ChartStageInference,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
   assessments: A,
   prepareJudgments: typeof makeEntryJudgmentRequest,
 ) =>
   Result.gen(function* () {
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol: input.protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(input.funding.bidMicros),
@@ -258,19 +304,34 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
             protocol: input.protocol,
             bidMicros: BigInt(input.funding.bidMicros),
           })
-    const jev = yield* prepareJudgments({
+    const shortProposals =
+      input.protocol.schemaVersion === 'bayn.jev.protocol.v41' && input.funding.equityShortEligibility !== undefined
+        ? yield* makeShortEntryProposals({
+            chart,
+            assessments,
+            protocol: input.protocol,
+            bidMicros: BigInt(input.funding.bidMicros),
+            askMicros: BigInt(input.funding.askMicros),
+            capitalMicros: input.funding.capitalMicros,
+          })
+        : []
+    const nativeEvaluation = { ...evaluation, proposals: [...evaluation.proposals, ...shortProposals] }
+    const requestInput = {
+      model: input.protocol.model,
       numericalState: input.numericalState,
       chart,
       assessments,
-      proposals: evaluation.proposals,
-    })
+    }
+    const jev = yield* input.protocol.schemaVersion === 'bayn.jev.protocol.v41'
+      ? makeNativeEntryJudgmentRequest({ ...requestInput, proposals: nativeEvaluation.proposals })
+      : prepareJudgments({ ...requestInput, proposals: nativeEvaluation.proposals.filter(isLongEntryProposal) })
     return jev === null
-      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation } as const)
+      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation: nativeEvaluation } as const)
       : ({
           status: 'READY',
           visual,
           assessments,
-          evaluation,
+          evaluation: nativeEvaluation,
           jevRequest: jev.request,
           jevRequestHash: jev.requestHash,
         } as const)

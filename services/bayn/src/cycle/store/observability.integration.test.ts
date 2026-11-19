@@ -21,6 +21,7 @@ import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
 import { defaultJevProtocolDocument } from '../../jev/protocol'
 import { makeIntradayCycleDraft } from '../runner/calendar-decisions'
+import { ForwardPerformanceUnavailableReason } from '../observability'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleObservability, CycleObservabilityLive } from './observability'
 import { CycleStore } from './model'
@@ -385,9 +386,86 @@ describePostgres('PostgreSQL intraday observability projection', () => {
     expect(projection.mutations).toMatchObject({ eventCount: 0, unresolvedCount: 0 })
     expect(projection.execution).toMatchObject({ decision: null, intentCount: 0, fillCount: 0 })
     expect(projection.economics?.accounting).toMatchObject({
+      scope: 'ACCOUNT_HISTORY',
       fillCount: 0,
       transactionCount: 0,
       netRealizedPnlAfterExecutionFeesMicros: '0',
+    })
+    expect(projection.economics?.forwardPerformance).toBeNull()
+    expect(projection.economics?.forwardPerformanceUnavailableReason).toBe(
+      ForwardPerformanceUnavailableReason.NoPersistedReceipt,
+    )
+  })
+
+  test('reports the retained receipt generation, source and window independently of current authority', async () => {
+    const receiptGeneration = '9'.repeat(64)
+    const receiptSourceRevision = 'a'.repeat(40)
+    const windowOpenedAt = '2026-07-24T13:30:00.000Z'
+    const windowClosedAt = '2026-07-24T20:06:00.000Z'
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* CycleStore).acquire(draft(), acquiredAt)
+        yield* seedSafetyState
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Isolate retained receipt projections without manufacturing a qualifying financial receipt.
+            yield* sql`CREATE TEMP TABLE authority_generations (
+              generation_hash text, account_id text
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_forward_performance_receipts (
+              authority_generation_hash text, created_at timestamptz, document jsonb
+            ) ON COMMIT DROP`
+            const document = {
+              receipt: {
+                bindings: { source: { sourceRevision: receiptSourceRevision } },
+                window: { openedAt: windowOpenedAt, closedAt: windowClosedAt },
+                evidence: { status: 'SUFFICIENT' },
+                profitability: 'UNDETERMINED',
+                totals: {
+                  grossRealizedPnlMicros: '12500000',
+                  brokerExecutionFeesMicros: '500000',
+                  otherChargedCostsMicros: null,
+                  netRealizedPnlAfterCostsMicros: null,
+                  netRealizedReturn: null,
+                },
+                counts: { completedExecutionCount: 4, realizedCloseCount: 2 },
+                reconciliationProof: { accountingReceiptsExact: true, ledgerExact: true },
+              },
+            }
+            for (const receipt of [
+              { generation: receiptGeneration, account: accountId, createdAt: windowClosedAt },
+              {
+                generation: 'b'.repeat(64),
+                account: 'other-account',
+                createdAt: '2026-08-27T20:06:00.000Z',
+              },
+            ]) {
+              yield* sql`INSERT INTO authority_generations VALUES (${receipt.generation}, ${receipt.account})`
+              yield* sql`INSERT INTO autonomous_forward_performance_receipts VALUES (
+                ${receipt.generation}, ${receipt.createdAt}, ${sql.json(document)}
+              )`
+            }
+            return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+          }),
+        )
+      }),
+    )
+    expect(projection.authority?.generationHash).toBe(authorityGenerationHash)
+    expect(projection.economics).toMatchObject({
+      accounting: { scope: 'ACCOUNT_HISTORY', grossRealizedPnlMicros: '0' },
+      forwardPerformance: {
+        createdAt: windowClosedAt,
+        authorityGenerationHash: receiptGeneration,
+        sourceRevision: receiptSourceRevision,
+        windowOpenedAt,
+        windowClosedAt,
+        grossRealizedPnlMicros: '12500000',
+        brokerExecutionFeesMicros: '500000',
+        otherChargedCostsMicros: null,
+        netRealizedPnlAfterCostsMicros: null,
+      },
+      forwardPerformanceUnavailableReason: null,
     })
   })
 

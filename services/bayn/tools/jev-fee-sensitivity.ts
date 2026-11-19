@@ -103,6 +103,7 @@ const Economics = Schema.Struct({
   holdingExitBreakEvenBidUsd: Schema.Finite,
 })
 export const hypotheticalCryptoFeeSensitivity = (input: {
+  feeAt: string
   symbol: string
   protocol: JevProtocol
   economics: unknown
@@ -125,6 +126,7 @@ export const hypotheticalCryptoFeeSensitivity = (input: {
     if (received <= 0n) throw new Error('Fee sensitivity has no received inventory')
     const bid = Result.getOrThrow(
       jevBreakEvenExitBid({
+        feeAt: input.feeAt,
         protocol: input.protocol,
         symbol: input.symbol,
         quantityAtoms: received,

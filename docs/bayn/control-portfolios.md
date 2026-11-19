@@ -12,6 +12,12 @@ contains `bayn-control-study`.
 without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
 Installing the command does not schedule a capture, run a study, or qualify the input.
 
+The [November 9 prospective commitment](prospective/2026-11-09-controls.json) records the plan, design, released
+commands, source inventory query and input metadata hashes for that session. Verify the retained private plan and
+design bytes against those hashes before use. Establish their pre-open commitment through the file's Git commit and
+the matching GitHub CI run's server-recorded creation time and head SHA. Local timestamps do not establish that proof.
+This is a descriptive policy comparison; unknown costs, calibration and statistical qualification remain explicit.
+
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). `entry: "JEV"` adds an independent native entry
 portfolio with mechanical exits. `entry: "DETERMINISTIC"` retains deterministic entries. Only
@@ -28,6 +34,61 @@ market metadata to the serialized native protocol. Preparation rejects an interv
 session before any model dispatch.
 
 ## Offline input preflight
+
+### Bind a frozen plan to native opening evidence
+
+Run `bun run --filter @proompteng/bayn control:bind` to construct the sole v10 input from a
+`bayn.control-study-plan.v1`, a retained `bayn.control-study-opening.v1`, and the native export directory:
+
+```sh
+bun run --filter @proompteng/bayn control:bind \
+  --plan /private/plan.json --plan-sha256 <independently-retained-plan-sha256> \
+  --opening /private/opening.json --opening-sha256 <retained-native-opening-sha256> \
+  --export /private/native-export --source-receipt-sha256 <independently-retained-receipt-sha256> \
+  --output /private/new-bound-input
+```
+
+Freeze the plan bytes and independently establish their existence before the first session opens. The plan contains
+the deterministic mechanical control template and the candidate's broker identity, request, authority generation and
+native risk policy. It omits source, opening cash and opening equity peak. The opening file carries the candidate's
+retained native preflight inputs, physical build, broker identity, request and actual daily turnover. Capture those
+inputs from the native broker/PostgreSQL/TigerBeetle evidence path; never hand-enter or reset balances.
+
+Capture that file with the reviewed deployed binary, using the independently frozen plan:
+
+```sh
+bayn-control-opening \
+  --plan /private/plan.json --plan-sha256 <independently-retained-plan-sha256> \
+  --output /private/new-native-opening
+```
+
+The command requires an embedded production build, the configured sealed sandbox request and the exact frozen
+account, build and native risk policy. Before reconciliation, the existing native generation verifier checks durable
+authority history against the sealed request and its configured continuation or build lineage. Capture requires that
+verified generation to match the frozen plan and checks the reconciler's returned generation again. It acquires only
+broker read access; it cannot submit orders or activate
+capital. Normal reconciliation may retain broker events, accounting and ledger effects, and restrict authority on a
+discrepancy. It does not initialize a new generation, reset balances or change limits. The captured inputs include
+the native accounting hash, original equity peak, actual daily turnover and day-start equity, including used budgets.
+An output directory is claimed before reconciliation; reusing it fails without another pass. Native clients close
+before private `opening.json` and the final `opening-receipt.json` are published. A failure leaves no completed receipt.
+The printed opening SHA-256 pins the file for binding. Capture near the first regular open; a capture made earlier
+is diagnostic evidence and will fail binding's freshness check. The capture receipt does not independently authenticate
+when the file existed or qualify an economic result.
+
+Binding requires the same account, build and risk policy, exact flat native state, fully available cash, fresh observations
+available before the first regular open, zero used daily turnover and unchanged day-start equity. The comparison interval
+must start and finish at regular-session boundaries. It inherits the actual cash and original peak, including
+used drawdown. A different request, stale state, noncash equity or a changed export is rejected. Unknown costs remain
+null and every execution assumption stays frozen. `input.json` and the final `binding.json` use private permissions in
+a new directory. Existing output is never overwritten. Pass `input.json` and its printed SHA-256 to the existing study
+or preflight command below.
+
+The binding records byte identities and capital derivation. It does not authenticate when files existed or validate
+the market-data file. The study reader retains whole-file replay verification. Source and opening provenance,
+prospective completeness, calibration, full costs and economic qualification still require their own evidence.
+
+### Check complete input coverage
 
 Run the command with `--mode preflight` and the same pinned input, arrivals and source receipt before an economic
 study. It writes `bayn.control-input-preflight.v1` to the new `--output` path without selecting signals, constructing
@@ -50,7 +111,7 @@ An available benchmark with every candidate excluded cannot pass it. Partial cov
 The original source receipt is retained unchanged. A complete screen does not establish original stream
 availability, prospective completeness, executable liquidity, calibrated latency, costs or profitability. Keep the
 input and diagnostic output private, outside Git and CI artifacts. Omitting `--mode`, or using `--mode study`, retains
-the registered study behavior. The sole development input contract is v9. Preflight never starts that study
+the registered study behavior. The sole development input contract is v10. Preflight never starts that study
 automatically.
 
 ## Fixed policies
@@ -89,7 +150,7 @@ fallback. Use the native execution engine to verify those behaviors.
 
 ## Frozen residual-shock falsification candidate
 
-Input `bayn.control-study-input.v9` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
+Input `bayn.control-study-input.v10` supports `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
 `falsificationCandidate`. It requires deterministic entry, mechanical management, `repeatedTargetWeightPpm: 200000`,
 a declared `turnoverPolicy`, and native 30,000 ms polling. Freeze timing, execution and data-cost scenarios before
 any outcome. It cannot be combined with the Jev entry or Ridge experiments.
@@ -205,7 +266,7 @@ from each filled dollar of turnover as a cost stress.
 ### Scheduled opportunity accounting
 
 Input v8 always includes opportunity accounting. Current reports use `bayn.control-study-report.v6` and definition
-`bayn.control-study-definition.v12`. Older development input contracts are rejected; preserve old reports as historical
+`bayn.control-study-definition.v13`. Older development input contracts are rejected; preserve old reports as historical
 artifacts. The optional Ridge and residual-shock experiments retain their frozen mathematical definitions.
 
 Each session adds `simulatedOpportunityAccounting`. Its denominator is every session-open anchored poll strictly
@@ -275,7 +336,9 @@ claim that controls made Jev calls or executed the production interpreter.
 
 ```json
 {
-  "schemaVersion": "bayn.control-study-input.v9",
+  "schemaVersion": "bayn.control-study-input.v10",
+  "riskEnvironment": "live",
+  "openingPeakEquityMicros": "100000000000",
   "costObjective": "ALL_COSTS",
   "entry": "DETERMINISTIC",
   "turnoverPolicy": "ENTRY_AND_EXPECTED_EXIT",
@@ -302,3 +365,47 @@ node services/bayn/dist/research/control-study-command.js \
 The command refuses duplicate or incomplete flags, hash mismatches, and an existing output file. Keep the exact
 executable Git commit, input hashes, command, exit status, and report hash in the experiment receipt. A report
 records the source and policy definitions but does not independently prove which Git commit executed the command.
+
+### Freeze the risk profile explicitly
+
+Control input v10 requires `riskEnvironment`, either `live` or `sandbox`. It selects the same native risk policy
+constructor used by the candidate. Earlier inputs silently used the live default even when comparing with PAPER.
+The native sandbox profile allows $1,000,000 daily turnover and $10,000 drawdown; the live profile allows $200,000
+and $5,000. Order, symbol and gross limits retain their existing values. Choose the candidate's actual profile
+before outcomes and retain the resulting `risk` object and input hash. This changes simulated controls only.
+Existing input files must explicitly migrate to v10; there is no environment inference or compatibility default.
+
+The required `openingPeakEquityMicros` carries the candidate's pre-existing broker risk peak into every control.
+It must be at least the flat opening cash. Starting a comparison never resets the account's inherited drawdown.
+The experiment's external-cost accrual starts at its observation boundary and stays separate from broker risk.
+
+### Export original deliveries for the controls
+
+Build research commands with `bun run --filter @proompteng/bayn build:research`. Run `native:export` in the Bayn
+service directory with the existing archive connection and CA configuration:
+
+```sh
+bun run native:export --capture-id <capture-id> --through-ordinal <final-chunk-ordinal> --output <new-private-directory>
+```
+
+The published Bayn image exposes the same command as `bayn-native-arrival-export`.
+
+The command opens only the native-arrival archive, through read-only connections, without migrations or broker
+credentials. The metadata connection closes after its read; the chunk stream owns and closes its connection pool
+before local whole-file validation and receipt publication. There is no transaction spanning offline validation.
+Select the consumer epoch and final ordinal from its retained provenance, before inspecting control returns. A session needs a continuous prefix from ordinal zero that brackets the whole session. A restart cannot be
+repaired by joining different epochs, filtering other markets, or inventing availability times. Record missing
+coverage as incomplete and preserve the excluded source and reason.
+
+The exporter preserves every selected gzip member, verifies its hash chain and original consumer sequence, then runs
+the controls' whole-file replay reader. That reader checks raw bytes, source coordinates, reducer dispositions and
+termination markers. Memory is bounded by one decoded chunk, a page of compressed chunks, and the existing replay
+projection. No entire source history is loaded into memory. Failed or interrupted work retains its partial private
+output without publishing a usable source receipt. An existing directory is never overwritten.
+
+Outputs are `arrivals.ndjson.gz`, `source.json`, `source-receipt.json`, `export-manifest.json` and
+`interval-receipt.json`. The CLI prints the exact source receipt SHA-256 after validation; retain that hash outside
+editable study inputs. Use `source.json` as the control input's `backtest.source`, and pass the arrival file,
+receipt and pinned receipt hash to `control:study --mode preflight`, then to the study. Actual availability bounds
+are reported; export success alone does not establish full-session market coverage, calibrated simulation costs,
+prospective registration, a broker fill, profitability or capital authority.

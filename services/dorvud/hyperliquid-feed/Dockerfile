@@ -10,6 +10,7 @@ COPY websockets ./websockets
 COPY technical-analysis ./technical-analysis
 COPY technical-analysis-flink ./technical-analysis-flink
 COPY hyperliquid-feed ./hyperliquid-feed
+COPY webull-feed ./webull-feed
 
 RUN chmod +x ./gradlew
 RUN ./gradlew :hyperliquid-feed:installDist --no-daemon

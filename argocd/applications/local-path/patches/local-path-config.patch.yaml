@@ -31,8 +31,7 @@ data:
             {
               "node": "turin",
               "paths": [
-                "/var/mnt/turin-nvme-intel",
-                "/var/mnt/turin-nvme-transcend"
+                "/var/local-path-provisioner"
               ]
             },
             {
@@ -43,40 +42,18 @@ data:
             }
           ]
         },
-        "local-path-ryzen": {
+        "local-path-bayn-wal": {
           "nodePathMap": [
             {
-              "node": "talos-192-168-1-194",
+              "node": "talos-192-168-1-85",
               "paths": [
-                "/var/mnt/local-path-provisioner"
+                "/var/mnt/local-path-provisioner/bayn-wal"
               ]
             },
             {
-              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-              "paths": []
-            }
-          ]
-        },
-        "local-path-turin-nvme-intel": {
-          "nodePathMap": [
-            {
               "node": "turin",
               "paths": [
-                "/var/mnt/turin-nvme-intel"
-              ]
-            },
-            {
-              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-              "paths": []
-            }
-          ]
-        },
-        "local-path-turin-nvme-transcend": {
-          "nodePathMap": [
-            {
-              "node": "turin",
-              "paths": [
-                "/var/mnt/turin-nvme-transcend"
+                "/var/mnt/turin-nvme-intel/bayn-wal"
               ]
             },
             {
@@ -88,15 +65,15 @@ data:
         "local-path-ci-amd64": {
           "nodePathMap": [
             {
-              "node": "turin",
-              "paths": [
-                "/var/mnt/turin-nvme-transcend"
-              ]
-            },
-            {
               "node": "talos-192-168-1-194",
               "paths": [
                 "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/lib/kubelet/ci-amd64"
               ]
             },
             {

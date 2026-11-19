@@ -133,7 +133,7 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     statusPath: readEnv(env, 'ANYPI_STATUS_PATH', resolve(workspace, '.agent/status.json')),
     logPath: readEnv(env, 'ANYPI_LOG_PATH', resolve(workspace, '.agent/runner.log')),
     provider: readEnv(env, 'ANYPI_PROVIDER', 'flamingo'),
-    model: readEnv(env, 'ANYPI_MODEL', 'qwen36-flamingo'),
+    model: readEnv(env, 'ANYPI_MODEL', 'qwen38-flamingo'),
     baseUrl: readEnv(env, 'ANYPI_BASE_URL', 'http://flamingo.flamingo.svc.cluster.local/v1'),
     apiKey: readEnv(env, 'ANYPI_API_KEY', 'flamingo-local'),
     modelReadyTimeoutSeconds: readNumber(env, 'ANYPI_MODEL_READY_TIMEOUT_SECONDS', 1800),

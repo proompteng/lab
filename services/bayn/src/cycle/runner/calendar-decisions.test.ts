@@ -8,7 +8,6 @@ import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { makeCycleExecutionPolicy } from '../construction'
 import { CycleState, AutonomousCycleSchema } from '../model'
 import {
-  intradayEntryRearmDelayMs,
   makeIntradayCycleDraft,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
@@ -123,8 +122,15 @@ describe('intraday calendar decisions', () => {
         terminalAt,
       }),
     )
-    const beforeRearm = new Date(Date.parse(terminalAt) + intradayEntryRearmDelayMs - 1).toISOString()
-    const atRearm = new Date(Date.parse(terminalAt) + intradayEntryRearmDelayMs).toISOString()
+    expect(
+      nextIntradayEntryAttemptOrdinal(
+        first,
+        new Date(Date.parse(terminalAt) + 1).toISOString(),
+        first.window.submissionCutoffAt,
+      ),
+    ).toBe(2)
+    const beforeRearm = new Date(Date.parse(terminalAt) - 1).toISOString()
+    const atRearm = new Date(Date.parse(terminalAt)).toISOString()
 
     expect(secondDraft.identity.cycleId).not.toBe(firstDraft.identity.cycleId)
     expect(secondDraft.identity).toMatchObject({ entryAttemptOrdinal: 2 })
@@ -148,7 +154,7 @@ describe('intraday calendar decisions', () => {
     expect(
       nextIntradayEntryAttemptOrdinal(
         second,
-        new Date(Date.parse(atRearm) + intradayEntryRearmDelayMs).toISOString(),
+        new Date(Date.parse(atRearm) + 1).toISOString(),
         second.window.submissionCutoffAt,
       ),
     ).toBe(3)

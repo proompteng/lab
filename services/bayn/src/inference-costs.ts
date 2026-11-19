@@ -1,3 +1,4 @@
+import { usesJevOnlyInference } from './jev/protocol'
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -12,8 +13,8 @@ import {
 import { JevOutcome } from './jev/evidence'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
 import { readSequentialInferenceCostEvidence } from './jev/sequential-inference-cost-evidence'
-import { JevFailure, jevModel } from './jev/contract'
-import { decisionsModel } from './jev/decisions'
+import { JevFailure } from './jev/contract'
+import { decisionsModel, DecisionsUsageSchema } from './jev/decisions'
 import {
   ChartCheckpointSchema,
   decodeChartCheckpointForSource,
@@ -148,7 +149,12 @@ export const ThreeStageInferenceCostLineSchema = Schema.Struct({
   stageTerminalHash: Schema.NullOr(Sha256Schema),
   stageSkipHash: Schema.NullOr(Sha256Schema),
 })
+export const UndispatchedInferenceCostLineSchema = Schema.Struct({
+  ...ThreeStageInferenceCostLineSchema.fields,
+  notDispatchedByTerminalHash: Sha256Schema,
+})
 export const InferenceCostLineSchema = Schema.Union([
+  UndispatchedInferenceCostLineSchema,
   ThreeStageInferenceCostLineSchema,
   CheckpointInferenceCostLineSchema,
   StagedInferenceCostLineSchema,
@@ -194,6 +200,7 @@ type Stage = {
   readonly chartClaimHash?: string
   readonly chartTerminalHash?: string | null
   readonly stageClaimHash?: string | null
+  readonly notDispatchedByTerminalHash?: string
   readonly stageTerminalHash?: string | null
   readonly stageSkipHash?: string | null
 }
@@ -213,14 +220,15 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
     if (version.schemaVersion === 'bayn.jev-evaluation-request.v3') {
       if (row.chartCheckpoint !== undefined || row.stagedCheckpoint === undefined)
         return yield* failure('Staged requests require their explicit journal, not a historical chart checkpoint')
-      const { request, receipt, resolution, handoff, visualStages } = yield* readStagedInferenceCostEvidence({
-        ...row,
-        stagedCheckpoint: row.stagedCheckpoint,
-      })
+      const { request, receipt, resolution, handoff, visualStages, jevNotDispatchedByTerminalHash } =
+        yield* readStagedInferenceCostEvidence({
+          ...row,
+          stagedCheckpoint: row.stagedCheckpoint,
+        })
       const visual: Stage[] = visualStages.map((stage) => ({
         stage: stage.stage === 'CHART' ? InferenceStage.Chart : InferenceStage.BaseStart,
-        provider: 'openai',
-        model: decisionsModel,
+        provider: usesJevOnlyInference(request.request.protocol) ? 'typesafe' : 'openai',
+        model: usesJevOnlyInference(request.request.protocol) ? request.request.protocol.model : decisionsModel,
         purpose: InferencePurpose.Entry,
         tariffAt: stage.tariffAt,
         recordedStartedAt: stage.recordedStartedAt,
@@ -234,8 +242,12 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
                     stage.usage,
                     stage.outcome === 'RECEIVED' ? InferenceUsageStatus.Received : InferenceUsageStatus.Rejected,
                   ),
-                  cachedInputTokens: BigInt(stage.usage.input_tokens_details.cached_tokens),
-                  cacheWriteInputTokens: BigInt(stage.usage.input_tokens_details.cache_write_tokens),
+                  cachedInputTokens: BigInt(
+                    'input_tokens_details' in stage.usage ? stage.usage.input_tokens_details.cached_tokens : 0,
+                  ),
+                  cacheWriteInputTokens: BigInt(
+                    'input_tokens_details' in stage.usage ? stage.usage.input_tokens_details.cache_write_tokens : 0,
+                  ),
                 },
         stageClaimHash: stage.claimHash,
         stageTerminalHash: stage.terminalHash,
@@ -243,10 +255,14 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         handoffHash: stage.handoffHash,
         receiptHash: stage.receiptHash,
         resolutionHash: stage.resolutionHash,
+        ...(stage.notDispatchedByTerminalHash === undefined
+          ? {}
+          : { notDispatchedByTerminalHash: stage.notDispatchedByTerminalHash }),
       }))
       const zero = receipt?.outcome.status === JevOutcome.Failed && receipt.outcome.failure === JevFailure.NotDispatched
       const skipped = handoff !== null && handoff.disposition.status !== 'READY'
-      let jevUsage: Usage | null = zero || skipped ? notDispatched() : null
+      let jevUsage: Usage | null =
+        zero || skipped || jevNotDispatchedByTerminalHash !== undefined ? notDispatched() : null
       let startedAt: string | undefined
       let recordedStartedAt: string | undefined
       if (receipt?.outcome.status === JevOutcome.Completed) {
@@ -265,17 +281,21 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         {
           stage: InferenceStage.Jev,
           provider: 'typesafe',
-          model: jevModel,
+          model: request.request.protocol.model,
           purpose: InferencePurpose.Entry,
           usage: jevUsage,
           tariffAt: startedAt,
           recordedStartedAt,
           handoffHash: handoff?.handoffHash ?? null,
           receiptHash: skipped ? null : (receipt?.receiptHash ?? null),
-          resolutionHash: skipped ? null : (resolution?.resolutionHash ?? null),
+          resolutionHash:
+            skipped || jevNotDispatchedByTerminalHash !== undefined ? null : (resolution?.resolutionHash ?? null),
           stageClaimHash: null,
           stageTerminalHash: null,
           stageSkipHash: null,
+          ...(jevNotDispatchedByTerminalHash === undefined
+            ? {}
+            : { notDispatchedByTerminalHash: jevNotDispatchedByTerminalHash }),
         },
       ]
       return { request, receipt, resolution, handoffAt: handoff?.recordedAt ?? null, stages }
@@ -362,17 +382,20 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
               : null
         chartStartedAt = disposition.status === 'VISUAL_FAILED' ? request.observedAt : disposition.visual.startedAt
         chartRecordedStartedAt = disposition.status === 'VISUAL_FAILED' ? undefined : disposition.visual.startedAt
-        if (metering !== null)
+        if (metering !== null) {
+          const decodedUsage = Schema.decodeUnknownResult(DecisionsUsageSchema)(metering)
+          if (Result.isFailure(decodedUsage)) return yield* failure('Retired chart usage does not reproduce')
           chartUsage = {
             ...usage(
-              metering,
+              decodedUsage.success,
               disposition.status === 'VISUAL_FAILED' || disposition.status === 'PREPARATION_FAILED'
                 ? InferenceUsageStatus.Rejected
                 : InferenceUsageStatus.Received,
             ),
-            cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
-            cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
+            cachedInputTokens: BigInt(decodedUsage.success.input_tokens_details.cached_tokens),
+            cacheWriteInputTokens: BigInt(decodedUsage.success.input_tokens_details.cache_write_tokens),
           }
+        }
       }
     }
     if (checkpoint !== undefined) {
@@ -392,8 +415,12 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
                 metering,
                 terminal?.outcome.status === 'RECEIVED' ? InferenceUsageStatus.Received : InferenceUsageStatus.Rejected,
               ),
-              cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
-              cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
+              cachedInputTokens: BigInt(
+                'input_tokens_details' in metering ? metering.input_tokens_details.cached_tokens : 0,
+              ),
+              cacheWriteInputTokens: BigInt(
+                'input_tokens_details' in metering ? metering.input_tokens_details.cache_write_tokens : 0,
+              ),
             }
       if (terminal?.outcome.status === 'RECEIVED') {
         chartStartedAt = terminal.outcome.inference.startedAt
@@ -444,7 +471,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       {
         stage: InferenceStage.Jev,
         provider: 'typesafe',
-        model: jevModel,
+        model: request.request.protocol.model,
         usage: jevUsage,
         tariffAt: jevStartedAt,
         recordedStartedAt: jevRecordedStartedAt,
@@ -732,6 +759,9 @@ export const makeInferenceCostReport = (
             stageClaimHash: stage.stageClaimHash,
             stageTerminalHash: stage.stageTerminalHash ?? null,
             stageSkipHash: stage.stageSkipHash ?? null,
+            ...(stage.notDispatchedByTerminalHash === undefined
+              ? {}
+              : { notDispatchedByTerminalHash: stage.notDispatchedByTerminalHash }),
           })
         else {
           if (stage.stage === InferenceStage.BaseStart)
@@ -785,6 +815,9 @@ export const makeInferenceCostReport = (
               stageTerminalHash: line.stageTerminalHash,
               stageSkipHash: line.stageSkipHash,
             }
+          : {}),
+        ...('notDispatchedByTerminalHash' in line
+          ? { notDispatchedByTerminalHash: line.notDispatchedByTerminalHash }
           : {}),
       })),
     })

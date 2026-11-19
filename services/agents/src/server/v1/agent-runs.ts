@@ -33,22 +33,22 @@ export const getAgentRunsHandler = async (request: Request, deps: Pick<AgentRuns
   const limit = parseListLimit(url.searchParams.get('limit'))
   if (!agentName && statuses.length === 0) return errorResponse('agentId or status is required', 400)
 
-  const result = await Effect.runPromise(listAgentRunsEffect(deps, { agentName, statuses, limit }).pipe(Effect.either))
-  if (result._tag === 'Right') return okResponse({ ok: true, runs: result.right })
-  return errorResponse(describeAgentRunSubmitError(result.left), agentRunSubmitStatus(result.left))
+  const result = await Effect.runPromise(listAgentRunsEffect(deps, { agentName, statuses, limit }).pipe(Effect.result))
+  if (result._tag === 'Success') return okResponse({ ok: true, runs: result.success })
+  return errorResponse(describeAgentRunSubmitError(result.failure), agentRunSubmitStatus(result.failure))
 }
 
 export const postAgentRunsHandler = async (request: Request, deps: AgentRunsApiDependencies) => {
   const leaderResponse = deps.requireLeaderForMutation?.() ?? null
   if (leaderResponse) return leaderResponse
 
-  const result = await Effect.runPromise(submitAgentRunEffect(request, deps).pipe(Effect.either))
-  if (result._tag === 'Right') {
-    return okResponse(result.right.body, result.right.status)
+  const result = await Effect.runPromise(submitAgentRunEffect(request, deps).pipe(Effect.result))
+  if (result._tag === 'Success') {
+    return okResponse(result.success.body, result.success.status)
   }
   return errorResponse(
-    describeAgentRunSubmitError(result.left),
-    agentRunSubmitStatus(result.left),
-    agentRunSubmitDetails(result.left),
+    describeAgentRunSubmitError(result.failure),
+    agentRunSubmitStatus(result.failure),
+    agentRunSubmitDetails(result.failure),
   )
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@proompteng/design/ui'
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { startSignIn } from '@/lib/platform/auth-client'
 
 type RegistrationState = { status: 'idle' | 'redirecting' } | { status: 'error'; message: string }
 
@@ -17,7 +17,7 @@ export function PasskeyRegistration() {
         aria-busy={state.status === 'redirecting'}
         onClick={() => {
           setState({ status: 'redirecting' })
-          void startTengriSignIn('add-passkey').catch((cause: unknown) => {
+          void startSignIn('add-passkey').catch((cause: unknown) => {
             setState({
               status: 'error',
               message: cause instanceof Error ? cause.message : 'Passkey setup could not start. Try again.',

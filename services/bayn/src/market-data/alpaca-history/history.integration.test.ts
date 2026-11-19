@@ -4,7 +4,7 @@ import { expect, test } from 'bun:test'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeServices } from '@effect/platform-node'
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { backfillAlpacaHistory } from '../../../tools/backfill'
 import { publishHistoricalDataset, restoreHistoricalDataset } from '../../../tools/history-store'
 import { exportHistoricalDataset } from '../../../tools/history-export'
@@ -49,36 +49,10 @@ const prepareHistoryStorageFixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const text = yield* fs.readFileString(
     fileURLToPath(
-      new URL(
-        '../../../../../argocd/applications/torghut/clickhouse/historical-datasets-schema-job.yaml',
-        import.meta.url,
-      ),
+      new URL('../../../../../argocd/applications/torghut/clickhouse/schema/historical-datasets.sql', import.meta.url),
     ),
   )
-  const yaml = yield* Effect.try({
-    try: (): unknown => Bun.YAML.parse(text),
-    catch: (cause) => new HistoricalDatasetFailure({ message: 'Historical schema job YAML cannot be parsed', cause }),
-  })
-  const job = yield* Schema.decodeUnknownEffect(
-    Schema.Struct({
-      spec: Schema.Struct({
-        template: Schema.Struct({
-          spec: Schema.Struct({ containers: Schema.Array(Schema.Struct({ args: Schema.Array(Schema.String) })) }),
-        }),
-      }),
-    }),
-  )(yaml)
-  const script = job.spec.template.spec.containers[0]?.args[0]
-  if (script === undefined)
-    return yield* new HistoricalDatasetFailure({ message: 'Historical schema job has no SQL script' })
-  const first = script.indexOf('CREATE DATABASE IF NOT EXISTS signal'),
-    last = script.indexOf('SELECT throwIf')
-  if (first < 0 || last < first)
-    return yield* new HistoricalDatasetFailure({ message: 'Historical schema job has no bounded DDL section' })
-  const ddl = script
-    .slice(first, last)
-    .replaceAll(' ON CLUSTER default', '')
-    .replace(/ReplicatedMergeTree\('[^']+', '[^']+'\)/g, 'MergeTree()')
+  const ddl = text.replace(/ReplicatedMergeTree\('[^']+', '[^']+'\)/g, 'MergeTree()')
   for (const statement of ddl
     .split(';')
     .map((part) => part.trim())
@@ -220,8 +194,7 @@ storeTest(
   'historical batch readback uses bounded indexed reads for a large quote capture',
   async () => {
     const quotes = HttpClient.make((request) => {
-      const url = new URL(request.url)
-      for (const [key, value] of request.urlParams) url.searchParams.set(key, value)
+      const url = Option.getOrThrow(HttpClientRequest.toUrl(request))
       if (!url.pathname.endsWith('/quotes')) return historyFixtureHttp.execute(request)
       const page = Number(url.searchParams.get('page_token') ?? '0')
       const start = Date.parse(url.searchParams.get('start') ?? '')

@@ -14,13 +14,15 @@ resources:
   - postgres-cluster.yaml
   - postgres-monitoring.yaml
   - postgres-scheduled-backup.yaml
-  - native-arrival-postgres.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml
   - egress-proxy.yaml
   - deployment.yaml
   - execution-bootstrap-sealedsecret.yaml
   - execution-controller.yaml
+  - broker-feed.yaml
+  - broker-kafka-ingress.yaml
+  - broker-stream-networkpolicy.yaml
   - execution-controller-pdb.yaml
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
@@ -29,13 +31,18 @@ resources:
   - status-pdb.yaml
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
-  - openai-externalsecret.yaml
   - bayn-research-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
   - opencode-retained-state.yaml
   - research-networkpolicy.yaml
 configMapGenerator:
+  - name: bayn-broker-kafka-health
+    files:
+      - probe.sh=broker-kafka-health.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
   - name: bayn-telemetry
     files:
       - config.alloy=telemetry.alloy
@@ -50,3 +57,5 @@ images:
     newName: registry.ide-newton.ts.net/lab/bayn
     newTag: "sha-ee60493eb5a9b5f8572e868b6ff31c17675501a3"
     digest: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
+  - name: bayn-broker-feed
+    newName: registry.ide-newton.ts.net/lab/bayn-broker-feed

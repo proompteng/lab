@@ -4,7 +4,7 @@ Run Temporal workers and clients on Bun.
 
 Docs: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 
-This release uses Effect 4.0.0. Read the [Effect 4 migration guide](docs/effect-4-migration.md)
+This release uses Effect 4.1.4. Read the [Effect 4 migration guide](docs/effect-4-migration.md)
 before upgrading an existing worker; Effect 3 histories require their original runtime.
 
 ## Quickstart

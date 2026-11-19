@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { makeNativeChartEvidence } from './chart-evidence'
 import { decodeJevResponse } from './contract'
@@ -8,8 +8,15 @@ import { chartAssessmentsFixture } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
+import { WebullSession } from '../market-data/webull-contract'
+import { webullEntryContextPolicy, type WebullEntryContext } from './webull-entry-context'
 
-const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structureHigh = 103) => {
+const fixture = (
+  symbol: 'AAPL' | 'ETH/USD' = 'AAPL',
+  latestClose = 104,
+  structureHigh = 103,
+  webullContext: WebullEntryContext = null,
+) => {
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
       symbol,
@@ -42,6 +49,7 @@ const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structu
   const assessments = chartAssessmentsFixture(chartSource)
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: chart.symbol,
       bidMicros: 104_000_000n,
@@ -63,6 +71,8 @@ const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structu
   const input = {
     chart,
     numericalState: {
+      schemaVersion: 'bayn.jev-entry-state.v24',
+      webullContext,
       candidate: { symbol: chart.symbol, bars1m: chart.bars },
       benchmark: { symbol: 'SPY' },
       relativeSignals: {},
@@ -89,6 +99,36 @@ const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structu
 }
 
 describe('proposal-specific Jev judgments and code-owned selection', () => {
+  test('the final Jev body retains independently labeled Webull decimals without changing IEX evidence or proposal terms', () => {
+    const context = {
+      ...webullEntryContextPolicy,
+      symbol: 'AAPL',
+      windowStartAt: '2026-10-25T06:59:00.000Z',
+      windowEndAt: '2026-10-25T07:00:00.000Z',
+      session: WebullSession.Regular,
+      open: '103.0000',
+      high: '105.0000',
+      low: '102.0000',
+      close: '104.000000000000000001',
+      volume: '12345.00000001',
+      receivedAt: '2026-10-25T07:00:01.123456789Z',
+      availableAt: '2026-10-25T07:00:01.500Z',
+      availabilityLagMs: 1500,
+    }
+    const actual = fixture('AAPL', 104, 103, context).prepared
+    const baseline = fixture().prepared
+    const State = Schema.Record(Schema.String, Schema.Json)
+    const actualState = Schema.decodeUnknownSync(State)(actual.request.state)
+    const baselineState = Schema.decodeUnknownSync(State)(baseline.request.state)
+    expect(actualState['webullContext']).toEqual(context)
+    expect(actualState['completedSourceBars']).toEqual(baselineState['completedSourceBars'])
+    expect(actualState['proposals']).toEqual(baselineState['proposals'])
+    expect(actual.requestHash).not.toBe(baseline.requestHash)
+    expect(baselineState['webullContext']).toBeNull()
+    for (const question of Object.values(actual.request.questions))
+      expect(JSON.stringify(question.instructions)).toContain('Use available webullContext')
+  })
+
   test('asks one typed judgment per question with each proposal stored once in shared evidence', () => {
     const { prepared } = fixture()
     expect(Object.keys(prepared.request.questions)).toEqual([
@@ -98,7 +138,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
       'equity_base_breakout_stop_invalidates',
     ])
     expect(prepared.request.state).toMatchObject({
-      schemaVersion: 'bayn.jev-proposal-evidence.v1',
+      schemaVersion: 'bayn.jev-proposal-evidence.v2',
       proposals: {
         SUPPORT_RECOVERY: { terms: { entryPriceUsd: 104.02, stopPriceUsd: 96.99, maximumHoldingMinutes: 15 } },
       },

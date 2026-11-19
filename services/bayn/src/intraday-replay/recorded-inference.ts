@@ -3,13 +3,14 @@ import { Clock, Effect, Redacted, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { JevError } from '../jev/client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from '../jev/contract'
-import { DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from '../jev/decisions'
+import { decodeDecisionsResponse, prepareDecisionsRequest } from '../jev/decisions'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 import {
   ReplayInferenceCallSchema,
   replayVisualStage,
+  replayInferenceStage,
   type ReplayInferenceCall,
   type ReplayInferenceProviders,
 } from './inference-timing'
@@ -29,7 +30,9 @@ export const validateReplayInferenceCalls = (calls: readonly ReplayInferenceCall
     const identities = new Set<string>()
     for (const call of calls) {
       const prepared =
-        call.stage === 'JEV' ? yield* prepareJevRequest(call.request) : yield* prepareDecisionsRequest(call.request)
+        call.schemaVersion === 'bayn.replay-inference-call.v4' || call.stage === 'JEV'
+          ? yield* prepareJevRequest(call.request)
+          : yield* prepareDecisionsRequest(call.request)
       const identity = `${call.stage}:${call.requestHash}:${call.simulatedStartedAt}`
       if (
         prepared.requestHash !== call.requestHash ||
@@ -56,10 +59,11 @@ export const validateReplayInferenceCalls = (calls: readonly ReplayInferenceCall
           return yield* Result.fail(
             new ReplayBrokerFailure({ message: 'Retained inference response evidence differs' }),
           )
-        if (call.stage === 'JEV') yield* decodeJevResponse(call.request, call.outcome.inference.response)
+        if (call.schemaVersion === 'bayn.replay-inference-call.v4' || call.stage === 'JEV')
+          yield* decodeJevResponse(call.request, call.outcome.inference.response)
         else yield* decodeDecisionsResponse(call.request, call.outcome.inference.response)
       } else if (
-        call.stage === 'JEV' &&
+        (call.schemaVersion === 'bayn.replay-inference-call.v4' || call.stage === 'JEV') &&
         call.outcome.status === 'FAILED' &&
         call.outcome.responseHash !== null &&
         (yield* canonicalHashV1Result(call.outcome.rejectedResponse)) !== call.outcome.responseHash
@@ -162,8 +166,12 @@ export const makeRecordedInferenceProviders = (
                 failure: JevFailure.Request,
                 message: 'Invalid retained inference deadline',
               })
-            const call = claim('JEV', prepared.requestHash, yield* marketClock.currentTimeMillis)
-            if (call === undefined || call.stage !== 'JEV')
+            const call = claim(
+              replayInferenceStage(prepared.request),
+              prepared.requestHash,
+              yield* marketClock.currentTimeMillis,
+            )
+            if (call === undefined || (call.schemaVersion !== 'bayn.replay-inference-call.v4' && call.stage !== 'JEV'))
               return yield* new JevError({
                 failure: JevFailure.Request,
                 message: 'Retained Jev inference is unavailable',
@@ -206,56 +214,6 @@ export const makeRecordedInferenceProviders = (
                 return yield* Effect.interrupt
               case 'DEFECT':
                 return yield* Effect.die(new ReplayBrokerFailure({ message: 'Retained Jev provider defect' }))
-            }
-          }),
-      },
-      chart: {
-        evaluate: (raw, budgetMs) =>
-          Effect.gen(function* () {
-            const prepared = yield* Effect.fromResult(prepareDecisionsRequest(raw))
-            if (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > 10_000)
-              return yield* new DecisionsError({ category: 'REQUEST', message: 'Invalid retained inference deadline' })
-            const stage = replayVisualStage(prepared.request)
-            const call = claim(stage, prepared.requestHash, yield* marketClock.currentTimeMillis)
-            if (call === undefined || call.stage !== stage)
-              return yield* new DecisionsError({
-                category: 'REQUEST',
-                message: 'Retained chart inference is unavailable',
-              })
-            const startedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
-            yield* delay(call).pipe(
-              Effect.timeoutOrElse({
-                duration: budgetMs,
-                orElse: () =>
-                  Effect.fail(
-                    new DecisionsError({
-                      category: 'DEADLINE',
-                      message: 'Retained inference exceeded its remaining deadline',
-                    }),
-                  ),
-              }),
-            )
-            const outcome = call.outcome
-            switch (outcome.status) {
-              case 'RECEIVED':
-                return {
-                  ...outcome.inference,
-                  startedAt,
-                  completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-                }
-              case 'FAILED':
-                return yield* new DecisionsError({
-                  category: outcome.category,
-                  message: 'Retained chart provider failure',
-                  requestHash: call.requestHash,
-                  ...(outcome.httpStatus === null ? {} : { status: outcome.httpStatus }),
-                  ...(outcome.responseHash === null ? {} : { responseHash: outcome.responseHash }),
-                  ...(outcome.usage === null ? {} : { usage: outcome.usage }),
-                })
-              case 'INTERRUPTED':
-                return yield* Effect.interrupt
-              case 'DEFECT':
-                return yield* Effect.die(new ReplayBrokerFailure({ message: 'Retained chart provider defect' }))
             }
           }),
       },

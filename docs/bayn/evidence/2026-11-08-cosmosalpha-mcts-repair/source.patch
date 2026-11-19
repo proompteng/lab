@@ -1,0 +1,129 @@
+--- a/src/cosmosalpha/pipeline/mcts/controller.py
++++ b/src/cosmosalpha/pipeline/mcts/controller.py
+@@ -33,7 +33,7 @@
+ from cosmosalpha.evaluation._statistics import mean_daily_cross_sectional_pearson
+ from cosmosalpha.factors.expression import FieldCatalog, OperatorCatalog
+ from cosmosalpha.llm.client import LLMClient, LLMRequest
+-from cosmosalpha.llm.prompts import PromptRenderResult
++from cosmosalpha.llm.prompts import PromptMessage, PromptRenderResult
+ from cosmosalpha.pipeline.loop import CosmosAlphaLoop, CosmosAlphaLoopResult
+ from cosmosalpha.pipeline.mcts.core import MCTSNode, MCTSTree
+ from cosmosalpha.pipeline.mcts.fzoo import (
+@@ -1121,7 +1121,7 @@
+             f"focused on: {dimension}.\n\n"
+             f"Factor: {parent.expression}\n"
+             f"{dim_scores}\n\n"
+-            f"Output exactly a JSON array of strings."
++            f"Output exactly a JSON object with a suggestions array of strings."
+         )
+         try:
+             response = self._llm.complete(
+@@ -1133,10 +1133,16 @@
+                         template_checksum="mcts",
+                         input_schema="suggestion/1.0",
+                         output_schema="suggestion/1.0",
+-                        messages=(),
++                        messages=(PromptMessage("user", prompt_text),),
+                         output_json_schema={
+-                            "type": "array",
+-                            "items": {"type": "string"},
++                            "type": "object",
++                            "properties": {
++                                "suggestions": {
++                                    "type": "array",
++                                    "items": {"type": "string"},
++                                },
++                            },
++                            "required": ["suggestions"],
+                         },
+                         estimated_input_tokens=len(prompt_text) // 4,
+                         token_estimation_method="char_div_4",
+@@ -1144,7 +1150,7 @@
+                         schema_version="prompt-render-result/1.0",
+                     ),
+                     model_alias=self._model_alias,
+-                    max_output_tokens=300,
++                    max_output_tokens=2000,
+                     response_format="json_object",
+                 )
+             )
+@@ -1760,23 +1766,11 @@
+ 
+ 
+ def _parse_suggestions(content: str) -> list[str]:
+-    """Parse LLM output into a list of suggestion strings.
+-
+-    Handles three formats: JSON array, newline-separated list, single string.
+-    """
++    """Read suggestions from the shared JSON-object response contract."""
+     import json as _json
+ 
+-    try:
+-        parsed = _json.loads(content)
+-        if isinstance(parsed, list):
+-            return [str(s) for s in parsed if s]
+-        if isinstance(parsed, str):
+-            return [parsed]
+-    except Exception:
+-        pass
+-    # Fallback: split by newlines or bullet points
+-    lines = [line.strip(" -•*#0123456789.)") for line in content.split("\n")]
+-    return [line for line in lines if len(line) > 10]
++    parsed = _json.loads(content)
++    return [item for item in parsed["suggestions"] if item]
+ 
+ 
+ # ------------------------------------------------------------------
+--- a/src/cosmosalpha/pipeline/mcts/portrait.py
++++ b/src/cosmosalpha/pipeline/mcts/portrait.py
+@@ -15,13 +15,7 @@
+ 
+ from cosmosalpha.factors.expression import FieldCatalog, OperatorCatalog
+ from cosmosalpha.llm.client import LLMClient, LLMRequest
+-from cosmosalpha.llm.prompts import PromptRenderResult
+-
+-# ------------------------------------------------------------------
+-# Temperature settings (论文 §D.3)
+-# ------------------------------------------------------------------
+-
+-PORTRAIT_TEMPERATURE: float = 1.0  # 生成阶段：鼓励多样性
++from cosmosalpha.llm.prompts import PromptMessage, PromptRenderResult
+ 
+ # ------------------------------------------------------------------
+ # Data types
+@@ -155,7 +149,6 @@
+     prompt_text: str,
+     *,
+     model_alias: str = "mcts",
+-    temperature: float = PORTRAIT_TEMPERATURE,
+ ) -> AlphaPortrait | None:
+     """Call LLM to generate an Alpha Portrait and Formula.
+ 
+@@ -163,7 +156,6 @@
+         llm: LLM client.
+         prompt_text: Complete prompt from build_portrait_prompt.
+         model_alias: Model alias for the LLM request.
+-        temperature: LLM temperature (1.0 for generation, 0.8 for correction).
+ 
+     Returns:
+         Parsed AlphaPortrait, or None on failure.
+@@ -178,7 +170,7 @@
+                     template_checksum="mcts",
+                     input_schema="portrait/1.0",
+                     output_schema="portrait/1.0",
+-                    messages=(),
++                    messages=(PromptMessage("user", prompt_text.strip()),),
+                     output_json_schema={
+                         "type": "object",
+                         "properties": {
+@@ -200,9 +192,8 @@
+                     schema_version="prompt-render-result/1.0",
+                 ),
+                 model_alias=model_alias,
+-                max_output_tokens=800,
++                max_output_tokens=20000,
+                 response_format="json_object",
+-                temperature=temperature,
+             )
+         )
+         return parse_portrait_response(response.content)

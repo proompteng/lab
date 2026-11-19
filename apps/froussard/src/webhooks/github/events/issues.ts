@@ -20,47 +20,51 @@ export interface BaseIssueParams {
   senderLogin?: string
 }
 
-const SenderSchema = Schema.optionalWith(
-  Schema.Struct({
-    login: Schema.optionalWith(Schema.String, { nullable: true }),
-  }),
-  { nullable: true, default: () => ({}) },
+const SenderSchema = Schema.optional(
+  Schema.NullOr(
+    Schema.Struct({
+      login: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
 )
 
 const RepositoryValueSchema = Schema.Struct({
-  full_name: Schema.optionalWith(Schema.String, { nullable: true }),
-  default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
+  full_name: Schema.optional(Schema.NullOr(Schema.String)),
+  default_branch: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
-const RepositorySchema = Schema.optionalWith(RepositoryValueSchema, { nullable: true, default: () => ({}) })
+const RepositorySchema = Schema.optional(Schema.NullOr(RepositoryValueSchema))
 
 const IssueSchema = Schema.Struct({
   number: Schema.Number,
-  title: Schema.optionalWith(Schema.String, { nullable: true }),
-  body: Schema.optionalWith(Schema.String, { nullable: true }),
-  html_url: Schema.optionalWith(Schema.String, { nullable: true }),
-  repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
-  repository: Schema.optionalWith(RepositoryValueSchema, { nullable: true }),
-  labels: Schema.optionalWith(
-    Schema.Array(
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  html_url: Schema.optional(Schema.NullOr(Schema.String)),
+  repository_url: Schema.optional(Schema.NullOr(Schema.String)),
+  repository: Schema.optional(Schema.NullOr(RepositoryValueSchema)),
+  labels: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
+  pull_request: Schema.optional(
+    Schema.NullOr(
       Schema.Struct({
-        name: Schema.optionalWith(Schema.String, { nullable: true }),
+        url: Schema.optional(Schema.NullOr(Schema.String)),
+        html_url: Schema.optional(Schema.NullOr(Schema.String)),
       }),
     ),
-    { nullable: true, default: () => [] },
   ),
-  pull_request: Schema.optionalWith(
-    Schema.Struct({
-      url: Schema.optionalWith(Schema.String, { nullable: true }),
-      html_url: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
-  ),
-  user: Schema.optionalWith(
-    Schema.Struct({
-      login: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
+  user: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
   ),
 })
 
@@ -70,28 +74,29 @@ const IssueOpenedPayloadSchema = Schema.Struct({
   sender: SenderSchema,
 })
 
-type IssueOpenedPayload = Schema.Schema.Type<typeof IssueOpenedPayloadSchema>
+type IssueOpenedPayload = typeof IssueOpenedPayloadSchema.Type
 
 export const IssueCommentPayloadSchema = Schema.Struct({
   issue: IssueSchema,
   repository: RepositorySchema,
   sender: SenderSchema,
   comment: Schema.Struct({
-    id: Schema.optionalWith(Schema.Number, { nullable: true }),
-    body: Schema.optionalWith(Schema.String, { nullable: true }),
-    html_url: Schema.optionalWith(Schema.String, { nullable: true }),
-    author_association: Schema.optionalWith(Schema.String, { nullable: true }),
-    updated_at: Schema.optionalWith(Schema.String, { nullable: true }),
-    user: Schema.optionalWith(
-      Schema.Struct({
-        login: Schema.optionalWith(Schema.String, { nullable: true }),
-      }),
-      { nullable: true },
+    id: Schema.optional(Schema.NullOr(Schema.Number)),
+    body: Schema.optional(Schema.NullOr(Schema.String)),
+    html_url: Schema.optional(Schema.NullOr(Schema.String)),
+    author_association: Schema.optional(Schema.NullOr(Schema.String)),
+    updated_at: Schema.optional(Schema.NullOr(Schema.String)),
+    user: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          login: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
     ),
   }),
 })
 
-export type IssueCommentPayload = Schema.Schema.Type<typeof IssueCommentPayloadSchema>
+export type IssueCommentPayload = typeof IssueCommentPayloadSchema.Type
 
 const AUTOMATION_SKIP_MARKERS = ['codex:skip-automation']
 

@@ -72,6 +72,55 @@ const diagnosticMessage = (messages: unknown): unknown => {
 }
 
 describe('bounded observational broker diagnostics', () => {
+  test('reports the REST fee subtype separately from differently named provider fields', () => {
+    expect(
+      projectReadDiagnostic('fee-activities', [
+        { ...fee(), activity_sub_type: 'CAT', activity_subtype: 'REG', entry_sub_type: 'TAF' },
+      ]),
+    ).toMatchObject({
+      fees: [
+        {
+          fields: {
+            activity_sub_type: { state: 'reported', value: 'CAT' },
+            activity_subtype: { state: 'reported', value: 'REG' },
+            entry_sub_type: { state: 'reported', value: 'TAF' },
+          },
+        },
+      ],
+    })
+    expect(projectReadDiagnostic('fee-activities', [{ ...fee(), activity_subtype: 'REG' }])).toMatchObject({
+      fees: [{ fields: { activity_sub_type: { state: 'absent' } } }],
+    })
+  })
+
+  test('bounds REST fee subtype values and never invokes its accessors', () => {
+    for (const [value, expected] of [
+      [null, { state: 'null' }],
+      [42, { state: 'invalid', type: 'number' }],
+      ['private-unknown-subtype', { state: 'unrecognized', type: 'string' }],
+      ['x'.repeat(65), { state: 'invalid', type: 'string' }],
+    ] as const) {
+      const projected = projectReadDiagnostic('fee-activities', [{ ...fee(), activity_sub_type: value }])
+      expect(projected).toMatchObject({ fees: [{ fields: { activity_sub_type: expected } }] })
+      if (typeof value === 'string') expect(JSON.stringify(projected)).not.toContain(value)
+    }
+    let getterCalls = 0
+    const projected = projectReadDiagnostic('fee-activities', [
+      {
+        ...fee(),
+        get activity_sub_type() {
+          getterCalls += 1
+          return 'private-getter-result'
+        },
+      },
+    ])
+    expect(projected).toMatchObject({
+      fees: [{ fields: { activity_sub_type: { state: 'invalid', type: 'accessor' } } }],
+    })
+    expect(getterCalls).toBe(0)
+    expect(JSON.stringify(projected)).not.toContain('private-getter-result')
+  })
+
   test('retains reported metadata and distinct absent/null/type states without treating absence as settlement', () => {
     const result = projectReadDiagnostic('fee-activities', [
       {
@@ -486,6 +535,7 @@ describe('bounded observational broker diagnostics', () => {
 
   test('uses only existing HTTP reads and preserves normalized values and response hashes', async () => {
     let calls = 0
+    const reportedFee = { ...fee(), activity_sub_type: 'CAT' }
     const events: unknown[] = []
     const logger = Logger.make<unknown, void>((entry) => {
       const diagnostic = diagnosticMessage(entry.message)
@@ -498,7 +548,7 @@ describe('bounded observational broker diagnostics', () => {
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(JSON.stringify(url.pathname === '/v2/account' ? account : [fee()]), {
+          new Response(JSON.stringify(url.pathname === '/v2/account' ? account : [reportedFee]), {
             headers: { 'content-type': 'application/json', 'x-request-id': `request-${calls}` },
           }),
         ),
@@ -531,12 +581,15 @@ describe('bounded observational broker diagnostics', () => {
           items: [{ accountId, activityId: fee().id, date: fee().date, netAmountMicros: '-10000' }],
         })
         expect(original.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(account)))
-        expect(feeRead.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee()])))
+        expect(feeRead.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([reportedFee])))
         expect(events).toHaveLength(0)
         yield* TestClock.adjust(60_000)
         const repeated = yield* read.account
         expect({ ...repeated.value, observedAt: original.value.observedAt }).toEqual(original.value)
         expect(events).toHaveLength(1)
+        expect(events[0]).toMatchObject({
+          fees: [{ fields: { activity_sub_type: { state: 'reported', value: 'CAT' } } }],
+        })
         expect(calls).toBe(3)
       }).pipe(
         Effect.provideService(HttpClient.HttpClient, client),

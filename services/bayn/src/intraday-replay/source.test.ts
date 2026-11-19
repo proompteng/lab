@@ -280,14 +280,16 @@ test('retained source preflights its bytes and advances only available records a
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       expect(source.source.sourceManifestHash).toBe(Result.getOrThrow(canonicalHashV1Result(data.manifest)))
-      yield* source.advanceTo(data.manifest.firstAvailableAtMs - 1)
+      yield* source.advanceTo(data.manifest.firstAvailableAtMs - 1, (work) => work)
       expect((yield* source.cursor).processedRecords).toBe(0)
-      yield* source.advanceTo(data.manifest.lastAvailableAtMs)
+      yield* source.advanceTo(data.manifest.lastAvailableAtMs, (work) => work)
       expect((yield* source.cursor).processedRecords).toBe(data.events.length)
       expect((yield* source.cursor).projection.sequence).toBe(data.input.cursor.projection.sequence)
-      yield* source.advanceTo(data.manifest.lastAvailableAtMs + 1000)
+      yield* source.advanceTo(data.manifest.lastAvailableAtMs + 1000, (work) => work)
       yield* source.finish
-      expect((yield* Effect.exit(source.advanceTo(data.manifest.firstAvailableAtMs)))._tag).toBe('Failure')
+      expect((yield* Effect.exit(source.advanceTo(data.manifest.firstAvailableAtMs, (work) => work)))._tag).toBe(
+        'Failure',
+      )
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })
@@ -311,7 +313,7 @@ test('the retained source delivers each accepted quote to one scoped broker in a
         }),
       )
       expect((yield* Effect.exit(source.observeBroker(() => Effect.void)))._tag).toBe('Failure')
-      yield* source.advanceTo(data.manifest.lastAvailableAtMs)
+      yield* source.advanceTo(data.manifest.lastAvailableAtMs, (work) => work)
       expect(quotes).toEqual(
         data.events
           .filter((event) => event.record.topic === data.manifest.marketSources[0].topics.quotes)
@@ -320,6 +322,105 @@ test('the retained source delivers each accepted quote to one scoped broker in a
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })
+
+test('source clock exclusion covers reads and causal arrivals while empty polls still advance broker deadlines', async () => {
+  const data = fixture()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+      let paused = false
+      let reads = 0
+      const readSource = <E>(work: Effect.Effect<void, E>) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            expect(paused).toBe(false)
+            paused = true
+            reads++
+          }),
+          () => work,
+          () =>
+            Effect.sync(() => {
+              paused = false
+            }),
+        )
+      const quotes: number[] = []
+      const deadlines: number[] = []
+      yield* source.observeBroker((atMs, quote) =>
+        Effect.sync(() => {
+          if (quote === null) {
+            // Source records also advance the broker; only the final clock-only tick is outside the read.
+            if (!paused) deadlines.push(atMs)
+          } else {
+            expect(paused).toBe(true)
+            expect(quote.availableAtMs).toBe(atMs)
+            quotes.push(atMs)
+          }
+        }),
+      )
+      for (const offset of [-3, -2, -1]) yield* source.advanceTo(data.manifest.firstAvailableAtMs + offset, readSource)
+      expect(reads).toBe(1)
+      expect((yield* source.cursor).processedRecords).toBe(0)
+      expect(deadlines).toEqual([-3, -2, -1].map((offset) => data.manifest.firstAvailableAtMs + offset))
+      yield* source.advanceTo(data.manifest.firstAvailableAtMs, readSource)
+      expect(reads).toBe(2)
+      expect((yield* source.cursor).processedRecords).toBeGreaterThan(0)
+      yield* source.advanceTo(data.manifest.lastAvailableAtMs, readSource)
+      const completedReads = reads
+      for (const offset of [0, 1, 2]) yield* source.advanceTo(data.manifest.lastAvailableAtMs + offset, readSource)
+      expect(reads).toBe(completedReads)
+      expect((yield* source.cursor).processedRecords).toBe(data.events.length)
+      expect(deadlines.at(-1)).toBe(data.manifest.lastAvailableAtMs + 2)
+      expect(quotes).toEqual(
+        data.events
+          .filter((event) => event.record.topic === data.manifest.marketSources[0].topics.quotes)
+          .map((event) => event.availableAtMs),
+      )
+      yield* source.finish
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test.each(['failure', 'defect', 'interruption'] as const)(
+  'a source clock %s prevents reuse of a partially advanced replay',
+  async (kind) => {
+    const data = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* fs.makeTempFileScoped()
+        yield* fs.writeFile(path, gzipSync(data.body))
+        const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+        const entered = yield* Deferred.make<void>()
+        const advance = source.advanceTo(data.manifest.lastAvailableAtMs, (work) =>
+          work.pipe(
+            Effect.andThen(Deferred.succeed(entered, undefined)),
+            Effect.andThen(
+              kind === 'failure'
+                ? Effect.fail(new ReplaySourceFailure({ message: 'synthetic source clock failure' }))
+                : kind === 'defect'
+                  ? Effect.die(new Error('synthetic source clock defect'))
+                  : Effect.never,
+            ),
+          ),
+        )
+        if (kind === 'interruption') {
+          const pending = yield* advance.pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(entered)
+          yield* Fiber.interrupt(pending)
+        } else expect((yield* Effect.exit(advance))._tag).toBe('Failure')
+        const failed = yield* source.cursor
+        expect(failed.processedRecords).toBe(data.events.length)
+        expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs + 1, (work) => work)))._tag).toBe(
+          'Failure',
+        )
+        expect(yield* source.cursor).toEqual(failed)
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+)
 
 test.each(['failure', 'defect', 'interruption'] as const)(
   'a broker %s prevents further source advancement',
@@ -341,13 +442,18 @@ test.each(['failure', 'defect', 'interruption'] as const)(
         )
         if (kind === 'interruption') {
           const pending = yield* source
-            .advanceTo(data.manifest.lastAvailableAtMs)
+            .advanceTo(data.manifest.lastAvailableAtMs, (work) => work)
             .pipe(Effect.forkChild({ startImmediately: true }))
           yield* Deferred.await(entered)
           yield* Fiber.interrupt(pending)
-        } else expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
+        } else
+          expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs, (work) => work)))._tag).toBe(
+            'Failure',
+          )
         const failed = yield* source.cursor
-        expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs + 1)))._tag).toBe('Failure')
+        expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs + 1, (work) => work)))._tag).toBe(
+          'Failure',
+        )
         expect(yield* source.cursor).toEqual(failed)
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     )
@@ -372,7 +478,7 @@ test('a delayed source tail is consumed after trading stops without advancing ex
         }),
       )
       const { advanceTo: advance } = yield* makeReplayTimeline(
-        source,
+        { advanceTo: (atMs) => source.advanceTo(atMs, (work) => work) },
         {
           advanceTo: (at) =>
             Effect.sync(() => {

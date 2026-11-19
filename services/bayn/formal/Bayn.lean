@@ -16,8 +16,12 @@ public import Bayn.InferenceResolution
 public import Bayn.InferenceExpense
 public import Bayn.InferenceHandoff
 public import Bayn.Mutations
+public import Bayn.ReconciliationRecovery
 public import Bayn.DecisionWork
 public import Bayn.ControllerTiming
+public import Bayn.OperationalSafety
+public import Bayn.ConditionalConfidence
+public import Bayn.TradingScope
 public import Bayn.AccountProtection
 public import Bayn.ReplaySession
 public import Bayn.Ledger

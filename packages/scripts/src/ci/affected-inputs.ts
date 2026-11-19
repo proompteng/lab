@@ -194,6 +194,8 @@ export const changedRange = (event: string, base: string, head: string): { base:
 
 if (import.meta.main) {
   const env = process.env
+  const dependencyAwarePush = env.INPUT_DEPENDENCY_AWARE_PUSH ?? 'false'
+  if (!['true', 'false'].includes(dependencyAwarePush)) throw new Error('dependency-aware-push must be true or false')
   const event = env.GITHUB_EVENT_NAME ?? ''
   const targets = parseTargets(
     env.INPUT_WORKSPACES ?? '',
@@ -210,7 +212,7 @@ if (import.meta.main) {
     const files = git('diff', '--no-renames', '--name-only', '-z', range.base, range.head).split('\0').filter(Boolean)
     // Main publishes co-built Kargo image sets at one revision. Keep its source path contract.
     affected =
-      event === 'push'
+      event === 'push' && dependencyAwarePush === 'false'
         ? Object.fromEntries(
             Object.entries(targets).map(([name, target]) => [
               name,

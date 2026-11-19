@@ -282,32 +282,22 @@ impl Client {
 
     pub async fn check(
         &self,
-        context: RequestContext,
-        action: Action,
-        resource: Resource,
-        target: String,
-        receipt_id: String,
+        mut check: CheckRequest,
         recovery_generation: u64,
+        observation: bool,
     ) -> Result<CheckResponse, Status> {
-        let mut check = CheckRequest {
-            context: Some(context),
-            action: action as i32,
-            resource: Some(resource),
-            target,
-            stream_receipt_id: receipt_id,
-        };
         // Repeated observations retain one durable receipt. Control operations still
         // audit each submission and renew human activity through that transaction.
-        if !check.stream_receipt_id.is_empty()
-            || !matches!(
-                action,
-                Action::WorkspaceMetadataRead
+        let reusable = observation
+            || matches!(
+                Action::try_from(check.action),
+                Ok(Action::WorkspaceMetadataRead
                     | Action::FilesObserve
                     | Action::TerminalObserve
                     | Action::CodexObserve
-                    | Action::BrowserObserve
-            )
-        {
+                    | Action::BrowserObserve)
+            );
+        if !check.stream_receipt_id.is_empty() || !reusable {
             return self.check_request(check, recovery_generation).await;
         }
         let binding = self.receipts.bind(&check, recovery_generation).await?;

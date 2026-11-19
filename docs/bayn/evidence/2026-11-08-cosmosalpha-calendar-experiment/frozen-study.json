@@ -1,0 +1,180 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-frozen-plan-summary.v1",
+  "experimentId": "3cbfe7a0e0fff077b038247db61aa10c78a716a2727226b0ebad865232fa626c",
+  "planSha256": "3a52687c46e2705ddd9711eb17544a20df98f54caa3f4669d0499ee62769a7b0",
+  "frozenAt": "2026-11-09T02:29:08.838997+00:00",
+  "kind": "study",
+  "executionStatus": "NOT_STARTED_AT_FREEZE",
+  "supersedesUnstartedFreeze": "ac3940ddc5e07a578af2ae58d1d9d5b5966d405445fc8e160464fbdae2483e3e",
+  "supersessionReason": "Native model admission and the canonical qualified-factor counter replace an unavailable backend and the competing MCTS raw-node limit, before scientific execution.",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "sourceIdentitySha256": "666df02001e43fbb32bb1a38a328ee260035b47c48cf014c8e12c584d7f90208",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "limits": {
+    "evaluable_factors": 150,
+    "proposal_slots": 600,
+    "physical_requests": 2000,
+    "completion_tokens": 20000000,
+    "max_output_tokens": 20000
+  },
+  "runs": [
+    {
+      "runId": "calendar-study-20260823-graph",
+      "seed": 20260823,
+      "arm": "graph",
+      "config": "calendar-study-20260823-graph.toml",
+      "sha256": "56eff2258c54f8edbcb500328ed8afe99330e16adfde91514263170a98b885cf",
+      "downstreamConfig": "calendar-study-20260823-graph-model.toml",
+      "downstreamSha256": "1739ec023c7d27b87eef790eab25ee138c154b5f72abc2bee5155afab3a30490"
+    },
+    {
+      "runId": "calendar-study-20260823-mcts",
+      "seed": 20260823,
+      "arm": "mcts",
+      "config": "calendar-study-20260823-mcts.toml",
+      "sha256": "6da5f28f6f0f25e6a12abbbaadf3f5be32d94ce0f4b81e15e388d3455dc7361b",
+      "downstreamConfig": "calendar-study-20260823-mcts-model.toml",
+      "downstreamSha256": "63db0569a0280a24bd755f7b178128f7bc2b058d09c9791cfa06684680f685f6"
+    },
+    {
+      "runId": "calendar-study-20260823-no-flow",
+      "seed": 20260823,
+      "arm": "no-flow",
+      "config": "calendar-study-20260823-no-flow.toml",
+      "sha256": "a14b8a0648696911a97660193d4db24ccc808ba560317dae9a7650698e87ed9f",
+      "downstreamConfig": "calendar-study-20260823-no-flow-model.toml",
+      "downstreamSha256": "fe080e3f92b55f0de746a95a6007a98349a4ede08885ca8a60d2f343d9c3b689"
+    },
+    {
+      "runId": "calendar-study-20260824-mcts",
+      "seed": 20260824,
+      "arm": "mcts",
+      "config": "calendar-study-20260824-mcts.toml",
+      "sha256": "0a761589e444d6d6db87aa42565d147fcc71cfc88eb4a9b3a26c54f58ef271f3",
+      "downstreamConfig": "calendar-study-20260824-mcts-model.toml",
+      "downstreamSha256": "fc1bc14084a513c8da9d90d554eca88ee6c735e660c5cc54a5534887f2a8e8a4"
+    },
+    {
+      "runId": "calendar-study-20260824-no-flow",
+      "seed": 20260824,
+      "arm": "no-flow",
+      "config": "calendar-study-20260824-no-flow.toml",
+      "sha256": "840468f67d1d5a6d0ecbda78854c134b2d1bf7a0179aeafb242d16c72397535f",
+      "downstreamConfig": "calendar-study-20260824-no-flow-model.toml",
+      "downstreamSha256": "99148077dff04c2a72f6be5c7ef42fe22fc52d15be99968a29ac1b0c4203507c"
+    },
+    {
+      "runId": "calendar-study-20260824-graph",
+      "seed": 20260824,
+      "arm": "graph",
+      "config": "calendar-study-20260824-graph.toml",
+      "sha256": "f859346aa16f14f1eebad4e64e3dc5558540cd1f356d8fcea8deac732dd809d0",
+      "downstreamConfig": "calendar-study-20260824-graph-model.toml",
+      "downstreamSha256": "e9286b85b78a42e28e57542012f2326cad53bfb1640e075c0b04a46a62c76e77"
+    },
+    {
+      "runId": "calendar-study-20260825-no-flow",
+      "seed": 20260825,
+      "arm": "no-flow",
+      "config": "calendar-study-20260825-no-flow.toml",
+      "sha256": "5eb136c2307eff060f42e3267c0e02bda515d6396ef35d308f359353c800407a",
+      "downstreamConfig": "calendar-study-20260825-no-flow-model.toml",
+      "downstreamSha256": "42dcc03ae8c937a48e0328a13a2be99e8d007f1e4f847804a5261ce2f05ef53e"
+    },
+    {
+      "runId": "calendar-study-20260825-graph",
+      "seed": 20260825,
+      "arm": "graph",
+      "config": "calendar-study-20260825-graph.toml",
+      "sha256": "44dccfabc16023d66649279c943fc13c83b5e777376e4607bb47529949c32e41",
+      "downstreamConfig": "calendar-study-20260825-graph-model.toml",
+      "downstreamSha256": "241cbdc18e085778d2859547b95b5a0e8ed71b5ba9f9095c206f26592c70b85c"
+    },
+    {
+      "runId": "calendar-study-20260825-mcts",
+      "seed": 20260825,
+      "arm": "mcts",
+      "config": "calendar-study-20260825-mcts.toml",
+      "sha256": "e50dfc6adbbd72d6ee3271444003315d802a7dc53739f82f2783c2578094c140",
+      "downstreamConfig": "calendar-study-20260825-mcts-model.toml",
+      "downstreamSha256": "810910d5b272dd73a78f03a39ccf97b335689cc9fda032775c7068ec1867ce6a"
+    }
+  ],
+  "modelIdentity": {
+    "model": "qwen38-flamingo",
+    "checkpoint": "482ca0f3832238542f8f5295dde86b5f22711d80",
+    "servingImage": "sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2",
+    "tokenizerRevision": "482ca0f3832238542f8f5295dde86b5f22711d80",
+    "chatTemplateRevision": "482ca0f3832238542f8f5295dde86b5f22711d80"
+  },
+  "modelProfile": {
+    "temperature": 0.0,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "repetition_penalty": 1.0,
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    }
+  },
+  "inputs": {
+    "mining": {
+      "snapshot": "mining-snapshot.json",
+      "snapshotSha256": "80fc443234cea5b9ea861b41136e60233cb3f7661d90e571a83def05f092e411",
+      "returns": "mining-returns.json",
+      "returnsSha256": "44b2e338d2ce07a2fc7d23362a40cceea069e91fc5d10a2c6543d4407da2924c",
+      "snapshotId": "dadff2a60ada41d5c33ef3dbefe03c4972c31411e6faaeaa1ab612cb013d37df",
+      "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+      "rowsMatched": 685511,
+      "unexplainedMismatches": 0,
+      "targetArtifactId": "83a355991f90c438272ef3b03a4ed9976e4d3d5b57cfbcf3f68887e74c4f77b7"
+    },
+    "downstream": {
+      "snapshot": "downstream-snapshot.json",
+      "snapshotSha256": "c3dde3c650a806f2c784719d00daac08e162f2c21e678242e6f61bf33165adf1",
+      "returns": "downstream-returns.json",
+      "returnsSha256": "01722c9796688c776331b682b64e7eba383ca4104f76a9bb76d66161725dc5bc",
+      "snapshotId": "dc252d4fd10541b535c8d810e100dc95e87a501e806607bbf3818b700865046f",
+      "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+      "rowsMatched": 1165440,
+      "unexplainedMismatches": 0,
+      "targetArtifactId": "a86a930205dd581eabdfad5ad5a9c4ec0a3ee794d45b4f66defed3abd8a9eb8a"
+    }
+  },
+  "sourceConsumption": {
+    "status": "PASS",
+    "unexplainedMismatches": 0,
+    "verificationSha256": "890d7639167c655a7d65b27e3de3c1e08a183c18fc30b84212b5b4a8191c26c5"
+  },
+  "rawProviders": {
+    "fileCount": 103371,
+    "sizeBytes": 1062546857,
+    "identitySha256": "f04068ceb39321a12aa6fe7982d065d9d8a75d1255632dccff53513296e4af70"
+  },
+  "implementation": [
+    {
+      "path": "cosmosalpha_experiment.py",
+      "sha256": "438b23e2cbdb47e7d6740ca66008131d85bd9d4ed9d572a05b7e3cfc67707e31"
+    },
+    {
+      "path": "cosmosalpha_native_experiment.py",
+      "sha256": "f24895d25b2048f9efb5fc0485b6864366af7a1378468ef1c2aedb9d58627377"
+    },
+    {
+      "path": "verify-cosmosalpha-targets.py",
+      "sha256": "a8ac4ba9fcac6c3f1b07d44250cf0b7077c32446068d61082d412c6a4d05d37e"
+    },
+    {
+      "path": "audit-cosmosalpha-study.ts",
+      "sha256": "2841fcd73071e65ba6af044cda1e0ff0978ace12ffbacc00b0c8360e0d69caf9"
+    }
+  ],
+  "interpretation": "New calendar-target/Qwen experiment. Shortfalls and failed arms remain in the comparison. No industry-PIT or economic qualification.",
+  "runtimeFingerprint": {
+    "python": "3.12.9",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "lightgbmBinarySha256": "bc392db609d97730a9ed2acec7a56529b356c03dfad39bebf689523fed7dff18"
+  }
+}

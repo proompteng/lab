@@ -194,7 +194,9 @@ Local snapshots intentionally survive sleep and controller restarts, but not los
 remains the durable recovery boundary. This choice removes remote snapshot reads from normal resume and leaves shared
 Ceph ownership unchanged. Cross-node snapshot migration is outside this design.
 
-Account for all VMM and supervisor overhead within the 51 GiB namespace limit, including all six 8320 MiB runners, six 128 MiB supervisors, and controller limits. Preallocated Pod requests reserve capacity for prompt resume even when a guest is stopped. Sleep releases
+Account for guest RAM, charged disk/snapshot cache and VMM overhead in each 12 GiB runner. The namespace admits 75 GiB
+of memory requests and 81 GiB of limits, including all six runners, six 128 MiB supervisors, controllers and retained
+workers. Preallocated Pod requests reserve capacity for prompt resume even when a guest is stopped. Sleep releases
 physical guest RAM; it does not return the stable Pod's memory request to the Kubernetes scheduler. Report both values
 in the acceptance evidence. Do not claim scheduler capacity was released because guest RSS fell.
 

@@ -1,0 +1,107 @@
+diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
+--- a/src/sql/SqlClient.ts
++++ b/src/sql/SqlClient.ts
+@@ -140,6 +140,7 @@
+    * The transaction service for this client.
+    */
+   readonly transactionService: Context.Service<TransactionConnection, TransactionConnection.Service>
++  readonly transactionSemaphoreService: Context.Service<Semaphore.Semaphore>
+ 
+   /**
+    * Runs `effect` once the outermost transaction of this client commits, or
+@@ -386,6 +387,7 @@
+       [TypeId]: TypeId as typeof TypeId,
+       safe: undefined as any,
+       withTransaction,
++      transactionSemaphoreService: withTransaction.transactionSemaphoreService,
+       transactionService,
+       afterCommit,
+       reserve: transactionAcquirer,
+@@ -682,7 +684,7 @@
+       afterCommit(Effect.sync(() => reactivity.invalidateUnsafe(keys)))
+     return { ...reactivity, invalidate, mutation: (keys, effect) => Effect.tap(effect, invalidate(keys)) }
+   }
+-  return <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
++  const withTransaction = <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+     Effect.uninterruptibleMask((restore) =>
+       Effect.useSpan(
+         "sql.transaction",
+@@ -707,7 +709,7 @@
+                     controlSpan.attribute(key, value)
+                   }
+                   controlSpan.attribute(ATTR_DB_OPERATION_NAME, operation)
+-                  return effect
++                  return Effect.provideService(effect, Tracer.ParentSpan, controlSpan)
+                 }
+               )
+             const connOption = Context.getOption(services, options.transactionService)
+@@ -823,6 +825,7 @@
+           })
+       )
+     )
++  return Object.assign(withTransaction, { transactionSemaphoreService: transactionSemaphore })
+ }
+ 
+ /**
+diff --git a/dist/sql/SqlClient.js b/dist/sql/SqlClient.js
+--- a/dist/sql/SqlClient.js
++++ b/dist/sql/SqlClient.js
+@@ -92,6 +92,7 @@
+     [TypeId]: TypeId,
+     safe: undefined,
+     withTransaction,
++    transactionSemaphoreService: withTransaction.transactionSemaphoreService,
+     transactionService,
+     afterCommit,
+     reserve: transactionAcquirer,
+@@ -288,7 +289,7 @@
+       mutation: (keys, effect) => Effect.tap(effect, invalidate(keys))
+     };
+   };
+-  return effect => Effect.uninterruptibleMask(restore => Effect.useSpan("sql.transaction", {
++  const withTransaction = effect => Effect.uninterruptibleMask(restore => Effect.useSpan("sql.transaction", {
+     kind: "internal"
+   }, span => Effect.withFiber(fiber => {
+     for (const [key, value] of options.spanAttributes) {
+@@ -308,7 +309,7 @@
+         controlSpan.attribute(key, value);
+       }
+       controlSpan.attribute(ATTR_DB_OPERATION_NAME, operation);
+-      return effect;
++      return Effect.provideService(effect, Tracer.ParentSpan, controlSpan);
+     });
+     const connOption = Context.getOption(services, options.transactionService);
+     const conn = connOption._tag === "Some"
+@@ -377,7 +378,9 @@
+     // The savepoint wait is interruptible; the savepoint and its cleanup are not.
+     return id === 0 ? settled : restore(Context.getUnsafe(services, transactionSemaphore).withPermit(Effect.uninterruptible(settled)));
+   })));
++  return Object.assign(withTransaction, { transactionSemaphoreService: transactionSemaphore });
+ };
++
+ /**
+  * Creates a unique context service tag for the active transaction connection of
+  * a specific SQL client.
+diff --git a/dist/sql/SqlClient.d.ts b/dist/sql/SqlClient.d.ts
+--- a/dist/sql/SqlClient.d.ts
++++ b/dist/sql/SqlClient.d.ts
+@@ -112,6 +112,7 @@
+      * The transaction service for this client.
+      */
+     readonly transactionService: Context.Service<TransactionConnection, TransactionConnection.Service>;
++    readonly transactionSemaphoreService: Context.Service<Semaphore.Semaphore>;
+     /**
+      * Runs `effect` once the outermost transaction of this client commits, or
+      * immediately, and interruptibly, when no transaction is open.
+@@ -387,7 +388,10 @@
+     readonly onCommitFailure?: ((conn: NoInfer<S>) => Effect.Effect<void, SqlError>) | undefined;
+     readonly rollback: (conn: NoInfer<S>) => Effect.Effect<void, SqlError>;
+     readonly rollbackSavepoint: (conn: NoInfer<S>, id: number) => Effect.Effect<void, SqlError>;
+-}) => <R, E, A>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
++}) => {
++    <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R>;
++    readonly transactionSemaphoreService: Context.Service<Semaphore.Semaphore>;
++};
+ /**
+  * Phantom identifier for the scoped transaction connection service associated
+  * with a SQL client.

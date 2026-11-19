@@ -1,26 +1,72 @@
 import type { ForwardPerformanceExecutionEvidence, ForwardPerformanceMarketVolumeRequest } from '../model'
 import { Result, Schema } from 'effect'
-import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import {
+  CycleDecisionDocumentSchema,
+  decodeRetainedJevExecutionDecisionDocument,
+  executionCycleDecisionSchemaVersion,
+} from '../../shadow-decision-contract'
 import { strictParseOptions } from '../../schemas'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
+import { isBracketProtection, isOcoProtection } from '../../execution/contracts'
 import {
   CycleDecisionRow,
+  CycleDecisionJsonRow,
   FillExecutionRow,
   IntentExecutionRow,
   MarketVolumeBindingRow,
   OrderExecutionRow,
+  NativeProtectionOrderRow,
   type VerifiedCycleDecisionRow,
 } from './model'
+
+const RetainedJevProtocolPrefix = Schema.Struct({
+  schemaVersion: Schema.Literals(['bayn.jev.protocol.v38', 'bayn.jev.protocol.v39']),
+})
+const RetainedJevDecisionPrefix = Schema.Struct({
+  schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
+  mode: Schema.Literal(legacyExecutionAuthorityToken),
+  strategyDecision: Schema.Union([
+    Schema.Struct({
+      schemaVersion: Schema.Literals([
+        'bayn.jev-entry-target.v7',
+        'bayn.entry-ablation-target.v1',
+        'bayn.repeated-momentum-target.v1',
+      ]),
+      evidence: Schema.Struct({ observation: Schema.Struct({ protocol: RetainedJevProtocolPrefix }) }),
+    }),
+    Schema.Struct({
+      schemaVersion: Schema.Literal('bayn.jev-exit-target.v5'),
+      evidence: Schema.Struct({ protocol: RetainedJevProtocolPrefix }),
+    }),
+  ]),
+})
 
 export const verifyPerformanceDecisions = (rows: readonly (typeof CycleDecisionRow.Type)[]) => {
   const verifiedRows: VerifiedCycleDecisionRow[] = []
   const unverifiedDecisionHashes: string[] = []
   for (const row of rows) {
-    const decoded = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
-    if (Result.isFailure(decoded)) unverifiedDecisionHashes.push(row.decision_hash)
+    // This prefix only selects the complete verifier; the original evidence still passes every strict check.
+    const retained = Schema.decodeUnknownResult(RetainedJevDecisionPrefix, { onExcessProperty: 'ignore' })(row.document)
+    const decoded = Result.isSuccess(retained)
+      ? decodeRetainedJevExecutionDecisionDocument(row.document)
+      : Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+    if (decoded._tag === 'Failure') unverifiedDecisionHashes.push(row.decision_hash)
     else verifiedRows.push({ ...row, document: decoded.success })
   }
   return { verifiedRows, unverifiedDecisionHashes: [...new Set(unverifiedDecisionHashes)].sort() }
+}
+
+const decodeDecisionJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
+
+/** Keep the PostgreSQL JSON text opaque until its owning verifier, avoiding a deep cross-thread clone. */
+export const verifyPerformanceDecisionJson = (
+  row: typeof CycleDecisionJsonRow.Type,
+): ReturnType<typeof verifyPerformanceDecisions> => {
+  const { document_json: _json, ...metadata } = row
+  if (row.document_json === null) return verifyPerformanceDecisions([{ ...metadata, document: null }])
+  const parsed = decodeDecisionJson(row.document_json)
+  if (Result.isFailure(parsed)) return { verifiedRows: [], unverifiedDecisionHashes: [row.decision_hash] }
+  return verifyPerformanceDecisions([{ ...metadata, document: parsed.success }])
 }
 
 export const uniqueRows = <Row>(rows: readonly Row[], key: (row: Row) => string): ReadonlyMap<string, Row | null> => {
@@ -53,12 +99,12 @@ export const intentExecutionKey = (input: {
     input.createdAt,
   ])
 
-export const executionEvidenceFromRows = (
-  decisionRows: readonly VerifiedCycleDecisionRow[],
+export const indexExecutionEvidence = (
   intentRows: readonly (typeof IntentExecutionRow.Type)[],
   orderRows: readonly (typeof OrderExecutionRow.Type)[],
   fillRows: readonly (typeof FillExecutionRow.Type)[],
-): readonly ForwardPerformanceExecutionEvidence[] => {
+  nativeOrderRows: readonly (typeof NativeProtectionOrderRow.Type)[] = [],
+) => {
   const intents = uniqueRows(intentRows, (row) =>
     intentExecutionKey({
       cycleId: row.cycle_id,
@@ -79,13 +125,28 @@ export const executionEvidenceFromRows = (
     else found.push(row)
   }
 
+  const nativeOrders = new Map<string, (typeof NativeProtectionOrderRow.Type)[]>()
+  for (const row of nativeOrderRows) {
+    const intentId = row.order.intentId
+    if (intentId === undefined) continue
+    const group = nativeOrders.get(intentId)
+    if (group === undefined) nativeOrders.set(intentId, [row])
+    else group.push(row)
+  }
+  return { intents, orders, fills, nativeOrders }
+}
+
+export const executionEvidenceFromRows = (
+  decisionRows: readonly VerifiedCycleDecisionRow[],
+  { intents, orders, fills, nativeOrders }: ReturnType<typeof indexExecutionEvidence>,
+): readonly ForwardPerformanceExecutionEvidence[] => {
   const evidence: ForwardPerformanceExecutionEvidence[] = []
   for (const row of decisionRows) {
     const document = row.document
     if (document.targetPlan.status !== 'PLANNED') continue
     const replanGenerationHash =
       document.mode === legacyExecutionAuthorityToken ? document.replanGenerationHash : undefined
-    for (const target of document.targetPlan.intentTargets) {
+    for (const [targetIndex, target] of document.targetPlan.intentTargets.entries()) {
       const matchingReferences = document.targetPlan.targets.filter((candidate) => candidate.symbol === target.symbol)
       const reference = matchingReferences.length === 1 ? matchingReferences[0] : undefined
       const intentRow = intents.get(
@@ -102,7 +163,12 @@ export const executionEvidenceFromRows = (
       )
       const intentId = intentRow === undefined || intentRow === null ? '' : intentRow.intent_id
       const orderRow = orders.get(intentId)
+      const risk = document.deltaRisk[targetIndex]
+      const protection = risk?.protection
+      const group = nativeOrders.get(intentId) ?? []
+      const hasNativeProtection = isBracketProtection(protection) || isOcoProtection(protection)
       const fillEvidence = (fills.get(intentId) ?? []).map((fill) => ({
+        ...(hasNativeProtection && fill.source_sequence !== undefined ? { sourceSequence: fill.source_sequence } : {}),
         brokerEventId: fill.event_id,
         fillId: fill.fill_id,
         brokerOrderId: fill.broker_order_id,
@@ -171,7 +237,31 @@ export const executionEvidenceFromRows = (
                 observedAt: orderRow.observed_at.toISOString(),
               },
             }),
-        fills: fillEvidence,
+        fills:
+          hasNativeProtection && orderRow !== undefined && orderRow !== null
+            ? fillEvidence.filter((fill) => fill.brokerOrderId === orderRow.broker_order_id)
+            : fillEvidence,
+        ...(hasNativeProtection && risk !== undefined && protection !== undefined
+          ? {
+              nativeProtection: {
+                schemaVersion: 'bayn.forward-performance-native-protection.v1' as const,
+                target,
+                limitPriceMicros: risk.limitPriceMicros,
+                protection,
+                authorityGenerationHash:
+                  'authorityGenerationHash' in document.bindings ? document.bindings.authorityGenerationHash : '',
+                orders: group.map((native) => ({
+                  eventId: native.event_id,
+                  occurredAt: native.occurred_at.toISOString(),
+                  order: native.order,
+                })),
+                fills:
+                  orderRow === undefined || orderRow === null
+                    ? []
+                    : fillEvidence.filter((fill) => fill.brokerOrderId !== orderRow.broker_order_id),
+              },
+            }
+          : {}),
       })
     }
   }

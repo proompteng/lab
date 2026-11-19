@@ -23,6 +23,8 @@ export interface WriterFenceService {
 
 export type WriterFenceTransaction = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
+  /** An owned optional finalizer: failures roll back to its savepoint, commit preparation, then surface the cause. */
+  finalize?: (prepared: A) => Effect.Effect<A, E, R> | undefined,
 ) => Effect.Effect<A, E | WriterFenceError, R>
 
 export class WriterFence extends Context.Service<WriterFence, WriterFenceService>()(
@@ -107,6 +109,7 @@ const acquire = Effect.gen(function* () {
   const runTransaction = <A, E, R>(
     operation: 'check' | 'transaction',
     effect: Effect.Effect<A, E, R>,
+    finalize?: (prepared: A) => Effect.Effect<A, E, R> | undefined,
   ): Effect.Effect<A, E | WriterFenceError, R> =>
     transactionPermit
       .withPermit(
@@ -120,7 +123,13 @@ const acquire = Effect.gen(function* () {
                 ),
               )
               activeConnection = connection
-              const exit = yield* Effect.exit(
+              const transactionSemaphore = Semaphore.makeUnsafe(1)
+              const inTransaction = <B, E3, R3>(work: Effect.Effect<B, E3, R3>) =>
+                work.pipe(
+                  Effect.provideService(sql.transactionService, [connection, 0]),
+                  Effect.provideService(sql.transactionSemaphoreService, transactionSemaphore),
+                )
+              let exit: Exit.Exit<A, E | WriterFenceError> = yield* Effect.exit(
                 restore(
                   connection.executeUnprepared('BEGIN', [], undefined).pipe(
                     Effect.mapError((cause) => unavailable('transaction', cause)),
@@ -128,16 +137,53 @@ const acquire = Effect.gen(function* () {
                     Effect.andThen(acquireTransactionLease(connection, operation)),
                     Effect.andThen(checkHeld(connection, operation)),
                     Effect.andThen(effect),
-                    Effect.provideService(sql.transactionService, [connection, 0]),
-                    Effect.provideService(sql.transactionSemaphoreService, Semaphore.makeUnsafe(1)),
+                    inTransaction,
                   ),
                 ),
               )
+              let commit = Exit.isSuccess(exit)
+              if (Exit.isSuccess(exit) && finalize !== undefined) {
+                const prepared = exit.value
+                const selected = yield* Effect.exit(Effect.sync(() => finalize(prepared)))
+                if (Exit.isFailure(selected)) exit = Exit.failCause(selected.cause)
+                else if (selected.value !== undefined) {
+                  const savepoint = yield* Effect.exit(
+                    connection
+                      .executeUnprepared('SAVEPOINT bayn_finalization', [], undefined)
+                      .pipe(Effect.mapError((cause) => unavailable('transaction', cause))),
+                  )
+                  if (Exit.isFailure(savepoint)) {
+                    exit = Exit.failCause(savepoint.cause)
+                    commit = false
+                  } else {
+                    // The transaction owner captures cancellation before restoring interruptibility again.
+                    // A failed finalizer rolls back only its writes; the prepared evidence still commits.
+                    exit = yield* Effect.exit(restore(inTransaction(selected.value)))
+                    const restored = yield* Effect.exit(
+                      (Exit.isFailure(exit)
+                        ? connection.executeUnprepared('ROLLBACK TO SAVEPOINT bayn_finalization', [], undefined)
+                        : Effect.void
+                      ).pipe(
+                        Effect.andThen(
+                          connection.executeUnprepared('RELEASE SAVEPOINT bayn_finalization', [], undefined),
+                        ),
+                        Effect.mapError((cause) => unavailable('transaction', cause)),
+                      ),
+                    )
+                    if (Exit.isFailure(restored)) {
+                      exit = Exit.failCause(
+                        Exit.isFailure(exit) ? Cause.combine(exit.cause, restored.cause) : restored.cause,
+                      )
+                      commit = false
+                    }
+                  }
+                }
+              }
               // BEGIN can succeed before its acknowledgment is lost. Roll back interrupted startup too.
               const finalized = yield* Effect.exit(
-                connection.executeUnprepared(Exit.isSuccess(exit) ? 'COMMIT' : 'ROLLBACK', [], undefined).pipe(
+                connection.executeUnprepared(commit ? 'COMMIT' : 'ROLLBACK', [], undefined).pipe(
                   Effect.mapError((cause) => unavailable('transaction', cause)),
-                  withObservedStage(Exit.isSuccess(exit) ? 'bayn.postgres.commit' : 'bayn.postgres.rollback', {
+                  withObservedStage(commit ? 'bayn.postgres.commit' : 'bayn.postgres.rollback', {
                     dependency: 'postgresql',
                   }),
                 ),
@@ -164,15 +210,23 @@ const acquire = Effect.gen(function* () {
       )
 
   const check = runTransaction('check', Effect.void)
-  const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | WriterFenceError, R> =>
+  const transaction: WriterFenceTransaction = (effect, finalize) =>
     Effect.serviceOption(sql.transactionService).pipe(
       Effect.flatMap(
         Option.match({
-          onNone: () => runTransaction('transaction', effect),
+          onNone: () => runTransaction('transaction', effect, finalize),
           onSome: ([transactionConnection]) =>
-            transactionConnection === activeConnection
-              ? checkHeld(transactionConnection, 'transaction').pipe(Effect.andThen(effect))
-              : runTransaction('transaction', effect),
+            finalize !== undefined
+              ? Effect.fail(
+                  new WriterFenceError({
+                    failure: 'unavailable',
+                    operation: 'transaction',
+                    message: 'Prepared finalization requires an independently owned writer transaction',
+                  }),
+                )
+              : transactionConnection === activeConnection
+                ? checkHeld(transactionConnection, 'transaction').pipe(Effect.andThen(effect))
+                : runTransaction('transaction', effect),
         }),
       ),
     )

@@ -9,6 +9,7 @@ use crate::{
         Action, Actor, CheckRequest, CheckResponse, ObservationScope, RequestContext, Resource,
         WorkspaceRole, actor::Identity,
     },
+    registry,
     store::{self, Database, State, sql_error},
 };
 
@@ -129,8 +130,14 @@ pub async fn session(
         .get()
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-    let row = client.query_opt("SELECT expires_at_ms,idle_deadline_ms,mfa_at_ms FROM ofz.sessions WHERE id=$1 AND human_id=$2 AND NOT revoked AND recovery_generation=$3 AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms() AND EXISTS (SELECT 1 FROM ofz.memberships WHERE human_id=$2 AND role=1)", &[&session,human,&(state.recovery_generation as i64)]).await.map_err(sql_error)?
+    let row = client.query_opt("SELECT expires_at_ms,idle_deadline_ms,mfa_at_ms,gateway_service FROM ofz.sessions WHERE id=$1 AND human_id=$2 AND NOT revoked AND recovery_generation=$3 AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms() AND EXISTS (SELECT 1 FROM ofz.memberships WHERE human_id=$2 AND role=1)", &[&session,human,&(state.recovery_generation as i64)]).await.map_err(sql_error)?
         .ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
+    if !registry::configured()?
+        .by_id(&row.get::<_, String>(3))
+        .is_some_and(|service| service.allows_origin(&context.origin))
+    {
+        return Err(Status::unauthenticated("session gateway origin rejected"));
+    }
     let mfa: i64 = row.get(2);
     if policy::requires_mfa(action) && (mfa <= 0 || mfa as u64 > state.now_ms) {
         return Err(Status::permission_denied(
@@ -383,7 +390,7 @@ pub fn validate_context(context: &RequestContext, peer: &str, state: &State) -> 
             "authorization contract mismatch",
         ));
     }
-    if !policy::allowed_workload(peer) {
+    if registry::configured()?.service(peer).is_none() {
         return Err(Status::unauthenticated("unattested workload"));
     }
     let actor = context

@@ -5,7 +5,7 @@ import { Cause, Effect, Logger, References, Result } from 'effect'
 import { provideTestLayer } from '../effect-test-support'
 
 import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca/model'
-import type { ReconciliationPersistence } from '../db/execution-store'
+import type { ReconciliationPersistence } from '../db/execution-store/contract'
 import type { BrokerSnapshot, ReconciliationWriteResult } from '../db/reconciliation'
 import { canonicalHashV1Result } from '../hash'
 import { ReconciliationStatus, type Valuation } from '../execution/contracts'
@@ -116,7 +116,6 @@ const store: ReconciliationPersistence = {
   },
   accounting: {
     account: () => Effect.die(new Error('empty successful reconciliation must not account a fill')),
-    verifyCompleted: () => Effect.void,
   },
   valuation: {
     value: () => Effect.succeed(valuation),

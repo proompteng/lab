@@ -1,3 +1,4 @@
+import { isBracketProtection, isOcoProtection, isEquityShortProtection } from '../execution/contracts'
 import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -14,7 +15,10 @@ import {
   RiskOutcome,
   TimeInForce,
 } from '../execution/contracts'
-import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
+import {
+  reconciledPositionLiquidationBindingSchemaVersion,
+  type RecordedExecutionDecisionDocument as ExecutionDecisionDocument,
+} from '../shadow-decision-contract'
 import { legacyReconciliationIdSchemaVersion } from '../execution/legacy-wire'
 import { Sha256Schema, StrictNonEmptyStringSchema } from '../schemas'
 import { isProtectedEntryTarget } from '../strategy/runtime-decision'
@@ -31,6 +35,18 @@ export const ProtectionIntentEvidenceSchema = Schema.Struct({
 })
 export type ProtectionIntentEvidence = typeof ProtectionIntentEvidenceSchema.Type
 
+export const protectionIntentsByDecision = (intents: readonly ProtectionIntentEvidence[]) => {
+  const byDecision = new Map<string, ProtectionIntentEvidence[]>()
+  for (const intent of intents) {
+    const terms = intent.plan.protection
+    if (terms === undefined || isBracketProtection(terms)) continue
+    const entries = byDecision.get(terms.entryDecisionHash)
+    if (entries === undefined) byDecision.set(terms.entryDecisionHash, [intent])
+    else entries.push(intent)
+  }
+  return byDecision
+}
+
 type Target = ExecutionDecisionDocument['targetPlan']['intentTargets'][number]
 type Risk = ExecutionDecisionDocument['deltaRisk'][number]
 export interface ExecutionOrderPlan {
@@ -43,6 +59,30 @@ export interface ExecutionOrderPlan {
   readonly submissionDeadlineAt: string
   readonly positionOwnerDecisionId: string
   readonly protectionIntent: ProtectionIntentEvidence | null
+}
+
+/** A short owner holds a liability; covers consume it in the same chronology as long disposals. */
+export const executionPositionDirections = (plans: ReadonlyMap<string, ExecutionOrderPlan>) => {
+  const directions = new Map<string, bigint>()
+  for (const plan of plans.values()) {
+    const decision = plan.document.strategyDecision
+    const funded = isProtectedEntryTarget(decision) ? decision.exitPolicy.plans[plan.target.symbol] : undefined
+    const binding = plan.document.bindings.executionMarketData
+    const held =
+      binding?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
+        ? binding.positions.find((position) => position.symbol === plan.target.symbol)
+        : undefined
+    const short =
+      funded?.schemaVersion === 'bayn.jev-short-funded-exit-plan.v1' ||
+      (decision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+        decision.evidence.portfolio.brokerState.positions.some(
+          (position) => position.symbol === plan.target.symbol && BigInt(position.quantityAtoms) < 0n,
+        )) ||
+      (held !== undefined && BigInt(held.quantityAtoms) < 0n)
+    if (short || !directions.has(plan.positionOwnerDecisionId))
+      directions.set(plan.positionOwnerDecisionId, short ? -1n : 1n)
+  }
+  return directions
 }
 
 export const orderedExecutionPlan = (document: ExecutionDecisionDocument, index: number) =>
@@ -91,7 +131,7 @@ export const executionOrderPlans = (
       const { plan, riskDecision: risk, reconciliation } = evidence
       const terms = plan.protection
       const document =
-        terms !== undefined && terms._tag !== 'Bracket' ? documents.get(terms.entryDecisionHash) : undefined
+        terms !== undefined && !isBracketProtection(terms) ? documents.get(terms.entryDecisionHash) : undefined
       const entryPlan =
         document !== undefined && isProtectedEntryTarget(document.strategyDecision)
           ? document.strategyDecision.exitPolicy.plans[plan.symbol]
@@ -118,7 +158,7 @@ export const executionOrderPlans = (
         entryPlan === undefined ||
         !document.dispatchable ||
         terms === undefined ||
-        terms._tag === 'Bracket' ||
+        isBracketProtection(terms) ||
         sourceHash !== (yield* canonicalHashV1Result(material)) ||
         plans.has(evidence.intentId) ||
         intent.intentId !== evidence.intentId ||
@@ -130,7 +170,12 @@ export const executionOrderPlans = (
         plan.decisionHash !== document.bindings.strategyDecisionHash ||
         plan.policyHash !== document.bindings.policyHash ||
         plan.strategyName !== document.bindings.strategyName ||
-        plan.side !== OrderSide.Sell ||
+        plan.side !==
+          (entryPlan.levels.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1'
+            ? OrderSide.Buy
+            : OrderSide.Sell) ||
+        isEquityShortProtection(terms) !==
+          (entryPlan.levels.schemaVersion === 'bayn.jev-short-strategy-exit-plan.v1') ||
         plan.createdAt < document.createdAt ||
         risk.decidedAt < plan.createdAt ||
         risk.expiresAt <= risk.decidedAt ||
@@ -150,7 +195,7 @@ export const executionOrderPlans = (
             reconciliationId: reconciliation.reconciliationId,
             protection: terms,
           })) ||
-        (terms._tag === 'Oco'
+        (isOcoProtection(terms)
           ? plan.orderType !== OrderType.Limit ||
             plan.timeInForce !== TimeInForce.Day ||
             BigInt(plan.quantityAtoms) % 1000000000n !== 0n ||

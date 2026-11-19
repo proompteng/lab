@@ -73,7 +73,7 @@ async fn controller_metadata_roundtrip(
             default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
             architecture: MicroVMArchitecture::Amd64,
             database: database.clone(),
-            auth: Authenticator::fixture("https://proompteng.ai".into()),
+            auth: Authenticator::fixture(principal.context.origin.clone()),
             public_url: "https://tengri.proompteng.ai".into(),
             preview_origin: PreviewOrigin::parse(
                 "https://tengri-{session}.proompteng.ai".into(),
@@ -267,7 +267,7 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
         session_id: std::env::var("TENGRI_OFZ_FIXTURE_SESSION").unwrap(),
         trace_id: uuid::Uuid::new_v4().to_string(),
         deadline_unix_ms: now_ms().unwrap() + 5000,
-        origin: "https://proompteng.ai".into(),
+        origin: std::env::var("PLATFORM_WEB_ORIGIN").unwrap(),
         contract_version: 1,
         ..Default::default()
     };

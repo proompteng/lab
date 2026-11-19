@@ -4,9 +4,21 @@ import {
   codexOutputImagePaths,
   isWorkspaceImagePath,
   isCodexAttachmentPath,
+  codexGeneratedImageState,
 } from './codex-images'
 
 const path = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png'
+
+test('keeps native image progress, failure and missing output distinct', () => {
+  expect(codexGeneratedImageState({ type: 'imageGeneration', status: 'in_progress' })).toEqual({ status: 'generating' })
+  expect(
+    codexGeneratedImageState({ type: 'imageGeneration', status: 'failed', failure: { message: 'Quota exceeded' } }),
+  ).toEqual({ status: 'failed', message: 'Quota exceeded' })
+  expect(
+    codexGeneratedImageState({ type: 'imageGeneration', status: 'completed', fileId: 'unavailable-file' }),
+  ).toEqual({ status: 'unavailable' })
+  expect(codexGeneratedImageState({ type: 'imageGeneration', status: 'unknown' })).toEqual({ status: 'unavailable' })
+})
 
 describe('sent image references', () => {
   test('extracts retained attachments without treating arbitrary image markers as fetch targets', () => {

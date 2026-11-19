@@ -5,7 +5,7 @@ for per-machine Talos schematics. The factory is reachable only on the Elauwit p
 `http://100.100.244.148:8081`; port `8080` remains owned by Pi-hole, and the backing OCI registry is private to the
 Compose network.
 
-The factory serves the signed Talos `v1.14.0` catalog pinned in `release.json`. It contains every official Sidero Labs
+The factory serves the signed Talos `v1.14.5` catalog pinned in `release.json`. It contains every official Sidero Labs
 extension plus the signed Kata `4.1.0-r6` image. The accepted r4 catalog at
 `ghcr.io/proompteng/talos-extensions:v1.13.9` remains available for recovery. This is the supported community path: the separate
 `enterprise.extraExtensions` feature is not required.
@@ -168,5 +168,6 @@ already-started machine first. Start the next phase only after the
 current target passes installer identity, Kubernetes, etcd, Ceph, drain, and all four runtime gates in the Galactic
 runbook.
 
-The current custom installers lack factory schematic metadata and require the separate
-[Talos 1.14 transition procedure](../../galactic/releases/README.md), including its cluster-wide maintenance lock.
+All three machines now report valid factory schematic metadata. Complete the
+[current artifact gate](../../galactic/releases/README.md#artifact-identity-gate), then follow the scoped
+[1.14.5 maintenance procedure](../../galactic/releases/README.md#talos-1145-patch-upgrade).

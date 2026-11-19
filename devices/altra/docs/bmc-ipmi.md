@@ -5,16 +5,22 @@ PWM, and restore automatic cooling.
 
 ## Identity
 
-- BMC/IPMI address: `192.168.0.100`
-- BMC subnet: `192.168.0.0/24`
+- BMC/IPMI address: `100.100.244.132`
+- BMC subnet: `100.100.244.128/25`, DHCP
+- BMC MAC: `00:30:64:33:87:e5`
+- DHCP server and gateway: `100.100.244.129`
 - IPMI user: `admin`
 - Talos node name: `talos-192-168-1-85`
 - Legacy Talos LAN address: `192.168.1.85`
 - Current Talos provider-LAN endpoint: `100.100.244.142`
 
-Do not confuse the BMC address with the Talos node addresses. The BMC does not
-answer on the `100.100.244.128/25` provider LAN; reach it
-on the default BMC subnet.
+Do not confuse the BMC address with the Talos node addresses. The BMC moved from
+its factory subnet to the provider LAN on 2026-11-01 through the supported IPMI
+`lan set 1 ipsrc dhcp` operation. A BMC-only packet capture observed the client
+requesting `100.100.244.132` from the provider DHCP server. Native LAN readback
+confirmed the DHCP configuration, and the new endpoint matched the previously
+trusted SSH host key. This address is DHCP-assigned, not a static reservation.
+Keep DHCP enabled; a manually claimed static address does not reserve a lease.
 
 ## Authentication
 
@@ -24,34 +30,40 @@ from `IPMI_PASSWORD` when `-E` is passed.
 ```bash
 export IPMI_PASSWORD='...'
 
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis power status
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis power status
 ```
 
-## Temporary macOS reachability
+## Reachability
 
-If the workstation is not already on `192.168.0.0/24`, add a temporary address
-alias to the connected interface before using IPMI or the BMC web UI:
-
-```bash
-sudo ifconfig en0 alias 192.168.0.10 255.255.255.0
-ping -c 3 192.168.0.100
-```
-
-Remove the alias when finished:
-
-```bash
-sudo ifconfig en0 -alias 192.168.0.10
-```
-
-Use the actual active interface if it is not `en0`.
+Reach the BMC on the provider LAN. A factory-subnet address alias on the workstation
+is no longer required. Verify the current lease and BMC identity before changing a
+client target. The pinned RSA host-key fingerprint is
+`SHA256:8acbSdCTdsAR3WB7loV5b0fm9D8a5y6FsFGUf8OqwAU`.
 
 ## Read-only checks
 
 ```bash
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis power status
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E sdr elist
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E sel elist | tail -n 50
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis power status
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E sdr elist
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E sel elist | tail -n 50
 ```
+
+## Oracle inspection access
+
+Agent Shell's read-only `bmc` tool uses the dedicated `agents-reader` IPMI USER
+account, channel 1 slot 3. Altra's `fan_state` operation additionally uses a dedicated
+SSH key with `restrict,command="/conf/agents-shell/inspect"` in
+`/conf/user_home/sysadmin/.ssh/authorized_keys`. The BMC authenticates that key as
+`sysadmin` but always runs the fixed [inspection script](../scripts/agents-shell-inspect.sh).
+Install it as UID 0 with mode `0500` under a mode-`0700` directory. Preserve other
+authorized keys. The key cannot request a shell, forwarding, PTY, power or fan changes.
+The fixed script reads native PWM and RPM, matching process names and cooling files;
+it does not infer that a missing utility means the thermal daemon is stopped.
+
+Private keys and IPMI reader passwords are delivered through the existing 1Password
+ExternalSecret path. See the [Agent Shell procedure](../../../docs/agents/agents-shell-infrastructure.md)
+for field names, host-key pinning, rollout and actual Oracle consumer checks.
+Operator passwords are not delivered to the shell service.
 
 ## Read CPU and RAM temperatures
 
@@ -62,8 +74,8 @@ list and Web UI show carrier sensors. Query the module over IPMB bus `0`, target
 With `IPMI_PASSWORD` set, read the module's sensor records and CPU temperature:
 
 ```bash
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E -m 0x20 -b 0 -t 0x82 sdr elist
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E -m 0x20 -b 0 -t 0x82 sensor get 'CPU Core Temp'
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E -m 0x20 -b 0 -t 0x82 sdr elist
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E -m 0x20 -b 0 -t 0x82 sensor get 'CPU Core Temp'
 ```
 
 Standard module sensor reads work with `lanplus`. On this Mac, `ipmitool 1.8.19`
@@ -158,7 +170,7 @@ The BMC's SSH operating-system account is separate from its IPMI/Web UI
 account. The local `altra-bmc.json` contains IPMI credentials, which do not
 authenticate this SSH account. Keep SSH credentials outside this repository
 and shell arguments. Verify the SSH host key before connecting to
-`192.168.0.100`.
+`100.100.244.132`.
 
 ADLINK's [carrier firmware download](https://www.ipi.wiki/pages/ampere-altra-developer-platform-download)
 contains `COM_HPC_Server_Carrier_BMC_Engineer_Specification_R6.docx`, which
@@ -341,7 +353,7 @@ To repeat a module identity read with `IPMI_PASSWORD` set, use the trusted BMC
 network and the tested `lan` transport described above:
 
 ```bash
-ipmitool -I lan -H 192.168.0.100 -U admin -E -N 2 -R 1 \
+ipmitool -I lan -H 100.100.244.132 -U admin -E -N 2 -R 1 \
   -m 0x20 -b 0 -t 0x82 raw 0x2c 0x00 0x00
 ```
 
@@ -353,29 +365,29 @@ Talos API is healthy.
 
 ```bash
 # Power on
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis power on
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis power on
 
 # Graceful ACPI shutdown request
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis power soft
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis power soft
 
 # Warm reset
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis power reset
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis power reset
 
 # Forced power off; use only during explicit recovery
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis power off
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis power off
 ```
 
 ## One-time boot override
 
 ```bash
 # Boot into BIOS setup on next boot
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis bootdev bios
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis bootdev bios
 
 # Boot from virtual CD/DVD on next boot
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis bootdev cdrom
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis bootdev cdrom
 
 # PXE on next boot
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E chassis bootdev pxe
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E chassis bootdev pxe
 ```
 
 Then reboot through the safest available path.
@@ -383,7 +395,7 @@ Then reboot through the safest available path.
 ## Serial-over-LAN
 
 ```bash
-ipmitool -I lanplus -H 192.168.0.100 -U admin -E sol activate
+ipmitool -I lanplus -H 100.100.244.132 -U admin -E sol activate
 ```
 
 Exit SOL with `~.` on a new line. If the default SOL channel does not work,

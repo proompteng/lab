@@ -5,6 +5,7 @@ import { isSqlError } from 'effect/sql/SqlError'
 import type { RuntimeConfig } from '../config/model'
 import { classifyDatabaseError, databaseError, DatabaseError } from './database-error'
 import { migrationLoader } from './migrations'
+import { migrationTimeoutMs, withMigrationDeadline } from './migration-deadline'
 import { PostgresClientLive } from './postgres-client'
 
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
@@ -59,26 +60,6 @@ export const postgresMigrations = migrate.pipe(
   ),
   Effect.asVoid,
 )
-
-export const withMigrationDeadline = <R>(
-  migration: Effect.Effect<void, DatabaseError, R>,
-  operationTimeoutMs: number,
-): Effect.Effect<void, DatabaseError, R> =>
-  migration.pipe(
-    Effect.timeoutOrElse({
-      duration: operationTimeoutMs,
-      orElse: () =>
-        Effect.fail(
-          databaseError({
-            failure: 'migration',
-            operation: 'migrate',
-            message: `PostgreSQL migration timed out after ${operationTimeoutMs}ms`,
-          }),
-        ),
-    }),
-  )
-
-export const migrationTimeoutMs = 900_000
 
 export const PostgresMigrationsLive = (config: Pick<RuntimeConfig, 'postgres'>) =>
   Layer.effectDiscard(

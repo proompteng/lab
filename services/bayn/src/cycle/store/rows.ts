@@ -9,7 +9,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../../schemas'
-import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import { decodeCycleDecisionDocument } from '../../shadow-decision-contract'
 import {
   AutonomousCycleSchema,
   CycleDraftSchema,
@@ -77,7 +77,7 @@ const CycleRecoveryScopeSchema = Schema.Struct({
 })
 const DecisionInputSchema = Schema.Struct({
   cycleId: Sha256Schema,
-  document: CycleDecisionDocumentSchema,
+  document: Schema.Unknown,
   observedAt: UtcInstantSchema,
 })
 const BlockInputSchema = Schema.Struct({
@@ -92,6 +92,7 @@ const FinishInputSchema = Schema.Struct({
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
+const DecisionInputDigestRowsSchema = Schema.Tuple([Schema.Struct({ document_digest: Sha256Schema })])
 const DecisionEvidenceMismatchSchema = Schema.Tuple([
   Schema.Struct({ mismatch: Schema.NullOr(Schema.Enum(DecisionEvidenceMismatch)) }),
 ])
@@ -99,6 +100,7 @@ const StoredDecisionDocumentRowsSchema = Schema.Array(
   Schema.Struct({
     document: Schema.Unknown,
     matches_retained_document: Schema.Boolean,
+    document_digest: Sha256Schema,
     execution_completion_evidence_matches: Schema.Boolean,
     execution_generation_is_superseded: Schema.Boolean,
   }),
@@ -112,7 +114,17 @@ export const decodeCycleAuthoritySlot = Schema.decodeUnknownEffect(CycleAuthorit
 
 export const decodeCycleRecoveryScope = Schema.decodeUnknownEffect(CycleRecoveryScopeSchema, strictParseOptions)
 
-export const decodeDecisionInput = Schema.decodeUnknownEffect(DecisionInputSchema, strictParseOptions)
+export const decodeDecisionInput = (input: unknown) =>
+  Schema.decodeUnknownEffect(
+    DecisionInputSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Effect.flatMap((decoded) =>
+      Effect.fromResult(decodeCycleDecisionDocument(decoded.document)).pipe(
+        Effect.map((document) => ({ ...decoded, document })),
+      ),
+    ),
+  )
 
 export const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
 
@@ -125,6 +137,10 @@ export const decodeObservedAt = Schema.decodeUnknownEffect(UtcInstantSchema, str
 export const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
 
 export const decodeDecisionEvidenceMatch = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
+export const decodeDecisionInputDigestRows = Schema.decodeUnknownEffect(
+  DecisionInputDigestRowsSchema,
+  strictParseOptions,
+)
 export const decodeDecisionEvidenceMismatch = Schema.decodeUnknownEffect(
   DecisionEvidenceMismatchSchema,
   strictParseOptions,

@@ -2,14 +2,19 @@ import { Result, Schema } from 'effect'
 
 import { Authority, AuthorityStateSchema, KillState, ReconciliationSchema } from '../execution/contracts'
 import { accountEntryProtectionReasons, PolicySchema } from '../risk'
-import { IsoDateSchema, NonNegativeIntegerSchema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  SignedMicrosSchema,
+  UnsignedMicrosSchema,
+  UtcInstantSchema,
+} from '../schemas'
 import { accountTradingDate, utcInstantFromEpochMillis } from '../time'
 import { decodeJevPortfolio, JevPortfolioSchema, JevPurpose } from './portfolio'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 
 /** The same retained inputs reproduce the admission decision in the runtime and the offline assessment. */
-export const AccountProtectionInputsSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.account-protection-inputs.v1'),
+const accountProtectionFields = {
   observedAt: UtcInstantSchema,
   portfolio: JevPortfolioSchema.check(
     Schema.makeFilter((portfolio) => portfolio.purpose === JevPurpose.Entry, {
@@ -25,11 +30,28 @@ export const AccountProtectionInputsSchema = Schema.Struct({
   unknownMutationCount: NonNegativeIntegerSchema,
   dayStartEquityMicros: SignedMicrosSchema,
   peakEquityMicros: SignedMicrosSchema,
+} as const
+
+const LegacyAccountProtectionInputsSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.account-protection-inputs.v1'),
+  ...accountProtectionFields,
 })
+const CurrentAccountProtectionInputsSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.account-protection-inputs.v2'),
+  ...accountProtectionFields,
+  dailyTradedNotionalMicros: UnsignedMicrosSchema,
+})
+export const AccountProtectionInputsSchema = Schema.Union([
+  LegacyAccountProtectionInputsSchema,
+  CurrentAccountProtectionInputsSchema,
+])
 
 export type AccountProtectionInputs = typeof AccountProtectionInputsSchema.Type
 
-export type AccountProtectionFacts = Omit<AccountProtectionInputs, 'portfolio'> & {
+export type AccountProtectionFacts = (
+  | Omit<typeof LegacyAccountProtectionInputsSchema.Type, 'portfolio'>
+  | Omit<typeof CurrentAccountProtectionInputsSchema.Type, 'portfolio'>
+) & {
   readonly portfolio: { readonly purpose: JevPurpose; readonly brokerState: ReconciledBrokerState }
 }
 
@@ -60,7 +82,11 @@ export const decideAccountProtection = (inputs: AccountProtectionFacts, authorit
     },
     policy,
   )
-  if (reasons.length === 0) return undefined
+  const turnoverBudgetExhausted =
+    inputs.schemaVersion === 'bayn.account-protection-inputs.v2' &&
+    policy.maxDailyTradedNotionalMicros !== null &&
+    BigInt(inputs.dailyTradedNotionalMicros) >= BigInt(policy.maxDailyTradedNotionalMicros)
+  if (reasons.length === 0 && !turnoverBudgetExhausted) return undefined
   const timestamps = [
     brokerState.account.observedAt,
     brokerState.positionsObservedAt,

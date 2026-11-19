@@ -427,7 +427,7 @@ Final acceptance remains open. The following inventory is an interim readback, n
 
 At approximately `12:59Z`, the inventory contained 91 Argo Applications. 88 reported `Synced` and `Healthy`, but
 three of those had reconciliation paused, leaving 85 with both current health/sync and active reconciliation.
-The three non-green Applications were Bayn, Home Stash and Rook-Ceph. The Cloudflare, Keycloak, and Tengri holds
+Bayn and Rook-Ceph were among the non-green Applications. The Cloudflare, Keycloak, and Tengri holds
 belong to the separate ongoing identity/runtime cutover and must be resolved against that owner's reviewed release;
 their cached Argo health is not fresh acceptance. Incident-owned registry and observability holds were removed.
 
@@ -444,7 +444,6 @@ their cached Argo health is not fresh acceptance. Incident-owned registry and ob
 | Sealed Secrets        | Web Ready and HTTP 200 after amd64 placement; controller unchanged                                                                                                                             | Upstream packaging defect remains outside the deployed workaround                                                                        |
 | Hermes                | Published/promoted toolchain, production PID-file fix, retained-directory SIGKILL regression and cross-node policy proof pass                                                                  | No outstanding incident-specific check at this revision                                                                                  |
 | Ofz                   | API/playground/exporters Ready, encrypted immutable NUC archive and production acknowledgement verified                                                                                        | Separate identity/runtime migration and its deliberate fences remain owned by that work                                                  |
-| Home Stash            | The long 11:08 importer Job completed normally; subsequent scheduled runs started                                                                                                              | Active CronJobs legitimately report Progressing; observe normal completion rather than deleting work to change health                    |
 
 Ceph redundancy is improving, but a healthy host and active PGs are not equivalent to complete replication.
 No Ceph profile, scrub concurrency, media I/O throttle, OSD identity, or health-warning mute was changed to force
@@ -471,7 +470,7 @@ can be extended by new slow operations. That policy was preserved. A contemporan
 | Make NUC canonical-host SSH use its working direct key                      | Scoped host patterns/exclusions and native UID/source readback verified                                                                         |
 | Establish Altra's overlapping reboot cause                                  | Kernel boot confirmed; BMC last-cause result and stale clock recorded; actor and exact impact unresolved                                        |
 | Quantify registry integrity and telemetry gaps                              | Open; current pulls and replica readiness do not prove historical completeness                                                                  |
-| Close the incident after all application and service-level checks pass      | Still open: intermittent Bayn readiness, Home Stash active work, unmuted Ceph warnings/rebalancing, and separate cutover holds                  |
+| Close the incident after all application and service-level checks pass      | Still open: intermittent Bayn readiness, unmuted Ceph warnings/rebalancing, and separate cutover holds                                          |
 
 ## Acceptance still required
 
@@ -480,7 +479,6 @@ can be extended by new slow operations. That policy was preserved. A contemporan
   Keep OBSERVE authority until a separately reviewed mandate exists.
 - Verify session-specific market-data freshness. The native Kafka unavailable-partition recheck after the final Bayn rollout already passed with zero unavailable partitions.
 - Let Ceph finish rebalancing and clear its remaining native warnings; zero degraded objects does not mean every PG is clean. Retain all original OSD identities.
-- Confirm Home Stash's active Job completes normally and Argo returns to green between scheduled runs.
 - Resolve the separately owned Cloudflare, Keycloak, and Tengri reconciliation holds through their intended release.
 - Update this report with final application counts, runtime acceptance times, remaining data-integrity uncertainty,
   and the final disposition of each corrective action before declaring the incident closed.
@@ -489,7 +487,7 @@ can be extended by new slow operations. That policy was preserved. A contemporan
 
 The incident remains open. A new Argo inventory at `14:54Z` reported 89 of 91 Applications Synced/Healthy;
 three of those still had their separately owned reconciliation holds, leaving 86 actively reconciled and green.
-Home Stash's active importer and Rook-Ceph remained non-green. Bayn's current Argo health must also be distinguished
+Rook-Ceph remained non-green. Bayn's current Argo health must also be distinguished
 from the failed sustained-readiness checks below.
 
 ### Replica acknowledgement and the command budget
@@ -600,11 +598,10 @@ checkpoint IDs had advanced to 47,435 and 117,389, respectively, with current co
 Fresh Turin sensors reported four case fans at 1120 RPM, CPU fan 1400 RPM, protected pump 3780 RPM, CPU 40 C,
 NIC 74 C and DIMM banks 62/59 C. Ceph retained all six OSDs up/in and all 601 PGs active, with no degraded PGs.
 It still had 23 remapped PGs, approximately 544,000 misplaced objects and two unmuted BlueStore warnings.
-The current importer completed more runs normally; a subsequent scheduled run was active. The three separate
-identity/runtime cutover holds remained in place. Final all-application acceptance is still open.
+The three separate identity/runtime cutover holds remained in place. Final all-application acceptance is still open.
 
 The `16:00Z` application inventory still contained 91 Applications: 89 reported Synced/Healthy, with 86 actively
-reconciled and green. The remaining active exceptions were Home Stash's running importer and Rook-Ceph. Cached
+reconciled and green. Rook-Ceph remained an active exception. Cached
 Healthy states on the paused Cloudflare, Keycloak and Tengri Applications still do not establish cutover acceptance.
 Bayn's subsequent native publication failure also keeps its service-level acceptance open despite current Argo health.
 

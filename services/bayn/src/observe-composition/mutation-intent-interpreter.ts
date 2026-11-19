@@ -3,6 +3,9 @@ import { Duration, Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../telemetry'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { BrokerRead, OrderStatus as BrokerOrderStatus } from '../broker/alpaca/model'
+import { decideRecoverySuccess, validateRecovery } from '../execution/coordinator-decisions'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
 import { CycleRunnerError } from '../cycle/runner/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
@@ -25,16 +28,17 @@ import {
   type Intent,
   type Position,
 } from '../execution/contracts'
-import { MutationStore, type MutationEvent } from '../execution/mutations/model'
+import { MutationStore, type ExpiredEntryCancellationAdmission, type MutationEvent } from '../execution/mutations/model'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import {
   jevBrokerEvidenceFreshUntilMs,
   jevProfitTargetHoldingDeadlineAt,
   jevProfitTargetLimitFloors,
+  jevProfitTargetLimitCeilings,
   jevProfitTargetStopCrossed,
 } from '../jev/exit'
 import { jevPricingQuery } from '../jev/runtime'
-import { protectedEntryBuyPriceCeilings } from '../strategy/runtime-decision'
+import { protectedEntryBuyPriceCeilings, protectedEntrySellPriceFloors } from '../strategy/runtime-decision'
 import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -272,6 +276,7 @@ type ExecutionIntentRecoveryLookup = Omit<PreparedExecutionIntent, 'intent'> & {
 
 const hasBoundSellExposure = (prepared: PreparedExecutionIntent, positions: readonly Position[]): boolean =>
   prepared.intent.side === OrderSide.Sell &&
+  prepared.intent.protection?._tag !== 'EquityShortBracket' &&
   positions.some(
     (position) =>
       position.accountId === prepared.intent.accountId &&
@@ -284,7 +289,12 @@ const entryCloseObligationIsUnresolved = (
   facts: MutationPreparationFacts,
   policy: Policy,
 ): boolean => {
-  if (!preparedIntents.some(({ intent }) => intent.side === OrderSide.Sell)) return false
+  if (
+    !preparedIntents.some(
+      ({ intent }) => intent.side === OrderSide.Sell && intent.protection?._tag !== 'EquityShortBracket',
+    )
+  )
+    return false
   const { brokerState, report, riskContext } = facts.reconciliation
   if (preparedIntents.some((prepared) => hasBoundSellExposure(prepared, brokerState.positions))) return true
   const now = Date.parse(facts.evaluatedAt)
@@ -307,30 +317,10 @@ const entryCloseObligationIsUnresolved = (
   )
 }
 
-export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
-  input: I,
-  preparation: P,
-  policy: Policy,
-  cycle: AutonomousCycle,
+export const readPreparedExecutionIntents = (
   document: ExecutionDecisionDocument,
-  reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
-  allowSubmit: boolean,
-  drainOpenOrders: boolean,
-  dependencies: MutationPreparationDependencies<R, E, I, P>,
-): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore> =>
+): Effect.Effect<readonly PreparedExecutionIntent[], CycleRunnerError, IntentStore | MutationStore> =>
   Effect.gen(function* () {
-    yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, document))
-    const submissionCutoffAt = yield* Effect.fromResult(boundExecutionSubmissionCutoff(input, cycle, document))
-    const generationIsSuperseded = input.authorityGenerationHash !== document.bindings.authorityGenerationHash
-    if (document.riskBlock !== undefined) {
-      return {
-        _tag: 'Block',
-        reason: CycleTerminalReason.Risk,
-        observedAt: yield* dependencies.now,
-      }
-    }
-    if (document.targetPlan.status !== TargetPlanStatus.Planned) return { _tag: 'RunCycle' }
-
     const intentStore = yield* IntentStore
     const mutationStore = yield* MutationStore
     const targets = new Map(document.targetPlan.targets.map((target) => [target.symbol, target]))
@@ -443,6 +433,181 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       }
       preparedIntents.push({ ...lookup, intent })
     }
+
+    return preparedIntents
+  })
+
+type PreparedExpiredEntryRecoveryStep =
+  | {
+      readonly _tag: 'Execute'
+      readonly action: 'CANCEL'
+      readonly intentId: string
+      readonly observedAt: string
+      readonly cancellationAdmission: ExpiredEntryCancellationAdmission
+    }
+  | Extract<
+      PreparedMutationCycleStep,
+      { readonly action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' } | { readonly _tag: 'Wait' }
+    >
+
+export const prepareExpiredEntryCancellation = (
+  input: MutationIntentInput,
+  cycle: AutonomousCycle,
+  document: ExecutionDecisionDocument,
+  observedAt: string,
+  maximumBrokerStateAgeMs: number,
+  authorityVersion: number,
+): Effect.Effect<
+  PreparedExpiredEntryRecoveryStep | undefined,
+  CycleRunnerError,
+  BrokerRead | IntentStore | MutationStore
+> =>
+  Effect.gen(function* () {
+    yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, document))
+    if (
+      input.mutationPhase === 'CLOSE' ||
+      document.riskBlock !== undefined ||
+      document.targetPlan.status !== TargetPlanStatus.Planned
+    )
+      return undefined
+    // A superseded generation still needs ordinary lookup recovery and provenance terminalization.
+    if (input.authorityGenerationHash !== document.bindings.authorityGenerationHash) return undefined
+    const cutoff = yield* Effect.fromResult(boundExecutionSubmissionCutoff(input, cycle, document))
+    const preparedIntents = yield* readPreparedExecutionIntents(document)
+    for (const prepared of preparedIntents) {
+      const stored = prepared.stored
+      if (
+        stored === undefined ||
+        (stored.intent.side !== OrderSide.Buy && stored.intent.protection?._tag !== 'EquityShortBracket') ||
+        stored.intent.state === IntentState.Terminal ||
+        observedAt < executionSubmitExpiresAt(cutoff, prepared.riskBinding.evaluation.decision.expiresAt)
+      )
+        continue
+      const commit = yield* Effect.fromResult(
+        validateCommitIdentity(prepared.intent, prepared.riskBinding.evaluation.decision),
+      ).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'expired entry risk binding is invalid', cause, failure: 'contract' }),
+        ),
+      )
+      yield* Effect.fromResult(classifyExistingCommit([stored], commit)).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({
+            message: 'expired entry changed from its committed risk decision',
+            cause,
+            failure: 'contract',
+          }),
+        ),
+      )
+      const recovery = yield* Effect.fromResult(
+        decidePreparedMutationRecovery(stored.intent, prepared.latestSubmit, prepared.latestCancel),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+      if (recovery._tag === 'NoRecovery') continue
+      if (!mutationRecoveryIsDue(recovery.event, observedAt))
+        return { _tag: 'Wait', observedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
+      const action: 'RECOVER_CANCEL' | 'RECOVER_SUBMIT' =
+        recovery._tag === 'Recover' && recovery.operation === MutationOperation.Cancel
+          ? 'RECOVER_CANCEL'
+          : 'RECOVER_SUBMIT'
+      if (recovery._tag === 'ObservePending') {
+        yield* Effect.fromResult(validateRecovery(stored.intent, recovery.event, undefined)).pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({
+              message: 'expired entry submission identity is invalid',
+              cause,
+              failure: 'contract',
+            }),
+          ),
+        )
+        // This isolated lookup verifies the parent and complete immutable order terms without rebuilding
+        // unrelated account history. Uncertain observations cannot authorize a fresh cancellation.
+        const broker = yield* BrokerRead
+        const lookup = yield* broker.orderByClientId(stored.intent.clientOrderId).pipe(Effect.result)
+        // This optional containment lookup cannot prevent ordinary full reconciliation and recovery
+        // from handling a missing order or an independently unavailable lookup endpoint.
+        if (Result.isFailure(lookup)) return undefined
+        const order = lookup.success
+        const checkedAt = Date.parse(yield* currentUtcInstant)
+        const orderAt = Date.parse(order.value.observedAt)
+        const evidenceAt = Date.parse(order.evidence.observedAt)
+        if (
+          !Number.isFinite(orderAt) ||
+          !Number.isFinite(evidenceAt) ||
+          orderAt > checkedAt ||
+          evidenceAt > checkedAt ||
+          checkedAt - Math.min(orderAt, evidenceAt) >= maximumBrokerStateAgeMs
+        )
+          return undefined
+        const found = decideRecoverySuccess(stored.intent, MutationOperation.Submit, recovery.event, order, undefined)
+        // Canceling a native bracket can cancel its remaining exit legs. Only an observed unfilled
+        // entry with wholly held exits belongs to this isolated path. Any inventory or activated
+        // protection requires the ordinary complete reconciliation and protection lifecycle.
+        if (
+          order.value.filledQuantityAtoms !== '0' ||
+          (order.value.legs ?? []).some(
+            (leg) => leg.filledQuantityAtoms !== '0' || leg.status !== BrokerOrderStatus.Held,
+          )
+        )
+          continue
+        if (
+          found._tag === 'RecoveryFound' &&
+          found.terminalOutcome === undefined &&
+          order.value.parentBrokerOrderId === undefined
+        )
+          return {
+            _tag: 'Execute',
+            action: 'CANCEL',
+            intentId: prepared.intent.intentId,
+            observedAt,
+            cancellationAdmission: {
+              accountId: stored.intent.accountId,
+              authorityGenerationHash: input.authorityGenerationHash,
+              authorityVersion,
+              intentId: stored.intent.intentId,
+              clientOrderId: stored.intent.clientOrderId,
+              brokerOrderId: order.value.brokerOrderId,
+              observedAt: utcInstantFromEpochMillis(Math.min(orderAt, evidenceAt)),
+              validUntil: utcInstantFromEpochMillis(Math.min(orderAt, evidenceAt) + maximumBrokerStateAgeMs),
+            },
+          }
+      }
+      return {
+        _tag: 'Execute',
+        action,
+        intentId: prepared.intent.intentId,
+        observedAt,
+      }
+    }
+    return undefined
+  })
+
+export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+  input: I,
+  preparation: P,
+  policy: Policy,
+  cycle: AutonomousCycle,
+  document: ExecutionDecisionDocument,
+  reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
+  allowSubmit: boolean,
+  drainOpenOrders: boolean,
+  dependencies: MutationPreparationDependencies<R, E, I, P>,
+): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore> =>
+  Effect.gen(function* () {
+    yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, document))
+    const submissionCutoffAt = yield* Effect.fromResult(boundExecutionSubmissionCutoff(input, cycle, document))
+    const generationIsSuperseded = input.authorityGenerationHash !== document.bindings.authorityGenerationHash
+    if (document.riskBlock !== undefined) {
+      return {
+        _tag: 'Block',
+        reason: CycleTerminalReason.Risk,
+        observedAt: yield* dependencies.now,
+      }
+    }
+    if (document.targetPlan.status !== TargetPlanStatus.Planned) return { _tag: 'RunCycle' }
+
+    const intentStore = yield* IntentStore
+    const mutationStore = yield* MutationStore
+    const preparedIntents = yield* readPreparedExecutionIntents(document)
 
     const recoveryObservedAt = yield* dependencies.now
     let pendingRecovery: { readonly intentId: string; readonly event: MutationEvent } | undefined
@@ -607,7 +772,10 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     if (allowSubmit) {
-      const buyCeilings = protectedEntryBuyPriceCeilings(document.strategyDecision)
+      const coverCeilings = yield* Effect.fromResult(
+        jevProfitTargetLimitCeilings(profitTarget, document.createdAt, document.targetPlan.targets),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+      const buyCeilings = { ...protectedEntryBuyPriceCeilings(document.strategyDecision), ...coverCeilings }
       const profitFloors = yield* Effect.fromResult(
         jevProfitTargetLimitFloors(profitTarget, document.createdAt, document.targetPlan.targets),
       ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -622,7 +790,8 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
-            profitFloors[prepared.targetIntent.symbol],
+            profitFloors[prepared.targetIntent.symbol] ??
+              protectedEntrySellPriceFloors(document.strategyDecision)[prepared.targetIntent.symbol],
             buyCeilings[prepared.targetIntent.symbol],
           ),
         )
@@ -783,7 +952,9 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             if (
               drainOpenOrders ||
               (profitHoldingDeadlineAt !== undefined && facts.evaluatedAt >= profitHoldingDeadlineAt) ||
-              (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
+              (mutationPhase === 'ENTRY' &&
+                (record.intent.side === OrderSide.Buy || record.intent.protection?._tag === 'EquityShortBracket') &&
+                hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
                   executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
@@ -801,7 +972,6 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             const state = facts.reconciliation.brokerState
             if (
               mutationPhase === 'CLOSE' &&
-              record.intent.side === OrderSide.Sell &&
               profitTarget !== undefined &&
               profitHoldingDeadlineAt !== undefined &&
               profitTarget.symbols[0] === record.intent.symbol &&
@@ -814,7 +984,11 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               state.unknownOrderCount === 0 &&
               facts.reconciliation.riskContext.unknownMutationCount === 0 &&
               state.positions.some(
-                (position) => position.symbol === record.intent.symbol && BigInt(position.quantityAtoms) > 0n,
+                (position) =>
+                  position.symbol === record.intent.symbol &&
+                  (record.intent.side === OrderSide.Buy
+                    ? BigInt(position.quantityAtoms) < 0n
+                    : BigInt(position.quantityAtoms) > 0n),
               )
             ) {
               const observedAt = yield* dependencies.now

@@ -11,7 +11,7 @@ function textResponse(content: string, finishReason = 'stop', completionTokens =
 
 describe('withCacheSalt', () => {
   test('isolates every chat payload without mutating the caller input', () => {
-    const payload = { model: 'qwen36-flamingo', messages: [{ role: 'user', content: 'hello' }] }
+    const payload = { model: 'qwen38-flamingo', messages: [{ role: 'user', content: 'hello' }] }
 
     expect(withCacheSalt(payload, 'run-specific-salt')).toEqual({ ...payload, cache_salt: 'run-specific-salt' })
     expect(payload).not.toHaveProperty('cache_salt')
@@ -20,13 +20,13 @@ describe('withCacheSalt', () => {
 
 describe('validateChatSmokeResponse', () => {
   test('accepts real OpenAI text completion fields', () => {
-    expect(validateChatSmokeResponse('exact-no-thinking', textResponse('qwen36-ready'))).toEqual([])
-    expect(validateChatSmokeResponse('medium-thinking', textResponse('qwen36-thinking-ready'))).toEqual([])
+    expect(validateChatSmokeResponse('exact-no-thinking', textResponse('qwen38-ready'))).toEqual([])
+    expect(validateChatSmokeResponse('medium-thinking', textResponse('qwen38-thinking-ready'))).toEqual([])
   })
 
   test('reads finish_reason from the choice rather than the message', () => {
     const response = {
-      choices: [{ finish_reason: 'content_filter', message: { content: 'qwen36-ready', finish_reason: 'stop' } }],
+      choices: [{ finish_reason: 'content_filter', message: { content: 'qwen38-ready', finish_reason: 'stop' } }],
     }
     expect(validateChatSmokeResponse('exact-no-thinking', response)).toContain(
       'choices[0].finish_reason must be "stop" or "length", got "content_filter"',
@@ -38,7 +38,7 @@ describe('validateChatSmokeResponse', () => {
       choices: [
         {
           finish_reason: 'stop',
-          message: { content: 'qwen36-thinking-ready', completion_tokens: 8 },
+          message: { content: 'qwen38-thinking-ready', completion_tokens: 8 },
         },
       ],
       usage: { completion_tokens: 0 },

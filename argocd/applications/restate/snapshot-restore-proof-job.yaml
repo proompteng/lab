@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: restore-proof
-          image: ghcr.io/restatedev/restate-tools@sha256:db618f42dbad37a79d8d4c543968f32d8d07aaa71cbcc8736f700f6c5f517209
+          image: restate-runtime
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash

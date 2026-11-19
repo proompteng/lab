@@ -11,6 +11,7 @@ pub mod proompteng {
     }
 }
 pub use proompteng::{authz::v1 as authz, relay::v1 as relay};
+pub mod jwt;
 pub mod tls;
 pub const MAX_EXECUTION_BODY_BYTES: usize = 65_536;
 pub const MAX_RELAY_REQUEST_BYTES: usize = 262_144;

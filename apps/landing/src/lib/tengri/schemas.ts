@@ -168,8 +168,9 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
-  z.strictObject({ action: z.literal('active-codex-runs'), agentId }),
+  z.strictObject({ action: z.literal('active-codex-runs'), agentId, threadId: codexId.optional() }),
   z.strictObject({ action: z.literal('codex-run'), agentId, runId: z.uuid() }),
+  z.strictObject({ action: z.literal('recover-run'), agentId, runId: z.uuid(), operationId: z.uuid() }),
   z.strictObject({
     action: z.literal('list-threads'),
     agentId,
@@ -178,7 +179,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   }),
   z.strictObject({ action: z.literal('set-thread-archived'), agentId, threadId: codexId, archived: z.boolean() }),
   z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
-  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
+  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId }),
   z
     .strictObject({
       action: z.literal('send-turn'),

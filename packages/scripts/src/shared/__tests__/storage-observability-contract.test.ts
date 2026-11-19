@@ -14,14 +14,54 @@ const metricAllowlist = (config: string, name: string): RegExp => {
   return new RegExp(`^(?:${JSON.parse(encoded)})$`)
 }
 
+test('kubelet retains available, used and capacity bytes for filesystem alert validity', () => {
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const allow = metricAllowlist(config, 'arc_resource_metrics')
+  for (const name of ['available', 'used', 'capacity']) {
+    expect(allow.test(`kubelet_volume_stats_${name}_bytes;tengri;`)).toBe(true)
+  }
+  expect(allow.test('kubelet_volume_stats_used_bytes_extra;tengri;')).toBe(false)
+})
+
+test('Ceph retains bounded metadata pressure and scrub progress without RocksDB tracing', () => {
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const allow = metricAllowlist(config, 'ceph_daemon_metrics')
+  for (const name of [
+    'ceph_bluefs_bytes_written_sst',
+    'ceph_bluefs_bytes_written_wal',
+    'ceph_bluefs_read_bytes',
+    'ceph_bluefs_compact_lat_sum',
+    'ceph_bluefs_compact_lat_count',
+    'ceph_bluefs_compact_lock_lat_sum',
+    'ceph_bluefs_compact_lock_lat_count',
+    'ceph_bluestore_txc_throttle_lat_sum',
+    'ceph_bluestore_txc_throttle_lat_count',
+    'ceph_osd_scrub_replicated_read_bytes',
+    'ceph_osd_scrub_replicated_read_cnt',
+    'ceph_osd_scrub_replicated_io_intersects',
+    'ceph_osd_scrub_replicated_io_blocked',
+  ]) {
+    expect(allow.test(name)).toBe(true)
+  }
+  for (const name of [
+    'ceph_bluefs_bytes_written_sst_extra',
+    'ceph_bluefs_unbounded_future_metric',
+    'ceph_osd_scrub_replicated_object_name',
+    'ceph_rocksdb_compact_running',
+    'ceph_rocksdb_rocksdb_write_delay_time_sum',
+  ]) {
+    expect(allow.test(name)).toBe(false)
+  }
+})
+
 test('CNPG relabeling retains the complete bounded database diagnostics and collector failures', () => {
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const allow = metricAllowlist(config, 'cnpg_metrics')
   const manifest = YAML.parse(readRepoFile('argocd/applications/bayn/postgres-monitoring.yaml'))
-  const queries = YAML.parse(manifest.data.queries) as Record<
-    string,
-    { metrics: Array<Record<string, { usage: string }>> }
-  >
+  const queries = Object.assign(
+    {},
+    ...Object.values(manifest.data).map((value) => YAML.parse(String(value))),
+  ) as Record<string, { metrics: Array<Record<string, { usage: string }>> }>
   // Exercise the retained metric names produced by the configured exporter; labels are not themselves metric samples.
   for (const [query, { metrics }] of Object.entries(queries)) {
     for (const metric of metrics) {
@@ -47,6 +87,7 @@ test('CNPG relabeling retains the complete bounded database diagnostics and coll
   for (const sample of [
     'cnpg_bayn_unbounded_future_metric;',
     'cnpg_bayn_io_write_seconds_total_extra;',
+    'cnpg_bayn_native_arrivals_total_bytes_extra;',
     'cnpg_pg_settings_setting;application_name',
     'unrelated_metric;',
   ])
@@ -171,6 +212,11 @@ test('host storage collector reads host counters without a public listener or Ku
     'node_disk_io_time_weighted_seconds_total',
     'node_network_speed_bytes',
     'node_network_receive_drop_total',
+    'node_ethtool_info',
+    'node_ethtool_received_discards_phy',
+    'node_ethtool_received_out_of_buffer',
+    'node_ethtool_transmitted_pause_ctrl_phy',
+    'node_ethtool_received_crc_errors_phy',
     'node_pressure_io_stalled_seconds_total',
     'node_scrape_collector_success',
   ])

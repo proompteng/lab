@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevAcceptanceVersion, JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceRateSchema } from '../inference-costs'
 import { registrationFixture } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { validateSystemRegistration } from './policy'
-import { decisionsModel } from '../jev/decisions'
+import { jevModel } from '../jev/contract'
 
 const rateCard = (inputRate: string) =>
   replayRateCardFixture({
@@ -33,7 +33,7 @@ test('inference policies require uninterrupted tariffs for each actual model acr
         { ...rate, effectiveUntil: '2026-11-10T12:00:00.000Z' },
         { ...rate, effectiveFrom: '2026-11-10T12:00:00.001Z' },
       ]),
-      complete.rates.filter((rate) => rate.model !== decisionsModel),
+      complete.rates.filter((rate) => rate.model !== jevModel),
       ...(policy === JevResearchPolicy.Candidate
         ? [complete.rates.filter((rate) => rate.provider !== 'typesafe')]
         : []),
@@ -66,7 +66,7 @@ test('adjacent tariffs cover inference policies while deterministic controls nee
           definition.policy === JevResearchPolicy.Candidate
             ? rates
             : definition.policy === JevResearchPolicy.Ablation
-              ? rates.filter((rate) => rate.provider === 'openai')
+              ? rates.filter((rate) => rate.provider === 'typesafe')
               : [],
       },
     })),
@@ -74,19 +74,37 @@ test('adjacent tariffs cover inference policies while deterministic controls nee
   expect(Result.isSuccess(result)).toBe(true)
 })
 
-test('each policy preserves the frozen Jev tariff floor before the prospective window opens', () => {
-  const registration = registrationFixture()
-  for (const policy of Object.values(JevResearchPolicy))
-    for (const rate of ['0', '1', '41999', '42000', '42001', '100000000']) {
-      const result = validateSystemRegistration({
-        ...registration,
-        policies: registration.policies.map((definition) =>
-          definition.policy === policy ? { ...definition, inferenceRateCard: rateCard(rate) } : definition,
-        ),
-      })
-      expect(Result.isSuccess(result)).toBe(BigInt(rate) >= 42000n)
-    }
-})
+test.each([JevAcceptanceVersion.Current, JevAcceptanceVersion.RetainedV3])(
+  'registered contract rates under %s',
+  (version) => {
+    const registration = registrationFixture(undefined, 20, version)
+    for (const policy of Object.values(JevResearchPolicy))
+      for (const rate of ['0', '1', '41999', '42000', '42001', '100000000']) {
+        const result = validateSystemRegistration(
+          {
+            ...registration,
+            policies: registration.policies.map((definition) =>
+              definition.policy === policy
+                ? {
+                    ...definition,
+                    inferenceRateCard: {
+                      ...rateCard(rate),
+                      rates: rateCard(rate).rates.map((line) =>
+                        line.provider === 'typesafe'
+                          ? { ...line, model: registration.obligations.configuration.protocol.model }
+                          : line,
+                      ),
+                    },
+                  }
+                : definition,
+            ),
+          },
+          version,
+        )
+        expect(Result.isSuccess(result)).toBe(version === JevAcceptanceVersion.Current || BigInt(rate) >= 42000n)
+      }
+  },
+)
 
 test('a cheaper rate confined to history cannot lower any registered session cost', () => {
   const registration = registrationFixture()
@@ -113,7 +131,7 @@ test('a cheaper rate confined to history cannot lower any registered session cos
   ).toBe(true)
 })
 
-test('an intra-window discount is rejected even when it begins at the final close', () => {
+test('a verified contract discount may begin at the final close', () => {
   const registration = registrationFixture()
   const lastClose = registration.calendar.sessions.at(-1)?.closeAt
   if (lastClose === undefined) throw new Error('Missing fixture session')
@@ -129,7 +147,7 @@ test('an intra-window discount is rejected even when it begins at the final clos
     ),
   }
   expect(
-    Result.isFailure(
+    Result.isSuccess(
       validateSystemRegistration({
         ...registration,
         policies: registration.policies.map((definition) => ({ ...definition, inferenceRateCard })),

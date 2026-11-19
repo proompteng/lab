@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { Args, Command, Options } from '@effect/cli'
+import { Argument, Command, Flag } from 'effect/cli'
 import type * as grpc from '@grpc/grpc-js'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
@@ -39,8 +39,8 @@ type RunSubmitInput = {
   agent: string
   impl: string
   runtime: string
-  runtimeConfig: string[]
-  parameters: string[]
+  runtimeConfig: readonly string[]
+  parameters: readonly string[]
   idempotencyKey?: string
   workloadImage?: string
   cpu?: string
@@ -65,7 +65,7 @@ const resolvePromptText = (value: Option.Option<string>, question: string, allow
         catch: (error) => asAgentctlError(error, 'ValidationError'),
       })
 
-const resolvePromptList = (values: string[], question: string) =>
+const resolvePromptList = (values: readonly string[], question: string) =>
   values.length > 0
     ? Effect.succeed(
         values
@@ -210,25 +210,25 @@ const submitRunGrpc = async (
 }
 
 export const makeRunCommand = () => {
-  const nameArg = Args.text({ name: 'name' })
+  const nameArg = Argument.String('name')
 
   const submit = Command.make(
     'submit',
     {
-      agent: Options.text('agent'),
-      impl: Options.text('impl'),
-      runtime: Options.text('runtime'),
-      runtimeConfig: Options.repeated(Options.text('runtime-config')),
-      param: Options.repeated(Options.text('param')),
-      idempotencyKey: Options.optional(Options.text('idempotency-key')),
-      workloadImage: Options.optional(Options.text('workload-image')),
-      cpu: Options.optional(Options.text('cpu')),
-      memory: Options.optional(Options.text('memory')),
-      memoryRef: Options.optional(Options.text('memory-ref')),
-      vcs: Options.optional(Options.text('vcs')),
-      vcsMode: Options.optional(Options.text('vcs-mode')),
-      vcsRequired: Options.boolean('vcs-required'),
-      wait: Options.boolean('wait'),
+      agent: Flag.String('agent'),
+      impl: Flag.String('impl'),
+      runtime: Flag.String('runtime'),
+      runtimeConfig: Flag.atLeast(Flag.String('runtime-config'), 0),
+      param: Flag.atLeast(Flag.String('param'), 0),
+      idempotencyKey: Flag.optional(Flag.String('idempotency-key')),
+      workloadImage: Flag.optional(Flag.String('workload-image')),
+      cpu: Flag.optional(Flag.String('cpu')),
+      memory: Flag.optional(Flag.String('memory')),
+      memoryRef: Flag.optional(Flag.String('memory-ref')),
+      vcs: Flag.optional(Flag.String('vcs')),
+      vcsMode: Flag.optional(Flag.String('vcs-mode')),
+      vcsRequired: Flag.Boolean('vcs-required').pipe(Flag.withDefault(false)),
+      wait: Flag.Boolean('wait').pipe(Flag.withDefault(false)),
     },
     ({
       agent,
@@ -275,48 +275,51 @@ export const makeRunCommand = () => {
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 
-  const logs = Command.make('logs', { name: nameArg, follow: Options.boolean('follow') }, ({ name, follow }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (transport.mode === 'kube') {
-        const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-        )
-        if (!resource) throw new Error('AgentRun not found')
-        const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-        const selector = isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : runLabelSelector(name)
-        const pod = yield* Effect.promise(() => pickPodForRun(transport.backend, resolved.namespace, selector))
-        if (!pod) throw new Error('No pods found for AgentRun')
-        const podName = readNestedValue(pod, ['metadata', 'name'])
-        if (typeof podName !== 'string' || !podName) throw new Error('Pod name not available for logs')
-        const containerName = resolvePodContainerName(pod)
-        yield* Effect.promise(() =>
-          streamPodLogs(transport.backend, resolved.namespace, podName, containerName, follow),
-        )
-        return
-      }
-      const stream = (
-        transport.client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>
-      ).StreamAgentRunLogs
-      if (!stream) throw new Error('StreamAgentRunLogs not available')
-      const call = stream.call(transport.client, { name, namespace: resolved.namespace, follow }, transport.metadata)
-      call.on('data', (entry: { stream?: string; message?: string }) => {
-        const message = entry.message ?? ''
-        if (entry.stream === 'stderr') {
-          process.stderr.write(message)
-        } else {
-          process.stdout.write(message)
+  const logs = Command.make(
+    'logs',
+    { name: nameArg, follow: Flag.Boolean('follow').pipe(Flag.withDefault(false)) },
+    ({ name, follow }) =>
+      Effect.gen(function* () {
+        const { resolved } = yield* AgentctlContext
+        const transport = yield* TransportService
+        if (transport.mode === 'kube') {
+          const resource = yield* Effect.promise(() =>
+            getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
+          )
+          if (!resource) throw new Error('AgentRun not found')
+          const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
+          const selector = isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : runLabelSelector(name)
+          const pod = yield* Effect.promise(() => pickPodForRun(transport.backend, resolved.namespace, selector))
+          if (!pod) throw new Error('No pods found for AgentRun')
+          const podName = readNestedValue(pod, ['metadata', 'name'])
+          if (typeof podName !== 'string' || !podName) throw new Error('Pod name not available for logs')
+          const containerName = resolvePodContainerName(pod)
+          yield* Effect.promise(() =>
+            streamPodLogs(transport.backend, resolved.namespace, podName, containerName, follow),
+          )
+          return
         }
-      })
-      yield* Effect.promise(
-        () =>
-          new Promise<void>((resolve, reject) => {
-            call.on('end', () => resolve())
-            call.on('error', (error: unknown) => reject(error))
-          }),
-      )
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
+        const stream = (
+          transport.client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>
+        ).StreamAgentRunLogs
+        if (!stream) throw new Error('StreamAgentRunLogs not available')
+        const call = stream.call(transport.client, { name, namespace: resolved.namespace, follow }, transport.metadata)
+        call.on('data', (entry: { stream?: string; message?: string }) => {
+          const message = entry.message ?? ''
+          if (entry.stream === 'stderr') {
+            process.stderr.write(message)
+          } else {
+            process.stdout.write(message)
+          }
+        })
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              call.on('end', () => resolve())
+              call.on('error', (error: unknown) => reject(error))
+            }),
+        )
+      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 
   const wait = Command.make('wait', { name: nameArg }, ({ name }) =>
@@ -386,20 +389,20 @@ export const makeRunCommand = () => {
   const codex = Command.make(
     'codex',
     {
-      prompt: Options.optional(Options.text('prompt')),
-      agent: Options.optional(Options.text('agent')),
-      runtime: Options.optional(Options.text('runtime')),
-      runtimeConfig: Options.repeated(Options.text('runtime-config')),
-      param: Options.repeated(Options.text('param')),
-      workloadImage: Options.optional(Options.text('workload-image')),
-      cpu: Options.optional(Options.text('cpu')),
-      memory: Options.optional(Options.text('memory')),
-      memoryRef: Options.optional(Options.text('memory-ref')),
-      vcs: Options.optional(Options.text('vcs')),
-      vcsMode: Options.optional(Options.text('vcs-mode')),
-      vcsRequired: Options.boolean('vcs-required'),
-      idempotencyKey: Options.optional(Options.text('idempotency-key')),
-      wait: Options.boolean('wait'),
+      prompt: Flag.optional(Flag.String('prompt')),
+      agent: Flag.optional(Flag.String('agent')),
+      runtime: Flag.optional(Flag.String('runtime')),
+      runtimeConfig: Flag.atLeast(Flag.String('runtime-config'), 0),
+      param: Flag.atLeast(Flag.String('param'), 0),
+      workloadImage: Flag.optional(Flag.String('workload-image')),
+      cpu: Flag.optional(Flag.String('cpu')),
+      memory: Flag.optional(Flag.String('memory')),
+      memoryRef: Flag.optional(Flag.String('memory-ref')),
+      vcs: Flag.optional(Flag.String('vcs')),
+      vcsMode: Flag.optional(Flag.String('vcs-mode')),
+      vcsRequired: Flag.Boolean('vcs-required').pipe(Flag.withDefault(false)),
+      idempotencyKey: Flag.optional(Flag.String('idempotency-key')),
+      wait: Flag.Boolean('wait').pipe(Flag.withDefault(false)),
     },
     ({
       prompt,

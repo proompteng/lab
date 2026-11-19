@@ -3,7 +3,7 @@ name: galactic
 kubernetes:
   version: v1.37.0
 talos:
-  version: v1.14.0
+  version: v1.14.5
 features:
   backupConfiguration:
     interval: 24h

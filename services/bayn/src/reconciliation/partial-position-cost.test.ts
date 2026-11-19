@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
 
-import { prepareAccounting } from '../accounting/domain'
+import { prepareAccounting, rebuildAccountingLedger } from '../accounting/domain'
 import { prepareFeeAccrual, type FeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
@@ -202,9 +202,16 @@ test('reconciles the actual SOL partial-exit weighted basis without changing pos
   expect(input.snapshot.positions[0]?.quantityAtoms).toBe('80330361857')
   expect(input.snapshot.positions[0]?.costBasisMicros).toBe('8470906452')
   const accounting = Result.getOrThrow(
-    verifyAccountingReceipts(input.transactions, input.receipts, {
-      tigerBeetle: { clusterId: 1n, ledger: 1 },
-    }),
+    verifyAccountingReceipts(
+      input.transactions.map((transaction) => ({
+        transaction,
+        ledger: Result.getOrThrow(rebuildAccountingLedger(transaction, 1)),
+      })),
+      input.receipts,
+      {
+        tigerBeetle: { clusterId: 1n, ledger: 1 },
+      },
+    ),
   )
   expect([...accounting.exactReceipts.values()].every(Boolean)).toBe(true)
   const result = Result.getOrThrow(compareOpeningCash(input))

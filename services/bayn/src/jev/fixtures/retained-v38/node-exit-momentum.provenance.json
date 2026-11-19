@@ -1,0 +1,24 @@
+{
+  "sourceRevision": "5d776325dda0bec3a44e4eae8efbbfa4961ff475",
+  "sourceBaseRevision": "8f87974758c4490bbfc9549fc7c44ba5f02f871a",
+  "runtime": "v24.11.1",
+  "helperSourceSha256": {
+    "services/bayn/src/intraday-replay/matched-entry.test-support.ts": "7089431169132cad063d7a9af2be5379d3f8f03d806cfd3a5232ccb864f47868",
+    "services/bayn/src/jev/control-document.test-support.ts": "8f12c46941869adbdfa09df6c5a7ad9a1e54a9f8d7ab9d8bbbd7f107b97b4f35",
+    "services/bayn/src/jev/exit-document.test-support.ts": "9aa42ff3ad110cdf017b642ba9c5cef6ef2a3b2faaa9ac0caf868b789280bd7e"
+  },
+  "fixture": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-exit-momentum.json",
+  "canonicalBytes": 34714,
+  "canonicalSha256": "1f295ab9a50da75e4d0d87913a2f78e5181717ff6125d4548e181e54572d8941",
+  "contentHash": "005815abb3c0ecb46f84def21cbb9d7517f8af9c193ef828227e1b02fd57e4c3",
+  "gzipPath": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-exit-momentum.json.gz",
+  "gzipBytes": 7018,
+  "gzipSha256": "ae1edc0d57d70eb3aa7d13e55a87f055e24fdd34dde15444575f3d45dafe6170",
+  "gzipParameters": {
+    "mtime": 0,
+    "filename": "",
+    "compresslevel": 9
+  },
+  "harness": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/capture-control-exit.mjs",
+  "harnessSha256": "46e7b6db47de56a90df28b5cdbb48efc2f0022a77a0e1145d61ee07cb7bb9f45"
+}

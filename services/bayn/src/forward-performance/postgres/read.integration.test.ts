@@ -10,14 +10,18 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceUnclosedCycleCount } from './read'
 import { completedIntradayCycles, makeStreamingPerformanceFixture } from '../intraday-cycle.test-support'
-import { readForwardPerformancePostgres } from './read'
+import {
+  readForwardPerformancePostgres,
+  readForwardPerformanceExecutionOrders,
+  readForwardPerformanceNativeProtectionOrders,
+} from './read'
 import { runForwardPerformanceReport, type ForwardPerformanceReaders } from '../program'
 import type { ForwardPerformanceConfig } from '../config'
 import { coinRoundTrip } from '../coin-fee-episodes.test-support'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
-import { Authority } from '../../execution/contracts'
+import { Authority, OrderStatus } from '../../execution/contracts'
 import { makeCycleStore } from '../../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../../cycle/construction'
 import { makeIntradayCycleDraft } from '../../cycle/runner/calendar-decisions'
@@ -38,6 +42,148 @@ const config = {
 const hash = (character: string): string => character.repeat(64)
 
 describePostgres('Forward-performance PostgreSQL read boundary', () => {
+  test('entry order evidence excludes later bracket children while preserving its source cut and generation', async () => {
+    const runtime = ManagedRuntime.make(
+      PostgresClientLive(config, { maxConnections: 1, applicationName: 'bayn-parent-order-test' }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    )
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE reconciliations (account_id text, reconciliation_id text, reconciled_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, previous_generation_hash text, maximum text, account_id text, activated_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycles (cycle_id text, account_id text, state text, terminal_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE intents (intent_id text, account_id text, cycle_id text, authority_generation_hash text) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE broker_events (event_id text, source_sequence bigint, occurred_at timestamptz, observed_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE orders (event_id text, broker_order_id text, parent_broker_order_id text, client_order_id text, intent_id text, account_id text, symbol text, side text, quantity_atoms numeric, notional_micros numeric, filled_quantity_atoms numeric, status text) ON COMMIT DROP`
+              const accountId = 'synthetic-bracket-account'
+              const generation = hash('e')
+              const at = '2026-11-13T15:00:00.000Z'
+              const cut = '2026-11-13T15:01:00.000Z'
+              yield* sql`INSERT INTO reconciliations VALUES (${accountId},${hash('f')},${cut})`
+              yield* sql`INSERT INTO authority_generations VALUES (${generation},NULL,'PAPER',${accountId},'2026-11-13T14:00:00Z')`
+              yield* sql`INSERT INTO autonomous_cycles VALUES (${hash('c')},${accountId},'COMPLETED',${at})`
+              for (const id of ['a', 'b', 'd'] as const)
+                yield* sql`INSERT INTO intents VALUES (${hash(id)},${accountId},${hash('c')},${generation})`
+              const records = [
+                {
+                  id: '1',
+                  intent: 'a',
+                  order: 'entry',
+                  parent: null,
+                  side: 'BUY',
+                  status: 'NEW',
+                  filled: '0',
+                  observed: at,
+                },
+                {
+                  id: '2',
+                  intent: 'a',
+                  order: 'entry',
+                  parent: null,
+                  side: 'BUY',
+                  status: 'FILLED',
+                  filled: '1000000000',
+                  observed: at,
+                },
+                {
+                  id: '3',
+                  intent: 'a',
+                  order: 'stop',
+                  parent: 'entry',
+                  side: 'SELL',
+                  status: 'CANCELED',
+                  filled: '0',
+                  observed: at,
+                },
+                {
+                  id: '4',
+                  intent: 'a',
+                  order: 'take-profit',
+                  parent: 'entry',
+                  side: 'SELL',
+                  status: 'FILLED',
+                  filled: '1000000000',
+                  observed: at,
+                },
+                {
+                  id: '5',
+                  intent: 'b',
+                  order: 'exit',
+                  parent: null,
+                  side: 'SELL',
+                  status: 'CANCELED',
+                  filled: '0',
+                  observed: at,
+                },
+                {
+                  id: '6',
+                  intent: 'd',
+                  order: 'orphan-child',
+                  parent: 'missing-entry',
+                  side: 'SELL',
+                  status: 'FILLED',
+                  filled: '1000000000',
+                  observed: at,
+                },
+                {
+                  id: '7',
+                  intent: 'a',
+                  order: 'entry',
+                  parent: null,
+                  side: 'BUY',
+                  status: 'REJECTED',
+                  filled: '0',
+                  observed: '2026-11-13T15:02:00.000Z',
+                },
+              ] as const
+              for (const [index, row] of records.entries()) {
+                yield* sql`INSERT INTO broker_events VALUES (${hash(row.id)},${index},${at},${row.observed})`
+                yield* sql`INSERT INTO orders VALUES (${hash(row.id)},${row.order},${row.parent},${'client-' + row.intent},${hash(row.intent)},${accountId},'AAPL',${row.side},1000000000,NULL,${row.filled},${row.status})`
+              }
+              yield* sql`ALTER TABLE intents ADD COLUMN protection jsonb DEFAULT '{"_tag":"Bracket","stopPriceMicros":"99000000","stopLimitPriceMicros":"98500000","profitLimitPriceMicros":"101000000"}'`
+              yield* sql`ALTER TABLE orders ADD COLUMN schema_version text DEFAULT 'bayn.order.v3', ADD COLUMN order_type text DEFAULT 'LIMIT', ADD COLUMN time_in_force text DEFAULT 'DAY', ADD COLUMN limit_price_micros numeric DEFAULT 100000000, ADD COLUMN stop_price_micros numeric`
+              yield* sql`UPDATE orders SET order_type='STOP_LIMIT', stop_price_micros=99000000, limit_price_micros=98500000 WHERE broker_order_id='stop'`
+              for (const scope of [undefined, generation]) {
+                const native = yield* readForwardPerformanceNativeProtectionOrders(sql, accountId, scope)
+                expect(native.map((row) => row.order.brokerOrderId)).toEqual([
+                  'entry',
+                  'exit',
+                  'orphan-child',
+                  'stop',
+                  'take-profit',
+                ])
+                expect(native.find((row) => row.order.brokerOrderId === 'entry')?.order.status).toBe(OrderStatus.Filled)
+                expect(native.find((row) => row.order.brokerOrderId === 'take-profit')?.order.parentBrokerOrderId).toBe(
+                  'entry',
+                )
+                expect(yield* readForwardPerformanceNativeProtectionOrders(sql, 'another-account', scope)).toEqual([])
+                const rows = yield* readForwardPerformanceExecutionOrders(sql, accountId, scope)
+                expect(
+                  rows.map((row) => ({
+                    order: row.broker_order_id,
+                    side: row.side,
+                    status: row.status,
+                    filled: row.filled_quantity_atoms,
+                  })),
+                ).toEqual([
+                  { order: 'entry', side: 'BUY', status: 'FILLED', filled: '1000000000' },
+                  { order: 'exit', side: 'SELL', status: 'CANCELED', filled: '0' },
+                ])
+              }
+            }),
+          )
+        }),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   test('the shared decision source retains entry, closure and residual-close instructions without admitting an unbound entry', async () => {
     const runtime = ManagedRuntime.make(
       PostgresClientLive(config, { maxConnections: 1, applicationName: 'bayn-decision-query-test' }).pipe(
@@ -104,7 +250,6 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
       ...runtimeConfig,
       ...config,
       runtimeMode: 'AutonomousService',
-      cyclePollIntervalMs: 30_000,
       execution: { ...runtimeConfig.execution, brokerIdentity: identity },
       alpaca: {
         identity,
@@ -270,7 +415,11 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             const monitored = new Proxy(sql, {
               apply(target, receiver, argumentsList) {
                 const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
-                if (statement.compile()[0].includes('FROM account_snapshots AS snapshot')) lookups.push(statement)
+                if (
+                  typeof statement.compile === 'function' &&
+                  statement.compile()[0].includes('FROM account_snapshots AS snapshot')
+                )
+                  lookups.push(statement)
                 return statement
               },
             })

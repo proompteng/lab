@@ -1,12 +1,15 @@
+import { entryEvaluationRequestFixture as stagedRequestFixture } from './jev/retained-jev.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit, Result } from 'effect'
 import { ConnectionError, SqlError } from 'effect/sql/SqlError'
 import { CreateAccountStatus, CreateTransferStatus } from 'tigerbeetle-node'
 
+import { InferenceStage, InferenceUsageStatus } from './inference-costs'
 import {
   buildInferenceExpensePlan,
   makeInferenceExpenseQuote,
   makeInferenceExpenseQuotes,
+  inferenceExpenseBatchSize,
   inferenceExpenseRateCard,
   type InferenceExpenseQuote,
 } from './inference-expense'
@@ -16,6 +19,7 @@ import {
   makeConditionalEvaluationReceipt,
 } from './jev/conditional-entry.test-support'
 import { JevOutcome } from './jev/evidence'
+import { stagedCheckpointFixture } from './jev/entry-inference.test-support'
 import { makeJevResolution, JevResolutionStatus } from './jev/resolution'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { runInferenceExpensePass } from './inference-expense-runtime'
@@ -33,24 +37,53 @@ const quote = Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture()
 const plan = Result.getOrThrow(buildInferenceExpensePlan([quote]))
 const rows = (quotes: readonly InferenceExpenseQuote[]) =>
   quotes.map((quote) => ({ quote, verifiedAt: '1970-01-01T00:01:00.000Z' }))
-const snapshot = (quotes: readonly InferenceExpenseQuote[]) => ({
+const snapshot = (quotes: readonly InferenceExpenseQuote[], asOf = '1970-01-01T00:02:00.000Z') => ({
   evidence: {
-    accountBindingHash: quote.accountBindingHash,
-    sessionDate: quote.sessionDate,
-    asOf: '1970-01-01T00:02:00.000Z',
+    accountBindingHash: (quotes[0] ?? quote).accountBindingHash,
+    sessionDate: (quotes[0] ?? quote).sessionDate,
+    asOf,
   },
   quotes: rows(quotes),
 })
+const stagedExpenseQuote = (stage: InferenceStage.Chart | InferenceStage.BaseStart, completed: boolean) => {
+  const request = stagedRequestFixture()
+  const checkpoint = stagedCheckpointFixture(request)
+  return Result.getOrThrow(
+    makeInferenceExpenseQuote(
+      {
+        accountId: 'stage-expense-ledger-test',
+        sessionDate: '2026-10-25',
+        asOf: request.expiresAt,
+        requestId: request.requestId,
+        cycleId: request.cycleId,
+        authorityGenerationHash: request.authorityGenerationHash,
+        request,
+        receipt: null,
+        resolution: null,
+        handoff: null,
+        stagedCheckpoint: {
+          claims: checkpoint.claims.filter((row) => stage === InferenceStage.BaseStart || row.stage === stage),
+          terminals: checkpoint.terminals.filter(
+            (row) => (stage === InferenceStage.BaseStart || row.stage === stage) && (row.stage !== stage || completed),
+          ),
+          skips: [],
+        },
+      },
+      inferenceExpenseRateCard,
+      stage,
+    ),
+  )
+}
 const expectFailure = async <A, E>(operation: Effect.Effect<A, E>, message: string) => {
   const exit = await Effect.runPromiseExit(operation)
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain(message)
 }
-const memoryLedger = () => {
+const memoryLedger = (initialTimestamp = 0n) => {
   const accounts = new Map<bigint, LedgerAccountRecord>()
   const transfers = new Map<bigint, LedgerTransferRecord>()
   const history = new Map<bigint, LedgerAccountBalance[]>()
-  let timestamp = 0n
+  let timestamp = initialTimestamp
   let loseAck = false
   const match = (record: LedgerAccountRecord | LedgerTransferRecord, filter: LedgerQueryFilter) =>
     record.ledger === filter.ledger &&
@@ -84,7 +117,9 @@ const memoryLedger = () => {
           for (const id of [debit.id, credit.id]) {
             const updated = accounts.get(id)
             if (updated === undefined) throw new Error('synthetic account is absent')
-            history.set(id, [...(history.get(id) ?? []), { ...updated, timestamp }])
+            const balances = history.get(id) ?? []
+            balances.push({ ...updated, timestamp })
+            history.set(id, balances)
           }
         }
         return {
@@ -158,6 +193,41 @@ const memoryLedger = () => {
 }
 
 describe('inference expense TigerBeetle posting and reconciliation', () => {
+  test('reconciles a complete native expense prefix beyond ten thousand quotes', async () => {
+    const quotes = Array.from({ length: 10_002 }, (_, index) =>
+      Result.getOrThrow(
+        makeInferenceExpenseQuote(
+          expenseSourceFixture({ observedAt: new Date(index).toISOString() }),
+          expenseRateFixture,
+        ),
+      ),
+    )
+    const expected = Result.getOrThrow(buildInferenceExpensePlan(quotes))
+    const ledger = memoryLedger(59_000_000_000n)
+    await Effect.runPromise(postInferenceExpenses(ledger.client, expected))
+    const boundedClient: TigerBeetleRequestClient = {
+      request: (operation, execute) =>
+        ledger.client.request(operation, (active) =>
+          execute({
+            ...active,
+            lookupTransfers: async (ids) => {
+              expect(ids.length).toBeLessThanOrEqual(inferenceExpenseBatchSize)
+              return active.lookupTransfers(ids)
+            },
+          }),
+        ),
+    }
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(boundedClient, snapshot(quotes), Effect.succeed(rows(quotes))),
+    )
+    expect(report.exactLedgerPrefix).toBe(true)
+    expect(report.verifiedSessionTransferCount).toBe(quotes.length)
+    expect(report.transferCount).toBe(quotes.length)
+    expect(report.knownEstimatedCostPicoUsd).toBe(
+      expected.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString(),
+    )
+  }, 30_000)
+
   test('reconciles both provider stages as separate expenses for the same entry request', async () => {
     const request = entryEvaluationRequestFixture()
     const completion = entryCompletionFixture(request)
@@ -214,6 +284,100 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
     expect(report.knownEstimatedCostPicoUsd).toBe('18400000')
     expect(report.exactLedgerPrefix).toBe(true)
   })
+  for (const stage of [InferenceStage.Chart, InferenceStage.BaseStart] as const) {
+    for (const reversed of [false, true]) {
+      test(`counts a priced ${stage} terminal after its pending quote in ${reversed ? 'reverse' : 'forward'} order`, async () => {
+        const pending = stagedExpenseQuote(stage, false)
+        const priced = stagedExpenseQuote(stage, true)
+        const estimatedCost = priced.line.estimatedCostPicoUsd
+        if (estimatedCost === null) throw new Error('Expected a priced stage terminal')
+        expect(pending.line.usageStatus).toBe(InferenceUsageStatus.Unknown)
+        expect(pending.line.receiptHash).toBeNull()
+        expect(priced.line.receiptHash).toBeNull()
+        const quotes = reversed ? [priced, pending] : [pending, priced]
+        const ledger = memoryLedger()
+        await Effect.runPromise(
+          postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(quotes))),
+        )
+        const report = await Effect.runPromise(
+          readInferenceExpenseLedger(
+            ledger.client,
+            snapshot(quotes, '2026-10-25T08:00:00.000Z'),
+            Effect.succeed(rows(quotes)),
+          ),
+        )
+        expect(report.quotedRequestCount).toBe(1)
+        expect(report.claimedRequestCount).toBe(1)
+        expect(report.pricedRequestCount).toBe(1)
+        expect(report.gapRequestCount).toBe(0)
+        expect(report.transferCount).toBe(1)
+        expect(report.knownEstimatedCostPicoUsd).toBe(estimatedCost)
+      })
+    }
+  }
+
+  test('keeps an unknown provider stage explicit when another stage is priced', async () => {
+    const quotes = [
+      stagedExpenseQuote(InferenceStage.Chart, false),
+      stagedExpenseQuote(InferenceStage.BaseStart, false),
+      stagedExpenseQuote(InferenceStage.Chart, true),
+    ]
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(quotes))))
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(
+        ledger.client,
+        snapshot(quotes, '2026-10-25T08:00:00.000Z'),
+        Effect.succeed(rows(quotes)),
+      ),
+    )
+    expect(report.quotedRequestCount).toBe(2)
+    expect(report.claimedRequestCount).toBe(1)
+    expect(report.pricedRequestCount).toBe(1)
+    expect(report.gapRequestCount).toBe(1)
+    expect(report.transferCount).toBe(1)
+  })
+
+  test('does not resolve a captured pending stage from a later priced owner quote', async () => {
+    const pending = stagedExpenseQuote(InferenceStage.Chart, false)
+    const priced = stagedExpenseQuote(InferenceStage.Chart, true)
+    const current = [pending, priced]
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(current))))
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(
+        ledger.client,
+        snapshot([pending], '2026-10-25T08:00:00.000Z'),
+        Effect.succeed(rows(current)),
+      ),
+    )
+    expect(report.quotedRequestCount).toBe(1)
+    expect(report.pricedRequestCount).toBe(0)
+    expect(report.gapRequestCount).toBe(1)
+    expect(report.verifiedSessionTransferCount).toBe(1)
+    expect(report.transferCount).toBe(0)
+    expect(report.knownEstimatedCostPicoUsd).toBe('0')
+  })
+
+  test('counts proven non-dispatch as priced with zero cost and no transfer', async () => {
+    const skipped = Result.getOrThrow(
+      makeInferenceExpenseQuote(expenseSourceFixture({ notDispatched: true }), expenseRateFixture),
+    )
+    expect(skipped.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
+    const ledger = memoryLedger()
+    await Effect.runPromise(
+      postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan([skipped]))),
+    )
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(ledger.client, snapshot([skipped]), Effect.succeed(rows([skipped]))),
+    )
+    expect(report.quotedRequestCount).toBe(1)
+    expect(report.pricedRequestCount).toBe(1)
+    expect(report.gapRequestCount).toBe(0)
+    expect(report.transferCount).toBe(0)
+    expect(report.knownEstimatedCostPicoUsd).toBe('0')
+  })
+
   test('reports a captured quote set while later valid requests extend the session ledger', async () => {
     const ledger = memoryLedger()
     const later = Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture({ key: 'b' }), expenseRateFixture))
@@ -318,9 +482,23 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       })
       await expectFailure(
         readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
-        oversized ? 'oversized page' : 'not ordered',
+        oversized ? 'requested page size' : 'strictly increasing timestamps',
       )
     }
+  })
+
+  test('rejects a native transfer beyond the pinned ledger head', async () => {
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, plan))
+    const original = [...ledger.transfers.values()][0]
+    if (original === undefined) throw new Error('synthetic transfer is absent')
+    Object.assign(ledger.native, {
+      queryTransfers: async () => [{ ...original, timestamp: original.timestamp + 1n }],
+    })
+    await expectFailure(
+      readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
+      'after its pinned timestamp',
+    )
   })
 
   test('recovers a committed transfer with a lost acknowledgement before marking the quote verified', async () => {
@@ -330,6 +508,8 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       newSources: Effect.succeed([]),
       freeze: () => Effect.void,
       pending: Effect.sync(() => (verified ? [] : [quote])),
+      settleExpiredTerminalBatches: Effect.succeed({ candidates: 0, sealed: 0, pending: 0, failed: 0 }),
+      settleExpiredInferenceWork: Effect.succeed({ sealed: 0, failed: 0, remaining: false }),
       acknowledge: () =>
         Effect.sync(() => {
           verified = true
@@ -358,6 +538,8 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       newSources: Effect.succeed([]),
       freeze: () => Effect.void,
       pending: Effect.succeed([quote]),
+      settleExpiredTerminalBatches: Effect.succeed({ candidates: 0, sealed: 0, pending: 0, failed: 0 }),
+      settleExpiredInferenceWork: Effect.succeed({ sealed: 0, failed: 0, remaining: false }),
       acknowledge: () =>
         Effect.suspend(() =>
           ++attempts === 1

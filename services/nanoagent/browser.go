@@ -43,6 +43,9 @@ type browserSupervisor struct {
 	running                 bool
 	cuaMu                   sync.Mutex
 	userControl             bool
+	controlGeneration       uint64
+	driver                  browserDriver
+	mcpSessions             map[string]*browserMCPSession
 	control                 *http.Server
 }
 
@@ -179,6 +182,10 @@ func (browser *browserSupervisor) close() {
 }
 
 func (browser *browserSupervisor) serve(writer http.ResponseWriter, request *http.Request, path string) {
+	if path == "/mcp" {
+		browser.serveMCP(writer, request)
+		return
+	}
 	if path == "/paste" {
 		if request.Method != http.MethodPost {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
@@ -229,6 +236,10 @@ func (browser *browserSupervisor) serve(writer http.ResponseWriter, request *htt
 				return
 			}
 			browser.userControl = value.UserControl
+			if value.UserControl {
+				browser.controlGeneration++
+				browser.driver = browserDriver{}
+			}
 		} else if request.Method != http.MethodGet {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return

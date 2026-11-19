@@ -5,6 +5,7 @@ resources:
   - clickhouse-upgrade-25-8-checkpoints.yaml
   - clickhouse-upgrade-26-3-checkpoints.yaml
   - keeper-upgrade-snapshot.yaml
+  - keeper-pre-nvme-snapshot.yaml
   - clickhouse-keeper.yaml
   - keeper-pdb.yaml
   - sealed-secret.yaml
@@ -14,11 +15,20 @@ resources:
   - clickhouse-service.yaml
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
-  - intraday-bars-schema-job.yaml
-  - intraday-features-schema-job.yaml
-  - historical-datasets-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
   - signal-publisher-cronjob.yaml
+configMapGenerator:
+  - name: signal-schema
+    files:
+      - schema/reconcile.sh
+      - schema/adjusted-daily.sql
+      - schema/adjusted-daily.verify.sql
+      - schema/intraday-bars.sql
+      - schema/intraday-bars.verify.sql
+      - schema/intraday-features.sql
+      - schema/intraday-features.verify.sql
+      - schema/historical-datasets.sql
+      - schema/historical-datasets.verify.sql
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher

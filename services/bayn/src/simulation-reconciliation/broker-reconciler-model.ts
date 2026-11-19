@@ -1,7 +1,7 @@
 import { Cause, Data, Result, pipe } from 'effect'
 
 import type { BrokerReadError } from '../broker/alpaca/failures'
-import type { Observed } from '../broker/alpaca/model'
+import type { Observed, OrderStatus } from '../broker/alpaca/model'
 import {
   renderBrokerObservationError,
   sourceTimestamp,
@@ -19,7 +19,6 @@ import type { ReconciledBrokerState, ReconciliationRiskContext } from './broker-
 
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 
-export const maximumRows = 10_000
 export const ordersPageSize = 500
 export const fillsPageSize = 100
 export const incompletePassReason = reconciliationIncompleteRestrictionReason
@@ -57,11 +56,9 @@ export type PaginationFailureReason =
   | 'OrderHistoryNotDescending'
   | 'OrderTimestampCursorDidNotAdvance'
   | 'DuplicateOrder'
-  | 'OrderHistoryTooLarge'
   | 'OrderCursorDidNotAdvance'
   | 'FillPageTooLarge'
   | 'DuplicateFill'
-  | 'FillHistoryTooLarge'
   | 'FillCursorDidNotAdvance'
   | 'InvalidFeeHistory'
 
@@ -70,6 +67,21 @@ export type SnapshotFailureReason =
   | 'FillActivitiesPending'
   | 'AccountBaselineMissing'
   | 'TradingDayChanged'
+/** First rejected member only. Diagnostic facts never authorize a snapshot. */
+export enum FillActivityRelation {
+  NoMatchingFills = 'NO_MATCHING_FILLS',
+  BelowOrder = 'FILLS_BELOW_ORDER',
+  AboveOrder = 'FILLS_ABOVE_ORDER',
+}
+export enum FillMismatchOrderRole {
+  Order = 'ORDER',
+  Leg = 'LEG',
+}
+export interface FillMismatchDiagnostic {
+  readonly activityRelation: FillActivityRelation
+  readonly orderRole: FillMismatchOrderRole
+  readonly orderStatus: OrderStatus
+}
 export type HistorySnapshotSide = 'before' | 'after'
 export type HistoryHashFailure =
   | { readonly _tag: 'HistoryMaterializationFailed'; readonly cause: unknown }
@@ -85,7 +97,11 @@ export type NormalizationStage = 'order-timestamp' | 'order' | 'fill-ordering' |
 type ReconciliationFailure =
   | { readonly _tag: 'Clock' }
   | { readonly _tag: 'Pagination'; readonly reason: PaginationFailureReason }
-  | { readonly _tag: 'Snapshot'; readonly reason: SnapshotFailureReason }
+  | {
+      readonly _tag: 'Snapshot'
+      readonly reason: SnapshotFailureReason
+      readonly fillMismatch?: FillMismatchDiagnostic
+    }
   | { readonly _tag: 'HistoryHash'; readonly side: HistorySnapshotSide; readonly error: HistoryHashFailure }
   | { readonly _tag: 'Validation'; readonly reason: ValidationFailureReason; readonly detail: string }
   | {

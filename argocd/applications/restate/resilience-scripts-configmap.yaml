@@ -3,6 +3,50 @@ kind: ConfigMap
 metadata:
   name: restate-resilience-scripts
 data:
+  partition-startup.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    : "${POD_NAME:?POD_NAME must identify this member}"
+
+    read_state() {
+      restatectl --single-address http://localhost:5122 \
+        --connect-timeout 1000 --request-timeout 3000 sql --json "
+        SELECT n.gen_node_id AS generation, n.state, n.has_worker_role, n.worker_state, r.partition_id,
+               r.membership, s.replay_status, s.updated_at
+        FROM nodes n
+        LEFT JOIN partition_replica_set r ON r.plain_node_id = n.plain_node_id
+        LEFT JOIN partition_state s
+          ON s.partition_id = r.partition_id AND s.gen_node_id = n.gen_node_id
+        WHERE n.name = '$POD_NAME'
+        ORDER BY r.partition_id, r.membership"
+    }
+
+    recovered() {
+      jq -e 'type == "array" and length > 0 and all(.[];
+        .generation != null and .state == "alive"
+      ) and (
+        all(.[]; .has_worker_role == true and .worker_state == "active" and .partition_id != null and
+          .membership == "current" and .replay_status == "active" and .updated_at != null)
+        or (length == 1 and .[0].partition_id == null and .[0].has_worker_role == false)
+      )' >/dev/null
+    }
+
+    first="$(read_state)"
+    recovered <<< "$first"
+    sleep 2
+    second="$(read_state)"
+    recovered <<< "$second"
+    jq -e -n --argjson before "$first" --argjson after "$second" '
+      ($before | length) as $count |
+      $count == ($after | length) and all(range(0; $count); . as $i |
+        $before[$i].generation == $after[$i].generation and
+        $before[$i].has_worker_role == $after[$i].has_worker_role and
+        $before[$i].worker_state == $after[$i].worker_state and
+        $before[$i].partition_id == $after[$i].partition_id and
+        ($after[$i].partition_id == null or $before[$i].updated_at < $after[$i].updated_at)
+      )' >/dev/null
+    echo "Member recovered in its current role"
+
   snapshot-restore.sh: |
     #!/bin/bash
     set -euo pipefail

@@ -17,6 +17,7 @@ describe('classifyAgentsImageMode', () => {
       runStatic: false,
       runIntegration: false,
       imageTargets: [],
+      verifyDependencyClosure: false,
       matchedPaths: [],
     })
   })
@@ -35,6 +36,7 @@ describe('classifyAgentsImageMode', () => {
       runStatic: true,
       runIntegration: true,
       imageTargets: [],
+      verifyDependencyClosure: false,
       matchedPaths: [],
     })
   })
@@ -48,6 +50,7 @@ describe('classifyAgentsImageMode', () => {
       runStatic: true,
       runIntegration: true,
       imageTargets: [],
+      verifyDependencyClosure: false,
       matchedPaths: [],
     })
   })
@@ -58,6 +61,12 @@ describe('classifyAgentsImageMode', () => {
     expect(result.tier).toBe('local-smoke')
     expect(result.imageTargets).toEqual(['runner'])
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
+  })
+
+  it('rebuilds the runner when its toolchain or acceptance command changes', () => {
+    for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
+      expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
+    }
   })
 
   it('rebuilds every image that embeds the shared Linear MCP bridge contract', () => {
@@ -72,6 +81,15 @@ describe('classifyAgentsImageMode', () => {
 
   it('builds every image that embeds the Codex workspace package', () => {
     expect(classifyAgentsImageMode(['packages/codex/src/app-server.ts']).imageTargets).toEqual([
+      'control-plane',
+      'controller',
+      'runner',
+      'agents-shell',
+    ])
+  })
+
+  it('rebuilds all images that embed the shared patch helper', () => {
+    expect(classifyAgentsImageMode(['services/agents/scripts/apply_patch.py']).imageTargets).toEqual([
       'control-plane',
       'controller',
       'runner',
@@ -131,6 +149,46 @@ describe('classifyAgentsImageMode', () => {
       'services/agents/scripts/codex/agent-runner.ts',
       'services/agents/src/server/index.ts',
     ])
+  })
+
+  it('verifies the installed Effect patch without coupling builds to unrelated patches', () => {
+    const installed = classifyAgentsImageMode(['patches/effect@4.1.4.patch'])
+    expect(installed.tier).toBe('local-smoke')
+    expect(installed.imageTargets).toEqual(['control-plane', 'controller', 'runner', 'agents-shell'])
+    expect(installed.verifyDependencyClosure).toBe(true)
+    for (const path of ['patches/@effect%2Fsql-pg@4.1.4.patch', 'patches/@platformatic%2Fkafka@2.12.1.patch']) {
+      const result = classifyAgentsImageMode([path])
+      expect(result.runIntegration).toBe(false)
+      expect(result.verifyDependencyClosure).toBe(false)
+    }
+  })
+
+  it('checks cold dependency output only for selected dependency inputs', () => {
+    for (const path of [
+      'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/relativize-bun-cache.sh',
+      'nix/packages.nix',
+      'flake.lock',
+      'flake.nix',
+      'services/agents/package.json',
+      'packages/codex/package.json',
+      'packages/otel/package.json',
+    ]) {
+      const result = classifyAgentsImageMode([path])
+      expect(result.verifyDependencyClosure).toBe(true)
+      expect(result.needsLocalAgentsImage).toBe(true)
+    }
+    for (const path of [
+      'services/agents/src/server/health.ts',
+      'services/agents/src/server/health.test.ts',
+      'services/agents/README.md',
+      'charts/agents/templates/deployment.yaml',
+      'package.json',
+      'bun.lock',
+    ]) {
+      expect(classifyAgentsImageMode([path]).verifyDependencyClosure).toBe(false)
+    }
   })
 
   it('keeps shared JavaScript workspace inputs out of Agents runtime CI', () => {

@@ -712,7 +712,7 @@ describe('bumba completions', () => {
     }
 
     process.env.OPENAI_API_BASE_URL = 'http://flamingo.flamingo.svc.cluster.local/v1'
-    process.env.OPENAI_COMPLETION_MODEL = 'qwen36-flamingo'
+    process.env.OPENAI_COMPLETION_MODEL = 'qwen38-flamingo'
     delete process.env.OPENAI_COMPLETION_TEMPERATURE
     delete process.env.OPENAI_COMPLETION_TOP_P
     delete process.env.OPENAI_COMPLETION_REASONING_EFFORT
@@ -758,7 +758,7 @@ describe('bumba completions', () => {
       }
 
       const body = requestBody as Record<string, unknown>
-      expect(body.model).toBe('qwen36-flamingo')
+      expect(body.model).toBe('qwen38-flamingo')
       expect(body.temperature).toBe(0.7)
       expect(body.top_p).toBe(0.8)
       expect(body.reasoning_effort).toBe('none')
@@ -818,7 +818,7 @@ describe('bumba completions', () => {
         throw new Error('expected completion request body')
       }
       const body = requestBody as Record<string, unknown>
-      expect(body.model).toBe('gpt-6-astra')
+      expect(body.model).toBe('gpt-6.2-sol')
       expect(body).not.toHaveProperty('temperature')
       expect(body).not.toHaveProperty('top_p')
       expect(body.reasoning_effort).toBe('high')
@@ -838,7 +838,7 @@ describe('bumba completions', () => {
           throw new Error(`expected completion request body for ${legacyEffort} reasoning effort`)
         }
         const legacyBody = requestBody as Record<string, unknown>
-        expect(legacyBody.model).toBe('gpt-6-astra')
+        expect(legacyBody.model).toBe('gpt-6.2-sol')
         expect(legacyBody).not.toHaveProperty('temperature')
         expect(legacyBody).not.toHaveProperty('top_p')
         expect(legacyBody.reasoning_effort).toBe('low')

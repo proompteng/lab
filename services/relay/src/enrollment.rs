@@ -35,6 +35,7 @@ mod tests {
         enrollment.replace(vec![RegisteredRelayClient {
             id: "example".into(),
             identities: vec![peer.into()],
+            display_name: "Example".into(),
         }]);
         assert!(enrollment.permits(peer, Some("example")));
         assert!(!enrollment.permits(peer, Some("opencode")));

@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { DiscrepancyKind } from '../../execution/contracts'
-import { ReconciliationRow } from './model'
+import { ReconciliationRow, type TerminalCycleRow } from './model'
 import type { ForwardPerformanceCashYieldEvidence } from '../model'
 import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 
@@ -23,7 +23,17 @@ export const durableCycleGenerationBinding = (
   sql: PgClient.PgClient,
   authorityGenerationHash: string | undefined,
 ) => sql`
-  EXISTS (
+  CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM intents AS scoped_intent
+    WHERE scoped_intent.cycle_id = cycle.cycle_id
+      AND scoped_intent.account_id = scope_generation.account_id
+      AND scoped_intent.authority_generation_hash = scope_generation.generation_hash
+  ) THEN true
+  -- A NULL hash cannot match a decision. Avoid building its large JSON subplan.
+  WHEN cycle.decision_hash IS NULL THEN false
+  ELSE EXISTS (
     SELECT 1
     FROM autonomous_cycle_shadow_decisions AS scoped_decision
     WHERE scoped_decision.cycle_id = cycle.cycle_id
@@ -34,14 +44,7 @@ export const durableCycleGenerationBinding = (
       AND scoped_decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
       AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' =
         ${authorityGenerationHash ?? sql`scope_generation.generation_hash`}
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM intents AS scoped_intent
-    WHERE scoped_intent.cycle_id = cycle.cycle_id
-      AND scoped_intent.account_id = scope_generation.account_id
-      AND scoped_intent.authority_generation_hash = scope_generation.generation_hash
-  )
+  ) END
 `
 
 export const generationScope = (
@@ -186,6 +189,21 @@ export const generationScope = (
   }
 }
 
+// Captured terminal cycles must belong to this account/generation in the same snapshot. Reuse only
+// membership: callers retain their state and native timestamp cutoffs. One array also keeps the
+// parameter count independent of history size, and an empty capture cannot widen the scope.
+export const capturedCycleScope = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
+) => {
+  if (capturedCycles === undefined) return generationScope(sql, accountId, authorityGenerationHash, 'cycle')
+  // The PostgreSQL codec cannot infer an empty array's type from the SQL cast.
+  if (capturedCycles.length === 0) return sql`FALSE`
+  return sql`cycle.cycle_id = ANY(${capturedCycles.map((cycle) => cycle.cycle_id)}::text[])`
+}
+
 // A scalar cut lets PostgreSQL constrain the ordered snapshot index before joining payloads.
 export const openingSnapshotBoundary = (
   sql: PgClient.PgClient,
@@ -216,6 +234,7 @@ export const closingSnapshotBoundary = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) => sql`(
   SELECT ${
     authorityGenerationHash === undefined
@@ -228,7 +247,7 @@ export const closingSnapshotBoundary = (
             FROM autonomous_cycles AS cycle
             WHERE cycle.account_id = ${accountId}
               AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+              AND ${capturedCycleScope(sql, accountId, authorityGenerationHash, capturedCycles)}
           ),
           latest_reconciliation.reconciled_at
         ),

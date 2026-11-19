@@ -26,8 +26,8 @@ aliases if the local harness supports either spelling.
 export OPENAI_API_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 export OPENAI_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 export OPENAI_API_KEY=flamingo-local
-export OPENAI_COMPLETION_MODEL=qwen36-flamingo
-export OPENAI_MODEL=qwen36-flamingo
+export OPENAI_COMPLETION_MODEL=qwen38-flamingo
+export OPENAI_MODEL=qwen38-flamingo
 ```
 
 Do not move embeddings to Flamingo in this step. If the harness uses embedding
@@ -47,7 +47,7 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/models
 
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen36-flamingo","messages":[{"role":"user","content":"Reply with exactly: flamingo-ready"}],"max_tokens":16,"temperature":0}'
+  -d '{"model":"qwen38-flamingo","messages":[{"role":"user","content":"Reply with exactly: flamingo-ready"}],"max_tokens":16,"temperature":0}'
 ```
 
 Tool-call smoke:
@@ -56,7 +56,7 @@ Tool-call smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen36-flamingo",
+    "model": "qwen38-flamingo",
     "messages": [{"role": "user", "content": "Use the provided tool to add 7 and 35. Do not answer directly."}],
     "tools": [{
       "type": "function",
@@ -114,7 +114,7 @@ Pi needs a local provider entry because Flamingo is a private OpenAI-compatible
 endpoint, not a built-in Pi model. Keep this customization minimal:
 
 - required: one `flamingo` provider in `~/.pi/agent/models.json`
-- required: default Pi model set to `qwen36-flamingo`
+- required: default Pi model set to `qwen38-flamingo`
 - required: Qwen chat-template thinking compatibility
 - required: explicit compaction settings in `~/.pi/agent/settings.json`
 - not required: custom Pi code, extra provider plugins, model aliases, or moving
@@ -138,8 +138,8 @@ For this host, the permanent local Pi config should look like this:
       },
       "models": [
         {
-          "id": "qwen36-flamingo",
-          "name": "Qwen3.6 Flamingo",
+          "id": "qwen38-flamingo",
+          "name": "Qwen3.8 Flamingo",
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 229376,
@@ -163,7 +163,7 @@ medium thinking:
 ```json
 {
   "defaultProvider": "flamingo",
-  "defaultModel": "qwen36-flamingo",
+  "defaultModel": "qwen38-flamingo",
   "defaultThinkingLevel": "medium",
   "compaction": {
     "enabled": true,
@@ -208,7 +208,7 @@ PI_TMP_DIR="$(mktemp -d /tmp/pi-flamingo-smoke.XXXXXX)"
 cat > "$PI_TMP_DIR/settings.json" <<'JSON'
 {
   "defaultProvider": "flamingo",
-  "defaultModel": "qwen36-flamingo",
+  "defaultModel": "qwen38-flamingo",
   "defaultThinkingLevel": "medium",
   "quietStartup": true,
   "enableInstallTelemetry": false,
@@ -236,8 +236,8 @@ cat > "$PI_TMP_DIR/models.json" <<'JSON'
       },
       "models": [
         {
-          "id": "qwen36-flamingo",
-          "name": "Qwen3.6 Flamingo",
+          "id": "qwen38-flamingo",
+          "name": "Qwen3.8 Flamingo",
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 229376,
@@ -259,7 +259,7 @@ PI_CODING_AGENT_DIR="$PI_TMP_DIR" \
 PI_SKIP_VERSION_CHECK=1 \
 PI_TELEMETRY=0 \
 pi --provider flamingo \
-  --model qwen36-flamingo \
+  --model qwen38-flamingo \
   --no-tools \
   --no-session \
   -p "Reply with exactly: pi-flamingo-ready"
@@ -287,4 +287,4 @@ bun run scripts/jangar/validate-pi-flamingo-compaction.ts
 Do not restore an old model alias in host Pi config. If Flamingo is not
 reachable, tool calls are not structured, or the GPU pod is restarting under
 agent load, fix the Flamingo serving profile or switch the Flamingo server
-runtime for the same Qwen3.6 model.
+runtime for the same Qwen3.8 model.

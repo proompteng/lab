@@ -35,7 +35,7 @@ Native workers use separate repository sessions and pass the returned `sessionId
 generated job ID for task identity. These records describe tool execution; they do not infer a native model's thinking or overall lifecycle.
 
 The server exposes one generated catalog through the direct endpoint and tunnel. `tools/list` and tool replies include
-`_meta["agents-shell/catalog"]` with version `0.2.2` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
+`_meta["agents-shell/catalog"]` with version `0.3.0` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
 refresh both connector catalogs and compare these receipts; a cached connector catalog is not proof of deployed parity.
 Use `git_write` with an owned `sessionId` for `ls-remote`. Git configuration can rewrite URLs and execute configured
 helpers, so remote inspection requires execution authority.

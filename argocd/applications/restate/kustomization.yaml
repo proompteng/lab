@@ -4,8 +4,8 @@ namespace: restate
 images:
   - name: restate-runtime
     newName: docker.restate.dev/restatedev/restate
-    newTag: 1.7.9
-    digest: sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595
+    newTag: 1.8.1
+    digest: sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1
 resources:
   - serviceaccount.yaml
   - request-identity-sealedsecret.yaml
@@ -17,7 +17,6 @@ resources:
   - poddisruptionbudget.yaml
   - networkpolicy.yaml
   - resilience-scripts-configmap.yaml
-  - snapshot-bootstrap-job.yaml
-  - replication-migration-job.yaml
+  - node-roles-configmap.yaml
   - snapshot-restore-proof-job.yaml
   - snapshot-restore-drill-cronjob.yaml

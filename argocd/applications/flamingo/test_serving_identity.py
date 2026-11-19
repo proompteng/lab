@@ -13,14 +13,14 @@ class ServingIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.revision = "a" * 40
         self.image = "sha256:" + "b" * 64
         self.model = SimpleNamespace(
-            model="unsloth/Qwen3.6-35B-A3B-NVFP4",
-            tokenizer="unsloth/Qwen3.6-35B-A3B-NVFP4",
+            model="nvidia/Qwen3.8-27B-NVFP4",
+            tokenizer="nvidia/Qwen3.8-27B-NVFP4",
             revision=self.revision,
             tokenizer_revision=self.revision,
             hf_config=SimpleNamespace(_commit_hash=self.revision),
         )
         self.args = SimpleNamespace(
-            served_model_name=["qwen36-flamingo"],
+            served_model_name=["qwen38-flamingo"],
             chat_template=None,
             trust_request_chat_template=False,
         )
@@ -63,7 +63,7 @@ class ServingIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             json.loads(headers[0][1]),
             {
-                "model": "qwen36-flamingo",
+                "model": "qwen38-flamingo",
                 "checkpoint": self.revision,
                 "servingImage": self.image,
                 "tokenizerRevision": self.revision,

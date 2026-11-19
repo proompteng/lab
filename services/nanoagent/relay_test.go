@@ -52,7 +52,9 @@ func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T)
 	defer cancel()
 	connection := "11111111-1111-4111-8111-111111111111"
 	credential := strings.Repeat("a", 43)
-	params, _ := json.Marshal(relayConfiguration{ConnectionID: connection, relayGeneration: relayGeneration{RecoveryGeneration: 1, CredentialGeneration: 1}, DelegationID: "22222222-2222-4222-8222-222222222222", ConnectorID: "galactic", ClientService: "tengri-web", Binding: relayBinding{Service: "tengri", ID: "33333333-3333-4333-8333-333333333333", Generation: "44444444-4444-4444-8444-444444444444"}, Endpoint: "https://proompteng.ai/api/platform/relay/agent", Credential: credential, Operations: []relayOperation{{Name: "status", Description: "Read pod status", ReadOnly: true, InputSchema: json.RawMessage(`{"type":"object"}`)}}})
+	config := relayFixtureConfiguration("22222222-2222-4222-8222-222222222222", 1, 1)
+	config.Operations = append(config.Operations, relayOperation{Name: "start_run", Description: "Start a run", ReadOnly: new(bool), InputSchema: json.RawMessage(`{"type":"object"}`)})
+	params, _ := json.Marshal(config)
 	done := make(chan error, 1)
 	go func() {
 		result, err := supervisor.call(ctx, "relay/configure", params)
@@ -92,6 +94,10 @@ func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T)
 	if err != nil || !strings.Contains(string(raw), credential) || strings.Contains(string(raw), "provider-token") {
 		t.Fatal("grant configuration was not persisted")
 	}
+	var installed relayConfiguration
+	if json.Unmarshal(raw, &installed) != nil || len(installed.Operations) != 2 || installed.Operations[0].ReadOnly == nil || !*installed.Operations[0].ReadOnly || installed.Operations[1].ReadOnly == nil || *installed.Operations[1].ReadOnly {
+		t.Fatal("installed operations lost their read/write classification")
+	}
 	go func() {
 		_, err := supervisor.call(ctx, "relay/remove", json.RawMessage(`{"connectionId":"11111111-1111-4111-8111-111111111111","recoveryGeneration":"1","credentialGeneration":"2"}`))
 		done <- err
@@ -123,5 +129,31 @@ func TestRelayConfigurationRejectsInjectedFilesAndDestinations(t *testing.T) {
 		if _, err := supervisor.call(context.Background(), "relay/configure", json.RawMessage(raw)); err == nil {
 			t.Fatal("unsafe connector configuration was accepted")
 		}
+	}
+}
+
+func TestRelayConfigurationRequiresExplicitReadOnlyBoolean(t *testing.T) {
+	for _, classification := range []string{"", `,"readOnly":null`, `,"readOnly":"false"`} {
+		t.Run(classification, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			supervisor.relayRoot = t.TempDir()
+			config := relayFixtureConfiguration("22222222-2222-4222-8222-222222222222", 1, 1)
+			raw, _ := json.Marshal(config)
+			params := strings.Replace(string(raw), `,"readOnly":true`, classification, 1)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, err := supervisor.call(ctx, "relay/configure", json.RawMessage(params))
+			if err == nil || !strings.Contains(err.Error(), "invalid connector") {
+				t.Fatalf("expected malformed classification rejection, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(supervisor.relayRoot, config.ConnectionID+".json")); !os.IsNotExist(err) {
+				t.Fatal("malformed operation was persisted")
+			}
+			select {
+			case <-writer.messages:
+				t.Fatal("malformed operation reached the app server")
+			default:
+			}
+		})
 	}
 }

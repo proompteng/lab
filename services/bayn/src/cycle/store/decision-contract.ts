@@ -16,7 +16,7 @@ export const attachCycleDecisionStoreEvidence = (
   document: CycleDecisionDocument,
   evidence: CycleDecisionStoreEvidence,
 ): CycleDecisionDocument => {
-  const attached = { ...document } satisfies CycleDecisionDocument
+  const attached = Object.freeze({ ...document }) satisfies CycleDecisionDocument
   decisionStoreEvidence.set(attached, evidence)
   return attached
 }

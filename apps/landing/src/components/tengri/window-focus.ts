@@ -15,10 +15,12 @@ export function focusWindowContent(frame: HTMLElement | null) {
     !element.matches(':disabled') &&
     !element.closest('[hidden], [inert]') &&
     element.getClientRects().length > 0
-  if (previous && available(previous)) {
+  const canRestore = (element: HTMLElement) =>
+    !window.matchMedia('(pointer:coarse)').matches || !element.matches('input, textarea, [contenteditable="true"]')
+  if (previous && available(previous) && canRestore(previous)) {
     previous.focus({ preventScroll: true })
     return
   }
   const defaults = [...frame.querySelectorAll<HTMLElement>('[data-window-default-focus]')]
-  ;(defaults.find(available) ?? frame).focus({ preventScroll: true })
+  ;(defaults.find((element) => available(element) && canRestore(element)) ?? frame).focus({ preventScroll: true })
 }

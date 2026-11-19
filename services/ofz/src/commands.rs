@@ -1066,8 +1066,34 @@ async fn restrict_workspace<C: GenericClient + Sync>(client: &C, uid: &str) -> R
 }
 
 pub async fn recover(database: &Database, native: &Native) -> Result<(), Status> {
+    let client = database
+        .pool
+        .get()
+        .await
+        .map_err(|_| Status::unavailable("command recovery database pool unavailable"))?;
+    let pending: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM ofz.platform_commands WHERE NOT completed) OR EXISTS(SELECT 1 FROM ofz.commands WHERE state=1)",
+            &[],
+        )
+        .await
+        .map_err(sql_error)?
+        .get(0);
+    drop(client);
+    if !pending {
+        return Ok(());
+    }
     let mut connection = database.command_connection().await?;
     reconcile(database, native, &mut connection.client).await
+}
+
+pub async fn maintain_recovery(database: &Database, native: &Native) {
+    loop {
+        if let Err(error) = recover(database, native).await {
+            tracing::warn!(grpc_code = error.code() as i32, "command recovery deferred");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 }
 
 pub(crate) async fn reconcile(

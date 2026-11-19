@@ -170,13 +170,14 @@ test('a chart checkpoint reports its provider start before handoff creation', ()
 test('committing the same handoff preserves chart quote identity and rejects substituted provider evidence', () => {
   const completion = entryCompletionFixture(request)
   const disposition = completion.handoff.disposition
+  if (disposition.visual.response.model !== 'gpt-6-luna') throw new Error('Expected retained Decisions response')
   const exact = Result.getOrThrow(
     makeChartTerminalReceipt({
       schemaVersion: 'bayn.chart-terminal-receipt.v1',
       requestId: request.requestId,
       claimHash: claim.claimHash,
       recordedAt: completion.handoff.recordedAt,
-      outcome: { status: 'RECEIVED', inference: disposition.visual },
+      outcome: { status: 'RECEIVED', inference: { ...disposition.visual, response: disposition.visual.response } },
     }),
   )
   const value = { ...source, chartCheckpoint: { claim, terminal: exact } }

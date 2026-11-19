@@ -1,10 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
-import { TestClock } from 'effect/testing'
+import { Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { InferenceCostError, InferenceUsageStatus } from './inference-costs'
-import { provideTestLayer } from './effect-test-support'
+import { InferenceStage, InferenceUsageStatus } from './inference-costs'
 import {
   buildInferenceExpensePlan,
   decodeInferenceExpenseQuote,
@@ -14,7 +12,6 @@ import {
   verifyInferenceExpenseQuote,
 } from './inference-expense'
 import { expenseCoverageFromEvidence, expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
-import { inferenceExpenseLoop } from './inference-expense-runtime'
 
 const quote = (options: Parameters<typeof expenseSourceFixture>[0] = {}) =>
   Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture(options), expenseRateFixture))
@@ -191,6 +188,7 @@ describe('inference expense quote and deterministic plan', () => {
     expect(missing.requestsWithCoverageIssues).toEqual([
       {
         requestId: gap.line.requestId,
+        stage: InferenceStage.Jev,
         model: gap.line.model,
         purpose: gap.line.purpose,
         usageStatus: InferenceUsageStatus.Unknown,
@@ -246,44 +244,5 @@ describe('inference expense quote and deterministic plan', () => {
     )
     expect(complete.claimedRequestCount).toBe(1)
     expect(complete.completeMeteredCoverage).toBe(true)
-  })
-})
-
-describe('scoped inference expense background loop', () => {
-  test('retries a typed failure after the interval and finalizes its owned pass once on interruption', async () => {
-    let starts = 0
-    let releases = 0
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const entered = yield* Deferred.make<void>()
-          const pass = Effect.gen(function* () {
-            starts++
-            if (starts === 1) return yield* new InferenceCostError({ message: 'synthetic unavailable' })
-            yield* Deferred.succeed(entered, undefined)
-            return yield* Effect.never.pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  releases++
-                }),
-              ),
-            )
-          })
-          const fiber = yield* inferenceExpenseLoop(pass).pipe(Effect.forkScoped)
-          yield* TestClock.adjust('30 seconds')
-          yield* Deferred.await(entered)
-          yield* Fiber.interrupt(fiber)
-        }),
-      ).pipe((self) => provideTestLayer(self, TestClock.layer())),
-    )
-    expect(starts).toBe(2)
-    expect(releases).toBe(1)
-  })
-
-  test('does not turn a defect into successful accounting', async () => {
-    const exit = await Effect.runPromiseExit(inferenceExpenseLoop(Effect.die('synthetic accounting defect')))
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit))
-      expect(Result.getOrThrow(Cause.findDie(exit.cause)).defect).toBe('synthetic accounting defect')
   })
 })

@@ -25,7 +25,7 @@ type relayOperation struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema"`
-	ReadOnly    bool            `json:"readOnly"`
+	ReadOnly    *bool           `json:"readOnly"`
 }
 type relayBinding struct {
 	Service    string `json:"service"`
@@ -205,8 +205,8 @@ func (supervisor *codexSupervisor) relayConfigure(ctx context.Context, config re
 	seen := map[string]bool{}
 	for _, operation := range config.Operations {
 		var schema map[string]json.RawMessage
-		if !relayName.MatchString(operation.Name) || seen[operation.Name] || !operation.ReadOnly || len(operation.Description) > 4096 || json.Unmarshal(operation.InputSchema, &schema) != nil || string(schema["type"]) != `"object"` {
-			return errors.New("invalid read-only connector operation")
+		if !relayName.MatchString(operation.Name) || seen[operation.Name] || operation.ReadOnly == nil || len(operation.Description) > 4096 || json.Unmarshal(operation.InputSchema, &schema) != nil || string(schema["type"]) != `"object"` {
+			return errors.New("invalid connector operation")
 		}
 		seen[operation.Name] = true
 	}

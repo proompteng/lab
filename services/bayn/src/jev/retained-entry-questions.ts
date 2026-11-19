@@ -3,8 +3,8 @@ import { Result, Schema } from 'effect'
 
 import { SymbolSchema } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessmentsMaterial } from './chart-questions'
-import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
+import type { ChartAssessmentsMaterial } from './/chart-assessments'
+import { JevContractError, retainedJevModel as jevModel, prepareJevRequest, type JevRequest } from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
 const retainedEntryInstructions =
   'Use candidate, benchmark and relativeSignals in the shared state together with sourceEvidence and chartAssessment in these instructions. Chart assessments are model judgments about the same source bars, not independent facts. Proposed order prices are conditional terms, not observations or promised future prices. Answer only the individual setup, invalidation or obstruction question supplied here.'

@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
-const { verifyGithubIdentity } = await import('./github-identity')
+const { verifyGithubIdentity } = await import('../platform/github-identity')
 
 test('administration binds canonical GitHub numeric IDs and ignores display metadata', () => {
   const first = verifyGithubIdentity('Example', {

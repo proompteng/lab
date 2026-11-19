@@ -1,4 +1,4 @@
-import { equityMarketProfile } from './markets'
+import { currentEquityMarketProfile as equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -33,6 +33,16 @@ describe('native Jev entry and position observations', () => {
     const decode = Schema.decodeUnknownResult(JevEntryTargetSchema)
     expect(Result.getOrThrow(decode(target))).toEqual(target)
     expect(Result.getOrThrow(decode(structuredClone(target)))).toEqual(target)
+    const evidence = target.evidence
+    const other = Result.getOrThrow(
+      decideJevEntry({
+        ...evidence,
+        batchResult: nativeJevBatchResult(evidence.batchPlan, evidence.decidedAt, () => false, 0.9),
+      }),
+    )
+    expect(other.selectedSymbols).toEqual([])
+    expect(Result.getOrThrow(decode(other))).toEqual(other)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
 
     const changed = structuredClone(target)
     const originalHash = changed.evidence.batchPlan.observationHash
@@ -244,7 +254,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.numericalState).toMatchObject({
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: 'bayn.jev-entry-state.v24',
         task: { decisionPurpose: JevPurpose.Entry },
       })
     }
@@ -298,7 +308,7 @@ describe('native Jev entry and position observations', () => {
 
   test('the development protocol covers all available non-benchmark symbols without changing broker execution terms', () => {
     const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    expect(protocol.candidateSymbols).toHaveLength(18)
+    expect(protocol.candidateSymbols).toHaveLength(13)
     expect(protocol.maximumPositions).toBe(1)
     expect(protocol.executionModel.order.timeInForce).toBe('asset-session')
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, candidateSymbols: ['AAPL', 'AAPL'] }))).toBe(true)

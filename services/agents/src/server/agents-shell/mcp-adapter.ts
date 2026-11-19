@@ -8,7 +8,6 @@ import {
   type ToolAnnotations,
 } from '@modelcontextprotocol/sdk/types.js'
 import { Context, Effect, Layer } from 'effect'
-import * as ParseResult from 'effect/ParseResult'
 import * as Schema from 'effect/Schema'
 
 import { AuthChallengeError, buildBearerChallenge, requireScopes, type AuthContext } from './auth'
@@ -32,10 +31,9 @@ export type EffectToolContext = {
   requestId: string
 }
 
-export class AgentsShellServices extends Context.Tag('agents-shell/Services')<
-  AgentsShellServices,
-  EffectToolContext
->() {}
+export class AgentsShellServices extends Context.Service<AgentsShellServices, EffectToolContext>()(
+  'agents-shell/Services',
+) {}
 
 export const makeAgentsShellServicesLayer = (context: EffectToolContext) => Layer.succeed(AgentsShellServices, context)
 
@@ -43,8 +41,11 @@ export type EffectTool<I = any, O = any> = {
   name: string
   title: string
   description: string
-  inputSchema: Schema.Schema<I, any, never>
-  outputSchema?: Schema.Schema<O, any, never>
+  inputSchema: Schema.Codec<I, any>
+  inputJsonSchema?: Record<string, unknown>
+  outputSchema?: Schema.Codec<O, any>
+  auditResult?: boolean
+  auditArguments?: boolean
   annotations: ToolAnnotations
   scopes: string[]
   securitySchemes: OAuth2SecurityScheme[]
@@ -72,14 +73,11 @@ export const toolSecurityMeta = (scopes: string[]) => {
   }
 }
 
-const formatParseError = (error: ParseResult.ParseError) => ParseResult.TreeFormatter.formatErrorSync(error)
-
 const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =>
   Effect.runPromise(
-    Schema.decodeUnknown(tool.inputSchema)(value).pipe(
+    Schema.decodeUnknownEffect(tool.inputSchema, { onExcessProperty: 'error' })(value).pipe(
       Effect.mapError(
-        (error) =>
-          new Error(`Input validation error: Invalid arguments for tool ${tool.name}: ${formatParseError(error)}`),
+        (error) => new Error(`Input validation error: Invalid arguments for tool ${tool.name}: ${error.message}`),
       ),
     ),
   )
@@ -100,12 +98,10 @@ const validateOutput = async (tool: EffectTool<any, any>, result: CallToolResult
   }
   try {
     await Effect.runPromise(
-      Schema.decodeUnknown(tool.outputSchema)(result.structuredContent).pipe(
+      Schema.decodeUnknownEffect(tool.outputSchema)(result.structuredContent).pipe(
         Effect.mapError(
           (error) =>
-            new Error(
-              `Output validation error: Invalid structured content for tool ${tool.name}: ${formatParseError(error)}`,
-            ),
+            new Error(`Output validation error: Invalid structured content for tool ${tool.name}: ${error.message}`),
         ),
       ),
     )
@@ -125,6 +121,9 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
       structuredContent: {
         code: error.code,
         message: error.message,
+        ...(error.code === 'KUBECTL_REQUIRES_ADMIN'
+          ? { layer: 'tool-policy', requiredTool: 'kubectl_admin', executionStarted: false }
+          : {}),
         ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
       },
     }
@@ -153,7 +152,7 @@ export const installEffectToolHandlers = (
     name: tool.name,
     title: tool.title,
     description: tool.description,
-    inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
+    inputSchema: tool.inputJsonSchema ?? effectSchemaToJsonSchema(tool.inputSchema),
     annotations: tool.annotations,
     securitySchemes: tool.securitySchemes,
     _meta: tool._meta,
@@ -189,7 +188,7 @@ export const installEffectToolHandlers = (
         }
         const startedAuditErrors = runner.audit('tool_call_started', auth, {
           authorized,
-          ...(authorized && !requestError ? { arguments: input } : {}),
+          ...(authorized && !requestError && tool?.auditArguments !== false ? { arguments: input } : {}),
         })
         let result: CallToolResult
         try {
@@ -198,7 +197,7 @@ export const installEffectToolHandlers = (
             (tool
               ? await Effect.runPromise(
                   callEffectTool(tool, input).pipe(
-                    Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
+                    Effect.catch((error) => Effect.succeed(mapToolError(context.config, error))),
                     Effect.provide(toolLayer),
                   ),
                 )
@@ -210,7 +209,7 @@ export const installEffectToolHandlers = (
         const finishedAuditErrors = runner.audit('tool_call_finished', auth, {
           durationMs: performance.now() - startedAt,
           outcome: toolOutcome(tool?.name, result),
-          ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
+          ...(authorized && tool?.auditResult !== false ? { result: content ?? result.content } : {}),
         })
         const auditSink = await runner.flushAudit()
         return {

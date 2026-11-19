@@ -38,7 +38,7 @@ export const connectPostgresWithStartupRetry = <A, R>(open: Effect.Effect<A, Sql
 
 export const PostgresClientLive = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres' | 'alpaca'>,
-  options: { readonly maxConnections: number; readonly applicationName: string } = {
+  options: { readonly maxConnections: number; readonly applicationName: string; readonly readOnly?: boolean } = {
     maxConnections: 8,
     applicationName: 'bayn',
   },
@@ -53,10 +53,10 @@ export const PostgresClientLive = (
   const sessionConnection = Effect.try({
     try: () => {
       const url = new URL(Redacted.value(config.postgres.url))
-      const options = url.searchParams.get('options')
+      const existingOptions = url.searchParams.get('options')
       url.searchParams.set(
         'options',
-        `${options === null ? '' : `${options} `}-c statement_timeout=${statementTimeoutMs}`,
+        `${existingOptions === null ? '' : `${existingOptions} `}-c statement_timeout=${statementTimeoutMs}${options.readOnly === true ? ' -c default_transaction_read_only=on' : ''}`,
       )
       return {
         url: Redacted.make(url.toString()),

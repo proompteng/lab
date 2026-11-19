@@ -1,7 +1,7 @@
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { gzipSync } from 'node:zlib'
 import { Result } from 'effect'
 
@@ -63,6 +63,8 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
   const captured = sixBarFixture(
     inputs.filter((entry) => entry.availableAtMs <= endMs),
     '10:10',
+    undefined,
+    equityMarketProfile,
   )
   const body = gzipSync(captured.events.map((event) => JSON.stringify(event)).join('\n') + '\n')
   const nativeVisiblePartitions = Object.values(captured.universe.topics)
@@ -124,7 +126,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v10',
+      schemaVersion: 'bayn.backtest.v11',
       policy: 'JEV' as const,
       latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -134,8 +136,8 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       inference: {
         mode: 'measured-providers',
         maximumCalls: 1000,
-        models: { jev: jevModel, chart: 'gpt-6-luna' },
-        inputDefinition: 'bayn.jev-entry-state.v23',
+        models: { jev: jevModel },
+        inputDefinition: 'bayn.jev-entry-state.v24',
         costs: replayRateCardFixture({
           jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           chart: {

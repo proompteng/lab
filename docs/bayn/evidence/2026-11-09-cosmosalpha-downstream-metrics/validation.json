@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-downstream-numeric-acceptance.v1",
+  "status": "PASS_FUNCTIONAL_ACCEPTANCE_NUMERICS",
+  "experimentId": "bde329dd3b8975774b35ab225b903bd70fd6ed5f373f3f73d308e41133c06bed",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "planSha256": "53343c99ee8998e24cb4a9c4537fdb07c196a7f8af5c3cb53d43516ee17ca9b3",
+  "fullNumericReportSha256": "8d2f03e851d217ad254195a93350968fd29cec091f4b0fbad8a24a582fe62816",
+  "verifierSha256": "2907c406e7938e99b08a09c8e08bc8668b9394da69818fa9c68efe9bf5ea7bee",
+  "controlsSha256": "db4d9cab1cd845f4561692668b11d7335ba49ffd23de5aea5bf390818c5218cf",
+  "runtime": {
+    "python": "3.12.9",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1"
+  },
+  "modelsVerified": 3,
+  "evaluableFactorsPerModel": 4,
+  "reportedMetricComparisons": 21,
+  "predictionTargetRowsVerified": 1076121,
+  "dailySignalRowsVerified": 3630,
+  "portfolioReturnRowsVerified": 3636,
+  "outputArtifactsVerified": 18,
+  "absoluteTolerance": 1e-12,
+  "maximumAbsoluteMetricError": 2.7755575615628914e-17,
+  "maximumAbsoluteDailyCorrelationError": 1.1102230246251565e-16,
+  "definitionCases": 3,
+  "negativeCasesRejected": 9,
+  "unittestMethodsPassed": 9,
+  "models": [
+    {
+      "runId": "calendar-acceptance-20260823-graph",
+      "modelResultSha256": "2e93b5d58a067986e36b78e424488eb13eaa03294e41319338c745bb37effe4b"
+    },
+    {
+      "runId": "calendar-acceptance-20260823-mcts",
+      "modelResultSha256": "a0c1d28e781c8421227cd3b2d93c0888cc9747e94d00fdaf3d427704cb0beb56"
+    },
+    {
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "modelResultSha256": "774369f6e95a59267201222cc07ea9e11afa427cd226ffe406cea344c0fa6166"
+    }
+  ],
+  "scope": "Three completed four-factor acceptance models only. Prediction raw targets, daily IC/RankIC, aggregate metrics and artifact integrity checked. Portfolio math starts from recorded zero-cost daily returns; no independent fill replay, feature reconstruction, industry lineage, completed scientific matrix, paper parity or strategy-edge qualification."
+}

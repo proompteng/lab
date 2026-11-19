@@ -6,6 +6,7 @@ const control = document.getElementById('control')
 const channel = 'tengri-browser-v1'
 const sessionId = location.hostname.split('.')[0].slice(-24)
 const notify = (type, error) => parent.postMessage({ channel, sessionId, type, error }, '*')
+document.getElementById('chatgpt').addEventListener('click', () => notify('connect-chatgpt'))
 const connection = new URL('/websockify', location.href)
 connection.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
 let rfb

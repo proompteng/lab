@@ -55,7 +55,6 @@ import org.slf4j.LoggerFactory
 import java.io.Serializable
 import java.net.URI
 import java.nio.charset.StandardCharsets
-import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.Timestamp
@@ -75,7 +74,7 @@ fun main() {
 
   configureEnvironment(env, config)
   val graph = configureTechnicalAnalysisJob(env, config, RollingMarketFeatureConfig.fromEnv(), CryptoMarketFeatureConfig.fromEnv())
-  if (!config.clickhouseUrl.isNullOrBlank()) ensureClickhouseSchema(config)
+  if (!config.clickhouseUrl.isNullOrBlank()) verifyClickhouseSchema(config)
   graph.jobName = "torghut-technical-analysis-flink"
   env.execute(graph)
 }
@@ -314,34 +313,11 @@ private fun applyClickhouseSinks(
     .setParallelism(config.clickhouseSinkParallelism)
 }
 
-private fun ensureClickhouseSchema(config: FlinkTaConfig) {
+private fun verifyClickhouseSchema(config: FlinkTaConfig) {
   val logger = LoggerFactory.getLogger("ta-clickhouse")
   val url = requireNotNull(config.clickhouseUrl) { "TA_CLICKHOUSE_URL must be set when ClickHouse sinks are enabled." }
   val adminUrl = clickhouseAdminUrl(url)
   val sinkDatabase = clickhouseDatabaseName(url)
-  val schemaSql =
-    object {}
-      .javaClass
-      .getResourceAsStream("/ta-schema.sql")
-      ?.bufferedReader(StandardCharsets.UTF_8)
-      ?.use { it.readText() }
-
-  if (schemaSql.isNullOrBlank()) {
-    logger.warn("ClickHouse schema SQL resource not found; skipping schema init.")
-    return
-  }
-
-  val statements =
-    schemaSql
-      .splitToSequence(';')
-      .map { it.trim() }
-      .filter { it.isNotEmpty() }
-      .toList()
-
-  if (statements.isEmpty()) {
-    logger.warn("ClickHouse schema SQL resource is empty; skipping schema init.")
-    return
-  }
 
   val maxAttempts = (config.clickhouseSchemaInitMaxRetries.coerceAtLeast(0)) + 1
   val retryDelayMs = config.clickhouseSchemaInitRetryDelayMs.coerceAtLeast(0)
@@ -351,29 +327,21 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
     retryDelayMs = retryDelayMs,
     strict = config.clickhouseSchemaInitStrict,
     logger = logger,
-    operationName = "ClickHouse schema",
+    operationName = "ClickHouse schema verification",
   ) {
     val properties = Properties()
+    properties["connection_timeout"] = "5000"
+    properties["socket_timeout"] = "15000"
     config.clickhouseUsername?.let { properties["user"] = it }
     config.clickhousePassword?.let { properties["password"] = it }
-    val connection =
-      if (properties.isEmpty) {
-        DriverManager.getConnection(adminUrl)
-      } else {
-        DriverManager.getConnection(adminUrl, properties)
-      }
+    val connection = DriverManager.getConnection(adminUrl, properties)
 
     connection.use { conn ->
-      conn.createStatement().use { statement ->
-        statements.forEach { statement.execute(it) }
-      }
-      if (config.clickhouseRequireReplicatedTables) {
-        validateClickhouseTaTableEngines(loadClickhouseTaTableEngines(conn, sinkDatabase))
-      }
+      verifyClickhouseTaSchema(conn, sinkDatabase, config.clickhouseRequireReplicatedTables)
     }
   }
 
-  logger.info("ClickHouse schema ensured.")
+  logger.info("ClickHouse TA sink schema verified without DDL.")
 }
 
 private val requiredClickhouseTaTableEngines =
@@ -381,25 +349,6 @@ private val requiredClickhouseTaTableEngines =
     "ta_microbars" to "ReplicatedReplacingMergeTree",
     "ta_signals" to "ReplicatedReplacingMergeTree",
   )
-
-private fun loadClickhouseTaTableEngines(
-  connection: Connection,
-  database: String,
-): Map<String, String> {
-  val tables = requiredClickhouseTaTableEngines.keys.joinToString(",") { "'$it'" }
-  val sql = "SELECT name, engine FROM system.tables WHERE database = '${clickhouseSqlString(database)}' AND name IN ($tables)"
-  val engines = mutableMapOf<String, String>()
-
-  connection.createStatement().use { statement ->
-    statement.executeQuery(sql).use { resultSet ->
-      while (resultSet.next()) {
-        engines[resultSet.getString("name")] = resultSet.getString("engine")
-      }
-    }
-  }
-
-  return engines
-}
 
 internal fun clickhouseDatabaseName(url: String): String {
   val raw = if (url.startsWith("jdbc:")) url.removePrefix("jdbc:") else url
@@ -419,8 +368,6 @@ internal fun clickhouseDatabaseName(url: String): String {
     "default"
   }
 }
-
-private fun clickhouseSqlString(value: String): String = value.replace("'", "''")
 
 internal fun validateClickhouseTaTableEngines(engineByTable: Map<String, String>) {
   val issues = mutableListOf<String>()

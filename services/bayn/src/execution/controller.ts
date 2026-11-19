@@ -3,6 +3,7 @@ import { Data, Result, Schema } from 'effect'
 import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
+import { ProtectionReleaseReferenceSchema } from './events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -15,6 +16,10 @@ const DeliveryAttemptSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: executionControllerMaximumDeliveryAttempt }),
 )
 export const executionControllerMaximumRecoveryWindow = 7
+/** The counter saturates; a failed owner must keep its bounded recovery cadence alive. */
+export const nextExecutionControllerRecoveryWindow = (current: number): number =>
+  Math.min(current + 1, executionControllerMaximumRecoveryWindow)
+
 const RecoveryWindowSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: executionControllerMaximumRecoveryWindow }),
 )
@@ -59,6 +64,13 @@ export const ExecutionControllerDeactivationSchema = Schema.Struct({
 })
 export type ExecutionControllerDeactivation = typeof ExecutionControllerDeactivationSchema.Type
 
+export const ExecutionControllerRotationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-controller-rotation.v1'),
+  deployment: ExecutionDeploymentActivationSchema,
+  predecessor: ExecutionControllerDeactivationSchema,
+})
+export type ExecutionControllerRotation = typeof ExecutionControllerRotationSchema.Type
+
 const CompletionSchema = Schema.Struct({
   sequence: CounterSchema,
   outcome: Schema.Enum(ExecutionControllerOutcome),
@@ -76,6 +88,20 @@ export const ExecutionControllerStateSchema = Schema.Struct({
   nextSequence: CounterSchema,
   lastCompletion: Schema.optionalKey(CompletionSchema),
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
+  marketEligibleAt: Schema.optionalKey(UtcInstantSchema),
+  marketDataWakeSuppressed: Schema.optionalKey(Schema.Literal(true)),
+  wakeScheduledSequence: Schema.optionalKey(CounterSchema),
+  wakeAcceptedAt: Schema.optionalKey(UtcInstantSchema),
+  marketFrontier: Schema.optionalKey(
+    Schema.Struct({
+      producerId: Schema.String.check(Schema.isUUID(4)),
+      sequence: EpochSchema,
+    }),
+  ),
+  lastBrokerSnapshotHash: Schema.optionalKey(Sha256Schema),
+  lastProtectionRelease: Schema.optionalKey(
+    Schema.Struct({ ...ProtectionReleaseReferenceSchema.fields, sequence: CounterSchema }),
+  ),
 })
 export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Type
 
@@ -102,7 +128,7 @@ export type ExecutionControllerActivationDecision =
   | { readonly _tag: 'Replayed'; readonly state: ExecutionControllerState }
 
 export type ExecutionControllerTickDecision =
-  | { readonly _tag: 'Advance'; readonly command: AdvanceExecutionCommand }
+  | { readonly _tag: 'Advance'; readonly command: Omit<AdvanceExecutionCommand, 'issuedAt'> }
   | { readonly _tag: 'Ignored'; readonly reason: 'Inactive' | 'StaleEpoch' | 'StaleSequence' }
 
 export type ExecutionDeploymentActivationDecision =
@@ -201,7 +227,6 @@ export const decideExecutionControllerTick = (
   state: ExecutionControllerState | null,
   tick: ExecutionControllerTick,
   controllerKey: string,
-  issuedAt: string,
   workerSourceRevision: string,
 ): Result.Result<ExecutionControllerTickDecision, ExecutionControllerDecisionError> => {
   if (state === null || !state.active) return Result.succeed({ _tag: 'Ignored', reason: 'Inactive' })
@@ -224,7 +249,6 @@ export const decideExecutionControllerTick = (
       controllerKey,
       epoch: state.epoch,
       sequence: state.nextSequence,
-      issuedAt,
       sourceRevision: workerSourceRevision,
     },
   })
@@ -253,8 +277,18 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerReconciliationRetry =
+    result.outcome._tag === ExecutionControllerOutcome.Blocked &&
+    result.observation?.result === 'FAILURE' &&
+    result.observation.failure === 'market-data' &&
+    (result.observation.operation === 'reconcile' ||
+      (result.observation.operation === 'build-decision' &&
+        result.observation.brokerObservationFailure === 'NO_ADMISSIBLE_CUT'))
   const nextDueAt = Result.try({
-    try: () => new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
+    try: () => {
+      if (result.outcome.nextWakeAt === undefined) return undefined
+      return new Date(Date.parse(result.outcome.nextWakeAt)).toISOString()
+    },
     catch: () =>
       new ExecutionControllerDecisionError({
         operation: 'complete',
@@ -263,7 +297,8 @@ export const completeExecutionControllerTick = (
       }),
   })
   if (Result.isFailure(nextDueAt)) return Result.fail(nextDueAt.failure)
-  const decodedNextDueAt = decodeUtcInstant(nextDueAt.success)
+  const decodedNextDueAt =
+    nextDueAt.success === undefined ? Result.succeed(undefined) : decodeUtcInstant(nextDueAt.success)
   if (Result.isFailure(decodedNextDueAt)) {
     return Result.fail(
       new ExecutionControllerDecisionError({
@@ -273,8 +308,39 @@ export const completeExecutionControllerTick = (
       }),
     )
   }
+  const brokerObservationPending =
+    result.observation?.result === 'SUCCESS' && result.observation.waitReason === 'BROKER_OBSERVATION_PENDING'
+  // An early broker wake can revalidate and still wait. Keep its existing future obligation instead
+  // of restarting the backoff; a pass completing at or after that deadline establishes a new one.
+  const dueAt =
+    (brokerReconciliationRetry || brokerObservationPending) &&
+    state.nextDueAt !== undefined &&
+    state.nextDueAt > result.completedAt &&
+    decodedNextDueAt.success !== undefined &&
+    state.nextDueAt < decodedNextDueAt.success
+      ? state.nextDueAt
+      : decodedNextDueAt.success
+  const {
+    nextDueAt: _previousDeadline,
+    marketEligibleAt: _previousEligibility,
+    marketDataWakeSuppressed: _previousMarketSuppression,
+    wakeScheduledSequence: _previousWake,
+    wakeAcceptedAt: _previousWakeAcceptedAt,
+    ...completedState
+  } = state
+  // Market bursts cannot repair failed broker reconciliation. Honor its existing retry deadline,
+  // without inventing polling from a legacy delay; broker observations can still wake promptly.
+  const availableAt = brokerReconciliationRetry
+    ? dueAt
+    : result.observation?.result !== 'SUCCESS'
+      ? undefined
+      : result.observation.outcome === 'WINDOW_CLOSED' ||
+          result.observation.waitReason === 'BROKER_OBSERVATION_PENDING' ||
+          result.observation.waitReason === 'POST_MUTATION_RECONCILIATION'
+        ? dueAt
+        : result.observation.readiness?.availableAt
   return Result.succeed({
-    ...state,
+    ...completedState,
     nextSequence: state.nextSequence + 1,
     lastCompletion: {
       sequence: tick.sequence,
@@ -282,7 +348,13 @@ export const completeExecutionControllerTick = (
       receiptHash: result.outcome.receiptHash,
       completedAt: result.completedAt,
     },
-    nextDueAt: decodedNextDueAt.success,
+    ...(dueAt === undefined ? {} : { nextDueAt: dueAt }),
+    ...(availableAt !== undefined && availableAt > result.completedAt ? { marketEligibleAt: availableAt } : {}),
+    ...(result.observation?.result === 'SUCCESS' &&
+    result.observation.outcome === 'WINDOW_CLOSED' &&
+    decodedNextDueAt.success === undefined
+      ? { marketDataWakeSuppressed: true as const }
+      : {}),
   })
 }
 
@@ -331,8 +403,40 @@ export const decideExecutionControllerDeactivation = (
   })
 }
 
+export const decideExecutionControllerRotation = (
+  state: ExecutionControllerState | null,
+  request: ExecutionControllerRotation,
+): Result.Result<ExecutionControllerActivationDecision, ExecutionControllerDecisionError> => {
+  if (request.deployment.controllerKey !== request.predecessor.controllerKey)
+    return conflict('activate', 'execution controller rotation account bindings differ')
+  if (
+    state !== null &&
+    state.active &&
+    state.epoch === request.predecessor.epoch + 1 &&
+    sameBinding(state, request.deployment)
+  )
+    return Result.succeed({ _tag: 'Replayed', state })
+  if (state === null || !state.active)
+    return conflict('activate', 'execution controller rotation cannot resume a deactivated predecessor')
+  // Derive the existing fenced transition without ever persisting its inactive intermediate state.
+  return Result.flatMap(decideExecutionControllerDeactivation(state, request.predecessor), ({ state: inactive }) =>
+    decideExecutionControllerActivation(inactive, {
+      schemaVersion: 'bayn.execution-controller-activation.v1',
+      controllerKey: request.deployment.controllerKey,
+      epoch: inactive.epoch,
+      firstSequence: inactive.nextSequence,
+      planHash: request.deployment.planHash,
+      sourceRevision: request.deployment.sourceRevision,
+    }),
+  )
+}
+
 export const decodeExecutionControllerActivation = Schema.decodeUnknownResult(
   ExecutionControllerActivationSchema,
+  strictParseOptions,
+)
+export const decodeExecutionControllerRotation = Schema.decodeUnknownResult(
+  ExecutionControllerRotationSchema,
   strictParseOptions,
 )
 export const decodeExecutionDeploymentActivation = Schema.decodeUnknownResult(
@@ -368,5 +472,5 @@ export const executionControllerSuccessorPassCompleted = (
   state.planHash === activation.planHash &&
   state.sourceRevision === activation.sourceRevision &&
   state.lastCompletion !== undefined &&
-  state.lastCompletion.sequence > activation.firstSequence &&
+  state.lastCompletion.sequence >= activation.firstSequence &&
   state.nextSequence === state.lastCompletion.sequence + 1

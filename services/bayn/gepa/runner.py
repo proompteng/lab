@@ -603,8 +603,8 @@ def main():
     os.umask(0o077)
     study = validate_study(read_json(args.manifest))
     storage = Storage(
-        os.environ["BAYN_PUBLIC_INFORMATION_BUCKET"],
-        os.environ["BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT"],
+        os.environ["BAYN_RESEARCH_CAPTURE_BUCKET"],
+        os.environ["BAYN_RESEARCH_CAPTURE_ENDPOINT"],
         identity(study),
     )
     result = run_study(

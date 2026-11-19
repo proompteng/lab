@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { recoveredCodexRun, type TengriCodexRun } from './codex-run'
+import { codexRunCanStop, recoveredCodexRun, type TengriCodexRun } from './codex-run'
 
 const run: TengriCodexRun = {
   runId: '11111111-1111-4111-8111-111111111111',
@@ -8,6 +8,18 @@ const run: TengriCodexRun = {
   threadId: 'thread-one',
   state: { phase: 'running', turnId: 'turn-one' },
 }
+
+test('known-run stop is independent of list recovery but rejects other identities and terminal runs', () => {
+  expect(codexRunCanStop(run, run)).toBe(true)
+  expect(codexRunCanStop(null, run)).toBe(false)
+  for (const key of ['agentId', 'runId', 'threadId'] as const)
+    expect(codexRunCanStop(run, { ...run, [key]: 'other' })).toBe(false)
+  expect(codexRunCanStop({ ...run, state: { phase: 'succeeded', turnId: 'turn-one' } }, run)).toBe(false)
+  // A new login can refresh expired cancellation authority; a recorded Stop is not terminal.
+  expect(
+    codexRunCanStop({ ...run, state: { phase: 'cancelling', turnId: 'turn-one', reason: 'Stop pending' } }, run),
+  ).toBe(true)
+})
 
 test('the workspace poll supplies the selected run without another status request', async () => {
   let statusRequests = 0

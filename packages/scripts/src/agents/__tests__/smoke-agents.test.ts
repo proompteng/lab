@@ -714,20 +714,16 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(spec, 'binary')).toBe('/usr/local/bin/agent-runner')
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
-    expect(objectAt(codex, 'model')).toBe('gpt-6-astra')
+    expect(objectAt(codex, 'model')).toBe('gpt-6.2-sol')
     expect(objectAt(codex, 'effort')).toBe('high')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAME')).toBe('{{agentRun.name}}')
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
-    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('gpt-6-astra')
-    expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).toBe(
-      'gpt-5.6-sol,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex',
-    )
-    expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).not.toContain('gpt-6-astra')
+    expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('gpt-6.2-sol')
     expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
-    expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-6-astra"')
+    expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-6.2-sol"')
     expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "high"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "xhigh"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
@@ -1216,12 +1212,12 @@ crossProductDescribe('autonomous trader provider', () => {
   })
 
   it('preinstalls day-trading Python dependencies in the Codex runner image', () => {
-    const dockerfile = readFileSync(resolve(process.cwd(), 'services/agents/Dockerfile.codex-runner'), 'utf8')
+    const image = readFileSync(resolve(process.cwd(), 'nix/images/agents.nix'), 'utf8')
 
-    expect(dockerfile).toContain('"alpaca-py>=0.43"')
-    expect(dockerfile).toContain('"pandas>=2.2"')
-    expect(dockerfile).toContain('"pydantic>=2.8"')
-    expect(dockerfile).toContain('"pyarrow>=16.0"')
+    expect(image).toContain('alpacaPy')
+    expect(image).toContain('pythonPackages.pandas')
+    expect(image).toContain('pythonPackages.pydantic')
+    expect(image).toContain('ps.pyarrow')
   })
 
   it('wires the analysis daytrading bootstrap into the trader provider', () => {
@@ -1251,7 +1247,7 @@ crossProductDescribe('autonomous trader provider', () => {
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ARTIFACT_DIR')).toBeUndefined()
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_WORK_DIR')).toBe('/tmp/autonomous-trader-work')
     expect(objectAt(envTemplate, 'ANALYSIS_FETCH_DEPTH')).toBeUndefined()
-    expect(objectAt(codex, 'model')).toBe('gpt-6-astra')
+    expect(objectAt(codex, 'model')).toBe('gpt-6.2-sol')
     expect(objectAt(codex, 'effort')).toBe('high')
     expect(inputFilePaths).toContain('/root/.codex/config.toml')
     expect(inputFilePaths).toContain('/root/bootstrap-analysis-daytrading.sh')

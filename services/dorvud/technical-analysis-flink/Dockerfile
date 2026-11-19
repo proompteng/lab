@@ -10,6 +10,7 @@ COPY technical-analysis-flink ./technical-analysis-flink
 COPY websockets ./websockets
 COPY flink-integration ./flink-integration
 COPY hyperliquid-feed ./hyperliquid-feed
+COPY webull-feed ./webull-feed
 
 RUN chmod +x ./gradlew
 RUN ./gradlew :technical-analysis-flink:uberJar --no-daemon

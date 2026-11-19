@@ -3,19 +3,55 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
-import { imageWorkflowCatalog, imageWorkflows, repoRoot } from '../../ci/generate-observability-workflows'
+import { workflowCatalog, observedWorkflows, repoRoot } from '../../ci/generate-observability-workflows'
 
 describe('CI build observability', () => {
-  test('enrolls every image builder and its reusable workflow callers', () => {
+  test('enrolls Bayn validation, every image builder and its reusable workflow callers', () => {
     const catalog: unknown = JSON.parse(
       readFileSync(resolve(repoRoot, 'argocd/applications/observability/ci/workflows.json'), 'utf8'),
     )
-    const discovered = imageWorkflows(repoRoot)
+    const discovered = observedWorkflows(repoRoot)
+    expect(discovered).toContain('bayn-ci.yml')
     expect(discovered).toContain('temporal-worker-images.yml')
     expect(discovered).toContain('symphony-build-push.yaml')
     expect(discovered).toContain('arc-runner-build-push.yml')
     expect(discovered).not.toContain('semantic-pull-request.yml')
-    expect(catalog).toEqual(imageWorkflowCatalog(repoRoot))
+    expect(catalog).toEqual(workflowCatalog(repoRoot))
+  })
+
+  test('keeps the collector on Ryzen without changing its durable Ceph claim', () => {
+    const documents = YAML.parseAllDocuments(
+      readFileSync(resolve(repoRoot, 'argocd/applications/observability/ci/collector.yaml'), 'utf8'),
+    ).map((document) => document.toJSON()) as Array<{
+      kind: string
+      spec: {
+        storageClassName?: string
+        resources?: { requests?: { storage?: string } }
+        template?: {
+          spec?: {
+            nodeSelector?: Record<string, string>
+            tolerations?: Array<Record<string, string>>
+          }
+        }
+      }
+    }>
+    const deployment = documents.find((document) => document.kind === 'Deployment')
+    const claim = documents.find((document) => document.kind === 'PersistentVolumeClaim')
+    expect(deployment?.spec.template?.spec).toMatchObject({
+      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+      tolerations: [
+        {
+          key: 'workload.proompteng.ai/compute-local',
+          operator: 'Equal',
+          value: 'true',
+          effect: 'NoSchedule',
+        },
+      ],
+    })
+    expect(claim?.spec).toMatchObject({
+      storageClassName: 'rook-ceph-block',
+      resources: { requests: { storage: '1Gi' } },
+    })
   })
 
   test('preserves attempt identity, timing and durable delivery behavior', () => {
@@ -39,7 +75,7 @@ describe('CI build observability', () => {
   })
 
   test('retains static suffixes that distinguish dynamic matrix job names', () => {
-    const families = imageWorkflowCatalog(repoRoot)['kata-firecracker-extension.yaml']
+    const families = workflowCatalog(repoRoot)['kata-firecracker-extension.yaml']
     if (!families) throw new Error('Kata workflow is missing from enrollment')
     const match = (name: string) =>
       families.filter((family) => new RegExp(family.pattern).test(name)).map((family) => family.id)
@@ -97,7 +133,7 @@ describe('CI build observability', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   test('validates the Alloy scrape configuration with the native collector', () => {
     const result = Bun.spawnSync(

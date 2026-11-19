@@ -40,6 +40,7 @@ const MAX_LINEAR_BODY_BYTES = 1024 * 1024
 const MAX_LINEAR_WEBHOOK_TOLERANCE_MS = 60_000
 
 export interface AppConfig {
+  restate: { ingressOrigin: string }
   idempotency: {
     ttlMs: number
     maxEntries: number
@@ -198,6 +199,11 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   const linearWebhookEnabled = parseBoolean(env.LINEAR_WEBHOOK_ENABLED, false, 'LINEAR_WEBHOOK_ENABLED')
 
   return {
+    restate: {
+      ingressOrigin: trimTrailingSlash(
+        readOptionalEnv(env, 'FROUSSARD_RESTATE_INGRESS', 'http://restate.restate.svc.cluster.local:8080'),
+      ),
+    },
     idempotency: {
       ttlMs: idempotencyTtlMs,
       maxEntries: idempotencyMaxEntries,

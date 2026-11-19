@@ -4,6 +4,7 @@ import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { freezeEvidence } from '../immutable-evidence'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { strictParseOptions } from '../schemas'
@@ -11,12 +12,17 @@ import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 
 import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
-import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import {
+  isOwnedMarketSnapshot,
+  type StrategyMarketSnapshot,
+  type VerifiedStrategyMarketSnapshot,
+} from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
-import { JevObservationSchema } from './observation-contract'
+import { JevObservationSchema, RetainedJevObservationSchema } from './observation-contract'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
-import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
+import { decodeJevPortfolio, isOwnedJevPortfolio, jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
+import type { EquityShortEligibility } from '../execution/equity-short'
 import { jevHistoryStartMs, jevSignalWindowEndMs } from './observation-query'
 
 const invalidObservation = (
@@ -31,20 +37,21 @@ const invalidObservation = (
     ...(cause === undefined ? {} : { cause }),
   })
 
-export const reproduceJevCandidateObservation = (input: unknown) =>
+const verifyObservation = <
+  Observation extends typeof JevObservationSchema.Type | typeof RetainedJevObservationSchema.Type,
+>(
+  observation: Observation,
+  snapshot: StrategyMarketSnapshot,
+) =>
   Result.gen(function* () {
-    const observation = yield* Schema.decodeUnknownResult(
-      JevObservationSchema,
-      strictParseOptions,
-    )(input).pipe(Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)))
     const candidates =
       observation.portfolio.purpose === 'ENTRY'
         ? []
         : jevPortfolioCandidates(observation.portfolio, observation.protocol.candidateSymbols)
-    const snapshot = yield* reproduceStrategySnapshot(observation.manifest, observation.rows).pipe(
-      Result.mapError((cause) => invalidObservation(JevObservationCheck.Snapshot, cause)),
+    const market = jevMarketForFeed(
+      snapshot.manifest.feed,
+      observation.protocol.marketProfiles.find((profile) => profile.feed === snapshot.manifest.feed)?.universeId,
     )
-    const market = jevMarketForFeed(snapshot.manifest.feed)
     const requestedCandidates =
       observation.portfolio.purpose === 'ENTRY' ? (snapshot.manifest.candidateSymbols ?? []) : candidates
     const hasReference =
@@ -168,27 +175,155 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
     ),
   )
 
-export const makeJevObservation = (input: {
+const reproduceObservation = <
+  Observation extends typeof JevObservationSchema.Type | typeof RetainedJevObservationSchema.Type,
+>(
+  observation: Observation,
+) =>
+  reproduceStrategySnapshot(observation.manifest, observation.rows).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Snapshot, cause)),
+    Result.flatMap((snapshot) => verifyObservation(observation, snapshot)),
+  )
+
+export const reproduceJevCandidateObservation = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    JevObservationSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    Result.flatMap(reproduceObservation),
+  )
+
+// Financial evidence reader only; current observation and execution admission remain strict.
+export const reproduceRetainedJevCandidateObservation = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    RetainedJevObservationSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    Result.flatMap(reproduceObservation),
+  )
+
+const OwnedObservationTypeId: unique symbol = Symbol('OwnedJevObservation')
+
+export interface OwnedJevObservation {
+  readonly [OwnedObservationTypeId]: true
+  readonly payload: JevObservation
+  readonly verified: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>
+}
+
+const ownedObservations = new WeakSet<OwnedJevObservation>()
+
+const sealObservation = (payload: JevObservation, verified: OwnedJevObservation['verified']) =>
+  Result.gen(function* () {
+    if ((yield* canonicalHashV1Result(payload)) !== verified.contentHash)
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
+    const source: OwnedJevObservation = freezeEvidence({
+      [OwnedObservationTypeId]: true,
+      payload,
+      verified,
+    })
+    ownedObservations.add(source)
+    return source
+  })
+
+const detachObservation = <A>(input: A) =>
+  Result.try({
+    try: () => structuredClone(input),
+    catch: (cause) => invalidObservation(JevObservationCheck.Identity, cause),
+  })
+
+export const ownJevObservation = (input: JevObservation) =>
+  Result.gen(function* () {
+    const payload = yield* detachObservation(input)
+    const verified = yield* reproduceJevCandidateObservation(payload)
+    return yield* sealObservation(payload, verified)
+  })
+
+export const isOwnedJevObservation = (observation: OwnedJevObservation) => ownedObservations.has(observation)
+
+const jevObservationPayload = (input: {
   readonly cycleId: string
   readonly authorityGenerationHash: string
   readonly protocol: JevProtocol
   readonly portfolio: JevPortfolio
   readonly snapshot: VerifiedStrategyMarketSnapshot
+  readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
 }) =>
   Result.gen(function* () {
     const rows = yield* persistIntradayRecordRows(input.snapshot)
-    const payload = {
+    return {
       schemaVersion: 'bayn.jev-observation.v1' as const,
       cycleId: input.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
       observedAt: input.snapshot.manifest.observedAt,
       protocol: input.protocol,
       portfolio: input.portfolio,
+      ...(input.equityShortEligibility === undefined ? {} : { equityShortEligibility: input.equityShortEligibility }),
       manifest: input.snapshot.manifest,
       rows,
     }
-    const reproduced = yield* reproduceJevCandidateObservation(payload)
-    return { contentHash: reproduced.contentHash, payload }
   })
 
-export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']
+export type JevObservation = Result.Result.Success<ReturnType<typeof jevObservationPayload>>
+
+export const makeJevObservation = (input: Parameters<typeof jevObservationPayload>[0]) =>
+  jevObservationPayload(input).pipe(
+    Result.flatMap((payload) =>
+      Result.map(reproduceJevCandidateObservation(payload), ({ contentHash }) => ({ contentHash, payload })),
+    ),
+  )
+
+const decodeObservationEnvelope = Schema.decodeUnknownResult(
+  Schema.Struct({ ...JevObservationSchema.fields, portfolio: Schema.Unknown }),
+  strictParseOptions,
+)
+
+export const makeOwnedJevObservation = (input: Parameters<typeof jevObservationPayload>[0]) =>
+  Result.gen(function* () {
+    const { snapshot, portfolio: suppliedPortfolio, ...context } = input
+    if (!isOwnedMarketSnapshot(snapshot)) return yield* Result.fail(invalidObservation(JevObservationCheck.Snapshot))
+    const portfolio = isOwnedJevPortfolio(suppliedPortfolio)
+      ? suppliedPortfolio
+      : yield* decodeJevPortfolio(suppliedPortfolio).pipe(
+          Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+        )
+    const {
+      portfolio: _portfolio,
+      manifest,
+      ...observation
+    } = yield* jevObservationPayload({
+      ...context,
+      snapshot,
+      portfolio,
+    })
+    const detached = yield* detachObservation(observation)
+    const payload = { ...detached, manifest, portfolio }
+    const decoded = yield* decodeObservationEnvelope(payload).pipe(
+      Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    )
+    const verified = yield* verifyObservation({ ...decoded, portfolio }, snapshot)
+    return yield* sealObservation(payload, verified)
+  })
+
+/** Restore the current typed graph while retaining the exact admitted source identity. */
+export const restoreVerifiedJevObservation = ({
+  snapshot,
+  contentHash,
+  ...source
+}: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>) =>
+  Result.gen(function* () {
+    const observation: JevObservation = {
+      ...source,
+      manifest: snapshot.manifest,
+      rows: yield* persistIntradayRecordRows(snapshot),
+    }
+    if ((yield* canonicalHashV1Result(observation)) !== contentHash)
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Identity))
+    return { observation, snapshot, contentHash }
+  })
+
+export const restoreJevObservation = (input: unknown) =>
+  reproduceJevCandidateObservation(input).pipe(Result.flatMap(restoreVerifiedJevObservation))
+
+export type RestoredJevObservation = Result.Result.Success<ReturnType<typeof restoreJevObservation>>

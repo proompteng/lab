@@ -17,7 +17,7 @@ import {
   References,
   Tracer,
 } from 'effect'
-import { PrometheusMetrics } from 'effect/observability'
+import { OtlpExporter, PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -33,6 +33,60 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test.each(
+    ['success', 'failure', 'defect', 'interruption'].flatMap((outcome) =>
+      ['logger', 'timing'].map((sink) => ({ outcome, sink })),
+    ),
+  )('diagnostic-only stages preserve $outcome when the $sink sink throws', async ({ outcome, sink }) => {
+    const failure = { reason: 'original operation failure' }
+    const operation =
+      outcome === 'success'
+        ? Effect.succeed('committed')
+        : outcome === 'failure'
+          ? Effect.fail(failure)
+          : outcome === 'defect'
+            ? Effect.die(failure)
+            : Effect.interrupt
+    const actual = await Effect.runPromiseExit(
+      operation.pipe(
+        withObservedStage('bayn.jev.batch-completion.phase', {
+          operation: 'lock',
+          recordCompletion: true,
+          diagnosticOnly: true,
+        }),
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              if (sink === 'logger') throw new Error('diagnostic sink failed')
+            }),
+          ]),
+        ),
+        Effect.provideService(
+          ExecutionStageTimings,
+          new (class extends Map<string, ExecutionStageTiming> {
+            override set(key: string, value: ExecutionStageTiming) {
+              if (sink === 'timing') throw new Error('diagnostic timing sink failed')
+              return super.set(key, value)
+            }
+          })(),
+        ),
+      ),
+    )
+    if (outcome === 'success') {
+      expect(Exit.isSuccess(actual)).toBe(true)
+      if (Exit.isSuccess(actual)) expect(actual.value).toBe('committed')
+    } else {
+      expect(Exit.isFailure(actual)).toBe(true)
+      if (Exit.isFailure(actual)) {
+        expect(actual.cause.reasons).toHaveLength(1)
+        const reason = actual.cause.reasons[0]
+        expect(reason?._tag).toBe(outcome === 'failure' ? 'Fail' : outcome === 'defect' ? 'Die' : 'Interrupt')
+        if (reason?._tag === 'Fail') expect(reason.error).toBe(failure)
+        if (reason?._tag === 'Die') expect(reason.defect).toBe(failure)
+      }
+    }
+  })
+
   test.each(['success', 'failure', 'defect', 'interruption'])(
     'retains the native millisecond interval through %s and finalizes once',
     async (outcome) => {
@@ -313,9 +367,10 @@ describe('Bayn telemetry', () => {
     }
     try {
       await Effect.runPromise(
-        Effect.void.pipe(
+        TestClock.adjust('1 second').pipe(
           withObservedStage('bayn.postgres.commit'),
           Effect.provide(Layer.mergeAll(makeTelemetryRuntimeLayer(options), makeMetricsRuntimeLayer(options))),
+          Effect.provide(TestClock.layer()),
           Effect.provideService(Metric.MetricRegistry, new Map()),
         ),
       )
@@ -323,6 +378,7 @@ describe('Bayn telemetry', () => {
       for (const field of [
         'bayn_operation_duration_seconds',
         'bayn_telemetry_heartbeat_timestamp_seconds',
+        'bayn_scheduler_delay_seconds',
         'source-test',
         'source_revision',
         'pod-test',
@@ -447,6 +503,92 @@ describe('Bayn telemetry', () => {
     }
   })
 
+  test.each(['headers', 'body'])('aborts stalled export %s and permits subsequent exports', async (stalled) => {
+    const output: unknown[] = []
+    const testConsole: Console.Console = { ...console, error: (...messages) => output.push(...messages) }
+    const bodies: Buffer[] = []
+    let acceptFirst: (() => void) | undefined
+    let closeFirst: (() => void) | undefined
+    const firstAccepted = new Promise<void>((resolve) => {
+      acceptFirst = resolve
+    })
+    const firstClosed = new Promise<void>((resolve) => {
+      closeFirst = resolve
+    })
+    const server = createServer((request, response) => {
+      const chunks: Uint8Array[] = []
+      request.on('data', (chunk: Uint8Array) => chunks.push(chunk))
+      request.on('end', () => {
+        bodies.push(Buffer.concat(chunks))
+        if (bodies.length !== 1) {
+          response.writeHead(200).end()
+          return
+        }
+        response.once('close', () => closeFirst?.())
+        if (stalled === 'body') {
+          response.writeHead(200)
+          response.write('unfinished collector response')
+        }
+        acceptFirst?.()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('telemetry test server did not bind TCP')
+    try {
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const exporter = yield* OtlpExporter.Flusher
+          yield* Effect.void.pipe(withObservedSpan('bayn.test.stalled-export'))
+          const flushing = yield* exporter.flush.pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Effect.promise(() => firstAccepted)
+          yield* TestClock.adjust('3 seconds')
+          yield* Effect.promise(() => firstClosed)
+          yield* TestClock.adjust('1 second')
+          yield* Fiber.join(flushing)
+          yield* Effect.void.pipe(withObservedSpan('bayn.test.after-timeout'))
+          yield* exporter.flush
+          return 'application-result'
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              makeTelemetryRuntimeLayer({
+                serviceName: 'bayn-telemetry-test',
+                endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+              }),
+              OtlpExporter.layerFlusher,
+            ),
+          ),
+          Effect.provide(TestClock.layer()),
+          Effect.provideService(Console.Console, testConsole),
+        ),
+      )
+      expect(result).toBe('application-result')
+      expect(bodies).toHaveLength(3)
+      expect(bodies[0]).toEqual(bodies[1])
+      expect(bodies[2]?.includes(Buffer.from('bayn.test.after-timeout'))).toBe(true)
+      expect(output.map((entry) => JSON.parse(String(entry)))).toContainEqual(
+        expect.objectContaining({
+          message: 'Bayn OTLP trace export attempt failed',
+          annotations: expect.objectContaining({ failureReason: 'TransportError' }),
+        }),
+      )
+      expect(output.map((entry) => JSON.parse(String(entry)))).toContainEqual(
+        expect.objectContaining({
+          message: 'Bayn OTLP trace export request recovered',
+          annotations: expect.objectContaining({ failedAttempts: 1, httpStatus: 200 }),
+        }),
+      )
+      expect(output.join()).not.toContain('unfinished collector response')
+    } finally {
+      server.closeAllConnections()
+      if (server.listening)
+        await new Promise<void>((resolve, reject) =>
+          server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+        )
+    }
+  })
+
   test('retains rejected trace exports as bounded warnings without collector response contents', async () => {
     const output: unknown[] = []
     const stdout: unknown[] = []
@@ -550,5 +692,39 @@ describe('Bayn telemetry', () => {
         server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
       )
     }
+  })
+})
+
+test('enclosing stages retain timings and failure logs while the inner operation reports slowness once', async () => {
+  const logs: Readonly<Record<string, unknown>>[] = []
+  const timings = new Map<string, ExecutionStageTiming>()
+  const logger = Logger.make(({ fiber }) => {
+    logs.push(fiber.getRef(References.CurrentLogAnnotations))
+  })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.adjust(1_200).pipe(
+        withObservedStage('bayn.execution.cycle-pass'),
+        withObservedStage('bayn.execution.bounded-pass', { slowAfterMs: null }),
+        withObservedStage('bayn.execution.generation-pass', { slowAfterMs: null }),
+      )
+      yield* Effect.fail('failed operation').pipe(
+        withObservedStage('bayn.execution.bounded-pass', { slowAfterMs: null }),
+        Effect.exit,
+      )
+    }).pipe(
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Logger.layer([logger])),
+      Effect.provideService(ExecutionStageTimings, timings),
+    ),
+  )
+  expect(logs).toHaveLength(2)
+  expect(logs[0]).toMatchObject({ stage: 'bayn.execution.cycle-pass', elapsedMs: 1_200, outcome: 'succeeded' })
+  expect(logs[1]).toMatchObject({ stage: 'bayn.execution.bounded-pass', outcome: 'failed' })
+  expect(timings.get('bayn.execution.generation-pass:')).toMatchObject({ count: 1, inclusiveElapsedMs: 1_200 })
+  expect(timings.get('bayn.execution.bounded-pass:')).toMatchObject({
+    count: 2,
+    failures: 1,
+    inclusiveElapsedMs: 1_200,
   })
 })

@@ -1,8 +1,16 @@
 import { Result } from 'effect'
 
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
+import { OperationalError } from '../../errors'
 import { CycleState, type AutonomousCycle } from '../model'
 import type { CycleRecoverySelection } from './recovery-model'
-import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
+import {
+  CycleDecisionBuildError,
+  runnerError,
+  type CyclePassObservation,
+  type CycleRunnerError,
+  type CycleRunResult,
+} from './model'
 import type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
 export type { RetainedAutonomousCyclePassObservation } from './pass-observation'
@@ -38,6 +46,29 @@ export interface CyclePassLogFacts {
   readonly annotations: Readonly<Partial<Record<string, string | boolean>>>
 }
 
+const isMissingBrokerObservation = (error: CycleRunnerError): boolean => {
+  const cause =
+    error.operation === 'build-decision' &&
+    error.cause instanceof CycleDecisionBuildError &&
+    error.cause.failure === 'market-data'
+      ? error.cause.cause
+      : error.operation === 'reconcile'
+        ? error.cause
+        : undefined
+  return (
+    error.failure === 'market-data' &&
+    cause instanceof OperationalError &&
+    cause.component === 'market-data' &&
+    cause.operation === 'reconciliation' &&
+    cause.retryable &&
+    cause.cause instanceof BrokerReadError &&
+    cause.cause.operation === 'preflight' &&
+    cause.cause.kind === BrokerReadErrorKind.Timeout &&
+    cause.cause.retryable &&
+    cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+  )
+}
+
 export const retainAutonomousCyclePassObservation = (
   observation: CyclePassObservation,
 ): RetainedAutonomousCyclePassObservation => {
@@ -55,6 +86,9 @@ export const retainAutonomousCyclePassObservation = (
       operation: observation.error.operation,
       failure: observation.error.failure,
       message: observation.error.message,
+      ...(isMissingBrokerObservation(observation.error)
+        ? { brokerObservationFailure: 'NO_ADMISSIBLE_CUT' as const }
+        : {}),
     }
   }
 
@@ -64,6 +98,9 @@ export const retainAutonomousCyclePassObservation = (
     observedAt:
       observation.result.outcome === 'ADMISSION_WAITING' ? observation.result.observedAt : observation.observedAt,
     outcome: observation.result.outcome,
+    ...(observation.result.outcome === 'WINDOW_CLOSED' && observation.result.closedEntryWindow !== undefined
+      ? { closedEntryWindow: observation.result.closedEntryWindow }
+      : {}),
     ...(observation.result.outcome === 'ADMISSION_WAITING'
       ? { readiness: observation.result.readiness, admissionProtection: observation.result.admissionProtection }
       : {}),
@@ -72,6 +109,10 @@ export const retainAutonomousCyclePassObservation = (
           recoveryAction: observation.result.action,
           ...('positionHold' in observation.result && observation.result.positionHold !== undefined
             ? { positionHold: observation.result.positionHold }
+            : {}),
+          ...('protectionReleaseCycleId' in observation.result &&
+          observation.result.protectionReleaseCycleId !== undefined
+            ? { protectionReleaseCycleId: observation.result.protectionReleaseCycleId }
             : {}),
           ...('entryAbstention' in observation.result && observation.result.entryAbstention !== undefined
             ? { entryAbstention: observation.result.entryAbstention }

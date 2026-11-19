@@ -11,17 +11,19 @@ import { makeReplayBrokerCheckpoint, type ReplayBrokerEvidenceConfig } from '../
 import { createReplayLedger } from '../intraday-replay/ledger'
 import { type ReplayInferenceCall } from '../intraday-replay/inference-timing'
 import { equityMarketProfile } from '../jev/markets'
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { nativeJevInference } from '../jev/native.test-support'
-import { jevModel, prepareJevRequest } from '../jev/contract'
+import { prepareJevRequest } from '../jev/contract'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
-import { assessmentFixture, testHash } from './fixtures.test-support'
+import { assessmentFixture, registrationFixture, testHash } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { ReplaySessionCostsSchema, reproduceReplaySessionEconomics } from './latency-economics'
 import { CostAllocationPlanSchema } from './cost-allocation'
 
-const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate) => {
-  const { input, verifiedSources } = assessmentFixture()
+const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate, historical = false) => {
+  const { input, verifiedSources } = assessmentFixture(
+    historical ? registrationFixture(undefined, 20, JevAcceptanceVersion.RetainedV4) : undefined,
+  )
   const fullTariff = {
     jev: { inputMicrosPerMillionTokens: '100000000', outputMicrosPerMillionTokens: '0' },
     chart: {
@@ -31,15 +33,38 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate) => {
       cacheWriteInputMicrosPerMillionTokens: '0',
     },
   }
-  const inferenceTariff = replayRateCardFixture({
-    jev: policy === JevResearchPolicy.Candidate ? fullTariff.jev : null,
-    chart: policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation ? fullTariff.chart : null,
+  const rawTariff = replayRateCardFixture({
+    jev:
+      policy === JevResearchPolicy.Candidate || (!historical && policy === JevResearchPolicy.Ablation)
+        ? fullTariff.jev
+        : null,
+    chart:
+      historical && (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation)
+        ? fullTariff.chart
+        : null,
   })
+  const inferenceTariff = {
+    ...rawTariff,
+    rates: rawTariff.rates.map((rate) =>
+      rate.provider === 'typesafe'
+        ? { ...rate, model: input.registration.obligations.configuration.protocol.model }
+        : rate,
+    ),
+  }
+  const rawOtherTariff = replayRateCardFixture(fullTariff)
+  const otherTariff = {
+    ...rawOtherTariff,
+    rates: rawOtherTariff.rates.map((rate) =>
+      rate.provider === 'typesafe'
+        ? { ...rate, model: input.registration.obligations.configuration.protocol.model }
+        : rate,
+    ),
+  }
   const registration = {
     ...input.registration,
     policies: input.registration.policies.map((p) => ({
       ...p,
-      inferenceRateCard: p.policy === policy ? inferenceTariff : replayRateCardFixture(fullTariff),
+      inferenceRateCard: p.policy === policy ? inferenceTariff : otherTariff,
     })),
   }
   const definition = registration.policies.find((p) => p.policy === policy)
@@ -94,7 +119,7 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate) => {
   })
   const request = Result.getOrThrow(
     prepareJevRequest({
-      model: jevModel,
+      model: registration.obligations.configuration.protocol.model,
       state: { symbol: 'AAPL' },
       questions: { enter: { type: 'noul', instructions: 'Assess retained market information.' } },
     }),
@@ -446,3 +471,15 @@ test('changed cash, fees, marks, session membership, cost scope and inference oc
   ])
     expect(Result.isFailure(f.evaluate(costs))).toBe(true)
 })
+
+test.each([JevResearchPolicy.Candidate, JevResearchPolicy.Ablation])(
+  'historical %s economics retains the frozen OpenAI tariff and original session losses',
+  (policy) => {
+    const f = fixture(policy, true)
+    const result = Result.getOrThrow(f.evaluate())
+    expect(result.complete).toBe(true)
+    expect(result.sessions).toHaveLength(f.registration.calendar.sessions.length)
+    expect(result.sessions.every((session) => session.netEconomicPnlMicros === '-15000000')).toBe(true)
+    expect(f.costs.inferenceTariff.rates.some((rate) => rate.provider === 'openai')).toBe(true)
+  },
+)
