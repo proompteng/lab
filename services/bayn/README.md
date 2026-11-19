@@ -276,10 +276,10 @@ adds the `bayn:` namespace, bounded values and expiry, command cancellation and
 replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
-Initial acquisition retries a native `ECONNREFUSED` failure at most twice, one second
-apart, closing each failed acquisition before the next attempt. Authentication,
-TLS, configuration and timeout failures fail immediately. The retry boundary ends
-before the cache service is exposed, so it never replays a caller's command.
+Initial acquisition retries native `ECONNREFUSED` and `ConnectionTimeoutError`
+failures at most twice, one second apart. Each failed acquisition closes before
+the next attempt. Authentication, TLS identity and configuration failures fail
+immediately. The retry boundary ends before the cache service is exposed.
 Each acquisition has a two-second budget covering TCP, TLS and the RESP handshake.
 Cancellation aborts the native connection and awaits its settlement before closing
 the layer scope. Healthy idle connections have no socket inactivity timeout or
