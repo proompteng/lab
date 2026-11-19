@@ -1,6 +1,8 @@
 import type { Effect } from 'effect'
 import type { DecisionConstruction } from '../decision-construction'
 import type { BrokerEnvironment } from '../broker/identity'
+import type { readCurrentProtectionClose } from '../db/protection-release'
+import type { ProtectionReleaseReference } from '../execution/events'
 import { BrokerRead } from '../broker/alpaca/model'
 import type { CycleExecutionPolicy } from '../cycle/model'
 import type { CycleRunnerError, CycleRunResult } from '../cycle/runner/model'
@@ -97,6 +99,13 @@ export type ObserveAutonomousCycleInput = {
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
+  readonly readProtectionClose?: (
+    reference: ProtectionReleaseReference,
+    maximumObservationAgeMs: number,
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof readCurrentProtectionClose>>,
+    Effect.Error<ReturnType<typeof readCurrentProtectionClose>>
+  >
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
   readonly executionCycleCloseSubmitCutoffAt?: string
   readonly executionCycleCloseExpiresAt?: string
@@ -131,6 +140,7 @@ export type PostMutationReconciliation = {
   readonly observedAt: string
   /** Only ordinary durable cancel intents support lookup-only confirmation before reconciliation. */
   readonly cancellationConfirmationIntentId?: string | undefined
+  readonly protectionReleaseCycleId?: string
 }
 
 export type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation

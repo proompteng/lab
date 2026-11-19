@@ -588,7 +588,19 @@ export const makeBaynExecutionController = (
                 // with the already-durable advance instead of waiting for a separate journaled clock round trip.
                 const issuedAt = tick.issuedAt ?? new Date(clock.currentTimeMillisUnsafe()).toISOString()
                 try {
-                  return await runtime.advance({ ...decision.command, issuedAt }, ctx.request().attemptCompletedSignal)
+                  const release = state?.lastProtectionRelease
+                  const protectionRelease =
+                    release?.sequence === tick.sequence
+                      ? { proofId: release.proofId, cycleId: release.cycleId, checkedAt: release.checkedAt }
+                      : undefined
+                  return await runtime.advance(
+                    {
+                      ...decision.command,
+                      issuedAt,
+                      ...(protectionRelease === undefined ? {} : { protectionRelease }),
+                    },
+                    ctx.request().attemptCompletedSignal,
+                  )
                 } catch (cause) {
                   throw executionAdvanceRunFailure(cause, issuedAt)
                 }
@@ -682,7 +694,12 @@ export const makeBaynExecutionController = (
               service: 'BaynBrokerObservations',
               method: 'refresh',
               key: ctx.key,
-              parameter: { sourceRevision: config.sourceRevision },
+              parameter: {
+                sourceRevision: config.sourceRevision,
+                ...(result.observation.protectionReleaseCycleId === undefined
+                  ? {}
+                  : { cycleId: result.observation.protectionReleaseCycleId }),
+              },
               inputSerde: brokerObservationJsonSerde,
               idempotencyKey: `bayn-post-mutation-refresh-${completed.epoch}-${tick.sequence}`,
             })
@@ -778,6 +795,21 @@ export const makeBaynExecutionController = (
           if (event._tag === 'BrokerObservation') {
             if (event.snapshotHash === state.lastBrokerSnapshotHash) return
             nextState = { ...state, lastBrokerSnapshotHash: event.snapshotHash }
+          }
+          if (event._tag === 'ProtectionRelease') {
+            if (event.eventId !== event.proofId) throw terminal('protection release identity differs')
+            const previous = state.lastProtectionRelease
+            if (previous !== undefined && (previous.proofId === event.proofId || previous.checkedAt >= event.checkedAt))
+              return
+            nextState = {
+              ...state,
+              lastProtectionRelease: {
+                proofId: event.proofId,
+                cycleId: event.cycleId,
+                checkedAt: event.checkedAt,
+                sequence: state.nextSequence,
+              },
+            }
           }
           if (nextState !== state) ctx.set(stateKey, nextState)
           // A closed owner has no quote-dependent work. Canonical broker publications still recheck
