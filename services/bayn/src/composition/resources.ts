@@ -17,7 +17,7 @@ import { JevHttpClientLive } from '../jev/http'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, type Context } from 'effect'
 
 import type { ApplicationIdentity, ApplicationPlan } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
@@ -156,26 +156,11 @@ export const AutonomousWorkerApplicationResourcesLive = (
     Layer.provideMerge(ApplicationPlatformLive),
   )
 
-export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
-  const postgres = PostgresClientLive(plan.config)
-  const journal = JournalLive(plan.config)
-  const writerFence = WriterFenceLive.pipe(Layer.provide(postgres))
-  const executionPersistence = Layer.mergeAll(
+export const JevRuntimeResourcesLive = (plan: ApplicationPlan) =>
+  Layer.mergeAll(
     JevBatchStoreLive.pipe(Layer.provideMerge(JevEvaluationStoreLive)),
     JevInferenceWorkStoreLive,
     EntryInferenceJournalLive,
-    CandidateObservationStoreLive,
-    JevPositionStoreLive,
-    ExecutionStoreLive(plan.config),
-    BlockedCycleIntentStoreLive,
-    IntentStoreLive,
-    MutationStoreLive,
-    PersistedCapitalGrantStoreLive,
-    ExecutionCycleClosureStorePostgresLive,
-    ExecutionControllerStatusStoreLive,
-  ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
-  return Layer.mergeAll(
-    DecisionConstructionLive,
     plan.config.jevKey === undefined
       ? Layer.succeed(JevClient, {
           evaluate: () =>
@@ -202,8 +187,33 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
             ),
           ),
         ),
-    BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
+  ).pipe(Layer.provideMerge(PostgresClientLive(plan.config)), Layer.provide(ApplicationPlatformLive))
+
+export type JevRuntimeServices = Layer.Success<ReturnType<typeof JevRuntimeResourcesLive>>
+
+export const AutonomousRuntimeResourcesLive = (
+  plan: ApplicationPlan,
+  inferenceContext: Context.Context<JevRuntimeServices>,
+) => {
+  const executionPersistence = Layer.mergeAll(
+    CandidateObservationStoreLive,
+    JevPositionStoreLive,
+    ExecutionStoreLive(plan.config),
+    BlockedCycleIntentStoreLive,
+    IntentStoreLive,
+    MutationStoreLive,
+    PersistedCapitalGrantStoreLive,
+    ExecutionCycleClosureStorePostgresLive,
+    ExecutionControllerStatusStoreLive,
+  ).pipe(Layer.provideMerge(WriterFenceLive), Layer.provideMerge(JournalLive(plan.config)))
+  return Layer.mergeAll(
+    DecisionConstructionLive,
+    BrokerSessionResourceLive(plan.config),
     executionPersistence,
     WriterFencedCycleStoreLive.pipe(Layer.provide(executionPersistence)),
-  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(
+    Layer.provideMerge(ValkeyCacheLive),
+    Layer.provideMerge(Layer.succeedContext(inferenceContext)),
+    Layer.provideMerge(ApplicationPlatformLive),
+  )
 }

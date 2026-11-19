@@ -185,7 +185,7 @@ The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
-New selections use GPT-6.1 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
+New selections use GPT-6.2 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
 supported reasoning choices remain selectable. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
 starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals

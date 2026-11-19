@@ -209,7 +209,38 @@ P&L, fees, known inference estimates, twenty gaps and exact ledger proofs remain
 incomplete and profitability undetermined; no receipt was persisted. API readiness and exact accounting
 were retained before and after every run. The ARM deadline target remains open.
 
-The private grouping candidate completed ARM64 in 28,948 ms wall time under the unchanged 30-second deadline
+The then-private grouping candidate completed ARM64 in 28,948 ms wall time under the unchanged 30-second deadline
 (25,199 ms measured interval), using 2,233,344 KiB peak RSS. It ran on the existing sixteen-core/six-GiB API
 allocation with development provenance and produced the same financial receipt hash as the released x64 report
-above. This is candidate evidence; completion still requires the reviewed packaged release on both architectures.
+above. The grouping offload subsequently merged in PR [#15954](https://github.com/proompteng/lab/pull/15954),
+commit `fc70d503c1`, and is already present in deployed source `178edec0d2f4392aa3e12a2223031c78137a0015`.
+The private timing remains candidate evidence for that November 13 cut with **174 transactions**; it does not
+establish the packaged runtime budget for a different retained cut.
+
+### November 16 retained-cut transport diagnostic
+
+The current retained generation is `5fcc26b3a8aeaa80033862db9dbb265b79e0a2b4e67c87a336d1a192af4cdf0f`,
+with **196 transactions**, 117 cycles and 102 realized closes from the November 12 cohort. On the ARM64 API
+pod at source `178edec0d2f4392aa3e12a2223031c78137a0015`, image
+`sha256:e7038c0e6d28cc819d4ea86bed7f5b1c6f5dfd99376479d27e96311dd9cfb543`, the original 30-second command
+still exceeded its budget. A read-only CPU diagnostic with a separately labeled 60-second deadline completed
+in 37,889 ms wall time (32,576 ms measured interval), at 2,834,072 KiB peak RSS. Its financial receipt hash was
+`813c0f882328b2efeead62677064118e00a91688f85f9cec9a42d7afd3218ba6`, matching the completed x64 report.
+No receipt was persisted, and uniquely named temporary CPU profiles were removed after extracting timings.
+
+The coordinator spent 3,167 ms of sampled self CPU in `postMessage`; workers also spent substantial aggregate
+CPU serializing full decision graphs. Aggregate worker CPU is not elapsed report time. The focused follow-up
+keeps PostgreSQL JSONB documents as text until their owning verification worker, preserving standard JSON
+number/string parsing, all document verification, cursor ordering and bounded lookahead. Group authentication
+already uses the worker pool. The original 30-second packaged ARM64 acceptance remains open until this
+transport change is released and measured against this exact 196-transaction cut.
+
+### ARM transport component verification — November 16
+
+The same fixed benchmark also ran with Node v24.11.1 in the existing ARM64 status runtime (six GiB, sixteen-core
+ceiling), using sixteen workers, 196 repetitions of the 1,523,926-byte retained fixture, one warm-up pair and three
+alternating measured pairs. Median elapsed time was 2,575.9 ms with coordinator parsing and object transport,
+versus 338.0 ms with JSON text transport and worker parsing. Every returned parsed-document SHA-256 matched.
+This isolates transport and parsing; it does not establish the complete retained-report deadline. Acceptance
+still requires the reviewed packaged release to complete the original 196-transaction report within 30 seconds
+on both architectures, with exact financial totals and explicit incomplete evidence preserved.

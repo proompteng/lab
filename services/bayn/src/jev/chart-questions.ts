@@ -46,6 +46,14 @@ export const chartQuestionPolicy = {
   definitions,
   absenceAtMost: entryJudgmentThresholds.negativeAtMost,
 }
+export const buildChartQuestions = () =>
+  Object.fromEntries(
+    Object.entries(definitions).flatMap(([name, definition]) => [
+      [`${name}_present`, { type: 'noul', instructions: definition.presence }],
+      [`${name}_region`, { type: 'box', instructions: definition.region }],
+    ]),
+  )
+
 export const buildChartJevRequest = ({ chart, protocol, funding }: ChartDecisionSource) => {
   const reference = `bayn_chart_image_${chart.pngHash}`
   return prepareJevRequest({
@@ -65,12 +73,7 @@ export const buildChartJevRequest = ({ chart, protocol, funding }: ChartDecision
     assets: {
       [reference]: { type: 'image', format: 'png', data_base64: chart.image.slice('data:image/png;base64,'.length) },
     },
-    questions: Object.fromEntries(
-      Object.entries(definitions).flatMap(([name, definition]) => [
-        [`${name}_present`, { type: 'noul', instructions: definition.presence }],
-        [`${name}_region`, { type: 'box', instructions: definition.region }],
-      ]),
-    ),
+    questions: buildChartQuestions(),
   })
 }
 
