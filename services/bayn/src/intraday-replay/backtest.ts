@@ -67,6 +67,7 @@ import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerState, type Rep
 import type { CycleRunResult } from '../cycle/runner/model'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayTimeline, driveReplaySession } from './session'
+import { EquityExecutionTapeReferenceSchema, type EquityExecutionTape } from './equity-execution-tape'
 import type { RuntimeConfig } from '../config/model'
 import type { RecordAutonomousCyclePass } from '../app'
 import type { OperationalError } from '../errors'
@@ -155,6 +156,7 @@ export const BacktestInputSchema = Schema.Struct({
   replicate: StrictNonEmptyStringSchema,
   interval: Schema.Struct({ startAt: UtcInstantSchema, endAt: UtcInstantSchema }),
   source: BacktestSourceManifestSchema,
+  equityExecutionTape: Schema.optionalKey(EquityExecutionTapeReferenceSchema),
   openingCashMicros: PositiveMicrosSchema,
   fractionalTrading: Schema.Boolean,
   equityShortAccount: Schema.optionalKey(
@@ -310,6 +312,20 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(new ReplayBrokerFailure({ message: 'Backtest calendar contains duplicate sessions' }))
     const openMs = Date.parse(decoded.interval.startAt)
     const closeMs = Date.parse(decoded.interval.endAt)
+    const equityTape = decoded.equityExecutionTape
+    if (
+      equityTape !== undefined &&
+      (decoded.latencyStress !== null ||
+        !decoded.source.marketSources.some((source) => source.universeId === equityMarketProfile.universeId) ||
+        Date.parse(equityTape.startAt) > openMs ||
+        Date.parse(equityTape.endAt) < closeMs)
+    )
+      return yield* Result.fail(
+        new ReplayBrokerFailure({
+          message:
+            'A historical equity execution tape requires an unregistered equity replay and complete interval coverage',
+        }),
+      )
     if (openMs >= closeMs)
       return yield* Result.fail(new ReplayBrokerFailure({ message: 'Backtest interval must have a positive duration' }))
     if (!calendar.sessions.some((session) => Date.parse(session.openAt) > closeMs))
@@ -492,8 +508,20 @@ export const runBacktest = (
   recordPass: (pass: BacktestPass) => Effect.Effect<void, OperationalError>,
   recordInference: (call: ReplayInferenceCall) => Effect.Effect<void, ReplayBrokerFailure>,
   liveProviders: ReplayInferenceProviders | null,
+  equityExecutionTape?: EquityExecutionTape,
 ) =>
   Effect.gen(function* () {
+    if (
+      prepared.input.equityExecutionTape?.sha256 !== equityExecutionTape?.hash ||
+      (equityExecutionTape !== undefined &&
+        (prepared.input.equityExecutionTape?.startAt !== equityExecutionTape.startAt ||
+          prepared.input.equityExecutionTape.endAt !== equityExecutionTape.endAt ||
+          equityExecutionTape.universeId !== equityMarketProfile.universeId ||
+          equityExecutionTape.universeSymbolHash !== equityMarketProfile.universeSymbolHash))
+    )
+      return yield* new ReplayBrokerFailure({
+        message: 'Replay equity execution tape differs from its declared content',
+      })
     if (
       prepared.latencyStress !== null &&
       databases.operationTimeoutMs !== prepared.latencyStress.registration.obligations.configuration.operationTimeoutMs
@@ -574,19 +602,27 @@ export const runBacktest = (
       timing.run(operation).pipe(Effect.tap(() => recorded?.assertSupported ?? Effect.void))
     const broker = yield* makeReplayBroker({
       ...(yield* Effect.fromResult(backtestBrokerEvidenceConfig(prepared))),
+      ...(equityExecutionTape === undefined ? {} : { equityExecutionTape }),
       submissionTime: timing.currentUtcInstant,
       advanceToArrival: advanceTo,
       quoteAt: (symbol, atMs, quoteSource) =>
         source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs, quoteSource))),
     })
+    let equityTapeIndex = 0
     yield* source.observeBroker((atMs, quote) =>
-      broker
-        .observeMarket(atMs, quote)
-        .pipe(
-          Effect.mapError(
-            (cause) => new ReplaySourceFailure({ message: 'Replay broker rejected source advancement', cause }),
-          ),
+      Effect.gen(function* () {
+        // The strategy clock advances both sources, while the broker's equity fills consume only its own tape.
+        let entry = equityExecutionTape?.entry(equityTapeIndex)
+        while (entry !== undefined && entry.atMs <= atMs) {
+          yield* broker.observeEquityExecution(equityTapeIndex)
+          entry = equityExecutionTape?.entry(++equityTapeIndex)
+        }
+        yield* broker.observeMarket(atMs, quote)
+      }).pipe(
+        Effect.mapError(
+          (cause) => new ReplaySourceFailure({ message: 'Replay broker rejected source advancement', cause }),
         ),
+      ),
     )
     const runtime = yield* makeReplayExecutionRuntime({
       decisionLatencyStress:
