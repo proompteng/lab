@@ -5,30 +5,30 @@
 }:
 
 let
-  version = "0.45.0";
-  headlampSha = "0e9fe810cb618964172f420666727c9a67fd6ebf";
-  headlampNixpkgsRevision = "dc5d91f840324650bac8c379428c7037a416959a";
+  version = "0.46.0";
+  headlampSha = "825604fdadbe7ed94b8e61f615d7917c743e9083";
+  headlampNixpkgsRevision = "44778ad15e951a5e98ae126373e75681518b213c";
 
   headlampNixpkgs = builtins.fetchTarball {
     url = "https://github.com/NixOS/nixpkgs/archive/${headlampNixpkgsRevision}.tar.gz";
-    sha256 = "sha256-VaWGJ6+cIYN2erfSecbRV+4ljI185Ty2wUrXyvQbgOw=";
+    sha256 = "sha256-3CwEAd93SA3KTnQGLB/SnXmDUZ58+xY+QY4Ira3l0Cw=";
   };
   headlampPkgs = import headlampNixpkgs {
     system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = false;
   };
   headlampGo =
-    if headlampPkgs.go.version == "1.26.7" then
+    if headlampPkgs.go.version == "1.26.8" then
       headlampPkgs.go
     else
-      throw "expected Headlamp Go 1.26.7, got ${headlampPkgs.go.version}";
+      throw "expected Headlamp Go 1.26.8, got ${headlampPkgs.go.version}";
   headlampBuildGoModule = headlampPkgs.buildGoModule.override { go = headlampGo; };
 
   upstreamSrc = pkgs.fetchFromGitHub {
     owner = "kubernetes-sigs";
     repo = "headlamp";
     rev = headlampSha;
-    hash = "sha256-Q/15vBSO3vjTrYQW6YZ9oMGVr2EjFor+hKGehFTaQNQ=";
+    hash = "sha256-chDlfZvfXXaKrY4k1xQ4EO+J0KY4J/kBoYInytIECmk=";
   };
 
   patchedSrc = pkgs.stdenvNoCC.mkDerivation {
@@ -41,21 +41,9 @@ let
       ../../services/headlamp/patches/0003-oidc-refresh-reauth.patch
       ../../services/headlamp/patches/0004-static-copy-writable.patch
     ];
-    nativeBuildInputs = [
-      pkgs.gnused
-    ];
     dontConfigure = true;
     dontBuild = true;
     dontFixup = true;
-    postPatch = ''
-      substituteInPlace frontend/make-env.js \
-        --replace-fail \
-          "const appInfo = JSON.parse(fs.readFileSync('../app/package.json', 'utf8'));" \
-          "const appInfo = { version: '${version}', productName: 'Headlamp' };" \
-        --replace-fail \
-          "const gitVersion = execSync('git rev-parse HEAD').toString().trim();" \
-          "const gitVersion = '${headlampSha}';"
-    '';
     installPhase = ''
       runHook preInstall
       mkdir -p "$out"
@@ -69,7 +57,7 @@ let
     inherit version;
     src = patchedSrc;
     modRoot = "backend";
-    vendorHash = "sha256-6hOxJpC9SlR6Oa0mKA8SziTdNS81l27eNYM1v0KOod0=";
+    vendorHash = "sha256-of7baM59Kqm77YpAgK1XM95b/LnctUlKqwXAdMvG8d4=";
     subPackages = [ "cmd" ];
     doCheck = false;
     env.CGO_ENABLED = 0;
@@ -92,11 +80,12 @@ let
     pname = "headlamp-frontend";
     inherit version;
     src = patchedSrc + "/frontend";
-    npmDepsHash = "sha256-khcVcOtzu9oGJigs6N+Za5z4Np3dkbHnylOoQiBa06g=";
+    npmDepsHash = "sha256-A/z5eQf1CrLLinQkX5dBDeZkULWxAhGSD9bvOL8SBqk=";
     makeCacheWritable = false;
     env = {
       NODE_OPTIONS = "--max-old-space-size=8096";
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+      HEADLAMP_SOURCE_COMMIT = headlampSha;
       REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER = "true";
     };
     preBuild = ''
