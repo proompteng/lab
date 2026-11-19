@@ -805,18 +805,14 @@ describe('complete history reuse between broker captures', () => {
         expect(second.recentFills.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
         const replayRead: BrokerReadShape = {
           ...read,
-          fillExecutions: () =>
-            Effect.sync(() => {
-              source.calls.push('execution-replay')
-              return fills.map(({ activityId, ...value }) => ({
-                ...value,
-                executionId: activityId.slice('fill::'.length),
-                transactionTime:
-                  activityId === 'fill::2168'
-                    ? '2026-11-13T18:00:49.999999500Z'
-                    : value.transactionTime.replace('.000Z', '.000000500Z'),
-              }))
+          fillActivities: () => Effect.die('unexpected REST fill read on PAPER stream'),
+          activityFills: currentUtcInstant.pipe(
+            Effect.map((observedAt) => {
+              source.calls.push('execution-stream-view')
+              const evidence = { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt }
+              return { fills: fills.map((value) => ({ value, evidence })), evidence }
             }),
+          ),
         }
         const previousOrder = orders[0]
         if (previousOrder === undefined) throw new Error('missing filled order')
@@ -830,8 +826,7 @@ describe('complete history reuse between broker captures', () => {
         yield* TestClock.adjust(20_000)
         source.calls.length = 0
         const changed = yield* capture(replayRead, { generation: 4, startedAt: yield* currentUtcInstant }, 15_000)
-        expect(source.calls).toHaveLength(26)
-        expect(source.calls.filter((call) => call === 'execution-replay')).toHaveLength(2)
+        expect(source.calls.filter((call) => call === 'execution-stream-view')).toHaveLength(2)
         expect(changed.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
         expect(changed.snapshot.history.fees.map((row) => row.value)).toEqual(fees)
         const oldFill = fills[0]
@@ -850,17 +845,16 @@ describe('complete history reuse between broker captures', () => {
         expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
         const unavailableReplay = (kind: BrokerReadErrorKind) => ({
           ...read,
-          fillExecutions: () =>
-            Effect.fail(
-              new BrokerReadError({ operation: 'fill-executions', kind, message: 'fixture', retryable: true }),
-            ),
+          activityFills: Effect.fail(
+            new BrokerReadError({ operation: 'activity-stream', kind, message: 'fixture', retryable: true }),
+          ),
         })
         const timedOut = yield* capture(
           unavailableReplay(BrokerReadErrorKind.Timeout),
           { generation: 7, startedAt: yield* currentUtcInstant },
           15_000,
-        )
-        expect(timedOut.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        ).pipe(Effect.result)
+        expect(timedOut).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.Timeout } })
         const rateLimited = yield* capture(
           unavailableReplay(BrokerReadErrorKind.RateLimited),
           { generation: 8, startedAt: yield* currentUtcInstant },

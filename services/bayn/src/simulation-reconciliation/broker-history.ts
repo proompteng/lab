@@ -5,14 +5,12 @@ import {
   SortDirection,
   type BrokerReadShape,
   type FillActivity,
-  type FillExecution,
   type FeeActivity,
   type Order as BrokerOrder,
   type ReadResult,
   type FillActivityPage,
 } from '../broker/alpaca/model'
-import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
-import { activityReplayStart } from '../broker/alpaca/activity-fills'
+import { type BrokerReadError } from '../broker/alpaca/failures'
 import { canonicalHashV1Result } from '../hash'
 import {
   fillsPageSize,
@@ -285,96 +283,15 @@ const readFillPages = (
   )
 }
 
-const sameExecution = (row: FillActivity, replay: FillExecution): boolean => {
-  // REST reports microseconds. Alpaca rounds half-microsecond ties in both directions.
-  const nanos = (value: string) => Number(value.slice(20, -1).padEnd(9, '0'))
-  const restNanos = nanos(row.transactionTime)
-  const secondDeltaMs =
-    Date.parse(`${row.transactionTime.slice(0, 19)}Z`) - Date.parse(`${replay.transactionTime.slice(0, 19)}Z`)
-  return (
-    restNanos % 1_000 === 0 &&
-    Math.abs(secondDeltaMs * 1_000_000 + restNanos - nanos(replay.transactionTime)) <= 500 &&
-    row.accountId === replay.accountId &&
-    row.brokerOrderId === replay.brokerOrderId &&
-    row.symbol === replay.symbol &&
-    row.side === replay.side &&
-    row.type === replay.type &&
-    row.orderStatus === replay.orderStatus &&
-    row.quantityAtoms === replay.quantityAtoms &&
-    row.cumulativeQuantityAtoms === replay.cumulativeQuantityAtoms &&
-    row.leavesQuantityAtoms === replay.leavesQuantityAtoms &&
-    row.priceAtoms === replay.priceAtoms
-  )
-}
-
-const readFillHistory = (
-  read: BrokerReadShape,
-  until: string,
-  retained: readonly Observed<FillActivity>[] | undefined,
-) => {
-  const full = () => readFillPages(read, until, initialFillPaginationState())
-  const replay = read.fillExecutions
-  const anchor = retained?.at(-2)?.value.activityId
-  const latest = retained?.at(-1)?.value.activityId
-  if (
-    replay === undefined ||
-    retained === undefined ||
-    anchor === undefined ||
-    latest === undefined ||
-    retained.some(({ value }) => Date.parse(value.transactionTime) < Date.parse(activityReplayStart))
-  )
-    return full()
-
-  const prefix = retained.slice(0, -1)
-  return Effect.gen(function* () {
-    const checked = yield* Effect.all(
-      {
-        executions: replay(until),
-        tail: readFillPages(read, until, {
-          rows: prefix,
-          ids: HashSet.fromIterable(prefix.map(({ value }) => value.activityId)),
-          cursor: anchor,
-        }),
-      },
-      { concurrency: 2 },
-    ).pipe(Effect.result)
-    if (Result.isSuccess(checked)) {
-      const { executions, tail } = checked.success
-      const byExecution = new Map(executions.map((event) => [event.executionId, event]))
-      const complete =
-        tail.rows.length === executions.length &&
-        tail.rows[prefix.length]?.value.activityId === latest &&
-        tail.rows.every(({ value }) => {
-          const executionId = value.activityId.split('::')[1]
-          const event = executionId === undefined ? undefined : byExecution.get(executionId)
-          if (event === undefined || !sameExecution(value, event)) return false
-          byExecution.delete(event.executionId)
-          return true
-        })
-      if (complete) {
-        yield* Effect.annotateCurrentSpan('broker.fill_history.reused', true)
-        return tail
-      }
-    } else if (checked.failure instanceof BrokerReadError) {
-      const { kind, operation, status } = checked.failure
-      const replayUnavailable =
-        operation === 'fill-executions' &&
-        (kind === BrokerReadErrorKind.Transport ||
-          kind === BrokerReadErrorKind.Timeout ||
-          kind === BrokerReadErrorKind.Server)
-      if (
-        status === 401 ||
-        status === 403 ||
-        status === 429 ||
-        (!replayUnavailable && kind !== BrokerReadErrorKind.InvalidResponse && kind !== BrokerReadErrorKind.NotFound)
+const readFillHistory = (read: BrokerReadShape, until: string) =>
+  read.activityFills === undefined
+    ? readFillPages(read, until, initialFillPaginationState())
+    : read.activityFills.pipe(
+        Effect.map(({ fills, evidence }) => ({
+          rows: fills,
+          recentFills: { value: { items: fills.slice(-1).map(({ value }) => value) }, evidence },
+        })),
       )
-        return yield* checked.failure
-    }
-    yield* Effect.annotateCurrentSpan('broker.fill_history.reused', false)
-    // The replay is an independent completeness check. A failed or different replay never supplies a fill.
-    return yield* full()
-  }).pipe(Effect.withSpan('broker.fill-history'))
-}
 
 const readFeePages = (
   read: BrokerReadShape,
@@ -407,11 +324,11 @@ const readFeePages = (
     }
   })
 
-const readHistory = (read: BrokerReadShape, until: string, fills?: readonly Observed<FillActivity>[]) =>
+const readHistory = (read: BrokerReadShape, until: string) =>
   Effect.all(
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
-      fills: readFillHistory(read, until, fills),
+      fills: readFillHistory(read, until),
       fees: readFeePages(read),
     },
     { concurrency: 3 },
@@ -508,7 +425,6 @@ export const readBrokerSnapshotOnce = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
   previous: BrokerHistory | undefined,
-  retainedFills = previous?.fills,
 ): Effect.Effect<
   {
     readonly snapshot: StableBrokerSnapshot
@@ -519,10 +435,10 @@ export const readBrokerSnapshotOnce = (
 > =>
   Effect.gen(function* () {
     const beforeUntil = yield* now
-    const before = previous ?? (yield* readHistory(read, beforeUntil, retainedFills)).history
+    const before = previous ?? (yield* readHistory(read, beforeUntil)).history
     const [account, positions] = yield* Effect.all([read.account, read.positions], { concurrency: 2 })
     const afterUntil = yield* now
-    const after = yield* readHistory(read, afterUntil, retainedFills === undefined ? undefined : before.fills)
+    const after = yield* readHistory(read, afterUntil)
     const history = yield* Effect.fromResult(decideStableHistory(before, after.history))
     // Project recent-history probes only from the complete, verified after-cut. Retain the actual page's
     // response evidence, including empty history, instead of issuing independent overlapping HTTP reads.
