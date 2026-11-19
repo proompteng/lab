@@ -1205,7 +1205,8 @@ identityTest(
     const productionClient = z
       .object({ clientId: z.literal('tengri-bff'), redirectUris: z.array(z.string()), webOrigins: z.array(z.string()) })
       .parse(productionRealm.clients[0])
-    const productionProvider = { ...provider, config: { ...provider.config, clientSecret: githubSecret } }
+    const productionProvider = { ...provider, config: { ...provider.config } }
+    productionProvider.config.clientSecret = githubSecret
     delete productionProvider.config.baseUrl
     delete productionProvider.config.apiUrl
     delete productionProvider.config.githubJsonFormat
