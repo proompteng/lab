@@ -47,10 +47,6 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
         Effect.gen(function* () {
           const { startedAt } = ticket
           const now = yield* currentUtcInstant
-          const retainedFills =
-            previous !== undefined && previous.completedAt <= startedAt && previous.completedAt <= now
-              ? previous.history.fills
-              : undefined
           if (
             previous !== undefined &&
             (previous.completedAt > startedAt ||
@@ -62,7 +58,14 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
           const latestFill =
             previous === undefined
               ? undefined
-              : yield* fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
+              : yield* fresh.activityFills === undefined
+                  ? fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
+                  : fresh.activityFills.pipe(
+                      Effect.map(({ fills, evidence }) => ({
+                        value: { items: fills.slice(-1).map(({ value }) => value) },
+                        evidence,
+                      })),
+                    )
           if (latestFill !== undefined && previous?.latestFillId !== (latestFill.value.items[0]?.activityId ?? null))
             previous = undefined
           yield* Effect.annotateCurrentSpan('broker.history.reused', previous !== undefined)
@@ -70,7 +73,7 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
             {
               // Restart unstable cuts through the owner, with a new durable ticket and the existing quota wait.
               // Retrying under a ticket invalidated by that mutation only adds unusable history reads and debt.
-              capture: readBrokerSnapshotOnce(fresh, currentUtcInstant, previous?.history, retainedFills),
+              capture: readBrokerSnapshotOnce(fresh, currentUtcInstant, previous?.history),
               configuration: fresh.accountConfiguration,
               openOrders: fresh.orders({ status: OrderCollection.Open, limit: 1 }),
             },

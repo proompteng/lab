@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
+import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schedule, Schema, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
@@ -28,6 +28,7 @@ import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/prefligh
 import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
 import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
 import { make, alpacaHttpLayer } from './alpaca/http'
+import { activityFrames, fillActivityIdentity, startActivityFills } from './alpaca/activity-stream'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -183,65 +184,110 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
-  const replayCases = ['fill', 'partial_fill', 'trade_correct', 'trade_bust', 'dropped']
-  test.each(replayCases)('checks bounded activity replay for %s', async (kind) => {
-    const until = '2026-11-18T20:47:00.000Z'
-    const event = {
-      activity_type: 'TRD',
-      ref_id: assetId,
-      executed_at: '2026-11-18T20:46:59.000000480Z',
-      price: '260.10',
-      qty: '1',
-      details: {
-        order_id: orderId,
-        cum_qty: '1',
-        leaves_qty: kind === 'partial_fill' ? '0.25' : '0.000',
-        symbol: 'AAPL',
-        side: 'buy',
-        execution_type: kind === 'partial_fill' ? 'fill' : kind,
-      },
-    }
+  const activityCursor = (n: number) => n.toString().padStart(26, '0')
+  const fillFrame = (n: number, executedAt = '2026-11-18T20:46:59.021034500Z') => ({
+    activity_type: 'TRD',
+    event_id: activityCursor(n),
+    ref_id: n === 1 ? assetId : orderId,
+    executed_at: executedAt,
+    price: '260.10',
+    qty: '1',
+    details: {
+      order_id: orderId,
+      cum_qty: String(n),
+      leaves_qty: n === 1 ? '1' : '0',
+      symbol: 'AAPL',
+      side: 'buy',
+      execution_type: 'fill',
+    },
+  })
+  const frameText = (value: unknown) => `data: ${JSON.stringify(value)}
+
+`
+  const sseResponse = (body: BodyInit) =>
+    new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'activity-stream' } })
+
+  test('reads PAPER fills from an open stream and replays an inclusive cursor across reconnects', async () => {
+    const requests: string[] = []
+    let transport: ReadableStreamDefaultController<Uint8Array> | undefined
+    const bytes = new TextEncoder()
     const client = HttpClient.make((request, url) => {
       expect(url.pathname).toBe('/v2beta1/events/activities')
-      expect(url.searchParams.get('until')).toBe(until)
-      const body =
-        ': welcome to the Alpaca events\n\n' +
-        (kind === 'dropped'
-          ? ': you are reading too slowly, dropped 50 messages\n\n'
-          : `:heartbeat\n\ndata: ${JSON.stringify(event)}\n\n:heartbeat\n\n`)
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'activity-replay' } }),
-        ),
-      )
+      requests.push(url.search)
+      const body = url.searchParams.has('until')
+        ? frameText(fillFrame(1))
+        : new ReadableStream<Uint8Array>({
+            start(controller) {
+              transport = controller
+              controller.enqueue(
+                bytes.encode(
+                  ': welcome to the Alpaca events\n\n' +
+                    frameText(fillFrame(requests.length === 2 ? 1 : 2)) +
+                    ': heartbeat\n\n',
+                ),
+              )
+            },
+          })
+      return Effect.succeed(HttpClientResponse.fromWeb(request, sseResponse(body)))
     })
-    const result = await Effect.runPromise(
-      withClient(client, (read) => {
-        if (read.fillExecutions === undefined) return Effect.die(new Error('missing paper replay reader'))
-        return Effect.result(read.fillExecutions(until))
-      }),
+    const verified = Effect.void
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { read: snapshot } = yield* startActivityFills(options, verified)
+          const read = snapshot.pipe(
+            Effect.catch(() => Effect.sleep('1 millis').pipe(Effect.andThen(snapshot))),
+            Effect.retry({ times: 50 }),
+          )
+          expect((yield* read).fills.map(({ value }) => value)).toMatchObject([
+            {
+              activityId: `20261118154659021::${assetId}`,
+              transactionTime: '2026-11-18T20:46:59.021034000Z',
+              type: TradeActivityType.PartialFill,
+            },
+          ])
+          expect(requests).toHaveLength(2)
+          transport?.enqueue(bytes.encode(frameText(fillFrame(2))))
+          const second = yield* snapshot.pipe(
+            Effect.repeat({ while: (cut) => cut.fills.length < 2, schedule: Schedule.spaced('1 millis') }),
+            Effect.timeout('1 second'),
+          )
+          expect(second.fills).toHaveLength(2)
+          expect(requests).toHaveLength(2)
+          transport?.close()
+          yield* Effect.sleep('100 millis')
+          expect(yield* Effect.result(snapshot)).toMatchObject({ _tag: 'Failure' })
+          yield* Effect.sleep('2 seconds')
+          expect((yield* read).fills).toHaveLength(2)
+          expect(requests).toHaveLength(3)
+          expect(new URLSearchParams(requests[2]).get('since_id')).toBe(activityCursor(2))
+        }),
+      ).pipe(Effect.provideService(HttpClient.HttpClient, client)),
     )
-    if (kind === 'fill' || kind === 'partial_fill') {
-      expect(result).toMatchObject({
-        _tag: 'Success',
-        success: [
-          {
-            executionId: assetId,
-            accountId,
-            brokerOrderId: orderId,
-            priceAtoms: '260100000000',
-            quantityAtoms: '1000000000',
-            type: kind,
-            leavesQuantityAtoms: kind === 'partial_fill' ? '250000000' : '0',
-          },
-        ],
-      })
-    } else {
-      expect(result).toMatchObject({
-        _tag: 'Failure',
-        failure: { operation: 'fill-executions', kind: BrokerReadErrorKind.InvalidResponse },
-      })
+  })
+
+  test('preserves ledger identity across Eastern daylight time and microsecond rounding', () => {
+    expect(fillActivityIdentity(orderId, '2026-10-05T15:12:39.021034500Z')).toEqual({
+      activityId: `20261005111239021::${orderId}`,
+      transactionTime: '2026-10-05T15:12:39.021034000Z',
+    })
+    expect(fillActivityIdentity(orderId, '2026-11-05T15:12:39.999999500Z')).toEqual({
+      activityId: `20261105101239999::${orderId}`,
+      transactionTime: '2026-11-05T15:12:40.000000000Z',
+    })
+  })
+
+  test('assembles split UTF-8 frames and rejects drops and truncated endings', async () => {
+    const encoded = new TextEncoder().encode(frameText({ text: 'é' }))
+    const frames = (chunks: readonly Uint8Array[]) => activityFrames(Stream.fromIterable(chunks))
+    expect(
+      await Effect.runPromise(Stream.runCollect(frames(Array.from(encoded, (byte) => Uint8Array.of(byte))))),
+    ).toEqual([{ type: 'Data', value: { text: 'é' } }])
+    for (const input of [': you are reading too slowly, dropped 1 messages\n\n', 'data: {}\n']) {
+      const result = await Effect.runPromise(
+        Effect.result(Stream.runCollect(frames([new TextEncoder().encode(input)]))),
+      )
+      expect(result).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.InvalidResponse } })
     }
   })
 
@@ -326,7 +372,6 @@ describe('Alpaca paper reads', () => {
       'assetBySymbol',
       'feeActivities',
       'fillActivities',
-      'fillExecutions',
       'marketCalendar',
       'orderByClientId',
       'orderById',

@@ -430,21 +430,20 @@ State reads therefore avoid lazy-fetch round trips before execution or capture. 
 quota reservations and replay protection retain their existing durable semantics.
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
-successful tickets with an unchanged latest fill can reuse the prior full after-history as the next before-history.
-Each new history read checks the complete execution set. With a retained PAPER fill prefix, one bounded Alpaca
-Activity SSE replay checks the original execution IDs, order bindings, quantities, prices, status and execution
-clocks against the prefix and a paginated REST tail. The tail rereads the last known fill so the recent-fill
-projection has fresh REST evidence. Bayn retains the original REST fill IDs and response evidence. Missing,
-corrected or unsupported executions, incomplete stream frames and disagreement use complete REST fill paging.
-Order and fee histories still use complete REST reads. A new fill or generation gap discards reuse of the complete
-before-history. A clock regression, failure or interruption discards the retained prefix. History endpoints run
-concurrently within each scan. The capture still requires the original account/position bracket and exact order
-fill coverage.
-The compact recent-order and recent-fill projections come from that verified after-history and retain the actual
-response page's evidence, including empty histories. They are bounded by the same source cut instead of separate
-overlapping recent-history requests. The independent latest-fill probe remains before any retained-history reuse;
-open-order eligibility still uses its own fresh broker query. No polling cadence, request cost or backoff changes.
-See [capture ownership](src/broker/alpaca/snapshot-cache.ts) and [history verification](src/simulation-reconciliation/broker-history.ts).
+successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
+The PAPER execution controller verifies the account and replays Alpaca Activity SSE once at startup. It then keeps
+the connection open and resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
+the reader verifies its payload before advancing. It waits for the stream heartbeat before admitting a fill cut.
+A disconnect, dropped frame or unsupported trade correction makes the local fill cut unavailable until replay succeeds.
+
+PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
+activity ID and microsecond timestamp used by existing ledger records. Current order and fee histories use REST.
+The capture still compares both histories and checks exact filled quantities for every order and leg. The order
+WebSocket carries cancellations and other order lifecycle events. Successful captures project recent orders and
+fills from the same verified cut. Open-order eligibility retains its fresh broker query.
+See [Activity SSE ownership](src/broker/alpaca/activity-stream.ts),
+[capture ownership](src/broker/alpaca/snapshot-cache.ts) and
+[history verification](src/simulation-reconciliation/broker-history.ts).
 
 For a bounded, read-only fill cohort, run `psql -X -At` against the owning account database with
 `-v source_revision=<verified-deployed-SHA> -v start_at=<UTC> -v end_at=<UTC>` and
