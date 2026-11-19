@@ -1,7 +1,7 @@
 # Galactic SPIRE
 
 The `spire-server` and `spire-system` Applications install SPIRE through the platform ApplicationSet.
-The upstream SPIRE chart is pinned to `0.30.2`, SPIRE to `1.15.3`, and the CRD chart to `0.6.1`.
+The upstream SPIRE chart is pinned to `0.31.0`, SPIRE to `1.16.0`, and the CRD chart to `0.6.1`.
 Both Helm applications use the existing Lovely renderer and its Helm 3 toolchain.
 
 ## Ownership and identity

@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: coder-server-2-36-4
+  name: coder-server-2-38-10
   namespace: coder
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
