@@ -4,7 +4,7 @@ import type { OperationalError } from '../errors'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { evaluateAdmittedJevBatch, JevBatchStore, type JevBatchAdmission } from './batch-evaluation'
-import type { JevObservation, RestoredJevObservation } from './observation'
+import type { RestoredJevObservation } from './observation'
 
 const JobIdentity = {
   jobId: Sha256Schema,
@@ -59,7 +59,7 @@ export class JevInferenceWorkStore extends Context.Service<
     readonly claim: (jobId: string) => Effect.Effect<
       {
         readonly admission: JevBatchAdmission
-        readonly observation: JevObservation
+        readonly loadObservation: Effect.Effect<unknown, OperationalError>
       } | null,
       OperationalError
     >
@@ -72,20 +72,20 @@ export class JevInferenceWorkStore extends Context.Service<
  */
 export const executeJevInferenceWork = <E = never, R = never>(
   jobId: string,
-  allowDispatch: Effect.Effect<boolean, E, R> = Effect.succeed(true),
+  allowDispatch: (job: JevInferenceJob) => Effect.Effect<boolean, E, R> = () => Effect.succeed(true),
 ) =>
   Effect.gen(function* () {
     const work = yield* JevInferenceWorkStore
     const job = yield* work.read(jobId)
     if (job === null) return null
-    const claimed = (yield* allowDispatch) ? yield* work.claim(jobId) : null
+    const claimed = (yield* allowDispatch(job)) ? yield* work.claim(jobId) : null
     const batches = yield* JevBatchStore
     const evidence =
       claimed === null
         ? yield* batches.finish(job.batchId)
         : yield* evaluateAdmittedJevBatch(
             claimed.admission,
-            claimed.observation,
+            claimed.loadObservation,
             job.admissionDeadlineAt === undefined ? {} : { admissionDeadlineAt: job.admissionDeadlineAt },
           )
     const identity = {

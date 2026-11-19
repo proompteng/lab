@@ -399,7 +399,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(immediateDispatches(claimed.admission).length).toBe(
           plan.candidates.filter(({ status }) => status === JevCandidatePlanStatus.Requested).length,
         )
-        expect(claimed?.observation).toEqual(fixture.observation.payload)
+        expect(yield* claimed.loadObservation).toEqual(fixture.observation.payload)
         expect(yield* work.claim(plan.batchId)).toBeNull()
         expect((yield* work.read(plan.batchId))?.status).toBe('Claimed')
         const sql = yield* PgClient.PgClient
@@ -424,6 +424,54 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             }).pipe(Effect.andThen(Effect.die('Admission cannot dispatch provider work'))),
         }),
       ),
+    )
+  })
+
+  test('a compact job read cannot authorize dispatch from a changed stored plan', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const work = yield* JevInferenceWorkStore
+        const sql = yield* PgClient.PgClient
+        yield* beginRecordedJevBatch(batches, plan, fixture.observation.payload, {
+          deferProviderDispatch: true,
+          sourceReference: streamingSnapshotReference(fixture.snapshot),
+        })
+        yield* sql`ALTER TABLE jev_batch_plans DISABLE TRIGGER jev_batch_plans_immutable`
+        yield* sql`UPDATE jev_batch_plans SET payload = jsonb_set(payload, '{questionSetHash}', to_jsonb(${'0'.repeat(64)}::text))
+          WHERE batch_id = ${plan.batchId}`
+        yield* sql`ALTER TABLE jev_batch_plans ENABLE TRIGGER jev_batch_plans_immutable`
+        expect((yield* work.read(plan.batchId))?.status).toBe('Prepared')
+        expect(yield* work.claim(plan.batchId).pipe(Effect.result)).toMatchObject({ _tag: 'Failure' })
+        expect((yield* work.read(plan.batchId))?.status).toBe('Claimed')
+        expect(yield* work.claim(plan.batchId)).toBeNull()
+      }).pipe(atObservation),
+    )
+  })
+
+  test('source tampering after durable admission burns the claim without granting provider dispatch', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const work = yield* JevInferenceWorkStore
+        const sql = yield* PgClient.PgClient
+        yield* beginRecordedJevBatch(batches, plan, fixture.observation.payload, {
+          deferProviderDispatch: true,
+          sourceReference: streamingSnapshotReference(fixture.snapshot),
+        })
+        expect(
+          yield* sql`UPDATE jev_inference_work
+            SET source_sha256=decode(repeat('00',32),'hex'), claimed_at=clock_timestamp()
+            WHERE batch_id=${plan.batchId}`.pipe(Effect.result),
+        ).toMatchObject({ _tag: 'Failure' })
+        yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER intraday_candidate_observations_immutable`
+        yield* sql`UPDATE intraday_candidate_observations SET payload=payload || '{"sourceChanged": true}'::jsonb
+          WHERE content_hash = ${plan.observationHash}`
+        yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER intraday_candidate_observations_immutable`
+        expect(yield* work.claim(plan.batchId).pipe(Effect.result)).toMatchObject({ _tag: 'Failure' })
+        expect((yield* work.read(plan.batchId))?.status).toBe('Claimed')
+        expect(yield* work.claim(plan.batchId)).toBeNull()
+      }).pipe(atObservation),
     )
   })
 
@@ -533,7 +581,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           deferProviderDispatch: true,
           sourceReference: streamingSnapshotReference(fixture.snapshot),
         })
-        const outcome = yield* executeJevInferenceWork(plan.batchId, Effect.succeed(false))
+        const outcome = yield* executeJevInferenceWork(plan.batchId, () => Effect.succeed(false))
         expect(outcome?.status).toBe('Pending')
         expect((yield* work.read(plan.batchId))?.status).toBe('Prepared')
       }).pipe(
@@ -704,7 +752,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`CREATE TEMP TABLE jev_batch_plans (
-              batch_id text PRIMARY KEY, authority_generation_hash text NOT NULL, payload jsonb NOT NULL
+              batch_id text PRIMARY KEY, cycle_id text NOT NULL, authority_generation_hash text NOT NULL, payload jsonb NOT NULL
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE jev_inference_work (
               batch_id text PRIMARY KEY, claimed_at timestamptz, admission_deadline_at timestamptz
@@ -713,7 +761,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             // Rebind prepared statements to this transaction's temporary fixture tables.
             yield* sql`SET LOCAL search_path = pg_temp, public`
             yield* sql`INSERT INTO pg_temp.jev_batch_plans
-              SELECT md5(n::text)||md5('batch-'||n::text), ${plan.authorityGenerationHash},
+              SELECT md5(n::text)||md5('batch-'||n::text), ${plan.cycleId}, ${plan.authorityGenerationHash},
                 jsonb_build_object('expiresAt', ${plan.expiresAt}::text, 'evidence', repeat(md5(n::text), 1024))
               FROM generate_series(1,4096) n`
             yield* sql`INSERT INTO pg_temp.jev_batch_results SELECT batch_id FROM pg_temp.jev_batch_plans`
@@ -759,8 +807,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             }))
             for (const row of pending) {
               yield* sql`INSERT INTO pg_temp.jev_batch_plans VALUES (
-                ${row.batchId}, ${row.generation},
-                ${sql.json({ batchId: row.batchId, expiresAt: row.expiresAt })}
+                ${row.batchId}, ${plan.cycleId}, ${row.generation},
+                ${sql.json({ schemaVersion: plan.schemaVersion, observedAt: plan.observedAt, expiresAt: row.expiresAt })}
               )`
               yield* sql`INSERT INTO pg_temp.jev_inference_work VALUES (
                 ${row.batchId}, ${row.claimed ? plan.observedAt : null}, ${row.admissionDeadlineAt}
@@ -782,7 +830,12 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                 )
                 .slice(0, 64)
                 .map((row) => ({
-                  plan: { batchId: row.batchId, expiresAt: row.expiresAt },
+                  batch_id: row.batchId,
+                  cycle_id: plan.cycleId,
+                  authority_generation_hash: row.generation,
+                  plan_version: plan.schemaVersion,
+                  observed_at: plan.observedAt,
+                  expires_at: row.expiresAt,
                   claimed: row.claimed,
                   admission_deadline_at: row.admissionDeadlineAt?.replace('Z', '000Z') ?? null,
                 }))
