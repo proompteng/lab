@@ -37,9 +37,10 @@ require live compatibility validation rather than assuming upstream coverage.
 
 ## Upgrade and recovery
 
-The manager's `valkeyVersionMap` maps the `9.1` API version to the 9.1.4 OCI
-index digest. A change to this mapping rolls the managed data pods. Verify the
-new digests, replication, and application acceptance after the rollout.
+The manager's `valkeyVersionMap` maps the `9.1` API version to the exact `9.1.4`
+tag. The operator parses the generated image reference as a semantic version,
+so the mapping requires a bare version. Verify the running digest, replication,
+and application acceptance after changes to the mapping roll the data pods.
 
 Update the source commit, controller image digest, and helper image annotation
 together in a reviewed PR. Render the overlay and inspect CRD changes before

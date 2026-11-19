@@ -57,7 +57,7 @@ patches:
               # Also parsed as semantic version for actor selection. Image
               # digests belong in image references, never in this field.
               operatorVersion: v2.1.1
-              valkeyVersionMap: '{"9.1":"9.1.4@sha256:3ab0eca823ebbf0fe352476ebac330ac9e5f14b592b9a954eab296d341e81b0e"}'
+              valkeyVersionMap: '{"9.1":"9.1.4"}'
           spec:
             securityContext:
               runAsNonRoot: true
