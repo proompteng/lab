@@ -18,6 +18,7 @@ test('production Valkey lifecycle preserves idle connections and bounds startup 
       'idle',
       'startup-native-timeout',
       'startup-recover',
+      'startup-refused',
       'startup-deadline',
       'startup-interrupt',
       'command-deadline',

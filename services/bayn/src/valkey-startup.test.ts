@@ -10,7 +10,8 @@ class Connection extends Context.Service<Connection, { readonly command: Effect.
   'test/ValkeyStartupConnection',
 ) {}
 const refused = new RedisError({ cause: Object.assign(new Error('fixture refused'), { code: 'ECONNREFUSED' }) })
-const startupAttempts = 6
+const handshakeAttempts = 6
+const endpointAttempts = 60
 const handshakeUntilAbort = (signal: AbortSignal) =>
   Effect.callback<never, RedisError>((resume) => {
     const abort = () => resume(Effect.fail(new RedisError({ cause: new Error('fixture acquisition aborted') })))
@@ -20,8 +21,9 @@ const handshakeUntilAbort = (signal: AbortSignal) =>
 
 describe('Valkey startup acquisition', () => {
   test.each([false, true])(
-    'startup refusal has five spaced retries with closed attempts; persistent=%s',
+    'startup refusal retries at one-second intervals and closes every failed attempt; persistent=%s',
     async (persistent) => {
+      const startupAttempts = persistent ? endpointAttempts : handshakeAttempts
       let attempts = 0
       let active = 0
       let released = 0
@@ -70,6 +72,50 @@ describe('Valkey startup acquisition', () => {
       if (Result.isFailure(result)) expect(result.failure).toBe(refused)
     },
   )
+
+  test('an endpoint missing through a rolling update can recover in the original process', async () => {
+    let attempts = 0
+    let active = 0
+    let available = false
+    const layer = withValkeyStartupRetry(() =>
+      Layer.effect(
+        Connection,
+        Effect.gen(function* () {
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              active++
+            }),
+            () =>
+              Effect.sync(() => {
+                active--
+              }),
+          )
+          attempts++
+          expect(active).toBe(1)
+          if (!available) return yield* refused
+          return { command: Effect.void }
+        }),
+      ),
+    )
+    const result = await Effect.gen(function* () {
+      const fiber = yield* Connection.pipe(
+        Effect.provide(layer),
+        Effect.result,
+        Effect.forkChild({ startImmediately: true }),
+      )
+      for (let second = 0; second < 40; second++) {
+        yield* TestClock.adjust('1 second')
+      }
+      expect(active).toBe(0)
+      available = true
+      yield* TestClock.adjust('1 second')
+      return yield* Fiber.join(fiber)
+    }).pipe(Effect.provide(TestClock.layer()), Effect.runPromise)
+
+    expect(Result.isSuccess(result)).toBe(true)
+    expect(attempts).toBe(42)
+    expect(active).toBe(0)
+  })
 
   test('authentication, TLS certificate, other transport errors and untrusted causes are not retried', async () => {
     let codeReads = 0
@@ -186,13 +232,13 @@ describe('Valkey startup acquisition', () => {
         Effect.result,
         Effect.forkChild({ startImmediately: true }),
       )
-      for (let attempt = 1; attempt <= startupAttempts; attempt++) {
+      for (let attempt = 1; attempt <= handshakeAttempts; attempt++) {
         yield* TestClock.adjust('1999 millis')
         expect(attempts).toBe(attempt)
         expect(events).toHaveLength((attempt - 1) * 2)
         yield* TestClock.adjust('1 millis')
         expect(events).toHaveLength(attempt * 2)
-        if (attempt < startupAttempts) {
+        if (attempt < handshakeAttempts) {
           yield* TestClock.adjust('999 millis')
           expect(attempts).toBe(attempt)
           yield* TestClock.adjust('1 millis')
@@ -203,8 +249,8 @@ describe('Valkey startup acquisition', () => {
       if (Result.isFailure(result)) expect(result.failure.cause).toBeInstanceOf(ConnectionTimeoutError)
       yield* TestClock.adjust('5 seconds')
     }).pipe(Effect.provide(TestClock.layer()), Effect.runPromise)
-    expect(attempts).toBe(startupAttempts)
-    expect(events).toEqual(Array.from({ length: startupAttempts }, () => ['abort', 'release']).flat())
+    expect(attempts).toBe(handshakeAttempts)
+    expect(events).toEqual(Array.from({ length: handshakeAttempts }, () => ['abort', 'release']).flat())
   })
 
   test('defects release the failed acquisition without retrying', async () => {

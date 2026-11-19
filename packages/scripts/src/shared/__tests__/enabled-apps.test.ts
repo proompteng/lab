@@ -375,7 +375,7 @@ describe('enabled app inventory', () => {
 
   it('pins the identity and metrics controller upgrade wave', () => {
     expect(certManagerKustomization).toContain('version: v1.21.3')
-    expect(externalSecretsKustomization).toContain('version: 2.10.0')
+    expect(externalSecretsKustomization).toContain('version: 2.15.0')
     expect(platformApplicationSet).toContain('targetRevision: v0.9.1')
   })
 
@@ -513,10 +513,10 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the enabled service image upgrade wave', () => {
-    expect(featureFlagsKustomization).toContain('version: 2.12.1')
-    expect(featureFlagsKustomization).toContain('newTag: v2.12.0')
+    expect(featureFlagsKustomization).toContain('version: 2.14.2')
+    expect(featureFlagsKustomization).toContain('newTag: v2.14.2')
     expect(featureFlagsKustomization).toContain(
-      'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
+      'digest: sha256:121830e237c3a0d2b875f73905944d6ff301fdd7881c5abdec5f24f5549537e8',
     )
     expect(cloudflaredDeployment).toContain(
       'cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d',
