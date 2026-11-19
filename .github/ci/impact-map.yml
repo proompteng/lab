@@ -75,6 +75,15 @@ targets:
       - argocd/applications/kargo/stages.yaml
       - argocd/applications/kube-router/**
       - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/devbox/network-policy.yaml
+      - argocd/applications/froussard/approval-networkpolicy.yaml
+      - argocd/applications/kargo/smoke-access.yaml
+      - argocd/applications/keycloak/network-policy.yaml
+      - argocd/applications/ofz/control-plane/network-policy.yaml
+      - argocd/applications/opencode/networkpolicy.yaml
+      - argocd/applications/opencode/research.yaml
+      - argocd/applications/paperless/network.yaml
+      - argocd/applications/pelican/networking.yaml
       - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml
       - argocd/applications/observability/grafana-upgrade-backup.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml
@@ -93,6 +102,7 @@ targets:
       - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
       - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
+      - argocd/applications/tengri/run-reader.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
       - argocd/applications/observability/graf-mimir-rules.yaml
