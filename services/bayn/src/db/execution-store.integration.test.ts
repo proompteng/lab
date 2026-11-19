@@ -68,6 +68,7 @@ import {
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { postCashSettlements, prepareCashSettlements, readCashSettlements } from './cash-settlements'
+import { makeAccountingHistoryVerifier } from '../reconciliation/algebra'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -1096,7 +1097,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                 yield* PgClient.PgClient,
                 accountId,
                 [fill].map((event) => event.fill),
-                config.tigerBeetle.ledger,
+                makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
               )
               const valuation = yield* valuations.value({
                 accountEventId: accountReceipt.eventId,
@@ -1426,13 +1427,13 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [accountedFill].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         const accountingMismatch = yield* readAccountingHistory(
           yield* PgClient.PgClient,
           accountId,
           [{ ...accountedFill.fill, quantityAtoms: '2000000000' }],
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         ).pipe(Effect.flip)
         yield* accounting.account(preparedFill)
         const completedAfterRecovery = yield* events.completeHistory(history)
@@ -1440,7 +1441,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [accountedFill, preparedFill].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         const conflict = yield* events
           .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
@@ -1484,7 +1485,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           monitored,
           accountId,
           inputs.map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         expect(lookups).toHaveLength(1)
         const lookup = lookups[0]
@@ -1555,8 +1556,11 @@ describePostgres('PostgreSQL execution persistence', () => {
             yield* accounting.account(buy)
             yield* accounting.account(sell)
             const observedFills = [buy.fill, sell.fill]
-            const history = yield* readAccountingHistory(sql, accountId, observedFills, config.tigerBeetle.ledger)
+            const verify = makeAccountingHistoryVerifier(config.tigerBeetle.ledger)
+            const history = yield* readAccountingHistory(sql, accountId, observedFills, verify)
             expect(history).toHaveLength(2)
+            const unchanged = yield* readAccountingHistory(sql, accountId, observedFills, verify)
+            expect(unchanged[1]).toBe(history[1])
             expect(history[1]?.transaction).toMatchObject({
               costBasisMicros: '199999997',
               realizedPnlMicros: '20000003',
@@ -1564,9 +1568,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             yield* sql`UPDATE pg_temp.broker_inventory_debits
               SET cost_basis_micros = cost_basis_micros + 100
               WHERE quantity_atoms = 1000000`
-            const changed = yield* readAccountingHistory(sql, accountId, observedFills, config.tigerBeetle.ledger).pipe(
-              Effect.flip,
-            )
+            const changed = yield* readAccountingHistory(sql, accountId, observedFills, verify).pipe(Effect.flip)
             expect(changed).toMatchObject({ operation: 'reconcile', failure: 'invariant' })
           }),
         )
@@ -1755,7 +1757,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [buy, secondBuy, sell].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         const sql = yield* PgClient.PgClient
         return yield* sql`SELECT
@@ -2521,7 +2523,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           yield* PgClient.PgClient,
           accountId,
           [buy, sell].map((event) => event.fill),
-          config.tigerBeetle.ledger,
+          makeAccountingHistoryVerifier(config.tigerBeetle.ledger),
         )
         expect(
           yield* sql`SELECT sum(quantity_atoms)::text AS quantity,sum(cost_basis_micros)::text AS cost FROM broker_inventory_debits WHERE posted`,
