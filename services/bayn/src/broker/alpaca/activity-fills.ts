@@ -4,9 +4,6 @@ import { contractFailure } from './failures'
 import { FillActivityResponseSchema, TradeActivityType, type FillExecution } from './model'
 import { normalizeFillActivityResult } from './normalizers'
 
-// This is the earliest publication date Alpaca documents for Activity SSE replay.
-export const activityReplayStart = '2026-02-11T00:00:00.000Z'
-
 const fillFields = FillActivityResponseSchema.fields
 const trade = Schema.Struct({
   ref_id: fillFields.order_id,
