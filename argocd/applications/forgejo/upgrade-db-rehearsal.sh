@@ -11,7 +11,7 @@ postgres_pid=
 
 stop_database() {
   if [[ -n "$postgres_pid" ]] && kill -0 "$postgres_pid" 2>/dev/null; then
-    pg_ctl -D "$data" -m fast -w -t 60 stop
+    pg_ctl -D "$data" -m fast -W stop
     wait "$postgres_pid"
   fi
 }
@@ -51,7 +51,7 @@ until pg_isready -h /tmp -p 55432 -U postgres -d forgejo >/dev/null; do
   [[ ! -e "$proof/migration-failed" ]] || exit 1
   sleep 1
 done
-pg_isready -h /tmp -p 55432 -U postgres -d forgejo
+printf 'Restored PostgreSQL accepts connections. Checking source identity.\n'
 
 sql() { psql -X -v ON_ERROR_STOP=1 -h /tmp -p 55432 -U postgres -d forgejo -Atc "$1"; }
 counts_sql='SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM repository), (SELECT count(*) FROM action_runner), (SELECT count(*) FROM public_key), (SELECT count(*) FROM deploy_key), (SELECT count(*) FROM access_token)'

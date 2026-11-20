@@ -112,7 +112,7 @@ spec:
           name: forgejo-server-17-0-2-rehearsal
       - name: db-clone
         persistentVolumeClaim:
-          claimName: forgejo-server-17-0-2-restore-db
+          claimName: forgejo-server-17-0-2-restore-db-retry
       - name: data-clone
         persistentVolumeClaim:
           claimName: forgejo-server-17-0-2-restore-data
