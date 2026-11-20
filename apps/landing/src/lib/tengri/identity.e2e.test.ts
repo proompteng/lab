@@ -814,6 +814,7 @@ identityTest(
       baseUrl: `http://127.0.0.1:${githubAddress.port}`,
       apiUrl: `http://127.0.0.1:${githubAddress.port}`,
       githubJsonFormat: 'true',
+      clientSecret: githubSecret,
     }
     await adminCall('/identity-provider/instances/github', 'PUT', provider)
     const clients = z
@@ -1205,6 +1206,7 @@ identityTest(
       .object({ clientId: z.literal('tengri-bff'), redirectUris: z.array(z.string()), webOrigins: z.array(z.string()) })
       .parse(productionRealm.clients[0])
     const productionProvider = { ...provider, config: { ...provider.config } }
+    productionProvider.config.clientSecret = githubSecret
     delete productionProvider.config.baseUrl
     delete productionProvider.config.apiUrl
     delete productionProvider.config.githubJsonFormat
@@ -1248,6 +1250,7 @@ identityTest(
       baseUrl: `http://127.0.0.1:${githubAddress.port}`,
       apiUrl: `http://127.0.0.1:${githubAddress.port}`,
       githubJsonFormat: 'true',
+      clientSecret: githubSecret,
     }
     await adminCall('/identity-provider/instances/github', 'PUT', currentProvider)
     await adminCall(`/clients/${client.id}`, 'PUT', { redirectUris: [base + '/api/auth/callback'], webOrigins: [base] })
@@ -1567,7 +1570,7 @@ identityTest(
         .rows[0]?.identity_subject,
     ).toBe(subjectBeforeFailover)
     console.log(
-      'PASS: two production Keycloak 26.7.4 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
+      'PASS: two production Keycloak 26.8.2 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
     )
 
     const challengesBeforeSso = webAuthnRequests.length

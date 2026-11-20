@@ -3,7 +3,7 @@
 This is the active GitOps source for the existing Keycloak database, master realm, Headlamp and Agents Shell clients,
 and the dedicated [Tengri realm](tengri/README.md). The old prepared Keycloak overlay is removed.
 
-Two Keycloak 26.7.4 servers require separate hosts. They use JDBC cache discovery, transport mTLS, Pod/node topology
+Two Keycloak 26.8.2 servers require separate hosts. They use JDBC cache discovery, transport mTLS, Pod/node topology
 names and verified PostgreSQL TLS. Each server has a maximum of twenty SQL connections. The database requires three
 host-spread instances, one synchronous standby and a 100-connection budget. Only its Pods tolerate Ryzen's exact
 `workload.proompteng.ai/compute-local=true:NoSchedule` taint; the node taint stays in place. The serving disruption
@@ -28,7 +28,9 @@ Keycloak servers. Database traffic remains private, and external HTTPS egress ex
 The Tengri bootstrap uses strict sealed credentials in an earlier Argo wave, verifies the realm before enabling it,
 and preserves users, broker links and passkeys on retries. A new protected `keycloak-server-26-8-2` snapshot must
 complete before the upgrade wave. The existing Argo Backup health check waits for the CNPG completion timestamp;
-older protected backup objects and their snapshots remain retained.
+older protected backup objects and their snapshots remain retained. For a minor-version cutover, wait for the new
+checkpoint, sync the shutdown revision, and verify that both old server Pods have terminated before syncing the new
+image with two replicas. Once the new schema migration starts, recovery requires the pre-upgrade checkpoint.
 
 Render and verify the active source with:
 

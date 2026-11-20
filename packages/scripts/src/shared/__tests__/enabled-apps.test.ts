@@ -503,12 +503,12 @@ describe('enabled app inventory', () => {
 
   it('pins the enabled observability collector upgrade wave', () => {
     for (const deploymentPath of enabledAlloyDeploymentPaths) {
-      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.19.2')
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.22.0')
     }
     expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
-      'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
+      'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
-    expect(natsKustomization).toContain('newTag: v1.19.2')
+    expect(natsKustomization).toContain('newTag: v1.22.0')
     expect(observabilityKustomization).toContain('version: 8.4.2')
   })
 
@@ -619,7 +619,7 @@ describe('enabled app inventory', () => {
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c',
+      'quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3',
     )
   })
 
