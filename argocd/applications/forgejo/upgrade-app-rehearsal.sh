@@ -13,7 +13,7 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 [[ -e "$proof/database-ready" ]] || exit 1
-forgejo --version | grep -F '16.0.3'
+forgejo --version | grep -F '17.0.2'
 
 # Both clones come from the fresh snapshots taken after the quiesce gate.
 # Capture their current references before the migration changes anything.
@@ -53,4 +53,4 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 [[ -e "$proof/database-accepted" ]] || exit 1
-printf 'PASS: Forgejo 16.0.3 migrated on isolated clones; database checks and original Git references passed.\n'
+printf 'PASS: Forgejo 17.0.2 migrated on isolated clones; database checks and original Git references passed.\n'
