@@ -35,6 +35,9 @@ existing file ownership. It runs alongside Forgejo 16.0.3 with networking
 disabled. The published image must carry the same upstream index digest as
 the mirrored rehearsal image.
 
+The two containers share the Job's 40-minute deadline. Each reports failure to
+its peer when it exits early, and PostgreSQL shuts down before the Job passes.
+
 Require a successful rehearsal before switching the upstream pin. Capture a
 fresh production checkpoint at cutover and retire the rehearsal resources
 after the production migration has passed. Follow the
