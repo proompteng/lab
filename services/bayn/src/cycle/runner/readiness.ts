@@ -133,6 +133,7 @@ export const CycleWaitReasonSchema = Schema.Union([
 export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
 
 export type CycleWaitingDetails = {
+  readonly protectionReleaseCycleId?: string
   readonly maximumHoldDueAt?: string
   readonly maximumHoldEvaluatedAt?: string
   readonly positionHold?: JevPositionHold

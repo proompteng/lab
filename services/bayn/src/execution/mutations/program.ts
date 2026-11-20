@@ -8,6 +8,7 @@ import {
   MutationStoreError,
   type ExpiredEntryCancellationAdmission,
   type MutationStoreShape,
+  type ProtectionCloseCommit,
 } from './model'
 import { makeMutationEventPostgres } from './postgres/events'
 import { makeMutationOutcomePostgres } from './postgres/outcome'
@@ -37,7 +38,14 @@ export const makePostgresMutationStore = Effect.gen(function* () {
 
   return {
     authorizeSubmit: (intentId, closeOnly) => run('begin-submit', start.authorizeSubmit(intentId, closeOnly)),
-    beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt, closeOnly) =>
+    beginSubmit: (
+      intentId,
+      requestHash,
+      consistencyDelayMs,
+      occurredAt,
+      closeOnly,
+      protectionClose?: ProtectionCloseCommit,
+    ) =>
       run(
         'begin-submit',
         start.begin(
@@ -48,6 +56,8 @@ export const makePostgresMutationStore = Effect.gen(function* () {
           occurredAt,
           undefined,
           closeOnly,
+          undefined,
+          protectionClose,
         ),
       ),
     submitAccepted: (intentId, requestHash, brokerOrderId, evidence, terminalOutcome) =>

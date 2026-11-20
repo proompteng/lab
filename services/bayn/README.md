@@ -204,10 +204,11 @@ Run it only in a separate research process; it is not part of the live service o
 
 ## Internal APIs
 
-The [accounting-verification benchmark](tools/benchmark-accounting-verification.md) measures complete reconstruction
-of synthetic accounting history. SHA-256 uses the runtime's one-shot function, and ledger identifiers parse the same
-first sixteen digest bytes directly as an integer. Canonical validation, hash bytes, and non-zero identifier rules
-retain their existing behavior.
+The reconciliation owner retains the last verified accounting history in memory. For each fresh PostgreSQL row,
+it compares the complete transaction, broker fill, and prior inventory before reusing an immutable ledger plan.
+Changed inputs require reconstruction. Each reconciliation verifies current receipts and reads TigerBeetle to
+check the complete account. The [accounting-verification benchmark](tools/benchmark-accounting-verification.md)
+measures reconstruction and reuse on the same synthetic history.
 
 The [fee-validation benchmark](tools/benchmark-fee-validation.md) measures dated fee and entry-economics work.
 Schema predicates are reused and fill totals are accumulated in one pass; exact fee caps, rounding, and separate
@@ -276,10 +277,10 @@ adds the `bayn:` namespace, bounded values and expiry, command cancellation and
 replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
-Initial acquisition retries a native `ECONNREFUSED` failure at most twice, one second
-apart, closing each failed acquisition before the next attempt. Authentication,
-TLS, configuration and timeout failures fail immediately. The retry boundary ends
-before the cache service is exposed, so it never replays a caller's command.
+Initial acquisition retries native `ECONNREFUSED` and `ConnectionTimeoutError`
+failures at most twice, one second apart. Each failed acquisition closes before
+the next attempt. Authentication, TLS identity and configuration failures fail
+immediately. The retry boundary ends before the cache service is exposed.
 Each acquisition has a two-second budget covering TCP, TLS and the RESP handshake.
 Cancellation aborts the native connection and awaits its settlement before closing
 the layer scope. Healthy idle connections have no socket inactivity timeout or
@@ -430,15 +431,24 @@ State reads therefore avoid lazy-fetch round trips before execution or capture. 
 quota reservations and replay protection retain their existing durable semantics.
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
-successful tickets with an unchanged latest fill can reuse the prior full after-history as the next before-history.
-The after-history is always read in full, including old fill and fee corrections. A new fill, generation gap,
-backward clock, failure or interruption discards that reuse. History endpoints run concurrently within each scan;
-pagination, exact fill coverage, original timestamps and hashes remain required.
-The compact recent-order and recent-fill projections come from that verified after-history and retain the actual
-response page's evidence, including empty histories. They are bounded by the same source cut instead of separate
-overlapping recent-history requests. The independent latest-fill probe remains before any retained-history reuse;
-open-order eligibility still uses its own fresh broker query. No polling cadence, request cost or backoff changes.
-See [capture ownership](src/broker/alpaca/snapshot-cache.ts) and [history verification](src/simulation-reconciliation/broker-history.ts).
+successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
+The PAPER execution controller verifies the account and opens one Alpaca Activity SSE connection for both startup
+replay and live delivery. It resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
+the reader verifies its payload before advancing. It waits for a stream heartbeat before admitting the activity history.
+A disconnect, dropped frame or unsupported correction makes the local activity history unavailable.
+
+PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
+activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
+the same connection. Bayn fetches REST fee records on startup and when the streamed fee history changes. It
+checks that both sources agree on fee counts by booking date, fee kind, cash amount and coin quantity. REST
+supplies the existing ledger IDs, crypto symbols and exact prices. The capture waits for the two sources to agree.
+
+The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
+compares complete histories around the account read and checks the filled quantity for every order and leg.
+The order WebSocket carries cancellations and other order lifecycle events.
+See [Activity SSE ownership](src/broker/alpaca/activity-stream.ts),
+[capture ownership](src/broker/alpaca/snapshot-cache.ts) and
+[history verification](src/simulation-reconciliation/broker-history.ts).
 
 For a bounded, read-only fill cohort, run `psql -X -At` against the owning account database with
 `-v source_revision=<verified-deployed-SHA> -v start_at=<UTC> -v end_at=<UTC>` and
@@ -571,14 +581,23 @@ expires. The owner retains the original close-plus-two-second eligibility timer 
 
 An account pass admits a JEV batch, the exact source reference, original expiry and irreversible staged claims in one
 transaction with `jev_inference_work`. That row retains the admitted financial work and its one-way dispatch claim.
-Dispatch polling materializes unresolved work before reading expiry from retained plan payloads, so completed history
-does not reopen large JSON evidence on each wake. The selected authority generation, original strict expiry cutoff,
-expiry-then-batch order, 64-item limit, claim state and admission deadline remain unchanged.
-The owner durably sends `BaynEntryInference.evaluate` and returns. The provider-only
-service can run while the account processes broker updates, protection or close deadlines. It never advances a cycle,
-binds a decision, reconciles an account or transmits an order. A one-way SQL dispatch claim prevents a replay or replacement
-worker from repeating paid work whose provider outcome is uncertain. Unknown outcomes retain their original expiry and
-existing expense classification; a retry cannot invent a fresh validity window.
+Capture binds Kafka bounds and delivery order before issuing a detached, immutable market snapshot. The account
+pass carries that snapshot and its already checked portfolio into Jev preparation, where it verifies the observation
+envelope and binds it to the same source. Retained data re-enters through the full source verifier. Planning,
+live source-reference verification, and PostgreSQL admission use the owned graph. Admission still checks any
+retained observation bytes and all current durable source bindings.
+Controller activation starts a private `BaynEntryInference.watch` chain for its epoch. The watcher subscribes to
+PostgreSQL before reading unresolved work. Admission notifies it in the same transaction that inserts the work row.
+The watcher sends each eligible job to `BaynEntryInference.evaluate` and resumes from committed work after interruption.
+The account controller tracks the original expiry separately and can process broker updates, protection or close deadlines
+while the worker runs. The one-way SQL claim checks the active controller epoch and authority before any provider call.
+An uncertain provider outcome retains its original expiry and expense classification.
+PostgreSQL seals the retained observation bytes when admission inserts the work row. The worker reads compact job
+metadata for authority and scheduling, then verifies the source seal in the one-way SQL claim. The claim returns the
+original plan and staged claims. The worker checks each reconstructed chart against its original staged claim before
+provider dispatch. The same worker can carry its verified plan, result and source seal into completion. PostgreSQL
+rechecks the admitted observation's bytes against that seal in the transaction that commits the receipts and batch
+result. The worker avoids transferring the observation back through the application after inference.
 While a committed entry batch awaits its result, ordinary market hints wait until the earliest original batch or admission
 expiry. Broker observations and inference completion still wake the owner immediately. The expiry timer survives replay;
 market bursts cannot run redundant financial passes or move that deadline forward.
@@ -601,8 +620,9 @@ quote, risk and original admission/inference/submission deadlines. Late or stale
 
 Fresh account, configuration and candidate-asset reads for short eligibility run only when admitting a new source;
 its observation clock is sampled after those reads. Completion retains the original eligibility evidence and avoids
-fresh reads that cannot replace the committed source. Final short submission still checks current account, configuration,
-asset eligibility and borrow flags through the existing mutation authority.
+fresh reads that cannot replace the committed source. Final short submission reads the selected symbol's asset,
+account and configuration in parallel. The fresh account must match the reconciled identity and cash before
+the mutation authority uses it to check short eligibility and buying power.
 
 Only domain deadlines schedule a timer: source eligibility, original admission or inference expiry, position protection,
 maximum hold, session close, broker consistency, quota, financial freshness and explicit recovery. An actual state-machine
@@ -1128,10 +1148,15 @@ Legacy journal and projection results keep the field absent, with unknown refere
 version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
 a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
 
-- `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
+- `BaynExecutionController` schedules financial passes. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
+- `BaynEntryInference` watches committed work and dispatches provider calls while the financial driver initializes
+  or recovers. The financial driver reuses the same PostgreSQL and Jev services.
+- The account process retains its last admitted source and plan. When the result arrives, PostgreSQL checks the
+  original source seal and candidate receipts before selection. The owner reuses that preparation when it still
+  matches, and reconstructs stored evidence on a cold resume. `bayn.jev.entry-selection` records which path ran.
 - Execution acquires a scoped driver directly. Production and replay share one serialized generation-rebinding
   path: when authority changes, the next pass prepares its replacement before advancing. Failed or interrupted
   preparation retains the clients and retries preparation without running the stale driver. Production preparation
@@ -2224,6 +2249,18 @@ The input also declares
 An unknown allocation preserves execution evidence while making sessions and net results incomplete; it never
 becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these
 assumptions changes the run identity.
+
+An unregistered equity backtest can pass `--equity-execution-tape execution.json` and include
+`equityExecutionTape` with the file's `sha256`, `startAt`, and `endAt` in its input. The tape uses
+`bayn.historical-sip-execution-tape.v1` and supplies a time-ordered `events` array covering the replay interval.
+Each event has a `symbol`, a UTC source timestamp `at`, and a `kind`. Quotes supply `bid`, `ask`,
+`bidSize`, and `askSize`. Trades supply `price`. Include quotes for every symbol in the configured equity universe.
+
+The controller reads its original recorded arrivals for decisions. The simulated equity broker prices fills on
+the separate SIP tape and elects stops from trades that reach the stop inside a fresh preceding NBBO. The
+checkpoint binds the tape digest and the electing trade and quote. Historical event timestamps model broker
+availability at millisecond resolution. The CLI loads the complete tape into memory. Broker liquidity and
+partial-fill assumptions remain part of the experiment. Registered latency assessments use their sealed source.
 
 The provider uses an independent live clock. Replay retains original provider requests, responses and timestamps
 in `inference-calls.ndjson` before advancing market and database time. Each call identifies its provider stage

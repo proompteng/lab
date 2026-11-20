@@ -497,9 +497,14 @@ export interface BrokerReadShape {
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly feeActivities: (query?: FeeActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
+  readonly accountActivity?: Effect.Effect<import('./activity-stream').AccountActivityCut, BrokerReadError>
   readonly marketCalendar: (
     query: MarketCalendarQuery,
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
+}
+
+export interface FillExecution extends Omit<FillActivity, 'activityId'> {
+  readonly executionId: string
 }
 
 export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()(

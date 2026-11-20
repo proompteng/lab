@@ -316,7 +316,7 @@ describe('Jev entry execution quote eligibility', () => {
             read: () => unused,
             complete: () => unused,
             finish: () => unused,
-            begin: (plan, observation) =>
+            begin: ({ plan, source: { payload: observation } }) =>
               Effect.sync(() => {
                 batchCount += 1
                 latestWindow = Option.some(observation.manifest.rangeEndAt)
@@ -391,7 +391,7 @@ describe('Jev entry execution quote eligibility', () => {
           read: () => unused,
           complete: () => unused,
           finish: () => unused,
-          begin: (plan, observation) =>
+          begin: ({ plan, source: { payload: observation } }) =>
             Effect.gen(function* () {
               calls.observations += 1
               latestWindow = Option.some(observation.manifest.rangeEndAt)

@@ -81,6 +81,7 @@ const activation = {
 }
 
 type Delivery = {
+  readonly method?: string
   readonly parameter: unknown
   readonly delay?: number
   readonly idempotencyKey?: string
@@ -245,7 +246,7 @@ test('a successful successor retires its old deadline and an executing deadline 
   expect(state.active).toBe(false)
 })
 
-test('a prepared inference is durably dispatched and releases the account owner without ordinary chaining', async () => {
+test('a tick keeps the inference expiry without dispatching work', async () => {
   let state: ExecutionControllerState = {
     schemaVersion: 1,
     active: true,
@@ -263,18 +264,12 @@ test('a prepared inference is durably dispatched and releases the account owner 
       log: async () => undefined,
       advance: async () => ({
         completedAt: '2026-08-13T18:00:01.000Z',
-        outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1 },
-        inferenceJobs: [
-          {
-            schemaVersion: 'bayn.jev-inference-job.v1',
-            jobId: 'e'.repeat(64),
-            batchId: 'e'.repeat(64),
-            cycleId: 'f'.repeat(64),
-            authorityGenerationHash: '1'.repeat(64),
-            expiresAt: '2026-08-13T18:01:00.000Z',
-            status: 'Prepared',
-          },
-        ],
+        outcome: {
+          _tag: ExecutionControllerOutcome.Waiting,
+          receiptHash: 'd'.repeat(64),
+          nextDelayMs: 1,
+          nextWakeAt: '2026-08-13T18:01:00.000Z',
+        },
       }),
     }),
   )
@@ -290,14 +285,8 @@ test('a prepared inference is durably dispatched and releases the account owner 
   } as unknown as TestContext
   await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 })
   expect(state.nextSequence).toBe(5)
-  expect(state.nextDueAt).toBeUndefined()
-  expect(deliveries).toEqual([
-    expect.objectContaining({
-      service: 'BaynEntryInference',
-      method: 'evaluate',
-      parameter: expect.objectContaining({ controllerKey, epoch: 1, jobId: 'e'.repeat(64) }),
-    }),
-  ])
+  expect(state.nextDueAt).toBe('2026-08-13T18:01:00.000Z')
+  expect(deliveries).toEqual([expect.objectContaining({ service: 'BaynExecutionController', method: 'tick' })])
 })
 
 test('market bursts preserve eligibility and ignore duplicate, older and foreign producer hints', async () => {
@@ -1227,6 +1216,11 @@ describe('native Restate execution controller', () => {
         state = next
       },
       genericSend: (delivery: Delivery) => {
+        if (delivery.method === 'watch') {
+          events.push('inference-watch-scheduled')
+          deliveries.push(delivery)
+          return
+        }
         events.push(
           delivery.delay === executionControllerInitialTickDelayMs ? 'first-pass-scheduled' : 'successor-scheduled',
         )
@@ -1241,8 +1235,17 @@ describe('native Restate execution controller', () => {
     expect(await object.activate(context, activation)).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(projectedStates).toHaveLength(1)
     expect(projectedStates[0]).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
-    expect(deliveries).toHaveLength(1)
-    expect(events).toEqual(['activation-projected', 'state-committed', 'first-pass-scheduled'])
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries.shift()).toMatchObject({
+      method: 'watch',
+      parameter: { controllerKey, epoch: 1, sourceRevision, pending: [] },
+    })
+    expect(events).toEqual([
+      'activation-projected',
+      'inference-watch-scheduled',
+      'state-committed',
+      'first-pass-scheduled',
+    ])
     expect(deliveries[0]).toMatchObject({
       delay: 0,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 4, 0),
@@ -1967,6 +1970,11 @@ describe('native Restate execution controller', () => {
         events.push('state-committed')
       },
       genericSend: (delivery: Delivery) => {
+        if (delivery.method === 'watch') {
+          events.push('inference-watch-scheduled')
+          deliveries.push(delivery)
+          return
+        }
         deliveries.push(delivery)
         events.push(
           delivery.delay === executionControllerInitialTickDelayMs ? 'first-pass-scheduled' : 'successor-scheduled',
@@ -1992,6 +2000,10 @@ describe('native Restate execution controller', () => {
       }),
       sleep: async () => {
         sleeps += 1
+        expect(deliveries.shift()).toMatchObject({
+          method: 'watch',
+          parameter: { controllerKey, epoch: 5, sourceRevision, pending: [] },
+        })
         const firstTick = deliveries.shift()
         if (firstTick === undefined) throw new Error('rotation did not schedule the new binding first pass')
         await object.tick(controllerContext, firstTick.parameter)
@@ -2033,6 +2045,7 @@ describe('native Restate execution controller', () => {
     expect(projectedStates[0]).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision, nextSequence: 12 })
     expect(events).toEqual([
       'activation-projected',
+      'inference-watch-scheduled',
       'state-committed',
       'first-pass-scheduled',
       'advance-completed',
