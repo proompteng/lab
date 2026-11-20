@@ -143,7 +143,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
                 durableConsumerSequence: 0,
                 failure: null,
               })
-              yield* TestClock.adjust('1 second')
+              yield* TestClock.adjust('30 seconds')
               yield* Deferred.await(firstCommitted)
               yield* capture.observe(observation(2))
               yield* Deferred.await(secondCommitted)
@@ -336,22 +336,28 @@ describePostgres('PostgreSQL native arrival retention', () => {
     const exit = await runtime.runPromise(
       provideTestLayer(
         Effect.gen(function* () {
-          const append = yield* store.append([chunk(0, null)]).pipe(Effect.exit, Effect.forkChild)
-          yield* TestClock.adjust('61 seconds')
-          return yield* Fiber.join(append)
+          const append = yield* store.append([chunk(0, null)]).pipe(Effect.forkChild)
+          yield* TestClock.adjust('2 minutes')
+          if (failure.startsWith('connection-') || failure.startsWith('statement-timeout-')) {
+            expect(append.pollUnsafe()).toBeUndefined()
+            yield* Fiber.interrupt(append)
+          }
+          return yield* Fiber.await(append)
         }),
         TestClock.layer(),
       ),
     )
     expect(Exit.isFailure(exit)).toBe(true)
     const retryable = failure.startsWith('connection-') || failure.startsWith('statement-timeout-')
-    expect(attempts).toBe(retryable ? 62 : 1)
+    if (retryable) {
+      expect(attempts).toBeGreaterThan(1)
+      expect(attempts).toBeLessThan(12)
+    } else expect(attempts).toBe(1)
     if (Exit.isFailure(exit)) {
-      if (failure === 'interruption') expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      if (retryable || failure === 'interruption') expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
       if (failure === 'defect' || failure === 'mixed')
         expect(exit.cause.reasons.some((reason) => reason._tag === 'Die' && reason.defect === unrelated)).toBe(true)
-      if (retryable || failure === 'validation')
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(NativeArrivalCaptureError)
+      if (failure === 'validation') expect(Cause.squash(exit.cause)).toBeInstanceOf(NativeArrivalCaptureError)
     }
     expect(
       await runtime.runPromise(

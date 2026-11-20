@@ -1,6 +1,6 @@
 import { jevBatchQuestionSetHash } from './batch'
 import { jevObservationForSnapshot, jevRequestForSnapshot } from './native.test-support'
-import { equityMarketProfile } from './markets'
+import { currentEquityMarketProfile as equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 

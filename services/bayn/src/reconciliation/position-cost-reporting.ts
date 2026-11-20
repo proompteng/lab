@@ -1,5 +1,6 @@
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import { accountTradingDate } from '../time'
 import { OrderSide } from '../execution/contracts'
 import type { ProjectedPosition } from '../simulation-reconciliation/broker-model'
@@ -70,11 +71,14 @@ const equityPositionCostAnchor = (
   trades: readonly AccountingTransaction[],
   observedAt: string,
 ): ProjectedPosition['costBasisAnchor'] => {
+  const direction = BigInt(position.quantityAtoms) < 0n ? -1n : 1n
+  const openingSide = direction < 0n ? OrderSide.Sell : OrderSide.Buy
   let state = { quantity: 0n, nativeCost: 0n, averageMicros: 0n, openedAt: '' }
   for (const trade of trades) {
     if (trade.occurredAt > observedAt) return null
-    const quantity = state.quantity + BigInt(trade.quantityDeltaAtoms)
-    const nativeCost = state.nativeCost + BigInt(trade.costBasisDeltaMicros)
+    if (direction < 0n && trade.schemaVersion !== equityShortAccountingSchemaVersion) return null
+    const quantity = state.quantity + direction * BigInt(trade.quantityDeltaAtoms)
+    const nativeCost = state.nativeCost + direction * BigInt(trade.costBasisDeltaMicros)
     if (quantity < 0n || nativeCost < 0n || (quantity === 0n && nativeCost !== 0n)) return null
     if (quantity === 0n) {
       state = { quantity, nativeCost, averageMicros: 0n, openedAt: '' }
@@ -88,15 +92,15 @@ const equityPositionCostAnchor = (
       nativeCost,
       // Alpaca carries the rounded intraday average into the next opening fill.
       averageMicros:
-        trade.side === OrderSide.Buy ? (numerator * 2n + denominator) / (denominator * 2n) : state.averageMicros,
+        trade.side === openingSide ? (numerator * 2n + denominator) / (denominator * 2n) : state.averageMicros,
       openedAt: state.openedAt || trade.occurredAt,
     }
   }
   if (
     state.quantity <= 0n ||
     state.averageMicros <= 0n ||
-    state.quantity.toString() !== position.quantityAtoms ||
-    state.nativeCost.toString() !== position.costBasisMicros ||
+    (direction * state.quantity).toString() !== position.quantityAtoms ||
+    (direction * state.nativeCost).toString() !== position.costBasisMicros ||
     accountTradingDate(state.openedAt) !== accountTradingDate(observedAt)
   )
     return null

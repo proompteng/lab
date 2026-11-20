@@ -1,3 +1,15 @@
+import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
+import protectionClosePlans from '../../migrations/0204_protection_close_plans'
+import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
+import protectionReleaseProofs from '../../migrations/0202_protection_release_proofs'
+import notDispatchedVisualEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
+import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
+import equityShortObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
+import equityShortAccounting from '../../migrations/0198_equity_short_accounting'
+import inferenceExpenseWakeups from '../../migrations/0197_inference_expense_wakeups'
+import streamingOperationalController from '../../migrations/0196_streaming_operational_controller'
+import jevInferenceWork from '../../migrations/0195_jev_inference_work'
+import brokerNotificationReceipts from '../../migrations/0194_broker_notification_receipts'
 import uncappedPaperTurnover from '../../migrations/0192_uncapped_paper_turnover'
 import executionControllerAtomicRotation from '../../migrations/0191_execution_controller_atomic_rotation'
 import settleRetiredJevBatches from '../../migrations/0190_settle_retired_jev_batches'
@@ -194,6 +206,18 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '205_inference_source_seals': inferenceSourceSeals,
+  '204_protection_close_plans': protectionClosePlans,
+  '203_protection_read_allowance': protectionReadAllowance,
+  '202_protection_release_proofs': protectionReleaseProofs,
+  '201_not_dispatched_visual_evidence': notDispatchedVisualEvidence,
+  '197_inference_expense_wakeups': inferenceExpenseWakeups,
+  '198_equity_short_accounting': equityShortAccounting,
+  '199_equity_short_observe_cutover': equityShortObserveCutover,
+  '200_native_equity_shorts': nativeEquityShorts,
+  '196_streaming_operational_controller': streamingOperationalController,
+  '195_jev_inference_work': jevInferenceWork,
+  '194_broker_notification_receipts': brokerNotificationReceipts,
   '192_uncapped_paper_turnover': uncappedPaperTurnover,
   '191_execution_controller_atomic_rotation': executionControllerAtomicRotation,
   '190_settle_retired_jev_batches': settleRetiredJevBatches,

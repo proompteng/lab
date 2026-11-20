@@ -5,6 +5,7 @@ import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import v38ObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
 import v39ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
+import v40ObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -40,6 +41,15 @@ for (const {
     protocolHash: '769bf588ec2944657b235e12c8c43a431339eab51ee4159cd44909ceaa9fed34',
     rejectionMessage:
       'Jev 1.14 OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
+  },
+  {
+    schemaVersion: 'bayn.jev.protocol.v40',
+    migrationId: 199,
+    effectiveEntryObserveCutover: v40ObserveCutover,
+    parameterHash: '6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb',
+    protocolHash: '140d646d825c1f77d3c5e1f21c425680f64d99226d2c2aacca97f70b11675dcf',
+    rejectionMessage:
+      'native equity short OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
 ]) {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'

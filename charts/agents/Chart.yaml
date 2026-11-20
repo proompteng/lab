@@ -211,7 +211,7 @@ annotations:
     - kind: fixed
       description: "Keep runner permissions read-only by publishing AgentRun progress to artifact storage."
     - kind: changed
-      description: "Use GPT-6 Astra in the Codex provider examples."
+      description: "Default the Codex provider examples to GPT-6.2 Sol."
     - kind: changed
       description: "Rewrite chart README around a first-time-user quickstart and production-ready install guidance."
     - kind: fixed

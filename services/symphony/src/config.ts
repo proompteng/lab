@@ -16,7 +16,7 @@ import {
 } from './utils'
 
 const DEFAULT_LINEAR_ENDPOINT = 'https://api.linear.app/graphql'
-const DEFAULT_CODEX_MODEL = 'gpt-6-astra'
+export const DEFAULT_CODEX_MODEL = 'gpt-6.2-sol'
 const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress']
 const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate', 'Done']
 const DEFAULT_BLOCKED_LABELS = ['manual-only', 'secret-rotation', 'cluster-recovery', 'cross-repo', 'db-migration']

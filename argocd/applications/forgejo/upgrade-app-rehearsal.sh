@@ -5,15 +5,12 @@ umask 007
 proof=/proof
 trap 'status=$?; if ((status != 0)); then touch "$proof/migration-failed"; fi' EXIT
 
-for _ in $(seq 1 90); do
-  [[ ! -e "$proof/migration-failed" ]] || exit 1
-  if [[ -e "$proof/database-ready" ]]; then
-    break
-  fi
+printf 'Waiting for restored database identity and source migration proofs.\n'
+until [[ -e "$proof/database-ready" ]]; do
+  [[ ! -e "$proof/database-failed" ]] || exit 1
   sleep 1
 done
-[[ -e "$proof/database-ready" ]] || exit 1
-forgejo --version | grep -F '16.0.3'
+forgejo --version | grep -F '17.0.2'
 
 # Both clones come from the fresh snapshots taken after the quiesce gate.
 # Capture their current references before the migration changes anything.
@@ -46,11 +43,8 @@ forgejo --config /tmp/rehearsal.ini --work-path /data --custom-path /data/gitea 
 bash /scripts/upgrade-repository-refs.sh /data/git/gitea-repositories >"$proof/references-after"
 cmp "$proof/references-before" "$proof/references-after"
 touch "$proof/migration-complete"
-for _ in $(seq 1 90); do
-  if [[ -e "$proof/database-accepted" ]]; then
-    break
-  fi
+until [[ -e "$proof/database-accepted" ]]; do
+  [[ ! -e "$proof/database-failed" ]] || exit 1
   sleep 1
 done
-[[ -e "$proof/database-accepted" ]] || exit 1
-printf 'PASS: Forgejo 16.0.3 migrated on isolated clones; database checks and original Git references passed.\n'
+printf 'PASS: Forgejo 17.0.2 migrated on isolated clones; database checks and original Git references passed.\n'

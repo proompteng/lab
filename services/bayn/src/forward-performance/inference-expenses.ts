@@ -1,8 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result, Schema } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 
 import type { ForwardPerformanceConfig } from './config'
-import { InferenceCostError, type DecodedInferenceCostEvidence } from '../inference-costs'
+import { inferenceStageKey, InferenceCostError, type DecodedInferenceCostEvidence } from '../inference-costs'
 import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import {
   verifyInferenceExpenseCoverage,
@@ -14,6 +14,7 @@ import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import type { WriterFenceService } from '../execution/writer-fence'
+import { ReportVerification, reportVerificationConcurrency, type ReportExpenseCoverage } from './verification'
 
 export interface ForwardInferenceExpenseSession {
   readonly sessionDate: string
@@ -33,31 +34,88 @@ export interface ForwardInferenceExpenseSession {
   readonly invoiceReconciled: false
 }
 
+const expenseSummary = (
+  evidence: DecodedInferenceCostEvidence,
+  authorityGenerationHash: string | undefined,
+  coverage: ReportExpenseCoverage,
+) =>
+  ({
+    sessionDate: evidence.sessionDate,
+    authorityGenerationHash: authorityGenerationHash ?? null,
+    ...coverage,
+    invoiceReconciled: false,
+  }) satisfies Omit<
+    ForwardInferenceExpenseSession,
+    'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
+  >
+
 export const summarizeForwardInferenceExpenses = (
   evidence: DecodedInferenceCostEvidence,
   accountId: string,
   frozen: readonly { readonly quote: InferenceExpenseQuote; readonly verifiedAt: string | null }[],
   authorityGenerationHash?: string,
 ) =>
-  Result.gen(function* () {
-    const coverage = yield* verifyInferenceExpenseCoverage(evidence, accountId, frozen, authorityGenerationHash)
-    return {
-      sessionDate: evidence.sessionDate,
-      authorityGenerationHash: authorityGenerationHash ?? null,
-      knownEstimatedCostPicoUsd: coverage.knownEstimatedCostPicoUsd,
-      sourceAsOf: coverage.sourceAsOf,
-      claimedRequestCount: coverage.claimedRequestCount,
-      missingQuoteCount: coverage.missingQuoteCount,
-      unverifiedRequestCount: coverage.unverifiedRequestCount,
-      gapRequestCount: coverage.gapRequestCount,
-      matchedQuoteHashes: coverage.matchedQuoteHashes,
-      requestsWithCoverageIssues: coverage.requestsWithCoverageIssues,
-      completeMeteredCoverage: coverage.completeMeteredCoverage,
-      invoiceReconciled: false,
-    } satisfies Omit<
-      ForwardInferenceExpenseSession,
-      'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
-    >
+  verifyInferenceExpenseCoverage(evidence, accountId, frozen, authorityGenerationHash).pipe(
+    Result.map((coverage) => expenseSummary(evidence, authorityGenerationHash, coverage)),
+  )
+
+export const readForwardInferenceExpenseSummary = (
+  evidence: DecodedInferenceCostEvidence,
+  accountId: string,
+  frozen: Parameters<typeof summarizeForwardInferenceExpenses>[2],
+  authorityGenerationHash?: string,
+) =>
+  Effect.gen(function* () {
+    const service = yield* Effect.serviceOption(ReportVerification)
+    if (Option.isNone(service))
+      return yield* Effect.fromResult(
+        summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
+      )
+    const partitions = Array.from({ length: reportVerificationConcurrency }, () => ({
+      requests: [] as DecodedInferenceCostEvidence['requests'][number][],
+      frozen: [] as (typeof frozen)[number][],
+    }))
+    const requestPartitions = new Map<string, (typeof partitions)[number]>()
+    for (const request of evidence.requests) {
+      let partition = requestPartitions.get(request.requestId)
+      if (partition === undefined) {
+        partition = partitions[requestPartitions.size % partitions.length]!
+        requestPartitions.set(request.requestId, partition)
+      }
+      // Keep duplicate sources together so conflicting fingerprints still fail verification.
+      partition.requests.push(request)
+    }
+    for (const row of frozen)
+      // Orphan quotes must reach the verifier and fail; never silently filter the session cut.
+      (requestPartitions.get(row.quote.line.requestId) ?? partitions[0]!).frozen.push(row)
+    const coverage = yield* Effect.forEach(
+      partitions.filter(
+        (partition, index) => index === 0 || partition.requests.length > 0 || partition.frozen.length > 0,
+      ),
+      (partition) =>
+        service.value.coverage({
+          evidence: { ...evidence, requests: partition.requests },
+          accountId,
+          frozen: partition.frozen,
+          ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
+        }),
+      { concurrency: reportVerificationConcurrency },
+    )
+    return expenseSummary(evidence, authorityGenerationHash, {
+      sourceAsOf: evidence.asOf,
+      claimedRequestCount: coverage.reduce((sum, part) => sum + part.claimedRequestCount, 0),
+      missingQuoteCount: coverage.reduce((sum, part) => sum + part.missingQuoteCount, 0),
+      unverifiedRequestCount: coverage.reduce((sum, part) => sum + part.unverifiedRequestCount, 0),
+      gapRequestCount: coverage.reduce((sum, part) => sum + part.gapRequestCount, 0),
+      knownEstimatedCostPicoUsd: coverage
+        .reduce((sum, part) => sum + BigInt(part.knownEstimatedCostPicoUsd), 0n)
+        .toString(),
+      matchedQuoteHashes: coverage.flatMap((part) => part.matchedQuoteHashes).sort(),
+      requestsWithCoverageIssues: coverage
+        .flatMap((part) => part.requestsWithCoverageIssues)
+        .sort((a, b) => inferenceStageKey(a).localeCompare(inferenceStageKey(b))),
+      completeMeteredCoverage: coverage.every((part) => part.completeMeteredCoverage),
+    })
   })
 
 export const inferenceExpenseSessionQuery = (
@@ -118,9 +176,7 @@ export const readForwardInferenceExpenses = (
         const snapshot = yield* verify
         const { evidence, quotes: frozen } = snapshot
         const sessionDate = evidence.sessionDate
-        const summary = yield* Effect.fromResult(
-          summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
-        )
+        const summary = yield* readForwardInferenceExpenseSummary(evidence, accountId, frozen, authorityGenerationHash)
         const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
         return {
           ...summary,

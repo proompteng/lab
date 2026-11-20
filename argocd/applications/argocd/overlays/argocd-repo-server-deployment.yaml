@@ -18,10 +18,24 @@ spec:
             value: "1"
       containers:
         - name: argocd-repo-server
+          env:
+            - name: ARGOCD_EXEC_TIMEOUT
+              value: "180s"
+            - name: ARGOCD_EXEC_FATAL_TIMEOUT
+              value: "10s"
           resources:
             requests:
               cpu: "500m"
-              memory: "1Gi"
+              memory: "12Gi"
             limits:
               cpu: "2"
-              memory: "4Gi"
+              memory: "12Gi"
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: helm-working-dir
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
