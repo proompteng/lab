@@ -65,18 +65,3 @@ spec:
   method: plugin
   pluginConfiguration:
     name: barman-cloud.cloudnative-pg.io
----
-apiVersion: postgresql.cnpg.io/v1
-kind: Backup
-metadata:
-  name: ofz-db-pre-18-7
-  annotations:
-    argocd.argoproj.io/sync-wave: "-10"
-    argocd.argoproj.io/sync-options: Prune=false,Delete=false
-spec:
-  cluster:
-    name: ofz-db
-  target: prefer-standby
-  method: plugin
-  pluginConfiguration:
-    name: barman-cloud.cloudnative-pg.io
