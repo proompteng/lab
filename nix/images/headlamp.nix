@@ -44,6 +44,21 @@ let
     dontConfigure = true;
     dontBuild = true;
     dontFixup = true;
+    nativeBuildInputs = [ pkgs.jq ];
+    postPatch = ''
+      # The upstream lock omits registry URLs for some entries with integrity
+      # hashes. Restore the URLs so the Nix cache can fetch the locked tarballs.
+      jq '
+        .packages |= with_entries(
+          if .key != "" and .value.resolved == null and .value.integrity != null then
+            (.value.name // (.key | split("node_modules/") | last)) as $package
+            | ($package | split("/") | last) as $filename
+            | .value.resolved = "https://registry.npmjs.org/\($package)/-/\($filename)-\(.value.version).tgz"
+          else . end
+        )
+      ' frontend/package-lock.json > frontend/package-lock.resolved.json
+      mv frontend/package-lock.resolved.json frontend/package-lock.json
+    '';
     installPhase = ''
       runHook preInstall
       mkdir -p "$out"
@@ -80,7 +95,7 @@ let
     pname = "headlamp-frontend";
     inherit version;
     src = patchedSrc + "/frontend";
-    npmDepsHash = "sha256-A/z5eQf1CrLLinQkX5dBDeZkULWxAhGSD9bvOL8SBqk=";
+    npmDepsHash = "sha256-dYFEu5KA3dBVqyD3PKjqqnJ1NcUPDNoiIryzGeoEgLI=";
     makeCacheWritable = false;
     env = {
       NODE_OPTIONS = "--max-old-space-size=8096";
