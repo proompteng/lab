@@ -10,7 +10,7 @@ web_search = "live"
 enable_request_compression = true
 unified_exec = true
 shell_snapshot = true
-multi_agent = true
+multi_agent_v2 = true
 
 [shell_environment_policy]
 ignore_default_excludes = true

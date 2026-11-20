@@ -16,7 +16,6 @@ shell_snapshot = true
 apply_patch_streaming_events = true
 code_mode = true
 runtime_metrics = true
-multi_agent = true
 multi_agent_v2 = true
 enable_fanout = true
 apps = true

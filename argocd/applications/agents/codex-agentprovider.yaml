@@ -36,7 +36,7 @@ spec:
         enable_request_compression = true
         unified_exec = true
         shell_snapshot = true
-        multi_agent = true
+        multi_agent_v2 = true
         goals = true
 
         [shell_environment_policy]
