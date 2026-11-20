@@ -117,16 +117,17 @@ export const readSystemFeeSettlementAnchors = (
           AND fee.first_observed_at<=${asOf}::timestamptz
       ) fees
       LEFT JOIN LATERAL (
-        SELECT rec.reconciled_at,rec.content_hash FROM reconciliations rec
+        SELECT rec.reconciled_at,rec.content_hash,rec.account_event_id,rec.position_snapshot_id
+        FROM reconciliations rec
+        JOIN account_snapshots s ON s.event_id=rec.account_event_id AND s.account_id=rec.account_id
+        JOIN broker_events e ON e.event_id=s.event_id AND e.account_id=s.account_id
+        JOIN position_snapshots p ON p.snapshot_id=rec.position_snapshot_id AND p.account_id=rec.account_id
         WHERE rec.account_id=${accountId} AND rec.status='EXACT' AND rec.discrepancies='[]'::jsonb
           AND rec.reconciled_at>=greatest(calendar."recoveryCloseAt",fees.last_posted)
           AND rec.reconciled_at<=${asOf}::timestamptz AND fees.observed_count=fees.posted_count
-          AND EXISTS (
-            SELECT 1 FROM broker_events e JOIN account_snapshots s USING(event_id,account_id)
-            WHERE e.account_id=rec.account_id AND e.event_kind='ACCOUNT'
-              AND e.occurred_at BETWEEN greatest(calendar."recoveryCloseAt",fees.last_posted) AND rec.reconciled_at
-              AND e.observed_at<=rec.reconciled_at
-          )
+          AND e.event_kind='ACCOUNT'
+          AND e.occurred_at BETWEEN greatest(calendar."recoveryCloseAt",fees.last_posted) AND rec.reconciled_at
+          AND e.observed_at<=rec.reconciled_at AND p.observed_at<=rec.reconciled_at
         ORDER BY rec.reconciled_at,rec.reconciliation_id COLLATE "C" LIMIT 1
       ) reconciliation ON true
       CROSS JOIN LATERAL (VALUES
@@ -140,11 +141,14 @@ export const readSystemFeeSettlementAnchors = (
         WHERE event.account_id=${accountId} AND event.event_kind='ACCOUNT'
           AND event.occurred_at BETWEEN bound.earliest_at AND bound.cut_at
           AND event.observed_at<=least(bound.cut_at,${asOf}::timestamptz)
+          AND (bound.phase<>'RECONCILED' OR event.event_id=reconciliation.account_event_id)
         ORDER BY event.observed_at DESC,event.source_sequence DESC LIMIT 1
       ) cash ON true
       LEFT JOIN LATERAL (
         SELECT p.content_hash,p.observed_at,p.position_count FROM position_snapshots p
-        WHERE p.account_id=${accountId} AND p.observed_at<=cash.occurred_at
+        WHERE p.account_id=${accountId} AND cash.event_id IS NOT NULL
+          AND CASE WHEN bound.phase='RECONCILED' THEN p.snapshot_id=reconciliation.position_snapshot_id
+            ELSE p.observed_at<=cash.occurred_at END
         ORDER BY p.observed_at DESC,p.ingestion_sequence DESC LIMIT 1
       ) inventory ON true
       ORDER BY calendar."sessionDate",bound.cut_at NULLS LAST,bound.phase

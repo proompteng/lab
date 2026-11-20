@@ -606,6 +606,13 @@ describePostgres('PostgreSQL execution persistence', () => {
             (SELECT count(*)::integer FROM position_snapshots) AS snapshots,
             (SELECT count(*)::integer FROM reconciliations) AS reconciliations`
         expect(counts).toEqual({ accounts: 1, snapshots: 1, reconciliations: 1 })
+        const [binding] = yield* sql<{ accountBound: boolean; positionsBound: boolean }>`
+          SELECT EXISTS(SELECT 1 FROM account_snapshots a
+            WHERE a.event_id=r.account_event_id AND a.account_id=r.account_id) AS "accountBound",
+            EXISTS(SELECT 1 FROM position_snapshots p
+            WHERE p.snapshot_id=r.position_snapshot_id AND p.account_id=r.account_id) AS "positionsBound"
+          FROM reconciliations r WHERE r.account_id=${accountId}`
+        expect(binding).toEqual({ accountBound: true, positionsBound: true })
       }),
     )
   })
@@ -2668,7 +2675,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           fills: [],
           fees: [],
           cashReportingQuantumMicros: '1' as const,
-          positionSnapshotId: hash('fixture-position-snapshot'),
+          positionSnapshotId: positionsReceipt.snapshotId,
           accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
@@ -2765,7 +2772,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           fills: [],
           fees: [],
           cashReportingQuantumMicros: '1' as const,
-          positionSnapshotId: hash('fixture-position-snapshot'),
+          positionSnapshotId: positionsReceipt.snapshotId,
           accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',

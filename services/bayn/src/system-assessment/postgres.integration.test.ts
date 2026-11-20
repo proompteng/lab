@@ -1846,6 +1846,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               { accountId, occurred: 120, observed: 130, cash: '1005' },
               { accountId, occurred: 121, observed: 121, cash: '999' },
               { accountId, occurred: 150, observed: 151, cash: '990' },
+              { accountId, occurred: 151, observed: 151, cash: '987' },
             ].entries()) {
               const id = testHash({ cashEvent: i })
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
@@ -1854,19 +1855,23 @@ postgres('PostgreSQL prospective system qualification', () => {
               yield* sql`INSERT INTO account_snapshots(event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
           VALUES(${id},${row.accountId},'bayn.paper-account-snapshot.v2','ACTIVE','USD',${row.cash},999999999999,999999999999)`
             }
-            for (const second of [145, 152]) {
-              const id = testHash({ cashReconciliation: second })
-              yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,
-                observed_hash,content_hash,status,discrepancies,reconciled_at)
-              VALUES(${id},${legacyReconciliationSchemaVersion},${accountId},${id},${id},${id},'EXACT','[]'::jsonb,${at(second)})`
-            }
             for (const [second, count] of [
               [119, 1],
               [125, 0],
+              [151, 0],
+              [152, 1],
             ] as const) {
               const id = testHash({ inventoryObservation: second })
               yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash)
               VALUES(${id},'bayn.paper-position-snapshot.v1',${accountId},${id},${at(second)},${count},${id})`
+            }
+            for (const second of [145, 151, 152]) {
+              const id = testHash({ cashReconciliation: second })
+              yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,
+                observed_hash,content_hash,status,discrepancies,reconciled_at,account_event_id,position_snapshot_id)
+              VALUES(${id},${legacyReconciliationSchemaVersion},${accountId},${id},${id},${id},'EXACT','[]'::jsonb,
+                ${at(second)},${second === 152 ? testHash({ cashEvent: 8 }) : null},
+                ${second === 152 ? testHash({ inventoryObservation: 151 }) : null})`
             }
             return yield* readSystemCashObservations(accountId, scope)
           }),
@@ -1885,7 +1890,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(later).toHaveLength(5)
     expect(later[3]?.cashMicros).toBe('1000000000')
     const settlement = [{ sessionDate: '2026-11-02', openAt: at(0), closeAt: at(120), recoveryCloseAt: at(140) }]
-    const before = await runtime.runPromise(readSystemFeeSettlementAnchors(accountId, settlement, at(149)))
+    const before = await runtime.runPromise(readSystemFeeSettlementAnchors(accountId, settlement, at(151)))
     expect(before.find((row) => row.phase === 'RECONCILED')).toMatchObject({
       cutAt: null,
       observation: null,
@@ -1900,6 +1905,10 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(complete.find((row) => row.phase === 'RECONCILED')).toMatchObject({
       cutAt: at(152),
       reconciliationHash: testHash({ cashReconciliation: 152 }),
+      observation: {
+        sourceHash: testHash({ cashEvent: 8 }),
+        positions: { sourceHash: testHash({ inventoryObservation: 151 }), at: at(151), count: 0 },
+      },
       fees: [],
     })
     expect(complete.find((row) => row.phase === 'RECOVERY')?.observation?.positions).toMatchObject({

@@ -210,7 +210,7 @@ const ProjectedPositionRow = Schema.Struct({
 const PreviousReconciliationRows = Schema.Array(
   Schema.Struct({ discrepancies: Schema.Array(DiscrepancySchema) }),
 ).check(Schema.isMaxLength(1))
-const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256 })])
+const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256, same_source: Schema.Boolean })])
 const FinalExecutionRiskContextRow = Schema.Tuple([
   Schema.Struct({
     daily_traded_notional_micros: UnsignedMicrosSchema,
@@ -893,13 +893,14 @@ export const makeReconciliation = (
     )
 
   const writeReconciliationPhase = (
-    accountId: string,
+    snapshot: BrokerSnapshot,
     comparison: ReconciliationComparison,
-    reconciledAt: string,
   ): Effect.Effect<Reconciliation, ReconciliationStoreError> =>
     runStore(
       'reconcile',
       Effect.gen(function* () {
+        const { account, accountEventId, positionSnapshotId, reconciledAt } = snapshot
+        const { accountId } = account
         const [previous] = yield* sql<Record<string, unknown>>`
           SELECT discrepancies
           FROM reconciliations
@@ -922,19 +923,25 @@ export const makeReconciliation = (
         yield* sql`
           INSERT INTO reconciliations (
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-            content_hash, status, discrepancies, reconciled_at
+            content_hash, status, discrepancies, reconciled_at, account_event_id, position_snapshot_id
           ) VALUES (
             ${reconciliation.reconciliationId}, ${reconciliation.schemaVersion}, ${reconciliation.accountId},
             ${reconciliation.expectedHash}, ${reconciliation.observedHash}, ${reconciliation.contentHash},
             ${reconciliation.status}, ${sql.json(encodedDiscrepancies)},
-            ${reconciliation.reconciledAt}
+            ${reconciliation.reconciledAt}, ${accountEventId}, ${positionSnapshotId}
           )
           ON CONFLICT (reconciliation_id) DO NOTHING
           `
         const [stored] = yield* sql<Record<string, unknown>>`
-          SELECT content_hash FROM reconciliations WHERE reconciliation_id = ${reconciliation.reconciliationId}
+          SELECT content_hash, (
+            account_event_id IS NOT DISTINCT FROM ${accountEventId}::text
+            AND position_snapshot_id IS NOT DISTINCT FROM ${positionSnapshotId}::text
+          ) AS same_source
+          FROM reconciliations WHERE reconciliation_id = ${reconciliation.reconciliationId}
         `.pipe(Effect.flatMap(decodeContent))
         yield* fromDecision('reconcile', validateReconciliationReadback(reconciliation, stored.content_hash))
+        if (!stored.same_source)
+          return yield* storeError('reconcile', 'invariant', 'Stored reconciliation has different source snapshots')
 
         if (reconciliation.discrepancies.length > 0) {
           yield* restrictAuthority(sql, `reconciliation discrepancy ${reconciliation.reconciliationId}`, reconciledAt)
@@ -965,7 +972,7 @@ export const makeReconciliation = (
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting).pipe(
           withObservedStage('bayn.reconciliation.compare'),
         )
-        const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt).pipe(
+        const reconciliation = yield* writeReconciliationPhase(snapshot, comparison).pipe(
           withObservedStage('bayn.reconciliation.record', { dependency: 'postgresql' }),
         )
         const riskContext = yield* readReconciliationRiskContext(

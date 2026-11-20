@@ -155,8 +155,10 @@ recovery. The account read verifies the credential identity. The activity read s
 provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The source cut
 retains the requested creation-time interval, page evidence and actual observation time. This statement covers the
 provider's reported activity during that interval. Capture also retains actual before-open, broker recovery, and later
-exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. Position witnesses
-must precede or coincide with the cash event's economic timestamp.
+exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. The reconciliation
+transaction retains the exact account event and position snapshot it compared. Settlement capture uses that pair.
+Historical reconciliations without the durable pair provide no settlement witness. For independent opening and recovery
+observations, inventory must precede or coincide with the cash event's economic timestamp.
 
 Native assessment uses a fee-adjusted cash path for the supported case of flat equity endpoints, zero TAF in the
 fourth-quarter 2026 schedule, exact fills, and later posted fees with no other cash movements in the statement.

@@ -102,12 +102,15 @@ export const confirmEquityFeeCash = (
       sessionDate < '2026-10-01' ||
       sessionDate >= '2027-01-01' ||
       Result.getOrElse(equityTafRate(model, sessionDate), () => -1n) !== 0n ||
-      [opening, recovery.observation, settled].some(
+      [opening, recovery.observation].some(
         (row) =>
           row.positions?.count !== 0 ||
           timestamp(row.positions.at) > timestamp(row.at) ||
           Date.parse(row.at) - Date.parse(row.positions.at) > maximumBrokerObservationAgeMs,
       ) ||
+      settled.positions?.count !== 0 ||
+      timestamp(settled.positions.at) > timestamp(reconciled.cutAt) ||
+      Math.abs(Date.parse(settled.at) - Date.parse(settled.positions.at)) > maximumBrokerObservationAgeMs ||
       Date.parse(openAt) - Date.parse(opening.at) > maximumBrokerObservationAgeMs ||
       forward.accountFeeAccruals.some(
         (a) =>
