@@ -5,6 +5,7 @@ resources:
 - server-upgrade-backup.yaml
 - kargo-upgrade-backup.yaml
 - server-17-backup.yaml
+- server-17-rehearsal.yaml
 - postgres-upgrade-backup.yaml
 - admin-sealedsecret.yaml
 - postgres-cluster.yaml
@@ -16,7 +17,17 @@ helmCharts:
   releaseName: forgejo
   namespace: forgejo
   valuesFile: values.yaml
+configMapGenerator:
+- name: forgejo-server-17-0-2-rehearsal
+  files:
+  - upgrade-db-rehearsal.sh
+  - upgrade-app-rehearsal.sh
+  - upgrade-repository-refs.sh
+  options:
+    disableNameSuffixHash: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-25"
 images:
 - name: code.forgejo.org/forgejo/forgejo
   newName: registry.ide-newton.ts.net/lab/forgejo
-  digest: sha256:e5c7c485e638f4fae7ac09941f7dd948a3d4ffede1767fb3bed6746586cf0230
+  digest: sha256:768d1045d21243c910107d7342139353b7c45454f9794e38691263a9e408ac1d

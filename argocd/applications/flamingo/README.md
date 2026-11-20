@@ -10,8 +10,8 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 - Node: `turin`
 - GPU: one physical `NVIDIA RTX PRO 6000 Blackwell Max-Q`; the device plugin may expose time-sliced `nvidia.com/gpu` replicas.
 - RuntimeClass: `nvidia`
-- Server: `vllm/vllm-openai:v0.29.0-cu129`
-- Image digest: `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2`
+- Server: `vllm/vllm-openai:v0.34.0` with CUDA 13.0
+- Image digest: `sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1`
 - Model: `nvidia/Qwen3.8-27B-NVFP4`
 - Served model name: `qwen38-flamingo`
 - Internal URL: `http://flamingo.flamingo.svc.cluster.local/v1`

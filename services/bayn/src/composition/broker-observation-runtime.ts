@@ -455,6 +455,7 @@ export const acquireBrokerObservationRuntime = (
                   Effect.annotateLogs({
                     'broker.snapshot_hash': snapshotHash,
                     'broker.observed_at': result.success.observedAt,
+                    'broker.pending_cash_fee_count': result.success.pendingCashFeeCount,
                     'broker.source_revision': plan.config.build.sourceRevision,
                     'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
                   }),
