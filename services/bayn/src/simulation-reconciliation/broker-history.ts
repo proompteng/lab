@@ -316,7 +316,11 @@ export const readFeePages = (
   })
 
 type ReadPaperActivities = Effect.Effect<
-  { readonly cut: AccountActivityCut; readonly fees: readonly Observed<FeeActivity>[] },
+  {
+    readonly cut: AccountActivityCut
+    readonly fees: readonly Observed<FeeActivity>[]
+    readonly pendingCashFeeCount: number
+  },
   BrokerReadError | ReconciliationError
 >
 
@@ -329,9 +333,9 @@ const readHistory = (read: BrokerReadShape, until: string, paperActivities: Read
           ? Effect.all(
               { fills: readFillPages(read, until, initialFillPaginationState()), fees: readFeePages(read) },
               { concurrency: 2 },
-            )
+            ).pipe(Effect.map((activities) => ({ ...activities, pendingCashFeeCount: 0 })))
           : paperActivities.pipe(
-              Effect.map(({ cut, fees }) => ({
+              Effect.map(({ cut, fees, pendingCashFeeCount }) => ({
                 fills: {
                   rows: cut.fills,
                   recentFills: {
@@ -340,15 +344,17 @@ const readHistory = (read: BrokerReadShape, until: string, paperActivities: Read
                   },
                 },
                 fees,
+                pendingCashFeeCount,
               })),
             ),
     },
     { concurrency: 2 },
   ).pipe(
-    Effect.map(({ orders, activities: { fills, fees } }) => ({
+    Effect.map(({ orders, activities: { fills, fees, pendingCashFeeCount } }) => ({
       history: { orders: orders.history, fills: fills.rows, fees },
       recentOrders: orders.recentOrders,
       recentFills: fills.recentFills,
+      pendingCashFeeCount,
     })),
   )
 
@@ -443,6 +449,7 @@ export const readBrokerSnapshotOnce = (
     readonly snapshot: StableBrokerSnapshot
     readonly recentOrders: ReadResult<readonly BrokerOrder[]>
     readonly recentFills: ReadResult<FillActivityPage>
+    readonly pendingCashFeeCount: number
   },
   BrokerReadError | ReconciliationError
 > =>
@@ -459,6 +466,7 @@ export const readBrokerSnapshotOnce = (
       snapshot: { account, positions, history },
       recentOrders: after.recentOrders,
       recentFills: after.recentFills,
+      pendingCashFeeCount: after.pendingCashFeeCount,
     }
   })
 
