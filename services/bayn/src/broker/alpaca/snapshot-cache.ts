@@ -2,7 +2,7 @@ import { Config, DateTime, Effect, Exit, Schema, Semaphore } from 'effect'
 
 import { readBrokerSnapshotOnce, readFeePages } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
-import { feeHistoryMatches } from './activity-fees'
+import { pendingCashFees } from './activity-fees'
 import { BrokerPollFailureReason, BrokerReadError, configurationError } from './failures'
 import {
   OrderCollection,
@@ -17,6 +17,7 @@ import {
   maximumBrokerObservationAgeMs,
   observationTimes,
   observationUnavailable,
+  requireSettledCashFees,
   type ObservedBrokerSnapshot,
   type BrokerObservationTicket,
 } from './observed-snapshot'
@@ -66,22 +67,33 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
           )
             previous = undefined
           const accountActivity = fresh.accountActivity
+          let sampledFees:
+            | {
+                readonly counts: ReadonlyMap<string, number>
+                readonly fees: readonly Observed<FeeActivity>[]
+                readonly pendingCashFeeCount: number
+              }
+            | undefined
           const paperActivities =
             accountActivity === undefined
               ? undefined
               : Effect.gen(function* () {
                   const cut = yield* accountActivity
-                  if (verifiedFees?.counts === cut.feeCounts) return { cut, fees: verifiedFees.rows }
-                  const rows = yield* readFeePages(fresh)
+                  if (verifiedFees?.counts === cut.feeCounts)
+                    return { cut, fees: verifiedFees.rows, pendingCashFeeCount: 0 }
+                  if (sampledFees?.counts === cut.feeCounts) return { cut, ...sampledFees }
+                  const fees = yield* readFeePages(fresh)
                   const confirmed = yield* accountActivity
-                  if (confirmed.feeCounts !== cut.feeCounts || !feeHistoryMatches(cut.feeCounts, rows))
+                  const pendingCashFeeCount = pendingCashFees(cut.feeCounts, fees, startedAt)
+                  if (confirmed.feeCounts !== cut.feeCounts || pendingCashFeeCount === undefined)
                     return yield* observationUnavailable(
                       'Alpaca Activity SSE and fee authority have not converged',
                       undefined,
                       BrokerPollFailureReason.SnapshotRejected,
                     )
-                  verifiedFees = { counts: cut.feeCounts, rows }
-                  return { cut: confirmed, fees: rows }
+                  if (pendingCashFeeCount === 0) verifiedFees = { counts: cut.feeCounts, rows: fees }
+                  sampledFees = { counts: cut.feeCounts, fees, pendingCashFeeCount }
+                  return { cut: confirmed, ...sampledFees }
                 })
           if (previous !== undefined) {
             if (accountActivity === undefined) {
@@ -128,14 +140,15 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
           Effect.onExit((exit) =>
             Effect.sync(() => {
               // A completed full after-read brackets the next account read. Never retain a partial or failed cut.
-              previous = Exit.isSuccess(exit)
-                ? {
-                    history: exit.value.snapshot.history,
-                    completedAt: exit.value.completedAt,
-                    generation: ticket.generation,
-                    latestFillId: exit.value.recentFills.value.items[0]?.activityId ?? null,
-                  }
-                : undefined
+              previous =
+                Exit.isSuccess(exit) && exit.value.pendingCashFeeCount === 0
+                  ? {
+                      history: exit.value.snapshot.history,
+                      completedAt: exit.value.completedAt,
+                      generation: ticket.generation,
+                      latestFillId: exit.value.recentFills.value.items[0]?.activityId ?? null,
+                    }
+                  : undefined
             }),
           ),
         ),
@@ -174,7 +187,7 @@ export const makeProjectedBrokerRead = (
     return {
       ...fresh,
       projection: {
-        healthSnapshot: cached,
+        healthSnapshot: cached.pipe(Effect.tap(requireSettledCashFees)),
         fresh,
         invalidate,
         snapshot: observations.read.pipe(Effect.map((value) => value.snapshot)),
