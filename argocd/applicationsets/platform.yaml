@@ -1085,23 +1085,11 @@ spec:
             - .spec.template.spec.containers[].readinessProbe.successThreshold
         - kind: Deployment
           group: apps
-          namespace: istio-system
-          name: istiod
-          jqPathExpressions:
-            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
-        - kind: Deployment
-          group: apps
           namespace: clickhouse-operator
           name: clickhouse-operator-altinity-clickhouse-operator
           jqPathExpressions:
             - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
             - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
-        - kind: DaemonSet
-          group: apps
-          namespace: istio-system
-          name: istio-cni-node
-          jqPathExpressions:
-            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
         - kind: ValidatingWebhookConfiguration
           group: admissionregistration.k8s.io
           name: istio-validator-istio-system

@@ -89,9 +89,10 @@ export type SimulatedVerifiedMarketSnapshot = SimulatedMarketSnapshot & {
 export type StrategyMarketSnapshot = StreamingMarketSnapshot | SimulatedMarketSnapshot
 export type VerifiedStrategyMarketSnapshot = StreamingVerifiedMarketSnapshot | SimulatedVerifiedMarketSnapshot
 
-const ownedSnapshots = new WeakSet<VerifiedStrategyMarketSnapshot>()
+const ownedSnapshots = new WeakSet<StrategyMarketSnapshot>()
 
-export const isOwnedMarketSnapshot = (snapshot: VerifiedStrategyMarketSnapshot) => ownedSnapshots.has(snapshot)
+export const isOwnedMarketSnapshot = (snapshot: StrategyMarketSnapshot): snapshot is VerifiedStrategyMarketSnapshot =>
+  ownedSnapshots.has(snapshot)
 
 const decodeManifest = Schema.decodeUnknownResult(StrategySnapshotManifestSchema, strictParseOptions)
 
