@@ -7,22 +7,42 @@
 let
   version = "0.46.0";
   headlampSha = "825604fdadbe7ed94b8e61f615d7917c743e9083";
-  headlampNixpkgsRevision = "44778ad15e951a5e98ae126373e75681518b213c";
-
-  headlampNixpkgs = builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/${headlampNixpkgsRevision}.tar.gz";
-    sha256 = "sha256-3CwEAd93SA3KTnQGLB/SnXmDUZ58+xY+QY4Ira3l0Cw=";
+  goVersion = "1.26.8";
+  goPlatform = {
+    x86_64-linux = {
+      arch = "amd64";
+      hash = "sha256-0PdDsz6NiUXmsfQy7dFXhccFBxIdbipyOyEoXt34tXs=";
+    };
+    aarch64-linux = {
+      arch = "arm64";
+      hash = "sha256-IR/87Z3LljOlXqxjZIFuwN3ZUTiadA6I+oszN5cb3aA=";
+    };
+  }.${pkgs.stdenv.hostPlatform.system};
+  headlampGo = pkgs.stdenvNoCC.mkDerivation {
+    pname = "go";
+    version = goVersion;
+    src = pkgs.fetchurl {
+      url = "https://go.dev/dl/go${goVersion}.linux-${goPlatform.arch}.tar.gz";
+      inherit (goPlatform) hash;
+    };
+    sourceRoot = "go";
+    dontConfigure = true;
+    dontBuild = true;
+    dontFixup = true;
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out"
+      cp -R . "$out/"
+      runHook postInstall
+    '';
+    doInstallCheck = true;
+    installCheckPhase = ''
+      runHook preInstallCheck
+      test "$("$out/bin/go" env GOVERSION)" = "go${goVersion}"
+      runHook postInstallCheck
+    '';
   };
-  headlampPkgs = import headlampNixpkgs {
-    system = pkgs.stdenv.hostPlatform.system;
-    config.allowUnfree = false;
-  };
-  headlampGo =
-    if headlampPkgs.go.version == "1.26.8" then
-      headlampPkgs.go
-    else
-      throw "expected Headlamp Go 1.26.8, got ${headlampPkgs.go.version}";
-  headlampBuildGoModule = headlampPkgs.buildGoModule.override { go = headlampGo; };
+  headlampBuildGoModule = pkgs.buildGoModule.override { go = headlampGo; };
 
   upstreamSrc = pkgs.fetchFromGitHub {
     owner = "kubernetes-sigs";
