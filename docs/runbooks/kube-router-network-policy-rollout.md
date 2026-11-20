@@ -69,8 +69,9 @@ kubectl -n kube-system rollout status daemonset/kube-router --timeout=10m
 
 The sync hook must print `All existing NetworkPolicy namespaces have an approved rollout policy state.` It requires
 traffic-neutral rollout policies in namespaces not yet graduated, Bayn's retained `Prune=false` object to use the inert
-retired selector and match no Pods, and enforced Hermes and Tengri namespaces to match their exact reviewed
-three-policy contracts. If the hook fails, the DaemonSet wave is not applied. Update the declared policy state through
+retired selector and match no Pods, and the enforced namespaces to match their exact reviewed policy sets,
+including Kargo smoke access. The rook-ceph and stash fingerprints come from the rendered Argo Applications,
+including the pinned Rook chart dependencies and the external home repository. If the hook fails, the DaemonSet wave is not applied. Update the declared policy state through
 Git and rerun CI; do not bypass the hook.
 
 Verify every desired node has one ready controller, the pinned image index or its architecture-specific child manifest

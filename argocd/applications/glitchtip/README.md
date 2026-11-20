@@ -2,7 +2,7 @@
 
 GlitchTip runs as a dedicated Argo CD application at
 `https://glitchtip.ide-newton.ts.net` (Tailscale-only HTTPS ingress; no public ingress).
-The official Helm chart is pinned to 9.0.1 and the app to 6.2.6.
+The official Helm chart is pinned to 9.2.0 and the app to 7.0.0.
 
 - Persistent data: the chart-managed CloudNativePG `glitchtip-pg` cluster, on
   `rook-ceph-block`, two 20Gi PVCs. Do not prune the CNPG cluster during an
@@ -15,18 +15,19 @@ The official Helm chart is pinned to 9.0.1 and the app to 6.2.6.
   `EMAIL_URL` uses SMTP STARTTLS on `smtp-relay.brevo.com:587` and URL-encodes
   credentials without putting them in Git or logs. Rotate credentials in the
   existing provider, not the application repository.
-- Valkey is intentionally disabled. GlitchTip 6.2 uses its documented
+- Valkey is intentionally disabled. GlitchTip uses its documented
   PostgreSQL fallback for async tasks and sessions. Reconsider only if volume
   warrants it. The existing Grafana LGTM stack remains authoritative for
   metrics, logs, and distributed traces.
 - The upstream migration Job has Helm hook annotations replaced with an Argo CD
-  sync hook; CNPG, secret material, migrations, web, and ingress run in order.
-  The upstream chart **does not copy `extraEnvVars` to the migration Job**.
+  sync hook. CNPG takes the protected `glitchtip-server-7-0-0` snapshot
+  before the migration runs. The web replicas start after migrations complete.
+  The migration Job uses its explicit `migrationJob.extraEnvVars` list.
   Keep `migrationJob.extraEnvVars.VALKEY_URL` empty as well as the web value,
   or Django omits the `db` task-queue and `sessions` migration apps.
 - Liveness checks both the local `/_health/` endpoint and the shared PostgreSQL
-  scheduler heartbeat. In GlitchTip 6.2.6 / django-vtasks 3.1.0, an embedded
-  scheduler task can exit while HTTP and ingestion workers remain healthy.
+  scheduler heartbeat. GlitchTip 7 starts HTTP, task processing, and scheduling in each
+  replica. The scheduler retries transient broker failures.
   Without recovery, maintenance stops and event ingestion eventually fails when
   the seven-day partition horizon expires. The read-only probe accepts a
   scheduler on either replica, allows 60 seconds beyond its lock expiry and
@@ -64,5 +65,6 @@ Run the probe regression checks with
    configure its DSN in the applications that should report exceptions.
 
 Upstream chart: <https://gitlab.com/glitchtip/glitchtip-helm-chart>.
-Rollback: revert the chart/application revision and reconcile `glitchtip`;
-**retain the CloudNativePG PVCs, database and stable Secret**.
+If the 7.0 database migration has run, recover from the protected pre-upgrade
+snapshot before starting the previous server version. Retain the existing
+PVCs, database and stable Secret.
