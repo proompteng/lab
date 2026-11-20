@@ -28,6 +28,7 @@ test('readiness validates the owner without transferring a retained cut and pres
     ),
     Layer.provide(
       Layer.succeed(KafkaMarketProjection, {
+        startWakeups: () => Effect.void,
         check: Effect.suspend(() => {
           checks++
           return fail ? Effect.fail(unavailable) : Effect.void
@@ -68,6 +69,7 @@ test('reuses an exact captured cut without reconstructing it again and still rej
             Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
             Layer.provide(
               Layer.succeed(KafkaMarketProjection, {
+                startWakeups: () => Effect.void,
                 check: Effect.void,
                 read: () => Effect.succeed(fixture.cut),
                 status: Effect.succeed({
@@ -109,6 +111,16 @@ test('reuses an exact captured cut without reconstructing it again and still rej
             const rejected = yield* market.verifyReference(changed).pipe(Effect.result)
             expect(Result.isFailure(rejected)).toBe(true)
             expect(reproduce).toHaveBeenCalledTimes(1)
+
+            const latest = Object.entries(restored.latestQuotes)[0]
+            if (latest === undefined) throw new Error('Missing fixture latest quote')
+            const [symbol, quote] = latest
+            const changedPricing = {
+              ...restored,
+              latestQuotes: { ...restored.latestQuotes, [symbol]: { ...quote, bidPrice: quote.bidPrice + 1 } },
+            }
+            const rejectedPricing = yield* market.verifyReference(changedPricing).pipe(Effect.result)
+            expect(Result.isFailure(rejectedPricing)).toBe(true)
           }).pipe(Effect.provide(live))
         }),
       ).pipe(Effect.provide(Reactivity.layer)),

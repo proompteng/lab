@@ -11,6 +11,7 @@ import {
   OrderType as BrokerOrderType,
   type Account,
   type AssetObservation,
+  type AccountConfigurationObservation,
   type BrokerReadShape,
   type Order,
   type Position,
@@ -241,6 +242,7 @@ export interface MutationAuthorityDependencies {
 
 export interface ExecutionBrokerSubmitSnapshot extends ExecutionCapitalSnapshot {
   readonly asset: AssetObservation
+  readonly shortConfiguration?: AccountConfigurationObservation
   readonly accountObservedAt: string
   readonly positionsObservedAt: string
   readonly ordersObservedAt: string
@@ -859,7 +861,22 @@ export const validateExecutionCapitalLimits = (
       proposedMicros: proposedOrderNotional.toString(),
     })
   }
-  if (intent.side === IntentOrderSide.Sell && quantityEnvelope.success.afterIntentMinimumMicros < 0n) {
+  const openingShort =
+    intent.protection?._tag === 'EquityShortBracket' &&
+    !context.closeOnly &&
+    intent.side === IntentOrderSide.Sell &&
+    currentQuantityAtoms === 0n &&
+    snapshot.positions.every((position) => BigInt(position.quantityAtoms) === 0n) &&
+    snapshot.openOrders.length === 0 &&
+    instrumentMarket(intent.symbol) === MarketKind.Equity
+  const collateral = (proposedOrderNotional * 3n + 1n) / 2n
+  if (openingShort && collateral > BigInt(snapshot.account.buyingPowerMicros))
+    return Result.fail({
+      _tag: 'BuyingPowerExceeded',
+      availableMicros: snapshot.account.buyingPowerMicros,
+      proposedMicros: collateral.toString(),
+    })
+  if (intent.side === IntentOrderSide.Sell && quantityEnvelope.success.afterIntentMinimumMicros < 0n && !openingShort) {
     return Result.fail({
       _tag: 'IncreasingSellUnsupported',
       symbol: intent.symbol,
@@ -939,7 +956,7 @@ const mutationAuthorizationError = (message: string, cause: unknown) =>
 
 export const confirmExecutionBrokerState = (
   cached: CachedBrokerState,
-  intent: Pick<Intent, 'intentId' | 'symbol'>,
+  intent: Pick<Intent, 'intentId' | 'symbol' | 'protection'>,
   brokerRead: BrokerReadShape,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
@@ -966,15 +983,41 @@ export const confirmExecutionBrokerState = (
       return yield* mutationAuthorizationError('broker cash changed since reconciliation', {
         _tag: 'BrokerAccountSnapshotChanged',
       })
-    const asset = yield* brokerRead
-      .assetBySymbol(intent.symbol)
-      .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker instrument confirmation failed', cause)))
+    const openingShort = intent.protection?._tag === 'EquityShortBracket'
+    const fresh = brokerRead.projection.fresh
+    const { asset, confirmedAccount, shortConfiguration } = yield* Effect.all(
+      {
+        asset: (openingShort ? fresh : brokerRead)
+          .assetBySymbol(intent.symbol)
+          .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker instrument confirmation failed', cause))),
+        // The canonical account cut can outlive the shorter borrow eligibility window.
+        confirmedAccount: openingShort
+          ? fresh.account.pipe(
+              Effect.mapError((cause) => mutationAuthorizationError('short account confirmation failed', cause)),
+            )
+          : Effect.succeed(account),
+        shortConfiguration: openingShort
+          ? fresh.accountConfiguration.pipe(
+              Effect.mapError((cause) => mutationAuthorizationError('short configuration confirmation failed', cause)),
+            )
+          : Effect.void,
+      },
+      { concurrency: 3 },
+    )
+    if (
+      confirmedAccount.value.id !== account.value.id ||
+      confirmedAccount.value.cashMicros !== account.value.cashMicros
+    )
+      return yield* mutationAuthorizationError('broker account changed since reconciliation', {
+        _tag: 'BrokerAccountSnapshotChanged',
+      })
     return {
       asset: asset.value,
-      account: account.value,
+      ...(shortConfiguration === undefined ? {} : { shortConfiguration: shortConfiguration.value }),
+      account: confirmedAccount.value,
       positions: positions.value,
       openOrders: orders.value,
-      accountObservedAt: account.evidence.observedAt,
+      accountObservedAt: confirmedAccount.evidence.observedAt,
       positionsObservedAt: cached.state.positionsObservedAt,
       ordersObservedAt: cached.state.ordersObservedAt,
       positionsConfirmedAt: positions.evidence.observedAt,
@@ -1071,6 +1114,30 @@ export const validateExecutionBrokerSubmitSnapshot = (
       }),
     )
   const asset = snapshot.asset
+  if (
+    intent.protection?._tag === 'EquityShortBracket' &&
+    (context.closeOnly ||
+      snapshot.account.shortingEnabled !== true ||
+      snapshot.shortConfiguration?.noShorting !== false ||
+      asset.equityShort?.marginable !== true ||
+      asset.equityShort?.shortable !== true ||
+      asset.equityShort?.easyToBorrow !== true ||
+      [
+        snapshot.account.observedAt,
+        snapshot.accountObservedAt,
+        asset.observedAt,
+        snapshot.shortConfiguration?.observedAt ?? '',
+      ].some((at) => {
+        const age = Date.parse(observedAt) - Date.parse(at)
+        return !Number.isFinite(age) || age < 0 || age >= Math.min(15_000, context.maxBrokerStateAgeMs)
+      }))
+  )
+    return Result.fail(
+      new InstrumentError({
+        symbol: intent.symbol,
+        message: 'Fresh account configuration and easy-to-borrow eligibility are required for a native equity short',
+      }),
+    )
   if (
     asset.symbol !== intent.symbol ||
     asset.requestedSymbol !== intent.symbol ||

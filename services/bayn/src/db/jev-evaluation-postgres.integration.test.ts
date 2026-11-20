@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
 import {
@@ -104,7 +105,9 @@ const recorded = Result.getOrThrow(
 )
 
 const admit = TestClock.setTime(Date.parse(request.observedAt)).pipe(
-  Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
+  Effect.andThen(
+    Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
+  ),
   Effect.provide(TestClock.layer()),
 )
 
@@ -147,6 +150,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const store = yield* JevEvaluationStore
         let calls = 0
         const admission = yield* admit
+        if (admission.dispatches === null) throw new Error('Expected in-process fixture dispatch rights')
         const dispatch = admission.dispatches[0]
         if (dispatch === undefined || dispatch.visualClaim === null)
           throw new Error('Missing durable fixture admission')

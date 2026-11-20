@@ -51,11 +51,11 @@ describe('Codex provider selection', () => {
     )
   })
 
-  it('keeps an explicitly selected Astra request on OpenAI', async () => {
+  it('routes an explicitly selected GPT-6.2 Sol request to OpenAI', async () => {
     for (const [name, value] of Object.entries(flamingoEnv)) vi.stubEnv(name, value)
-    await Effect.runPromise(getCodexClient({ defaultModel: 'gpt-6-astra' }))
+    await Effect.runPromise(getCodexClient({ defaultModel: 'gpt-6.2-sol' }))
     const options = construct.mock.calls[0]?.[0]
-    expect(options).toMatchObject({ defaultModel: 'gpt-6-astra', threadConfig: { web_search: 'live' } })
+    expect(options).toMatchObject({ defaultModel: 'gpt-6.2-sol', threadConfig: { web_search: 'live' } })
     expect(options.cliConfigOverrides).not.toContain('model_provider="flamingo"')
     expect(options.cliConfigOverrides).not.toContain('features.apps=false')
     expect(options.defaultEffort).toBeUndefined()

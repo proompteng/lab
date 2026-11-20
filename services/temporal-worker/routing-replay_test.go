@@ -27,7 +27,7 @@ import (
 )
 
 func routingReplayWorkflow(ctx workflow.Context, args *deploymentspb.WorkerDeploymentWorkflowArgs) error {
-	return Workflow(ctx, func() DeploymentWorkflowVersion { return VersionDataRevisionNumber }, func() int { return 100 }, args)
+	return Workflow(ctx, func() DeploymentWorkflowVersion { return VersionDataRevisionNumber }, func() int { return 100 }, func() bool { return false }, args)
 }
 
 func TestRoutingReconciliationReplays(t *testing.T) {

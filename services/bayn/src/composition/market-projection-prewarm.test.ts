@@ -17,6 +17,7 @@ const fixture = () => {
     message: 'Kafka projection is rebuilding required history',
   })
   const market = {
+    startWakeups: () => Effect.void,
     check: Effect.suspend(() => {
       calls.read += 1
       return Effect.fail(unavailable)
