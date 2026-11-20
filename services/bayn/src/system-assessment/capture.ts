@@ -262,31 +262,16 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               }),
             )
             const financial = yield* Effect.fromResult(
-              captureForwardFinancialEvidence(
-                registration,
-                definition.policy,
-                forward,
-                {
-                  decisions: [
-                    ...decisions.map(({ sessionDate, document }) => ({
-                      sessionDate,
-                      decisionHash: document.contentHash,
-                    })),
-                    ...protectionDecisions,
-                  ],
-                  fills,
-                },
-                brokerNonTradeActivity !== undefined &&
-                  settlementAnchors !== undefined &&
-                  brokerNonTradeActivity.accountIdentityHash === accountIdentity.identityHash
-                  ? {
-                      asOf,
-                      accountIdentityHash: accountIdentity.identityHash,
-                      anchors: settlementAnchors,
-                      statement: brokerNonTradeActivity,
-                    }
-                  : undefined,
-              ),
+              captureForwardFinancialEvidence(registration, definition.policy, forward, {
+                decisions: [
+                  ...decisions.map(({ sessionDate, document }) => ({
+                    sessionDate,
+                    decisionHash: document.contentHash,
+                  })),
+                  ...protectionDecisions,
+                ],
+                fills,
+              }),
             )
             accounts.push({
               policy: definition.policy,

@@ -13,6 +13,7 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
+  NonTradeActivityStatementSchema,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -1521,6 +1522,7 @@ describe('Alpaca paper reads', () => {
     ])
     expect(result.accountIdentityHash).toBe(options.identity.identityHash)
     expect(result.window).toEqual(bounds)
+    expect(Result.isSuccess(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))).toBe(true)
     expect(result.activities).toEqual([
       {
         activityId: deposit.id,

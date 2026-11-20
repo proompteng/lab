@@ -23,6 +23,7 @@ import { InferenceUsageStatus } from '../inference-costs'
 import { costReportFromEvidence } from '../inference-expense.test-support'
 import { SystemSourceCutSchema } from './source-cut'
 import { cashInventoryTradingPnl, markedRisk } from './economics'
+import { equityFeeCashFixture } from './equity-fee-cash.test-support'
 
 const event = (sequence: number, eventType: string, occurredAt: string) =>
   Schema.decodeUnknownSync(MutationEventSchema)({
@@ -39,75 +40,116 @@ const event = (sequence: number, eventType: string, occurredAt: string) =>
   })
 
 describe('immutable source binding', () => {
-  test('native assessment uses one fee-adjusted equity path and withholds a session without that proof', () => {
+  test('native assessment derives fees and marked cash from retained witnesses', () => {
     const registration = nativeRegistrationFixture(registrationFixture(undefined, 1))
     const { input, cut, verifiedSources } = capturedAccountsFixture(supportedAssessmentFixture(1, registration))
-    const calendar = registration.calendar.sessions[0]!
-    const candidate = cut.financial.find((a) => a.policy === 'JEV')!
-    const accountBindingHash = candidate.accountBindingHash
-    const middle = new Date((Date.parse(calendar.openAt) + Date.parse(calendar.closeAt)) / 2).toISOString()
+    const session = registration.calendar.sessions[0]!
+    const provider = registration.calendar.marketCalendar.providerSessions[0]!
+    const definition = registration.policies.find((p) => p.policy === 'JEV')!
+    const captured = cut.financial.find((a) => a.policy === 'JEV')!
+    const { identity, forward, evidence, accountHash, openFill, closeFill } = equityFeeCashFixture(
+      { ...session, recoveryCloseAt: provider.sessionCloseAt },
+      definition.riskPolicy.accountId,
+    )
+    expect(accountHash).toBe(definition.accountBindingHash)
+    const positions = [
+      {
+        symbol: 'AAPL',
+        quantityAtoms: '1000000000',
+        costBasisMicros: '100000000',
+        bidPriceMicros: '96000000',
+        quoteSourceHash: testHash('intraday quote'),
+      },
+    ]
     const marks = [
-      { at: calendar.openAt, physicalCash: '1000000000' },
-      { at: middle, physicalCash: '996000000' },
-      { at: calendar.closeAt, physicalCash: '1007000000' },
-    ].map(({ at, physicalCash }) => ({
-      at,
-      availableAt: at,
-      cashMicros: physicalCash,
-      accountBindingHash,
-      sourceHash: testHash(at),
-      valuation: { inventorySourceHash: testHash('positions'), positions: [] },
+      { at: session.openAt, cashMicros: '1000000000', positions: [] },
+      { at: openFill, cashMicros: null, positions },
+      { at: session.closeAt, cashMicros: '1007000000', positions: [] },
+    ].map(({ positions, ...mark }) => ({
+      ...mark,
+      availableAt: mark.at,
+      accountBindingHash: accountHash,
+      sourceHash: testHash(mark),
+      valuation: { inventorySourceHash: testHash('positions'), positions },
     }))
-    const proof = {
-      schemaVersion: 'bayn.fee-adjusted-cash.v1' as const,
-      sourceHash: testHash('confirmed cash and fees'),
-      accountBindingHash,
-      sessionDate: calendar.sessionDate,
-      openAt: calendar.openAt,
-      closeAt: calendar.closeAt,
-      openingCashMicros: '1000000000',
-      availableAt: cut.asOf,
-      points: [
-        { at: middle, tradeCashDeltaMicros: '-4000000', incurredFeesMicros: '10000' },
-        { at: calendar.closeAt, tradeCashDeltaMicros: '7000000', incurredFeesMicros: '20000' },
-      ],
+    const retained = {
+      brokerNonTradeActivity: evidence.statement,
+      accounts: [{ policy: definition.policy, identity, forward, settlementAnchors: evidence.anchors }],
     }
-    const boundSession = (includeProof: boolean) => {
+    const bound = (sourceMaterial: unknown) => {
       const source = {
         ...cut,
+        sourceMaterial,
+        sourceMaterialHash: testHash(sourceMaterial),
         accountMarks: marks,
         financial: [
           {
-            ...candidate,
-            sessions: candidate.sessions.map((session) => ({
-              ...session,
+            ...captured,
+            sessions: captured.sessions.map((row) => ({
+              ...row,
               facts: {
-                ...session.facts!,
+                ...row.facts!,
                 openingPositionCount: 0,
                 closingPositionCount: 0,
                 grossRealizedPnlMicros: '7000000',
                 executionCostMicros: '20000',
                 cashSettlementRoundingMicros: '0',
               },
-              ...(includeProof ? { feeAdjustedCash: proof } : {}),
+              // This independently rehashed draft field has no authority over the reconstructed path.
+              feeAdjustedCash: {
+                schemaVersion: 'bayn.fee-adjusted-cash.v1',
+                sourceHash: testHash('substituted cash path'),
+                accountBindingHash: accountHash,
+                sessionDate: session.sessionDate,
+                openAt: session.openAt,
+                closeAt: session.closeAt,
+                availableAt: evidence.statement.observedAt,
+                openingCashMicros: '1000000000',
+                points: [
+                  { at: openFill, tradeCashDeltaMicros: '-96000000', incurredFeesMicros: '10000' },
+                  { at: closeFill, tradeCashDeltaMicros: '7000000', incurredFeesMicros: '20000' },
+                ],
+              },
             })),
           },
         ],
       }
-      const bound = Result.getOrThrow(
-        bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources),
-      )
-      return bound.input.policies.find((p) => p.policy === 'JEV')?.sessions[0]
+      return bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources)
     }
-    const unproved = boundSession(false)
-    expect(unproved?.financial).toBeNull()
-    expect(unproved?.marks).toEqual([])
-    const proved = boundSession(true)
-    if (proved?.financial == null) throw new Error('Expected the exact supported native fixture')
+    const firstSession = (projection: ReturnType<typeof bound>) =>
+      Result.getOrThrow(projection).input.policies.find((p) => p.policy === 'JEV')?.sessions[0]
+
+    const proved = firstSession(bound(retained))
+    if (proved?.financial == null) throw new Error('Expected exact fee-adjusted evidence')
     expect(cashInventoryTradingPnl(proved.financial.cashInventory)).toBe('6980000')
     expect(
       markedRisk(proved.marks.map((m) => BigInt(m.cashFlowAdjustedTradingEquityMicros))).maximumDrawdownMicros,
     ).toBe('4010000')
+
+    const absent = firstSession(bound({}))
+    expect(absent?.financial).toBeNull()
+    expect(absent?.marks).toEqual([])
+
+    const fills = forward.accountTransactions ?? []
+    const changed = {
+      ...retained.accounts[0]!,
+      forward: {
+        ...forward,
+        accountTransactions: fills.map((fill) => ({
+          ...fill,
+          cashDeltaMicros: fill.side === 'BUY' ? '-96000000' : '103000000',
+        })),
+      },
+    }
+    expect(firstSession(bound({ ...retained, accounts: [changed] }))?.financial).toBeNull()
+    expect(
+      Result.isFailure(
+        bound({
+          ...retained,
+          brokerNonTradeActivity: { ...evidence.statement, secondPass: evidence.statement.secondPass.slice(0, 1) },
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('packet financial claims cannot supply an uncaptured control account', () => {

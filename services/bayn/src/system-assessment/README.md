@@ -163,7 +163,9 @@ observations, inventory must precede or coincide with the cash event's economic 
 Native assessment uses a fee-adjusted cash path for the supported case of flat equity endpoints, zero TAF in the
 fourth-quarter 2026 schedule, exact fills, and later posted fees with no other cash movements in the statement.
 The cash leg starts at observed opening cash, adds receipted trade cash and rounding, and subtracts incurred fee
-prefixes. The recovery bridge checks physical cash before the late fees. The later bridge independently checks the
+prefixes. The assessment reconstructs it from the underlying retained account records, settlement snapshots, and
+both authenticated activity page chains. Stored calculated cash points cannot supply a risk mark. The recovery
+bridge checks physical cash before the late fees. The later bridge independently checks the
 full fee debit. Cash or fee contradictions withhold financial evidence. Retained physical observations and the
 assessment's after-the-fact availability remain explicit. Opening liabilities, early debits, accrual matches,
 unsupported activity classes and other schedules require additional evidence before use in qualification. Other

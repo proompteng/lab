@@ -5,15 +5,8 @@ import { databaseUtcInstant } from '../db/clock'
 import { executionDecisionRows } from '../db/execution-decision-query'
 import { generationScope } from '../forward-performance/postgres/scope'
 import { canonicalHashV1Result } from '../hash'
-import {
-  IsoDateSchema,
-  NonNegativeIntegerSchema,
-  Sha256Schema,
-  SignedMicrosSchema,
-  StrictNonEmptyStringSchema,
-  UtcDatabaseInstantSchema,
-  UtcInstantSchema,
-} from '../schemas'
+import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
+import { FeeSettlementAnchorsSchema } from './cash-settlements'
 import { SystemSourceCutSchema } from './source-cut'
 
 export const readSystemCashObservations = (
@@ -51,16 +44,6 @@ export const readSystemCashObservations = (
     )
   })
 
-const settlementCashObservation = Schema.Struct({
-  sourceHash: Sha256Schema,
-  at: UtcDatabaseInstantSchema,
-  availableAt: UtcDatabaseInstantSchema,
-  cashMicros: SignedMicrosSchema,
-  positions: Schema.NullOr(
-    Schema.Struct({ sourceHash: Sha256Schema, at: UtcDatabaseInstantSchema, count: NonNegativeIntegerSchema }),
-  ),
-})
-
 /** Retain observed anchors and posting times, without assigning a physical debit time to a fee. */
 export const readSystemFeeSettlementAnchors = (
   accountId: string,
@@ -69,25 +52,7 @@ export const readSystemFeeSettlementAnchors = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(
-      Schema.Array(
-        Schema.Struct({
-          sessionDate: IsoDateSchema,
-          phase: Schema.Literals(['OPENING', 'RECOVERY', 'RECONCILED']),
-          cutAt: Schema.NullOr(UtcDatabaseInstantSchema),
-          observation: Schema.NullOr(settlementCashObservation),
-          reconciliationHash: Schema.NullOr(Sha256Schema),
-          fees: Schema.Array(
-            Schema.Struct({
-              activityId: StrictNonEmptyStringSchema,
-              sourceHash: Sha256Schema,
-              postedAt: Schema.NullOr(UtcDatabaseInstantSchema),
-              availableAt: UtcDatabaseInstantSchema,
-            }),
-          ),
-        }),
-      ),
-    )(
+    return yield* Schema.decodeUnknownEffect(FeeSettlementAnchorsSchema)(
       yield* sql`
       WITH sessions AS (
         SELECT * FROM jsonb_to_recordset(${JSON.stringify(sessions)}::jsonb)

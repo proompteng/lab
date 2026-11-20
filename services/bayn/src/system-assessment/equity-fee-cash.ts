@@ -1,75 +1,107 @@
-import { Result, Schema, type Effect } from 'effect'
+import { Result, Schema } from 'effect'
 
-import { brokerFeeCashDeltaMicros } from '../accounting/broker-fees'
+import { brokerFeeCashDeltaMicros, StoredFeeSchema } from '../accounting/broker-fees'
+import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
+import { verifyAccountingTransactionContent } from '../accounting/domain'
+import { AccountingTransactionSchema } from '../accounting/schema'
+import { NonTradeActivityStatementSchema } from '../broker/alpaca/model'
 import { decimalToMicrosResult } from '../broker/alpaca/normalizers'
-import type { make } from '../broker/alpaca/http'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
+import { BrokerIdentitySchema } from '../broker/identity'
+import { StoredAccrual } from '../db/fee-accruals'
 import type { ExecutionModel } from '../execution-model-contract'
-import type { ForwardPerformanceEvidenceInput } from '../forward-performance/model'
 import { canonicalHashV1Result } from '../hash'
 import { instrumentMarket, MarketKind } from '../instruments'
-import { IsoDateSchema, Sha256Schema, SignedMicrosSchema, UtcInstantSchema, UnsignedMicrosSchema } from '../schemas'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { IsoDateSchema, NonNegativeIntegerSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
 import { calculateSessionFees, equityTafRate } from '../strategy/execution-model/fees'
 import { accountTradingDate } from '../time'
-import { cashSettlementMatches } from './cash-settlements'
-import type { readSystemFeeSettlementAnchors } from './capture-queries'
+import { cashSettlementMatches, FeeSettlementAnchorsSchema } from './cash-settlements'
 import type { AccountMarkSchema } from './valuation'
 
-type ActivityStatement = Effect.Success<
-  ReturnType<Effect.Success<ReturnType<typeof make>>['nonTradeActivityStatement']>
->
-type SettlementAnchors = Effect.Success<ReturnType<typeof readSystemFeeSettlementAnchors>>
-
-export const FeeAdjustedCashSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.fee-adjusted-cash.v1'),
-  sourceHash: Sha256Schema,
-  accountBindingHash: Sha256Schema,
-  sessionDate: IsoDateSchema,
-  openAt: UtcInstantSchema,
-  closeAt: UtcInstantSchema,
-  availableAt: UtcInstantSchema,
-  openingCashMicros: SignedMicrosSchema,
-  points: Schema.Array(
+const RetainedCashLedger = Schema.Struct({
+  account: Schema.Struct({ accountId: StrictNonEmptyStringSchema }),
+  accountTransactions: Schema.optionalKey(Schema.Array(AccountingTransactionSchema)),
+  accountCashSettlements: Schema.optionalKey(Schema.Array(StoredCashSettlementSchema)),
+  accountFeeAccruals: Schema.optionalKey(Schema.Array(StoredAccrual)),
+  accountBrokerFees: Schema.optionalKey(Schema.Array(StoredFeeSchema)),
+  accountPositionCounts: Schema.optionalKey(
     Schema.Struct({
-      at: UtcInstantSchema,
-      tradeCashDeltaMicros: SignedMicrosSchema,
-      incurredFeesMicros: UnsignedMicrosSchema,
+      reconciledAt: UtcInstantSchema,
+      exact: Schema.Boolean,
     }),
   ),
+  ledgerExact: Schema.Boolean,
+  accountingReceiptsExact: Schema.Boolean,
+  missingLedgerAccountCount: NonNegativeIntegerSchema,
+  unresolvedMutationCount: NonNegativeIntegerSchema,
 })
-type FeeAdjustedCash = typeof FeeAdjustedCashSchema.Type
+
+export const decodeRetainedCashEvidence = Schema.decodeUnknownResult(
+  Schema.Struct({
+    brokerNonTradeActivity: Schema.optionalKey(NonTradeActivityStatementSchema),
+    accounts: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          policy: Schema.Enum(JevResearchPolicy),
+          identity: BrokerIdentitySchema,
+          forward: RetainedCashLedger,
+          settlementAnchors: Schema.optionalKey(FeeSettlementAnchorsSchema),
+        }),
+      ),
+    ),
+  }),
+)
+
+type CashPoint = {
+  readonly at: string
+  readonly tradeCashDeltaMicros: string
+  readonly incurredFeesMicros: string
+}
 
 const timestamp = (at: string) => at.slice(0, 19) + '.' + at.slice(20, -1).padEnd(9, '0')
 const isDate = Schema.is(IsoDateSchema)
 
 /** Verify the flat-equity, late-posted fee case. Other movements and fee schedules need their own accounting proof. */
 export const confirmEquityFeeCash = (
-  session: { readonly sessionDate: FeeAdjustedCash['sessionDate']; readonly openAt: string; readonly closeAt: string },
+  session: {
+    readonly sessionDate: typeof IsoDateSchema.Type
+    readonly openAt: string
+    readonly closeAt: string
+    readonly recoveryCloseAt: string
+  },
   accountBindingHash: string,
   model: Pick<ExecutionModel, 'fees'>,
-  forward: ForwardPerformanceEvidenceInput,
+  forward: typeof RetainedCashLedger.Type,
   evidence: {
     readonly asOf: string
     readonly accountIdentityHash: string
-    readonly anchors: SettlementAnchors
-    readonly statement: ActivityStatement
+    readonly anchors: typeof FeeSettlementAnchorsSchema.Type
+    readonly statement: typeof NonTradeActivityStatementSchema.Type
   },
 ) =>
   Result.gen(function* () {
-    const { sessionDate, openAt, closeAt } = session
+    const { sessionDate, openAt, closeAt, recoveryCloseAt } = session
     const { anchors, asOf, statement } = evidence
-    const opening = anchors.find((row) => row.phase === 'OPENING' && row.sessionDate === sessionDate)?.observation
-    const recovery = anchors.find((row) => row.phase === 'RECOVERY' && row.sessionDate === sessionDate)
-    const reconciled = anchors.find((row) => row.phase === 'RECONCILED' && row.sessionDate === sessionDate)
+    const rows = anchors.filter((row) => row.sessionDate === sessionDate)
+    const sessionAnchors = new Map(rows.map((row) => [row.phase, row]))
+    const openingAnchor = sessionAnchors.get('OPENING')
+    const opening = openingAnchor?.observation
+    const recovery = sessionAnchors.get('RECOVERY')
+    const reconciled = sessionAnchors.get('RECONCILED')
     const settled = reconciled?.observation
     const history = forward.accountTransactions
     const postingCut = forward.accountPositionCounts?.reconciledAt
     if (
+      rows.length !== 3 ||
+      openingAnchor?.cutAt == null ||
+      timestamp(openingAnchor.cutAt) !== timestamp(openAt) ||
       opening === undefined ||
       opening === null ||
       recovery?.observation == null ||
       recovery.cutAt === null ||
+      timestamp(recovery.cutAt) !== timestamp(recoveryCloseAt) ||
       reconciled === undefined ||
       settled === undefined ||
       settled === null ||
@@ -77,6 +109,7 @@ export const confirmEquityFeeCash = (
       reconciled.reconciliationHash === null ||
       statement.accountIdentityHash !== evidence.accountIdentityHash ||
       statement.observedAt > asOf ||
+      statement.observedAt < closeAt ||
       timestamp(statement.window.after) >= timestamp(opening.at) ||
       timestamp(statement.window.until) <= timestamp(reconciled.cutAt) ||
       timestamp(opening.availableAt) > timestamp(openAt) ||
@@ -148,6 +181,7 @@ export const confirmEquityFeeCash = (
           row.occurredAt > closeAt ||
           instrumentMarket(row.symbol) !== MarketKind.Equity ||
           row.feeMicros !== '0' ||
+          Result.isFailure(verifyAccountingTransactionContent(row)) ||
           !cashSettlementMatches(row, settlements.get(row.transactionId), forward.account.accountId, postingCut),
       )
     )
@@ -209,7 +243,7 @@ export const confirmEquityFeeCash = (
     const buy = { symbol, side: 'buy' as const, quantityAtoms: 0n, notionalMicros: 0n }
     const sell = { symbol, side: 'sell' as const, quantityAtoms: 0n, notionalMicros: 0n }
     const totals = [buy, sell]
-    const points: FeeAdjustedCash['points'][number][] = []
+    const points: CashPoint[] = []
     let tradeCash = 0n
     let fees = 0n
     let expectedAmounts: string[] = []
@@ -259,6 +293,8 @@ export const confirmEquityFeeCash = (
       points,
     }
   })
+
+type FeeAdjustedCash = Exclude<Result.Result.Success<ReturnType<typeof confirmEquityFeeCash>>, null>
 
 /** Use the confirmed economic cash path for assessment. Retain the physical marks in the source cut. */
 export const projectFeeAdjustedCash = (marks: readonly (typeof AccountMarkSchema.Type)[], proof: FeeAdjustedCash) =>

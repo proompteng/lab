@@ -687,11 +687,80 @@ export const decodeNonTradeActivities = Schema.decodeUnknownResult(
   responseParseOptions,
 )
 
-export const decodeNonTradeActivityWindow = Schema.decodeUnknownResult(
-  Schema.Struct({ after: UtcInstantSchema, until: UtcInstantSchema }).check(
-    Schema.makeFilter((window) => window.after < window.until || 'must be an ordered creation-time window'),
+const NonTradeActivityWindow = Schema.Struct({ after: UtcInstantSchema, until: UtcInstantSchema }).check(
+  Schema.makeFilter((window) => window.after < window.until || 'must be an ordered creation-time window'),
+)
+export const decodeNonTradeActivityWindow = Schema.decodeUnknownResult(NonTradeActivityWindow, inputParseOptions)
+
+const ActivityRead = Schema.Struct({
+  requestId: RequestId,
+  status: Schema.Literal(200),
+  contentHash: Sha256Schema,
+  observedAt: UtcInstantSchema,
+  rateLimit: Schema.optionalKey(
+    Schema.Struct({
+      limit: Schema.optionalKey(Schema.String),
+      remaining: Schema.optionalKey(Schema.String),
+      reset: Schema.optionalKey(Schema.String),
+      retryAfter: Schema.optionalKey(Schema.String),
+    }),
   ),
-  inputParseOptions,
+})
+
+const ActivityPass = Schema.NonEmptyArray(
+  Schema.Struct({
+    pageToken: Schema.NullOr(ActivityId),
+    evidence: ActivityRead,
+    activityIds: Schema.Array(ActivityId).check(Schema.isMaxLength(defaultFillActivitiesPageSize)),
+  }),
+).check(Schema.isMaxLength(100))
+
+export const NonTradeActivityStatementSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.alpaca-non-trade-activity-statement.v1'),
+  accountIdentityHash: Sha256Schema,
+  window: NonTradeActivityWindow,
+  accountRead: ActivityRead,
+  firstPass: ActivityPass,
+  secondPass: ActivityPass,
+  activities: Schema.Array(
+    Schema.Struct({
+      activityId: ActivityId,
+      activityType: Schema.String.check(Schema.isPattern(/^[A-Z][A-Z_0-9]{0,31}$/)),
+      date: Schema.NullOr(Schema.Union([IsoDate, Timestamp])),
+      createdAt: Schema.NullOr(Timestamp),
+      netAmount: Schema.NullOr(Decimal),
+    }),
+  ),
+  observedAt: UtcInstantSchema,
+}).check(
+  Schema.makeFilter((statement) => {
+    if (statement.accountRead.observedAt < statement.window.until) return 'account read predates the statement window'
+    const expected = new Set(statement.activities.map((activity) => activity.activityId))
+    if (expected.size !== statement.activities.length) return 'statement repeats an activity'
+    let observedAt = statement.accountRead.observedAt
+    for (const pass of [statement.firstPass, statement.secondPass]) {
+      const seen = new Set<string>()
+      let token: string | null = null
+      for (const [index, page] of pass.entries()) {
+        const last = page.activityIds.at(-1)
+        if (
+          page.pageToken !== token ||
+          page.evidence.observedAt < observedAt ||
+          page.evidence.observedAt > statement.observedAt ||
+          (last === undefined) !== (index === pass.length - 1)
+        )
+          return 'statement page chain or terminal page differs'
+        observedAt = page.evidence.observedAt
+        token = last ?? null
+        for (const id of page.activityIds) {
+          if (!expected.has(id) || seen.has(id)) return 'statement page has a foreign or repeated activity'
+          seen.add(id)
+        }
+      }
+      if (seen.size !== expected.size) return 'statement page chain omits an activity'
+    }
+    return true
+  }),
 )
 
 export const FillActivityResponseSchema = Schema.Struct({
