@@ -183,7 +183,11 @@ native metadata owns sidebar names and ordering. A matching completed native tur
 ends response activity even if a durable status poll is late. Cancellation keeps its Stopping state until cleanup is confirmed.
 The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
-no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
+no horizontal divider. Sidebar rows share one trailing position for response progress and the archive button;
+hover or keyboard focus reveals the archive action, which remains disabled during a response. Consecutive tool and
+command activity appears under a collapsed **Ran commands** disclosure, including a single command. Expanding it
+shows an indented list whose individual rows can disclose their full output. Messages and approvals stay outside it.
+The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
 New selections use GPT-6.2 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
 supported reasoning choices remain selectable. Composer height updates before paint, preserves scrolling within long drafts, and

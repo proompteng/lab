@@ -27,7 +27,7 @@ import {
   PanelLeft,
   Plus,
   Square,
-  Wrench,
+  TerminalSquare,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type ReactNode } from 'react'
@@ -2022,7 +2022,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
               >
                 {groupCodexActivity(transcriptCards).map((group) =>
                   group.activity ? (
-                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`} count={group.items.length}>
+                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`}>
                       {group.items.map((item) => item.card)}
                     </ToolActivityGroup>
                   ) : (
@@ -2730,28 +2730,29 @@ function safeVerificationUrl(value: string) {
   }
 }
 
-function ToolActivityGroup({ count, children }: { count: number; children: ReactNode }) {
-  const [expanded, setExpanded] = useState(true)
+function ToolActivityGroup({ children }: { children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
   const id = useId()
   return (
-    <div className="py-1">
-      {count > 1 ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={id}
-          onClick={() => setExpanded((value) => !value)}
-          className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
-        >
-          <Wrench className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
-          Tools and commands
-          <ChevronDown
-            className={cn('size-3.5 transition-transform motion-reduce:transition-none', !expanded && '-rotate-90')}
-            aria-hidden="true"
-          />
-        </button>
-      ) : null}
-      <div id={id} hidden={count > 1 && !expanded} className="space-y-0">
+    <div className="group/commands py-1">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={id}
+        onClick={() => setExpanded((value) => !value)}
+        className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
+      >
+        <TerminalSquare className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
+        Ran commands
+        <ChevronDown
+          className={cn(
+            'size-3.5 transition-[opacity,transform] group-hover/commands:opacity-100 group-focus-within/commands:opacity-100 motion-reduce:transition-none',
+            !expanded && '-rotate-90 opacity-0',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      <div id={id} hidden={!expanded} className="mt-2 ml-2 space-y-1 border-l border-zinc-800 pl-3">
         {children}
       </div>
     </div>

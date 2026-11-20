@@ -176,34 +176,38 @@ export function AgentSessionList({
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
-                  {busy ? (
-                    <LoaderCircle
-                      className="size-3 shrink-0 animate-spin text-zinc-500 motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : null}
                   {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`${index.archived ? 'Restore' : 'Archive'} ${thread.title}`}
-                  title={
-                    index.archived ? 'Restore chat' : busy ? 'Finish the response before archiving' : 'Archive chat'
-                  }
-                  disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
-                  onClick={() => void setArchived(thread.id, !index.archived)}
-                  className="absolute right-1 size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
-                >
-                  {changing.has(thread.id) ? (
-                    <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
-                  ) : index.archived ? (
-                    <RotateCcw aria-hidden="true" className="size-3.5" />
-                  ) : (
-                    <Archive aria-hidden="true" className="size-3.5" />
-                  )}
-                </Button>
+                {busy ? (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-500 group-hover:opacity-0 group-focus-within:opacity-0 [@media(pointer:coarse)]:hidden"
+                  >
+                    <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  </span>
+                ) : null}
+                <span className="absolute right-1 inline-flex [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`${index.archived ? 'Restore' : 'Archive'} ${thread.title}`}
+                    title={
+                      index.archived ? 'Restore chat' : busy ? 'Finish the response before archiving' : 'Archive chat'
+                    }
+                    disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
+                    onClick={() => void setArchived(thread.id, !index.archived)}
+                    className="size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11"
+                  >
+                    {changing.has(thread.id) ? (
+                      <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+                    ) : index.archived ? (
+                      <RotateCcw aria-hidden="true" className="size-3.5" />
+                    ) : (
+                      <Archive aria-hidden="true" className="size-3.5" />
+                    )}
+                  </Button>
+                </span>
               </li>
             )
           })}
