@@ -320,7 +320,8 @@ def validate(targets):
     )
     for target, kind, name in workloads:
         spec = resource(targets, target, kind, name)["spec"]
-        require(spec["replicas"] == 2, f"{target}: two serving replicas required")
+        expected_replicas = 0 if target == "keycloak" else 2
+        require(spec["replicas"] == expected_replicas, f"{target}: expected {expected_replicas} replicas")
         pod = spec["template"]["spec"]
         labels = spec["template"]["metadata"]["labels"]
         spread = (
@@ -648,7 +649,7 @@ def validate(targets):
         == {"method": "any", "number": 1, "dataDurability": "required"},
         "keycloak: synchronous durability required",
     )
-    checkpoint = resource(targets, "keycloak", "Backup", "keycloak-server-26-7-4")
+    checkpoint = resource(targets, "keycloak", "Backup", "keycloak-server-26-8-2")
     require(
         checkpoint["metadata"]["annotations"]
         == {
@@ -984,7 +985,7 @@ def main():
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "affinity"
         ].update(tolerations=[]),
-        lambda data: resource(data, "keycloak", "Backup", "keycloak-server-26-7-4")[
+        lambda data: resource(data, "keycloak", "Backup", "keycloak-server-26-8-2")[
             "metadata"
         ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
         lambda data: resource(
