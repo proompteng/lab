@@ -106,6 +106,8 @@ let
     preBuild = ''
       export HOME="$TMPDIR/home"
       mkdir -p "$HOME"
+      mkdir -p ../app
+      cp ${patchedSrc}/app/package.json ${patchedSrc}/app/app-build-manifest.json ../app/
     '';
     installPhase = ''
       runHook preInstall
