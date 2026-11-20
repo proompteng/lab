@@ -875,7 +875,23 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       },
     }
-    for (const invalid of [{ ...input, calendar }, retainedRegistration(2)]) {
+    const last = input.calendar.sessions.at(-1)
+    if (last === undefined) throw new Error('Missing final calendar session')
+    const alteredProvider = {
+      ...input,
+      calendar: {
+        ...input.calendar,
+        marketCalendar: {
+          ...input.calendar.marketCalendar,
+          providerSessions: input.calendar.marketCalendar.providerSessions.map((row) =>
+            row.date === last.sessionDate
+              ? { ...row, regularOpenAt: new Date(Date.parse(row.regularOpenAt) + 1000).toISOString() }
+              : row,
+          ),
+        },
+      },
+    }
+    for (const invalid of [{ ...input, calendar }, alteredProvider, retainedRegistration(2)]) {
       expect(
         Exit.isFailure(await runtime.runPromiseExit(asApplication(registerSystemQualification(invalid, sources)))),
       ).toBe(true)

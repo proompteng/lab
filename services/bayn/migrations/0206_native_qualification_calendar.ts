@@ -4,13 +4,14 @@ import { SqlClient } from 'effect/sql'
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   yield* sql`
-    CREATE FUNCTION system_native_qualification_calendar_valid(registration jsonb) RETURNS boolean
+    CREATE FUNCTION system_native_qualification_calendar_valid(payload json) RETURNS boolean
     LANGUAGE plpgsql STABLE AS $calendar$
-    DECLARE calendar jsonb := registration->'calendar'; evidence jsonb := calendar->'marketCalendar'; days integer;
+    DECLARE registration jsonb := payload::jsonb;
+      calendar jsonb := registration->'calendar'; evidence jsonb := calendar->'marketCalendar'; days integer;
     BEGIN
       IF NOT ((
         calendar->>'referenceMarket'='US_EQUITIES' AND calendar->>'operatingHours'='NATIVE'
-        AND calendar->>'sourceHash' ~ '^[0-9a-f]{64}$'
+        AND calendar->>'sourceHash'=encode(sha256(convert_to((payload #> '{calendar,marketCalendar}')::text,'UTF8')),'hex')
         AND registration #> '{obligations,configuration,entryMarkets}'='["EQUITY"]'::jsonb
         AND evidence->>'schemaVersion'='bayn.alpaca-market-calendar-observation.v2'
         AND evidence->>'source'='alpaca-v2-calendar' AND evidence->>'timeZone'='UTC'
@@ -80,7 +81,7 @@ export default Effect.gen(function* () {
     admission := replace(replace(admission, retained, current_version), retained_hash, current_hash);
     EXECUTE replace(admission,'NEW.created_at := clock_timestamp();',$admission$
       IF NEW.program='BAYN_SYSTEM_QUALIFICATION'
-        AND NOT system_native_qualification_calendar_valid(NEW.payload_text::jsonb) THEN
+        AND NOT system_native_qualification_calendar_valid(NEW.payload_text::json) THEN
         RAISE EXCEPTION 'registration must match the complete canonical native equity calendar' USING ERRCODE='23514';
       END IF;
       NEW.created_at := clock_timestamp();
