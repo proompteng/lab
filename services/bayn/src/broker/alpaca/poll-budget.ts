@@ -11,7 +11,7 @@ export interface ProtectionReadAllowance {
   readonly requestCostMs: number
 }
 
-interface QuotaWindow {
+interface QuotaHeadroom {
   readonly expiresAtMs: number
   readonly limit: number
   readonly remaining: number
@@ -25,7 +25,7 @@ interface PollBudgetState {
   readonly quotaResetAtMs: number
   readonly limit: number
   readonly quotaResponses: number
-  readonly quotaWindow: QuotaWindow | undefined
+  readonly headroom: QuotaHeadroom | undefined
 }
 
 const nextPollAt = (current: PollBudgetState): number =>
@@ -62,7 +62,7 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
     quotaResetAtMs: 0,
     limit: accountLimit,
     quotaResponses: 0,
-    quotaWindow: undefined,
+    headroom: undefined,
   })
   const reserve = Effect.gen(function* () {
     while (true) {
@@ -78,7 +78,7 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
                 requests: 1,
                 quotaResetAtMs: 0,
                 quotaResponses: 0,
-                quotaWindow: undefined,
+                headroom: undefined,
               },
             ]
           : [0, { ...current, requests: current.requests + 1 }]
@@ -110,27 +110,27 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
           reportedLimit !== undefined &&
           reportedLimit > 0 &&
           remaining !== undefined &&
-          remaining <= reportedLimit &&
-          windowEndsAt > now &&
-          windowEndsAt <= now + brokerObservationQuotaWindowMs
-        const window = current.quotaWindow
-        // Responses can complete out of order. Keep a conservative lower bound across the capture.
-        const quotaWindow = attested
+          remaining <= reportedLimit
+        const prior = current.headroom
+        // Reset governs backoff. Successful headers attest current capacity, which Bayn charges within its own quota window.
+        const expiresAtMs = now + brokerObservationQuotaWindowMs
+        const headroom = attested
           ? {
-              expiresAtMs: Math.min(window?.expiresAtMs ?? windowEndsAt, windowEndsAt),
-              limit: Math.max(window?.limit ?? reportedLimit, reportedLimit),
-              remaining: Math.min(window?.remaining ?? remaining, remaining),
-              requestCostMs: Math.max(window?.requestCostMs ?? requestCostMs, requestCostMs),
+              expiresAtMs: prior?.expiresAtMs ?? expiresAtMs,
+              limit: Math.max(prior?.limit ?? reportedLimit, reportedLimit),
+              remaining: Math.min(prior?.remaining ?? remaining, remaining),
+              requestCostMs: Math.max(prior?.requestCostMs ?? requestCostMs, requestCostMs),
             }
-          : window
+          : prior
         return {
           ...current,
           limit,
           requestCostMs,
           quotaResponses: current.quotaResponses + (attested ? 1 : 0),
-          quotaWindow,
+          headroom,
           quotaResetAtMs: Math.max(
             current.quotaResetAtMs,
+            retryAtMs,
             depleted ? (resetAtMs > now ? resetAtMs : now + brokerObservationQuotaWindowMs) : 0,
           ),
         }
@@ -151,7 +151,7 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
                   requests: 0,
                   quotaResetAtMs: 0,
                   quotaResponses: 0,
-                  quotaWindow: undefined,
+                  headroom: undefined,
                 },
               ],
         )
@@ -165,18 +165,18 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
     protectionReadAllowance: Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis
       const current = yield* Ref.get(state)
-      const window = current.quotaWindow
+      const headroom = current.headroom
       if (
-        window === undefined ||
+        headroom === undefined ||
         current.quotaResetAtMs > now ||
-        window.expiresAtMs <= now ||
-        window.remaining - (current.requests - current.quotaResponses) - protectionReleaseReadCount <
-          Math.ceil(window.limit / 4)
+        headroom.expiresAtMs <= now ||
+        headroom.remaining - (current.requests - current.quotaResponses) - protectionReleaseReadCount <
+          Math.ceil(headroom.limit / 4)
       )
         return undefined
       return {
-        expiresAtMs: window.expiresAtMs,
-        requestCostMs: window.requestCostMs,
+        expiresAtMs: headroom.expiresAtMs,
+        requestCostMs: headroom.requestCostMs,
       } satisfies ProtectionReadAllowance
     }),
   }

@@ -22,7 +22,6 @@ const BudgetDeadlineSchema = Schema.Int.check(
 export const brokerObservationJsonSerde = restate.serde.json.schema<unknown>({})
 const BindingSchema = Schema.Struct({ sourceRevision: GitSourceRevisionSchema })
 const RefreshSchema = Schema.Struct({ ...BindingSchema.fields, cycleId: Schema.optionalKey(Sha256Schema) })
-const ProtectionProbeSchema = Schema.Struct({ ...BindingSchema.fields, cycleId: Sha256Schema })
 const TickSchema = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
   epoch: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -280,57 +279,39 @@ export const makeBaynBrokerObservations = (
               : { pendingNotificationId: current.pendingNotificationId }),
           }
           ctx.set(key, state)
-          if (binding.cycleId !== undefined)
-            ctx.genericSend({
-              service: 'BaynBrokerObservations',
-              method: 'probeProtection',
-              key: ctx.key,
-              parameter: { sourceRevision: state.sourceRevision, cycleId: binding.cycleId },
-              inputSerde: brokerObservationJsonSerde,
-              delay: {
-                milliseconds: Math.max(
-                  0,
-                  receivedAt + protectionSettlementDelayMs - transportClock.currentTimeMillisUnsafe(),
-                ),
-              },
-              idempotencyKey: `broker-protection-probe:${state.sourceRevision}:${state.epoch}:${state.sequence}`,
-            })
+          const cycleId = binding.cycleId
+          if (cycleId !== undefined) {
+            const settleInMs = receivedAt + protectionSettlementDelayMs - (await ctx.date.now())
+            if (settleInMs > 0) await ctx.sleep({ milliseconds: settleInMs })
+            let proof: ProtectionReleaseReference | null = null
+            try {
+              proof = await ctx.run(
+                'read and record exact protective release',
+                async () =>
+                  (await runtime.probeProtection(ctx.request().attemptCompletedSignal, cycleId, ctx.request().id)) ??
+                  null,
+                { maxRetryAttempts: 2, initialRetryInterval: 75 },
+              )
+            } catch {
+              ctx.console.warn('Protective release read failed before the next complete broker capture')
+            }
+            if (proof !== null)
+              ctx.genericSend({
+                service: 'BaynExecutionController',
+                method: 'wake',
+                key: ctx.key,
+                parameter: {
+                  schemaVersion: 'bayn.execution-wakeup.v1',
+                  _tag: 'ProtectionRelease',
+                  sourceRevision: state.sourceRevision,
+                  eventId: proof.proofId,
+                  ...proof,
+                } satisfies ExecutionWakeup,
+                inputSerde: brokerObservationJsonSerde,
+                idempotencyKey: `broker-protection-proof:${proof.proofId}`,
+              })
+          }
           schedule(ctx, 'capture', state, Math.max(receivedAt + coalescingDelayMs, state.nextCaptureNotBeforeMs))
-        },
-      ),
-      probeProtection: restate.handlers.object.shared(
-        { ingressPrivate: true },
-        async (ctx: restate.ObjectSharedContext, candidate: unknown) => {
-          verifyKey(ctx)
-          const binding = decode(ProtectionProbeSchema, candidate)
-          const current = await read(ctx)
-          if (binding.sourceRevision !== config.sourceRevision || current?.sourceRevision !== config.sourceRevision)
-            return
-          const proof = await ctx.run(
-            'read and record exact protective release',
-            async () =>
-              (await runtime.probeProtection(
-                ctx.request().attemptCompletedSignal,
-                binding.cycleId,
-                ctx.request().id,
-              )) ?? null,
-            { maxRetryAttempts: 2, initialRetryInterval: 75 },
-          )
-          if (proof === null) return
-          ctx.genericSend({
-            service: 'BaynExecutionController',
-            method: 'wake',
-            key: ctx.key,
-            parameter: {
-              schemaVersion: 'bayn.execution-wakeup.v1',
-              _tag: 'ProtectionRelease',
-              sourceRevision: current.sourceRevision,
-              eventId: proof.proofId,
-              ...proof,
-            } satisfies ExecutionWakeup,
-            inputSerde: brokerObservationJsonSerde,
-            idempotencyKey: `broker-protection-proof:${proof.proofId}`,
-          })
         },
       ),
       activate: restate.handlers.object.exclusive(

@@ -130,9 +130,9 @@ describeRestate('Real always-replay Restate broker ingress', () => {
     let activations = 0
     let captures = 0
     let wakes = 0
-    let proofAttempts = 0
+    const captureCountsAtProbe: number[] = []
     const proofReads = new Map<string, ProtectionReleaseReference>()
-    const protectionWakes: Array<{ wake: unknown; captures: number }> = []
+    const protectionWakes: unknown[] = []
     const protectionCycleId = sha256(`${config.controllerKey}:pending-close`)
     const clock = Clock.Clock.defaultValue()
     const makeObserved = () =>
@@ -141,7 +141,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
           probeProtection: async (_signal, cycleId, claimId) => {
             expect(cycleId).toBe(protectionCycleId)
-            proofAttempts++
+            captureCountsAtProbe.push(captures)
             const retained = proofReads.get(claimId)
             if (retained !== undefined) return retained
             proofReads.set(claimId, {
@@ -164,7 +164,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
                 _tag: 'Published',
                 snapshotHash: captures.toString(16).padStart(64, '0'),
                 observedAt: new Date(now).toISOString(),
-                nextPollNotBeforeMs: now + 3_000,
+                nextPollNotBeforeMs: captures === 2 ? now : now + 3_000,
               },
               startedAtMs: now,
               completedAtMs: now,
@@ -207,7 +207,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
     )
     const receiver = wakeReceiver((wake) => {
       if (typeof wake === 'object' && wake !== null && '_tag' in wake && wake._tag === 'ProtectionRelease')
-        protectionWakes.push({ wake, captures })
+        protectionWakes.push(wake)
       else wakes++
     })
     await Effect.runPromise(
@@ -304,23 +304,19 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           )
           expect(counts).toEqual({ rows: [{ accepted: 1 }] })
           yield* invoke('refresh')
-          expect(captures).toBe(2)
           yield* waitFor(() => Effect.sync(() => protectionWakes.length === 1))
-          expect(proofAttempts).toBe(2)
+          expect(captureCountsAtProbe).toEqual([2, 2])
           expect(proofReads.size).toBe(1)
           const [proof] = proofReads.values()
           if (proof === undefined || !Schema.is(ProtectionReleaseReferenceSchema)(proof))
             throw new Error('Missing retained release proof')
           expect(protectionWakes).toEqual([
             {
-              wake: {
-                schemaVersion: 'bayn.execution-wakeup.v1',
-                sourceRevision: config.sourceRevision,
-                _tag: 'ProtectionRelease',
-                eventId: proof.proofId,
-                ...proof,
-              },
-              captures: 2,
+              schemaVersion: 'bayn.execution-wakeup.v1',
+              sourceRevision: config.sourceRevision,
+              _tag: 'ProtectionRelease',
+              eventId: proof.proofId,
+              ...proof,
             },
           ])
           yield* waitFor(() =>

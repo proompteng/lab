@@ -930,6 +930,84 @@ describe('complete history reuse between broker captures', () => {
     )
   })
 
+  test('keeps witnessed cash fees pending across UTC rollover and restart until REST settles them', async () => {
+    const fees: FeeActivity[] = []
+    const source = fixture({ fees })
+    const key = Result.getOrThrow(
+      decodeFeeActivityWitness({
+        activity_type: 'FEE',
+        ref_id: 'streamed-cash-fee',
+        status: 'executed',
+        currency: 'USD',
+        net_amount: '-0.02',
+        details: { system_date: '2026-11-19' },
+      }),
+    ).key
+    let feeCounts = new Map([[key, 2]])
+    const read: BrokerReadShape = {
+      ...source.read,
+      fillActivities: () => Effect.die('unexpected REST fill read'),
+      accountActivity: currentUtcInstant.pipe(
+        Effect.map((observedAt) => ({
+          fills: [],
+          feeCounts,
+          evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
+        })),
+      ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-11-20T01:15:00.000Z'))
+        const capture = yield* makeBrokerObservationCapture
+        const observe = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => capture(read, { startedAt, generation }, 15_000)))
+        const pending = yield* observe(1)
+        expect(pending.pendingCashFeeCount).toBe(2)
+        expect(pending.snapshot.history.fees).toEqual([])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(pending))).toBe(true)
+        fees.push({ accountId, activityId: 'rest-one', date: '2026-11-19', netAmountMicros: '-20000' })
+        const partial = yield* observe(2)
+        expect(partial.pendingCashFeeCount).toBe(1)
+        expect(partial.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        fees.push({ ...fees[0], accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-30000' })
+        expect(yield* observe(3).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+        fees.pop()
+        yield* TestClock.setTime(Date.parse('2026-11-20T23:59:59.999Z'))
+        expect((yield* observe(4)).pendingCashFeeCount).toBe(1)
+
+        yield* TestClock.setTime(Date.parse('2026-11-21T00:00:00.000Z'))
+        const restarted = yield* makeBrokerObservationCapture
+        const observeAfterRestart = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => restarted(read, { startedAt, generation }, 15_000)))
+        const lingering = yield* observeAfterRestart(5)
+        expect(lingering.observedAt).toBe('2026-11-21T00:00:00.000Z')
+        expect(lingering.pendingCashFeeCount).toBe(1)
+        expect(lingering.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(lingering))).toBe(true)
+
+        fees.push({ accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-20000' })
+        const settled = yield* observeAfterRestart(6)
+        expect(settled.pendingCashFeeCount).toBe(0)
+        expect(settled.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(6)
+        yield* observeAfterRestart(7)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(6)
+        feeCounts = new Map([
+          [key, 2],
+          [key.replace('2026-11-19', '2026-11-22'), 1],
+        ])
+        expect(yield* observeAfterRestart(8).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+      }),
+    )
+  })
+
   test('empty recent-history projections retain real response evidence without additional probes', async () => {
     const source = fixture()
     await run(

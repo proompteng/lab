@@ -439,9 +439,15 @@ A disconnect, dropped frame or unsupported correction makes the local activity h
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
-the same connection. Bayn fetches REST fee records on startup and when the streamed fee history changes. It
-checks that both sources agree on fee counts by booking date, fee kind, cash amount and coin quantity. REST
-supplies the existing ledger IDs, crypto symbols and exact prices. The capture waits for the two sources to agree.
+the same connection. Bayn fetches REST fee records on startup, when the streamed fee history changes, and during
+ordinary captures while fee settlement is pending. It checks both histories by booking date, fee kind, cash amount
+and coin quantity. REST supplies the existing ledger IDs, crypto symbols and exact prices.
+
+A stable stream that is ahead only by USD fee debits may publish current broker observations with a pending cash
+fee count. The gap stays pending across UTC rollover and capture restart. Full reconciliation, trading readiness,
+and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. The separate
+protective close still needs the exact fenced cancel, filled inventory and reducing-order proof. Extra REST fees,
+missing crypto fees and unmatched fees with future booking dates reject publication.
 
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
@@ -666,6 +672,14 @@ captures atomically settle their claim and replace the reservation with measured
 reset evidence. Snapshot invalidation and quota ownership use separate generations, so a mutation racing capture
 cannot strand the quota reservation or let an older capture shorten a newer reservation. A failed settlement leaves
 the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
+
+When an accepted PAPER protection cancellation carries a cycle, the exclusive broker refresh checks that cycle
+before scheduling the next complete capture. The last successful capture can fund one scoped four-request read.
+Bayn subtracts requests without valid headers from the lowest reported remaining capacity. It reserves the four
+reads only if one-quarter of the account limit remains. The evidence expires one minute after the first confirming response.
+Alpaca's reset timestamp controls backoff when quota runs low. The PostgreSQL owner charges the protected read
+once and carries that debt into the next full capture. A missing proof or read failure still schedules the full
+capture without admitting a close from the scoped path.
 
 Canonical captures issue one journaled worker command. A quota-blocked capture returns its database deadline and
 schedules a successor without holding the exclusive owner. Deployment activation uses a durable timer to wait for
