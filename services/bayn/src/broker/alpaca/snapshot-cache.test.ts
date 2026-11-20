@@ -930,6 +930,72 @@ describe('complete history reuse between broker captures', () => {
     )
   })
 
+  test('publishes two witnessed overnight cash fees as pending and waits for authoritative receipts', async () => {
+    const fees: FeeActivity[] = []
+    const source = fixture({ fees })
+    const key = Result.getOrThrow(
+      decodeFeeActivityWitness({
+        activity_type: 'FEE',
+        ref_id: 'streamed-cash-fee',
+        status: 'executed',
+        currency: 'USD',
+        net_amount: '-0.02',
+        details: { system_date: '2026-11-19' },
+      }),
+    ).key
+    const feeCounts = new Map([[key, 2]])
+    const read: BrokerReadShape = {
+      ...source.read,
+      fillActivities: () => Effect.die('unexpected REST fill read'),
+      accountActivity: currentUtcInstant.pipe(
+        Effect.map((observedAt) => ({
+          fills: [],
+          feeCounts,
+          evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
+        })),
+      ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-11-20T01:15:00.000Z'))
+        const capture = yield* makeBrokerObservationCapture
+        const observe = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => capture(read, { startedAt, generation }, 15_000)))
+        const pending = yield* observe(1)
+        expect(pending.pendingCashFeeCount).toBe(2)
+        expect(pending.snapshot.history.fees).toEqual([])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(pending))).toBe(true)
+        fees.push({ accountId, activityId: 'rest-one', date: '2026-11-19', netAmountMicros: '-20000' })
+        const partial = yield* observe(2)
+        expect(partial.pendingCashFeeCount).toBe(1)
+        expect(partial.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        fees.push({ ...fees[0], accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-30000' })
+        expect(yield* observe(3).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+        fees[1] = { accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-20000' }
+        const settled = yield* observe(4)
+        expect(settled.pendingCashFeeCount).toBe(0)
+        expect(settled.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        yield* observe(5)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        fees.pop()
+        yield* TestClock.setTime(Date.parse('2026-11-21T01:15:00.000Z'))
+        const restarted = yield* makeBrokerObservationCapture
+        const oldGap = yield* restarted(read, { startedAt: yield* currentUtcInstant, generation: 6 }, 15_000).pipe(
+          Effect.result,
+        )
+        expect(oldGap).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+      }),
+    )
+  })
+
   test('empty recent-history projections retain real response evidence without additional probes', async () => {
     const source = fixture()
     await run(

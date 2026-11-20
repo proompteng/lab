@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { quantityFromDecimal } from '../../quantity'
 import { IsoDateSchema } from '../../schemas'
+import { utcDateFromEpochMillis } from '../../time'
 import { contractFailure } from './failures'
 import type { FeeActivity, Observed } from './model'
 import { decimalToMicrosResult } from './normalizers'
@@ -42,18 +43,41 @@ export const decodeFeeActivityWitness = (raw: unknown) =>
     }
   })
 
-export const feeHistoryMatches = (
+const pendingCashFeeKey = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Tuple([
+      Schema.Literal('FEE'),
+      IsoDateSchema,
+      Schema.String.check(Schema.isPattern(/^-[1-9][0-9]*$/)),
+      Schema.Literal('0'),
+    ]),
+  ),
+)
+
+export const pendingCashFees = (
   expected: ReadonlyMap<string, number>,
   rows: readonly Observed<FeeActivity>[],
-): boolean => {
+  capturedAt: string,
+): number | undefined => {
   const remaining = new Map(expected)
   for (const { value: fee } of rows) {
     const kind = fee.coinDebit === undefined && fee.cryptoCashFee === undefined ? 'FEE' : 'CFEE'
     const key = feeKey(kind, fee.date, fee.netAmountMicros, fee.coinDebit?.quantityAtoms ?? '0')
     const count = remaining.get(key)
-    if (count === undefined) return false
+    if (count === undefined) return undefined
     if (count === 1) remaining.delete(key)
     else remaining.set(key, count - 1)
   }
-  return remaining.size === 0
+  if (remaining.size === 0) return 0
+  const today = capturedAt.slice(0, 10)
+  const yesterday = utcDateFromEpochMillis(Date.parse(capturedAt) - 86_400_000)
+  let pending = 0
+  for (const [key, count] of remaining) {
+    const decoded = pendingCashFeeKey(key)
+    if (Result.isFailure(decoded)) return undefined
+    const [, date] = decoded.success
+    if ((date !== today && date !== yesterday) || !Number.isSafeInteger(count) || count <= 0) return undefined
+    pending += count
+  }
+  return Number.isSafeInteger(pending) ? pending : undefined
 }
