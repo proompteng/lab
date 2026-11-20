@@ -7021,6 +7021,7 @@ test.each(['discovery', 'calendar-reuse', 'pending', 'not-ready', 'activation-ex
             strategyName: 'jev',
             strategyProtocolHash: fixture.preparation.strategyProtocolHash,
             executionPolicy: fixture.preparation.executionPolicy,
+            nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
             buildDecision: (currentCycle) =>
               Effect.gen(function* () {
                 operations.push('build')
@@ -7190,6 +7191,7 @@ test.each(['verified', 'empty', 'contract', 'not-ready'] as const)(
               strategyName: 'jev',
               strategyProtocolHash: fixture.preparation.strategyProtocolHash,
               executionPolicy: fixture.preparation.executionPolicy,
+              nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
               buildDecision: () =>
                 Effect.sync(() => {
                   operations.push('build')
@@ -7281,6 +7283,7 @@ test('reads the execution closure once without weakening completion evidence', a
             strategyName: 'jev',
             strategyProtocolHash: fixture.preparation.strategyProtocolHash,
             executionPolicy: fixture.preparation.executionPolicy,
+            nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
             buildDecision: forbidden,
             buildDecisionEvidence: forbidden,
           },
@@ -7505,6 +7508,7 @@ test('settles the committed close after native protection observes a flat accoun
           strategyName: 'jev',
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
           buildDecision: forbidden,
           buildDecisionEvidence: forbidden,
         },
@@ -7700,6 +7704,7 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
           strategyName: 'jev',
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
           buildDecision: () => unavailable('build decision before submission opens'),
           buildDecisionEvidence: () => unavailable('verify decision before submission opens'),
         },
@@ -7741,6 +7746,7 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
           strategyName: 'jev',
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
+          nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
           buildDecision: (subject) =>
             mutationDecisionBuilder(
               input,
@@ -9308,6 +9314,7 @@ test.each(
                   strategyName: 'jev',
                   strategyProtocolHash: fixture.preparation.strategyProtocolHash,
                   executionPolicy: fixture.preparation.executionPolicy,
+                  nextEntryWindowDueAt: () => Effect.succeed(Option.none()),
                   buildDecision: forbidden,
                   buildDecisionEvidence: forbidden,
                 },

@@ -18,6 +18,7 @@ import {
   type CycleRunResult,
 } from '../cycle/runner/model'
 import { cyclePassLogFacts } from '../cycle/runner/pass-decisions'
+import { nextJevEntryWindowDueAt } from './entry-window'
 import {
   decideIdleReconciliationCadence,
   validateCyclePassTimeout,
@@ -616,6 +617,8 @@ export const executionAdvanceDeadline = (
         const eligibleAt = firstIntradayObservationAtMs(session, evidence.executionPolicy)
         if (eligibleAt > now) add(eligibleAt, ExecutionDeadlineReason.Eligibility)
       }
+    } else if (result.outcome === 'ALREADY_TERMINAL' && result.readiness !== undefined) {
+      add(Date.parse(result.readiness.availableAt), ExecutionDeadlineReason.Eligibility)
     } else if (result.outcome === 'ADMISSION_WAITING') {
       const validUntil = Date.parse(result.admissionProtection.validUntil)
       add(validUntil > now ? validUntil : now + policy.financialFreshnessMs, ExecutionDeadlineReason.FinancialFreshness)
@@ -875,6 +878,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           accountId: input.accountId,
           authorityGenerationHash: input.authorityGenerationHash,
           executionPolicy: preparation.executionPolicy,
+          nextEntryWindowDueAt: (cycleId) =>
+            nextJevEntryWindowDueAt(cycleId, strategyTradingProtocol(input.strategy)).pipe(
+              Effect.mapError(decisionBuildError),
+            ),
           buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance, readForPricing),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }

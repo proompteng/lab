@@ -1,5 +1,5 @@
 import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
-import { Data, Effect } from 'effect'
+import { Data, Effect, Option } from 'effect'
 
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
@@ -27,6 +27,8 @@ export interface CycleRunContext<R = never> {
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
   >
+  /** Known next signal boundary from durable entry consumption, not a claim that source rows have arrived. */
+  readonly nextEntryWindowDueAt: (cycleId: string) => Effect.Effect<Option.Option<string>, CycleDecisionBuildError, R>
   readonly buildDecision: (
     cycle: AutonomousCycle,
     reconciliationCompleted?: Effect.Effect<void>,
@@ -51,9 +53,18 @@ export type CycleRunResult =
       readonly closedEntryWindow?: ClosedEntryWindow
     }
   | {
-      readonly outcome: 'ALREADY_ACQUIRED' | 'ALREADY_TERMINAL'
+      readonly outcome: 'ALREADY_ACQUIRED'
       readonly observedAt: string
       readonly cycle: AutonomousCycle
+    }
+  | {
+      readonly outcome: 'ALREADY_TERMINAL'
+      readonly observedAt: string
+      readonly cycle: AutonomousCycle
+      readonly readiness?: DecisionReadiness & {
+        readonly reason: DecisionReadinessReason.SignalWindowObserved
+        readonly availableAt: string
+      }
     }
   | ({
       readonly outcome: 'RECOVERED'
