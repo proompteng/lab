@@ -4,7 +4,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { chartQuestionPolicy, buildChartDecisionsRequest } from './retained-filtered-chart-questions'
-import { chartAssessmentsFromResponse, type ChartDecisionSource } from './chart-questions'
+import { chartAssessmentsFromResponse, type ChartDecisionSource } from './retained-observed-chart-questions'
 import { JevContractError } from './contract'
 import { decodeDecisionsResponse, prepareDecisionsRequest, type DecisionsRequest } from './decisions'
 

@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 
@@ -69,7 +71,6 @@ const torghutCoBuildPaths = [
   'services/dorvud/technical-analysis-flink/**',
   'services/dorvud/websockets/**',
   'services/signal-publisher/**',
-  'packages/scripts/src/shared/oci.ts',
   'nix/images/torghut.nix',
   'nix/images/torghut-notebook.nix',
   'nix/images/torghut-ta.nix',
@@ -80,8 +81,6 @@ const torghutCoBuildPaths = [
   'nix/images/bun-workspace-deps-source.nix',
   'nix/images/bun-workspace-deps-source.test.sh',
   'nix/images/prune-bun-dependency-metadata.sh',
-  'nix/check-bun-dependency-closure.sh',
-  '.github/workflows/nix-bun-dependency-closure.yml',
   'services/torghut/uv.lock',
   'flake.nix',
   'flake.lock',
@@ -91,10 +90,6 @@ const torghutCoBuildPaths = [
   '.npmrc',
   'patches/**',
   'package.json',
-  '.github/workflows/nix-oci-build-common.yml',
-  '.github/workflows/torghut-ta-build-push.yaml',
-  '.github/workflows/torghut-post-deploy-verify.yml',
-  'nix/oci-push.sh',
   'argocd/applications/torghut/**',
   'argocd/applications/torghut-options/**',
   'argocd/applications/torghut-hyperliquid-runtime/**',
@@ -124,12 +119,12 @@ describe('torghut build-push workflow', () => {
     expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
     for (const workflowOnlyPath of [
       '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/nix-oci-build-common.yml',
       '.github/actions/setup-nix-toolchain/**',
+      'nix/oci-push.sh',
     ]) {
       expect(pathPatternIndex(workflowOnlyPath)).toBe(-1)
     }
-    expect(pathPatternIndex('.github/workflows/nix-oci-build-common.yml')).toBeGreaterThan(-1)
-    expect(pathPatternIndex('nix/oci-push.sh')).toBeGreaterThan(-1)
   })
 
   it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {
@@ -386,6 +381,53 @@ describe('torghut build-push workflow', () => {
     expect(releaseManifestJobBody).not.toContain('gh run view')
     expect(ciWorkflow).not.toContain('name: Require source commit Torghut CI')
     expect(ciWorkflow).not.toContain('--workflow torghut-ci.yml')
+  })
+
+  it('checks changed image receipts while allowing config-only changes after old images expire', () => {
+    const functionsStart = ciWorkflow.indexOf('          resolve_source_sha() {')
+    const functionsEnd = ciWorkflow.indexOf('          verified_any=false', functionsStart)
+    const functions = ciWorkflow.slice(functionsStart, functionsEnd)
+    const directory = mkdtempSync(join(tmpdir(), 'torghut-image-contract-'))
+    const before = join(directory, 'before.yaml')
+    const current = join(directory, 'current.yaml')
+    const receiptCalls = join(directory, 'receipt-calls')
+    const manifest = (digest: string, source: string, nonce: number) =>
+      `spec:\n  image: registry.test/lab/ta@sha256:${digest}\n  env:\n    - name: TORGHUT_TA_COMMIT\n      value: ${source}\n  restartNonce: ${nonce}\n`
+    const script = `
+      git() {
+        case "$1" in
+          cat-file) test -f "$BEFORE_MANIFEST" ;;
+          show) cat "$BEFORE_MANIFEST" ;;
+          *) return 99 ;;
+        esac
+      }
+      nix() { printf '%s\\n' "$*" >> "$RECEIPT_CALLS"; return 42; }
+      diff_base=base
+      ${functions}
+      verify_image_contract TA "$1" TORGHUT_TA_COMMIT registry.test/lab/ta
+    `
+    try {
+      for (const scenario of ['config', 'digest', 'source', 'new', 'invalid']) {
+        rmSync(receiptCalls, { force: true })
+        const digest = scenario === 'invalid' ? 'invalid' : 'a'.repeat(64)
+        writeFileSync(before, manifest(digest, '1'.repeat(40), 3))
+        writeFileSync(
+          current,
+          manifest(scenario === 'digest' ? 'b'.repeat(64) : digest, (scenario === 'source' ? '2' : '1').repeat(40), 4),
+        )
+        const result = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', script, '--', current], {
+          env: {
+            ...process.env,
+            BEFORE_MANIFEST: scenario === 'new' ? join(directory, 'missing.yaml') : before,
+            RECEIPT_CALLS: receiptCalls,
+          },
+        })
+        expect(result.exitCode, scenario).toBe(scenario === 'config' ? 0 : scenario === 'invalid' ? 1 : 42)
+        expect(existsSync(receiptCalls), scenario).toBe(!['config', 'invalid'].includes(scenario))
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('verifies every core Torghut runtime manifest directly when the runtime manifest group changes', () => {

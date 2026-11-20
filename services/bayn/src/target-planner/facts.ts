@@ -1,5 +1,7 @@
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
+import { equityShortIsEligible } from '../execution/equity-short'
+import { matchesProtectionCloseBook } from '../execution/protection-close-basis'
 import { Result, pipe } from 'effect'
 
 import { AccountStatus, OrderStatus, ReconciliationStatus } from '../execution/contracts'
@@ -233,7 +235,8 @@ const brokerStateIsCoherent = (facts: TargetPlannerFacts): boolean => {
     state.unknownOrderCount === unknownOrderCount &&
     facts.allocationCapital <= facts.equity &&
     input.referencePrices.contentHash === facts.referencePriceHash &&
-    Object.values(input.targetWeights).reduce((total, weight) => total + weight, 0) <= 1 + WEIGHT_SUM_TOLERANCE &&
+    Object.values(input.targetWeights).reduce((total, weight) => total + Math.abs(weight), 0) <=
+      1 + WEIGHT_SUM_TOLERANCE &&
     [...prices.entries(), ...bidPrices.entries(), ...askPrices.entries()].every(
       ([symbol, price]) => price % (instrumentMarket(symbol) === MarketKind.Crypto ? 1n : priceIncrement) === 0n,
     ) &&
@@ -284,7 +287,7 @@ export const derivePlannedTargetFacts = (
           }
           const desiredAt = (price: bigint) =>
             Result.mapError(
-              desiredQuantityAtoms(facts.allocationCapital, targetWeight, price, {
+              desiredQuantityAtoms(facts.allocationCapital, Math.abs(targetWeight), price, {
                 precision: {
                   ...facts.input.precision,
                   quantityIncrementAtoms: (instrumentMarket(symbol) === MarketKind.Equity
@@ -292,7 +295,7 @@ export const derivePlannedTargetFacts = (
                     : facts.quantityIncrement
                   ).toString(),
                 },
-              }),
+              }).pipe(Result.map((quantity) => (targetWeight < 0 ? -quantity : quantity))),
               (cause) =>
                 deriveTargetsFailure({
                   reason: 'precision',
@@ -347,7 +350,12 @@ export const derivePlannedTargetFacts = (
               ? currentQuantity
               : desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
                 ? currentQuantity + maximumBuyQuantity
-                : selected.quantity
+                : selected.quantity < 0n &&
+                    desiredDelta < 0n &&
+                    (facts.maximumSellQuantities.get(symbol) ?? 0n) > 0n &&
+                    -desiredDelta > (facts.maximumSellQuantities.get(symbol) ?? 0n)
+                  ? currentQuantity - (facts.maximumSellQuantities.get(symbol) ?? 0n)
+                  : selected.quantity
             return Result.succeed([
               ...targetFacts,
               {
@@ -380,8 +388,44 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
   if (!brokerStateIsCurrent(facts)) return TargetPlanReason.ReconciliationNotExact
   if (input.brokerState.account.status !== AccountStatus.Active) return TargetPlanReason.AccountNotActive
   if (input.brokerState.unknownOrderCount > 0) return TargetPlanReason.UnknownOrder
-  if (input.brokerState.orders.some((order) => isUnresolved(order.status))) return TargetPlanReason.UnresolvedOrder
   const forcedClose = input.executionTerms.executionPurpose !== undefined
+  const protectionClose = input.protectionClose
+  if (protectionClose !== undefined) {
+    if (
+      !forcedClose ||
+      input.strategyName !== 'jev' ||
+      input.executionTerms.priceReference !== 'verified-adverse-quote-boundary' ||
+      facts.targetSymbols.length !== 1 ||
+      facts.targetSymbols[0] !== protectionClose.symbol ||
+      !matchesProtectionCloseBook(
+        protectionClose,
+        input.brokerState,
+        input.cycleId,
+        input.observedAt,
+        input.maximumInputAgeMs,
+      )
+    )
+      return TargetPlanReason.UnresolvedOrder
+  } else if (input.brokerState.orders.some((order) => isUnresolved(order.status))) {
+    return TargetPlanReason.UnresolvedOrder
+  }
+  if (
+    Object.entries(input.targetWeights).some(
+      ([symbol, weight]) =>
+        weight < 0 &&
+        (forcedClose ||
+          (facts.positions.get(symbol) ?? 0n) !== 0n ||
+          instrumentMarket(symbol) !== MarketKind.Equity ||
+          !equityShortIsEligible(
+            input.executionTerms.equityShortEntries?.[symbol],
+            input.accountId,
+            symbol,
+            input.observedAt,
+            Math.min(15_000, input.maximumInputAgeMs),
+          )),
+    )
+  )
+    return TargetPlanReason.ShortPositionNotAllowed
   if (!forcedClose && facts.positionQuantities.some((quantity) => quantity < 0n)) {
     return TargetPlanReason.ShortPositionNotAllowed
   }

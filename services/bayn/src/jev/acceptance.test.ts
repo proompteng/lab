@@ -5,7 +5,7 @@ import fc from 'fast-check'
 import { checkProperty } from '../testing/property-test-support'
 
 import {
-  evaluateJevAcceptance as evaluateAcceptance,
+  evaluateRetainedJevAcceptance as evaluateAcceptance,
   JevAcceptanceVersion,
   jevAcceptanceProtocolHash,
   JevNumericalVerdict,
@@ -13,7 +13,7 @@ import {
   type JevAcceptanceInput,
 } from './acceptance'
 
-const evaluateJevAcceptance = (input: unknown) => evaluateAcceptance(input, JevAcceptanceVersion.RetainedV3)
+const evaluateRetainedJevAcceptance = (input: unknown) => evaluateAcceptance(input, JevAcceptanceVersion.RetainedV3)
 
 const dates = [
   '2026-09-21',
@@ -94,7 +94,7 @@ const changeCandidate = (
 })
 
 const numerical = (input: unknown) => {
-  const report = Result.getOrThrow(evaluateJevAcceptance(input))
+  const report = Result.getOrThrow(evaluateRetainedJevAcceptance(input))
   if (!('checks' in report)) throw new Error('Expected a complete numerical report')
   return report
 }
@@ -158,7 +158,7 @@ describe('Jev registered-window numerical acceptance', () => {
     expect(report.confidence.meanNetPnlUsdLowerBound).toBe(2000)
     expect(
       Result.isFailure(
-        evaluateJevAcceptance({
+        evaluateRetainedJevAcceptance({
           ...input,
           policies: input.policies.map((policy, index) =>
             index === 0 ? { ...policy, sessions: policy.sessions.slice(1) } : policy,
@@ -167,13 +167,15 @@ describe('Jev registered-window numerical acceptance', () => {
       ),
     ).toBe(true)
     expect(
-      Result.isFailure(evaluateJevAcceptance({ ...input, registration: { ...input.registration, sessions: [] } })),
+      Result.isFailure(
+        evaluateRetainedJevAcceptance({ ...input, registration: { ...input.registration, sessions: [] } }),
+      ),
     ).toBe(true)
   })
 
   test('rejects an exact $50 paired bootstrap lower bound with fractional-dollar inputs', () => {
     const report = Result.getOrThrow(
-      evaluateJevAcceptance(
+      evaluateRetainedJevAcceptance(
         inputFixture(
           () => 300.000005,
           (index) => (index < 10 ? 256.000005 : 216.000005),
@@ -190,7 +192,7 @@ describe('Jev registered-window numerical acceptance', () => {
 
   test('accepts an exact $5,000 total without losing fractional dollars during summation', () => {
     const report = Result.getOrThrow(
-      evaluateJevAcceptance(inputFixture((index) => (index < 19 ? 249.999997 : 250.000057))),
+      evaluateRetainedJevAcceptance(inputFixture((index) => (index < 19 ? 249.999997 : 250.000057))),
     )
     expect(report.verdict).toBe(JevNumericalVerdict.Passed)
     if (!('checks' in report)) throw new Error('Expected a complete numerical report')
@@ -371,7 +373,7 @@ describe('Jev registered-window numerical acceptance', () => {
 
   test('requires all numerical outcomes and retains reproducible identity without granting authority', () => {
     const input = inputFixture()
-    const report = Result.getOrThrow(evaluateJevAcceptance(input))
+    const report = Result.getOrThrow(evaluateRetainedJevAcceptance(input))
     expect(report.verdict).toBe(JevNumericalVerdict.Passed)
     if ('metrics' in report) {
       expect(report.metrics.netPnlUsd).toBe(6000)
@@ -380,12 +382,12 @@ describe('Jev registered-window numerical acceptance', () => {
       expect(report.confidence.paired.every((c) => c.meanIncrementalNetPnlUsdLowerBound === 200)).toBe(true)
     }
     expect(report.scope).toContain('grants no trading authority')
-    expect(Result.getOrThrow(evaluateJevAcceptance(input))).toEqual(report)
+    expect(Result.getOrThrow(evaluateRetainedJevAcceptance(input))).toEqual(report)
   })
 
   test('rejects the oracle counterexample that passes absolute profitability and the observed 1.25 multiplier', () => {
     const report = Result.getOrThrow(
-      evaluateJevAcceptance(
+      evaluateRetainedJevAcceptance(
         inputFixture(
           () => 300,
           (index) => (Math.floor(index / 5) % 2 === 0 ? 900 : -420),
@@ -409,7 +411,7 @@ describe('Jev registered-window numerical acceptance', () => {
     ['p95BatchLatency', { p95LatencyStress: { status: 'COMPLETE', netPnlUsd: -1, evidenceHash: 'f'.repeat(64) } }],
   ] as const)('misses the %s target even when the ordinary net result is positive', (check, change) => {
     const report = Result.getOrThrow(
-      evaluateJevAcceptance(changeCandidate(inputFixture(), (session) => ({ ...session, ...change }))),
+      evaluateRetainedJevAcceptance(changeCandidate(inputFixture(), (session) => ({ ...session, ...change }))),
     )
     expect(report.verdict).toBe(JevNumericalVerdict.Missed)
     if ('checks' in report) expect(report.checks[check]).toBe(false)
@@ -417,7 +419,7 @@ describe('Jev registered-window numerical acceptance', () => {
 
   test('does not confuse modest positive profit with the required absolute profit target', () => {
     const report = Result.getOrThrow(
-      evaluateJevAcceptance(
+      evaluateRetainedJevAcceptance(
         inputFixture(
           () => 100,
           () => 0,
@@ -429,7 +431,7 @@ describe('Jev registered-window numerical acceptance', () => {
   })
 
   test('tracks drawdown across session boundaries', () => {
-    const report = Result.getOrThrow(evaluateJevAcceptance(inputFixture((index) => (index < 6 ? -500 : 1000))))
+    const report = Result.getOrThrow(evaluateRetainedJevAcceptance(inputFixture((index) => (index < 6 ? -500 : 1000))))
     if ('checks' in report) {
       expect(report.metrics.maximumDrawdownUsd).toBe(3000)
       expect(report.checks.drawdown).toBe(false)
@@ -439,7 +441,7 @@ describe('Jev registered-window numerical acceptance', () => {
 
   test('checks marked intraday losses even when the session closes profitably', () => {
     const report = Result.getOrThrow(
-      evaluateJevAcceptance(
+      evaluateRetainedJevAcceptance(
         changeCandidate(inputFixture(), (session) =>
           session.status === 'COMPLETE'
             ? { ...session, minimumEquityUsd: session.openingEquityUsd - 1500, maximumDrawdownUsd: 1500 }
@@ -454,7 +456,7 @@ describe('Jev registered-window numerical acceptance', () => {
     'retains unresolved %s evidence instead of excluding the session',
     (kind) => {
       const report = Result.getOrThrow(
-        evaluateJevAcceptance(
+        evaluateRetainedJevAcceptance(
           changeCandidate(inputFixture(), (session) =>
             kind === 'base'
               ? { status: 'UNRESOLVED', sessionDate: session.sessionDate, evidenceHash: session.evidenceHash }
@@ -473,7 +475,7 @@ describe('Jev registered-window numerical acceptance', () => {
   test('an unresolved control also prevents a pass', () => {
     const input = inputFixture()
     const report = Result.getOrThrow(
-      evaluateJevAcceptance({
+      evaluateRetainedJevAcceptance({
         ...input,
         policies: input.policies.map((policy) =>
           policy.policy === JevResearchPolicy.Ablation
@@ -505,7 +507,7 @@ describe('Jev registered-window numerical acceptance', () => {
       changeCandidate(input, (session) => ({ ...session, netPnlUsd: Number.NaN })),
       changeCandidate(input, (session) => ({ ...session, netPnlUsd: 5000 })),
     ])
-      expect(Result.isFailure(evaluateJevAcceptance(changed))).toBe(true)
+      expect(Result.isFailure(evaluateRetainedJevAcceptance(changed))).toBe(true)
   })
 
   test('spends less comparison error on later attempts and rejects insufficient bootstrap resolution', () => {
@@ -513,14 +515,16 @@ describe('Jev registered-window numerical acceptance', () => {
       () => 300,
       (i) => (i % 2 === 0 ? 400 : -200),
     )
-    const first = Result.getOrThrow(evaluateJevAcceptance(input))
+    const first = Result.getOrThrow(evaluateRetainedJevAcceptance(input))
     const second = Result.getOrThrow(
-      evaluateJevAcceptance({ ...input, registration: { ...input.registration, attemptIndex: 2 } }),
+      evaluateRetainedJevAcceptance({ ...input, registration: { ...input.registration, attemptIndex: 2 } }),
     )
     if ('confidence' in first && 'confidence' in second)
       expect(second.confidence.comparisonAlpha).toBeLessThan(first.confidence.comparisonAlpha)
     expect(
-      Result.isFailure(evaluateJevAcceptance({ ...input, registration: { ...input.registration, attemptIndex: 100 } })),
+      Result.isFailure(
+        evaluateRetainedJevAcceptance({ ...input, registration: { ...input.registration, attemptIndex: 100 } }),
+      ),
     ).toBe(true)
   })
 })

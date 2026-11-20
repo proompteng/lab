@@ -27,12 +27,20 @@ export async function GET(request: Request) {
   try {
     requireSameOriginGet(request)
     const identity = await requireAdminIdentity(request)
-    const { workspaceId } = z
-      .strictObject({ workspaceId: z.uuid() })
+    const { workspaceId, history, cursor, requestId } = z
+      .strictObject({
+        workspaceId: z.uuid(),
+        requestId: z.uuid().optional(),
+        history: z.enum(['true', 'false']).optional(),
+        cursor: z
+          .string()
+          .regex(/^[0-9]{1,19}:[0-9a-f-]{36}$/)
+          .optional(),
+      })
       .parse(Object.fromEntries(new URL(request.url).searchParams))
     const result = await ofzCall(
       PlatformAuthorizationService.method.listPlatformAccessRequests,
-      { administrator: platformSession(identity), workspaceId },
+      { administrator: platformSession(identity), workspaceId, history: history === 'true', cursor, requestId },
       request.signal,
     )
     return Response.json(toJson(ListPlatformAccessRequestsResponseSchema, result), { headers: noStoreHeaders() })

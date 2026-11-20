@@ -3,10 +3,8 @@ import { stat } from 'node:fs/promises'
 import type { FSWatcher } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import type * as ParseResult from '@effect/schema/ParseResult'
-import * as Schema from '@effect/schema/Schema'
-import * as TreeFormatter from '@effect/schema/TreeFormatter'
-import { Context, Effect, Layer, Runtime } from 'effect'
+import * as Schema from 'effect/Schema'
+import { Context, Effect, Layer } from 'effect'
 import * as SubscriptionRef from 'effect/SubscriptionRef'
 import * as Stream from 'effect/Stream'
 import YAML from 'yaml'
@@ -16,17 +14,12 @@ import { ConfigError, WorkflowError, toLogError } from './errors'
 import type { LoadedWorkflow, SymphonyConfig, WorkflowDefinition } from './types'
 import type { Logger } from './logger'
 
-const WorkflowFrontMatterSchema = Schema.Record({
-  key: Schema.String,
-  value: Schema.Unknown,
-})
+const WorkflowFrontMatterSchema = Schema.Record(Schema.String, Schema.Unknown)
 
-const decodeWorkflowFrontMatter = Schema.decodeUnknown(WorkflowFrontMatterSchema)
-
-const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
+const decodeWorkflowFrontMatter = Schema.decodeUnknownEffect(WorkflowFrontMatterSchema)
 
 const readFileText = (filePath: string): Effect.Effect<string, WorkflowError, never> =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     readFile(filePath, 'utf8', (error, data) => {
       if (error) {
         resume(
@@ -76,9 +69,7 @@ const parseFrontMatter = (
   }).pipe(
     Effect.flatMap((parsed) =>
       decodeWorkflowFrontMatter(parsed).pipe(
-        Effect.mapError(
-          (error) => new WorkflowError('workflow_front_matter_not_a_map', formatSchemaError(error), error),
-        ),
+        Effect.mapError((error) => new WorkflowError('workflow_front_matter_not_a_map', error.message, error)),
       ),
     ),
     Effect.map((config) => ({
@@ -130,17 +121,16 @@ export interface WorkflowServiceDefinition {
   readonly changes: Stream.Stream<{ definition: WorkflowDefinition; config: SymphonyConfig }>
 }
 
-export class WorkflowService extends Context.Tag('symphony/WorkflowService')<
-  WorkflowService,
-  WorkflowServiceDefinition
->() {}
+export class WorkflowService extends Context.Service<WorkflowService, WorkflowServiceDefinition>()(
+  'symphony/WorkflowService',
+) {}
 
 export const makeWorkflowLayer = (workflowPath: string, logger: Logger) =>
-  Layer.scoped(
+  Layer.effect(
     WorkflowService,
     Effect.gen(function* () {
       const resolvedPath = resolve(workflowPath)
-      const runtime = yield* Effect.runtime<never>()
+      const context = yield* Effect.context<never>()
       const workflowLogger = logger.child({ component: 'workflow-service', workflow_path: resolvedPath })
       const initial = yield* readLoadedWorkflowEffect(resolvedPath)
       const ref = yield* SubscriptionRef.make(initial)
@@ -162,10 +152,10 @@ export const makeWorkflowLayer = (workflowPath: string, logger: Logger) =>
       )
 
       const safeReload = reloadAndKeepLastKnownGood.pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             workflowLogger.log('error', 'workflow_reload_failed', toLogError(error))
-          }).pipe(Effect.zipRight(SubscriptionRef.get(ref))),
+          }).pipe(Effect.andThen(SubscriptionRef.get(ref))),
         ),
       )
 
@@ -173,7 +163,7 @@ export const makeWorkflowLayer = (workflowPath: string, logger: Logger) =>
         Effect.sync(() =>
           watch(dirname(resolvedPath), { persistent: false }, (_eventType, filename) => {
             if (filename && resolve(dirname(resolvedPath), filename.toString()) !== resolvedPath) return
-            Runtime.runFork(runtime)(safeReload)
+            Effect.runForkWith(context)(safeReload)
           }),
         ),
         (resource: FSWatcher) =>
@@ -189,10 +179,10 @@ export const makeWorkflowLayer = (workflowPath: string, logger: Logger) =>
           catch: (error) =>
             new WorkflowError('missing_workflow_file', `failed to stat workflow file ${resolvedPath}`, error),
         }).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.sync(() => {
               workflowLogger.log('warn', 'workflow_stat_failed', toLogError(error))
-            }).pipe(Effect.zipRight(Effect.succeed<{ mtimeMs: number }>({ mtimeMs: latest.mtimeMs }))),
+            }).pipe(Effect.andThen(Effect.succeed<{ mtimeMs: number }>({ mtimeMs: latest.mtimeMs }))),
           ),
         )
 
@@ -212,7 +202,7 @@ export const makeWorkflowLayer = (workflowPath: string, logger: Logger) =>
         current,
         config: current.pipe(Effect.map((loaded) => loaded.config)),
         reload: safeReload.pipe(Effect.map((loaded) => ({ definition: loaded.definition, config: loaded.config }))),
-        changes: ref.changes.pipe(
+        changes: SubscriptionRef.changes(ref).pipe(
           Stream.map((loaded) => ({
             definition: loaded.definition,
             config: loaded.config,

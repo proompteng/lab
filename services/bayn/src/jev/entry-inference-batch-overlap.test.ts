@@ -1,18 +1,18 @@
+import { nativeChartInference, entryProviderFixture } from './entry-inference.test-support'
 import { expect, test } from 'bun:test'
-import { Cause, Clock, Effect, Exit, Fiber, Layer, Result } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { canonicalHashV1Result } from '../hash'
 import { operationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
 import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
-import { DecisionsClient, DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { EntryInferenceJournal, prepareClaimedEntry, type EntryHandoff } from './entry-inference'
 import { evaluateClaimedEntryInferences } from './entry-inference-batch'
 import { makeJevDispatch, JevEvaluationStore, type JevEvaluationRecord } from './evaluation'
 import { defaultJevProtocolDocument } from './protocol'
-import { JevOutcome } from './evidence'
-import type { StagedDispatchClaim } from './staged-checkpoint'
+import { JevOutcome, makeJevEvaluationRequest } from './evidence'
+import type { StagedDispatchClaim, StagedTerminalReceipt } from './staged-checkpoint'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
 const fixture = () => {
@@ -30,7 +30,9 @@ const fixture = () => {
     input: {
       schemaVersion: 'bayn.entry-inference-input.v8' as const,
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: defaultJevProtocolDocument.inputDefinition,
+        webullContext: null,
+        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
@@ -46,7 +48,6 @@ const fixture = () => {
 
 const providers = (
   options: {
-    readonly visualDelay?: number
     readonly commitDelay?: number
     readonly jevDelay?: number | readonly number[]
     readonly visualFailure?: boolean
@@ -57,10 +58,9 @@ const providers = (
     readonly chartClaimDelay?: number
     readonly chartTerminalFails?: boolean
     readonly chartTerminalDelay?: number
-    readonly baseFailure?: boolean
-    readonly baseDelay?: number
-    readonly baseClaimDenied?: boolean
-    readonly baseTerminalFails?: boolean
+    readonly slowChartFailure?: boolean
+    readonly slowChartDelay?: number
+    readonly slowChartCommitFails?: boolean
     readonly journalCommitDelay?: number
     readonly cleanupTerminalFails?: boolean
     readonly receiptFailure?: boolean
@@ -73,9 +73,11 @@ const providers = (
   let receiptAttempts = 0
   const events: string[] = []
   const checkpointEvents: string[] = []
+  const terminals: StagedTerminalReceipt[] = []
   const handoffs: EntryHandoff[] = []
   const commits: string[] = []
   const jevBudgets: (number | undefined)[] = []
+  const providerStarts: { readonly kind: 'chart' | 'jev'; readonly at: number; readonly budget?: number }[] = []
   const commit = <A, E, R>(name: string, operation: Effect.Effect<A, E, R>) =>
     Effect.sync(() => commits.push(name)).pipe(
       Effect.andThen(operation),
@@ -88,13 +90,12 @@ const providers = (
         }),
       ),
     )
-  const recordClaim = (claim: StagedDispatchClaim) =>
+  const recordClaim = (_claim: StagedDispatchClaim) =>
     Effect.gen(function* () {
       checkpointEvents.push('claim')
       if (options.chartClaimDelay !== undefined) yield* Effect.sleep(options.chartClaimDelay)
       return {
-        dispatchAllowed:
-          options.chartClaimDenied !== true && !(claim.stage === 'BASE_START' && options.baseClaimDenied),
+        dispatchAllowed: options.chartClaimDenied !== true,
       }
     })
   const recordHandoff = (handoff: EntryHandoff) =>
@@ -108,79 +109,6 @@ const providers = (
       return { dispatchAllowed: options.existingHandoff !== true }
     })
   const layer = Layer.mergeAll(
-    Layer.succeed(DecisionsClient, {
-      evaluate: (input) =>
-        Effect.gen(function* () {
-          activeProviders++
-          peakProviders = Math.max(peakProviders, activeProviders)
-          events.push('visual')
-          checkpointEvents.push('visual')
-          const started = yield* Clock.currentTimeMillis
-          const prepared = Result.getOrThrow(prepareDecisionsRequest(input))
-          const isBase = prepared.request.questions.length === 1
-          if (options.visualFailure || (isBase && options.baseFailure))
-            return yield* new DecisionsError({
-              category: 'STATUS',
-              message: 'Limited',
-              status: 429,
-              requestHash: prepared.requestHash,
-              responseHash: 'b'.repeat(64),
-              usage: {
-                input_tokens: 100,
-                input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-                output_tokens: 0,
-                total_tokens: 100,
-              },
-            })
-          if (options.visualDelay !== undefined && prepared.request.questions.length > 1)
-            yield* Effect.sleep(options.visualDelay)
-          if (isBase && options.baseDelay !== undefined) yield* Effect.sleep(options.baseDelay)
-          const anchors: Readonly<Record<string, number>> = {
-            support_anchor: 0,
-            resistance_anchor: 0,
-            base_last_bar: 0,
-          }
-          const response = Result.getOrThrow(
-            decodeDecisionsResponse(prepared.request, {
-              model: prepared.request.model,
-              answers: prepared.request.questions.map((question) =>
-                question.type === 'predicate'
-                  ? { type: 'predicate', name: question.name, probability: 0.8 }
-                  : {
-                      type: 'choice',
-                      name: question.name,
-                      choice: question.choices[anchors[question.name] ?? 0]?.value,
-                      confidence: 0.8,
-                      probabilities: question.choices.map((choice, index) => ({
-                        value: choice.value,
-                        probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
-                      })),
-                    },
-              ),
-              usage: {
-                input_tokens: 100,
-                input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-                output_tokens: 0,
-                total_tokens: 100,
-              },
-            }),
-          )
-          options.afterVisual?.()
-          return {
-            requestHash: prepared.requestHash,
-            responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-            startedAt: utcInstantFromEpochMillis(started),
-            completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-            response,
-          }
-        }).pipe(
-          Effect.onExit(() =>
-            Effect.sync(() => {
-              activeProviders--
-            }),
-          ),
-        ),
-    }),
     Layer.succeed(EntryInferenceJournal, {
       recordVisualClaims: (inputs) =>
         commit(
@@ -203,6 +131,7 @@ const providers = (
                 const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
                 if (terminal !== null) {
                   checkpointEvents.push('terminal')
+                  terminals.push(terminal)
                   if (successor.kind === 'NONE' && options.cleanupTerminalFails)
                     return yield* operationalError({
                       component: 'journal',
@@ -211,7 +140,8 @@ const providers = (
                     })
                   if (
                     successor.kind !== 'NONE' &&
-                    (options.chartTerminalFails || (terminal.stage === 'BASE_START' && options.baseTerminalFails))
+                    (options.chartTerminalFails ||
+                      (terminal.requestId === 'a'.repeat(64) && options.slowChartCommitFails))
                   )
                     return yield* operationalError({
                       component: 'journal',
@@ -220,65 +150,114 @@ const providers = (
                     })
                 }
                 const result =
-                  successor.kind === 'NONE'
-                    ? { dispatchAllowed: false }
-                    : successor.kind === 'VISUAL'
-                      ? yield* recordClaim(successor.claim)
-                      : yield* recordHandoff(successor.handoff)
+                  successor.kind === 'NONE' ? { dispatchAllowed: false } : yield* recordHandoff(successor.handoff)
                 return { requestId, ...result }
               }),
             )
           }),
         ),
     }),
-    Layer.succeed(JevClient, {
-      evaluate: (input, timeoutMs) =>
-        Effect.gen(function* () {
-          activeProviders++
-          peakProviders = Math.max(peakProviders, activeProviders)
-          expect(handoffs.length).toBeGreaterThan(0)
-          jevBudgets.push(timeoutMs)
-          events.push('jev')
-          checkpointEvents.push('jev')
-          const prepared = Result.getOrThrow(prepareJevRequest(input))
-          expect(durableJevRequests.has(prepared.requestHash)).toBe(true)
-          if (options.jevFailure)
-            return yield* new JevError({
-              failure: JevFailure.Transport,
-              message: 'Unavailable',
-              requestHash: prepared.requestHash,
-            })
-          const started = yield* Clock.currentTimeMillis
-          const delay =
-            typeof options.jevDelay === 'number' ? options.jevDelay : options.jevDelay?.[jevBudgets.length - 1]
-          if (delay !== undefined) yield* Effect.sleep(delay)
-          const response = Result.getOrThrow(
-            decodeJevResponse(prepared.request, {
-              model: prepared.request.model,
-              answers: Object.fromEntries(
-                Object.keys(prepared.request.questions).map((name) => [
-                  name,
-                  { type: 'noul', noul: name.endsWith('_target_obstructed') ? 0.1 : 0.9 },
-                ]),
+    Layer.succeed(
+      JevClient,
+      entryProviderFixture(
+        {
+          evaluate: (input, timeoutMs) =>
+            Effect.gen(function* () {
+              activeProviders++
+              peakProviders = Math.max(peakProviders, activeProviders)
+              expect(handoffs.length).toBeGreaterThan(0)
+              jevBudgets.push(timeoutMs)
+              events.push('jev')
+              checkpointEvents.push('jev')
+              const started = yield* Clock.currentTimeMillis
+              providerStarts.push({ kind: 'jev', at: started, budget: timeoutMs })
+              const prepared = Result.getOrThrow(prepareJevRequest(input))
+              expect(durableJevRequests.has(prepared.requestHash)).toBe(true)
+              if (options.jevFailure)
+                return yield* new JevError({
+                  failure: JevFailure.Transport,
+                  message: 'Unavailable',
+                  requestHash: prepared.requestHash,
+                })
+              const delay =
+                typeof options.jevDelay === 'number' ? options.jevDelay : options.jevDelay?.[jevBudgets.length - 1]
+              if (delay !== undefined) yield* Effect.sleep(delay)
+              const response = Result.getOrThrow(
+                decodeJevResponse(prepared.request, {
+                  model: prepared.request.model,
+                  answers: Object.fromEntries(
+                    Object.keys(prepared.request.questions).map((name) => [
+                      name,
+                      { type: 'noul', noul: name.endsWith('_target_obstructed') ? 0.1 : 0.9 },
+                    ]),
+                  ),
+                  usage: { input_tokens: 200, output_tokens: 0 },
+                }),
+              )
+              return {
+                requestHash: prepared.requestHash,
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                startedAt: utcInstantFromEpochMillis(started),
+                completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                response,
+              }
+            }).pipe(
+              Effect.onExit(() =>
+                Effect.sync(() => {
+                  activeProviders--
+                }),
               ),
-              usage: { input_tokens: 200, output_tokens: 0 },
-            }),
-          )
-          return {
-            requestHash: prepared.requestHash,
-            responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-            startedAt: utcInstantFromEpochMillis(started),
-            completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-            response,
-          }
-        }).pipe(
-          Effect.onExit(() =>
-            Effect.sync(() => {
-              activeProviders--
-            }),
-          ),
-        ),
-    }),
+            ),
+        },
+        {
+          evaluate: (input, timeoutMs) =>
+            Effect.gen(function* () {
+              activeProviders++
+              peakProviders = Math.max(peakProviders, activeProviders)
+              events.push('visual')
+              checkpointEvents.push('visual')
+              const started = yield* Clock.currentTimeMillis
+              const prepared = Result.getOrThrow(prepareJevRequest(input))
+              const state = yield* Schema.decodeUnknownEffect(
+                Schema.Struct({ source: Schema.Struct({ bars: Schema.Array(Schema.Unknown) }) }),
+              )(prepared.request.state).pipe(Effect.orDie)
+              const isSlow = state.source.bars.length === 4
+              providerStarts.push({ kind: 'chart', at: started, budget: timeoutMs })
+              if (options.visualFailure || (isSlow && options.slowChartFailure))
+                return yield* new JevError({
+                  failure: JevFailure.Status,
+                  message: 'Limited',
+                  status: 429,
+                  requestHash: prepared.requestHash,
+                  responseHash: 'b'.repeat(64),
+                  rejectedResponse: Redacted.make({
+                    model: prepared.request.model,
+                    usage: { input_tokens: 100, output_tokens: 0 },
+                  }),
+                })
+              if (isSlow && options.slowChartDelay !== undefined) yield* Effect.sleep(options.slowChartDelay)
+              const response = nativeChartInference(
+                input,
+                utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+              ).response
+              options.afterVisual?.()
+              return {
+                requestHash: prepared.requestHash,
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                startedAt: utcInstantFromEpochMillis(started),
+                completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                response,
+              }
+            }).pipe(
+              Effect.onExit(() =>
+                Effect.sync(() => {
+                  activeProviders--
+                }),
+              ),
+            ),
+        },
+      ),
+    ),
     Layer.succeed(JevEvaluationStore, {
       read: () => Effect.die('Unexpected read'),
       abandon: () => Effect.die('Unexpected abandon'),
@@ -299,9 +278,11 @@ const providers = (
   return {
     events,
     checkpointEvents,
+    terminals,
     handoffs,
     commits,
     jevBudgets,
+    providerStarts,
     records,
     peakProviders: () => peakProviders,
     receiptAttempts: () => receiptAttempts,
@@ -330,27 +311,139 @@ const mixedDispatches = () => {
   }
   return [direct, base].map((claim) => {
     const prepared = Result.getOrThrow(prepareClaimedEntry(claim))
-    return makeJevDispatch({
-      claimedAt: claim.claimedAt,
-      visualClaim: prepared.visualClaim,
-      request: {
-        schemaVersion: 'bayn.jev-evaluation-request.v3',
-        requestId: claim.requestId,
-        cycleId: 'a'.repeat(64),
-        authorityGenerationHash: 'b'.repeat(64),
-        snapshotId: 'c'.repeat(64),
-        symbol: 'AAPL',
-        observedAt: claim.observedAt,
-        expiresAt: claim.expiresAt,
-        request: prepared.prepared.input,
-        requestHash: prepared.prepared.requestHash,
-      },
-    })
+    return Result.getOrThrow(
+      makeJevDispatch({
+        claimedAt: claim.claimedAt,
+        request: {
+          schemaVersion: 'bayn.jev-evaluation-request.v3',
+          requestId: claim.requestId,
+          cycleId: 'a'.repeat(64),
+          authorityGenerationHash: 'b'.repeat(64),
+          snapshotId: 'c'.repeat(64),
+          symbol: 'AAPL',
+          observedAt: claim.observedAt,
+          expiresAt: claim.expiresAt,
+          request: prepared.prepared.input,
+          requestHash: prepared.prepared.requestHash,
+        },
+      }),
+    )
   })
 }
 
-test('durable ready handoff overlaps unrelated base work without changing deadlines or input order', async () => {
-  const setup = providers({ baseDelay: 5000, jevDelay: [5000, 0] })
+const lateDispatches = () =>
+  mixedDispatches().map((dispatch) => {
+    const observedAt = utcInstantFromEpochMillis(at + 55_000)
+    const claimedAt = utcInstantFromEpochMillis(at + 59_000)
+    const expiresAt = utcInstantFromEpochMillis(at + 65_000)
+    const request = Result.getOrThrow(
+      makeJevEvaluationRequest({
+        schemaVersion: dispatch.request.schemaVersion,
+        cycleId: dispatch.request.cycleId,
+        authorityGenerationHash: dispatch.request.authorityGenerationHash,
+        snapshotId: dispatch.request.snapshotId,
+        symbol: dispatch.request.symbol,
+        observedAt,
+        expiresAt,
+        requestHash: dispatch.request.requestHash,
+        request: dispatch.request.request,
+      }),
+    )
+    return Result.getOrThrow(makeJevDispatch({ claimedAt, request }))
+  })
+
+test('an expired chart does not erase a paid sibling in the same parallel batch', async () => {
+  const setup = providers()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const fresh = lateDispatches()[0]
+      const expired = mixedDispatches()[1]
+      if (fresh === undefined || expired === undefined) return yield* Effect.die('Expected mixed expiry fixtures')
+      const result = yield* evaluateClaimedEntryInferences([fresh, expired]).pipe(Effect.result)
+      expect(Result.isFailure(result)).toBe(true)
+      expect(setup.terminals.map((terminal) => terminal.outcome.status).sort()).toEqual(['NOT_DISPATCHED', 'RECEIVED'])
+      expect(setup.terminals.find((terminal) => terminal.requestId === expired.request.requestId)?.outcome.status).toBe(
+        'NOT_DISPATCHED',
+      )
+      expect(setup.handoffs.map((handoff) => handoff.requestId)).toEqual([fresh.request.requestId])
+      expect(setup.providerStarts.map((start) => start.kind)).toEqual(['chart', 'jev'])
+      expect(setup.records).toHaveLength(1)
+      expect(setup.records[0]?.request.requestId).toBe(fresh.request.requestId)
+      expect(setup.records[0]?.receipt.outcome.status).toBe(JevOutcome.Completed)
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('failed non-dispatch terminal persistence retries its exact proof and still retains a paid sibling', async () => {
+  const setup = providers({ cleanupTerminalFails: true })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const fresh = lateDispatches()[0]
+      const expired = mixedDispatches()[1]
+      if (fresh === undefined || expired === undefined) return yield* Effect.die('Expected mixed expiry fixtures')
+      const result = yield* evaluateClaimedEntryInferences([fresh, expired]).pipe(Effect.exit)
+      expect(Exit.isFailure(result)).toBe(true)
+      const attempts = setup.terminals.filter((terminal) => terminal.requestId === expired.request.requestId)
+      expect(attempts).toHaveLength(2)
+      expect(attempts[0]).toEqual(attempts[1])
+      expect(setup.records).toHaveLength(1)
+      expect(setup.records[0]?.request.requestId).toBe(fresh.request.requestId)
+      expect(setup.providerStarts.map((start) => start.kind)).toEqual(['chart', 'jev'])
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('an enclosing admission expiry commits positive no-dispatch evidence and fails the observation', async () => {
+  const setup = providers()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 60_000)
+      const dispatch = lateDispatches()[0]
+      if (dispatch === undefined) return yield* Effect.die('Expected admission expiry fixture')
+      const result = yield* evaluateClaimedEntryInferences([dispatch], { admissionDeadlineAt: at + 60_000 }).pipe(
+        Effect.result,
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      expect(setup.providerStarts).toEqual([])
+      expect(setup.handoffs).toEqual([])
+      expect(setup.records).toEqual([])
+      expect(setup.terminals).toHaveLength(1)
+      expect(setup.terminals[0]?.outcome).toEqual({
+        status: 'NOT_DISPATCHED',
+        reason: 'ADMISSION_EXPIRY',
+        deadlineAt: utcInstantFromEpochMillis(at + 60_000),
+        checkedAt: utcInstantFromEpochMillis(at + 60_000),
+      })
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('interruption during non-dispatch persistence retains the same positive proof without starting a provider', async () => {
+  const setup = providers({ journalCommitDelay: 1000 })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const expired = mixedDispatches()[1]
+      if (expired === undefined) return yield* Effect.die('Expected expired fixture')
+      const fiber = yield* evaluateClaimedEntryInferences([expired]).pipe(Effect.forkChild)
+      yield* TestClock.adjust(1)
+      const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
+      yield* TestClock.adjust(5000)
+      yield* Fiber.join(interrupted)
+      expect(setup.terminals).toHaveLength(2)
+      expect(setup.terminals[0]).toEqual(setup.terminals[1])
+      expect(setup.terminals[0]?.outcome.status).toBe('NOT_DISPATCHED')
+      expect(setup.providerStarts).toEqual([])
+      expect(setup.handoffs).toEqual([])
+      expect(setup.records).toEqual([])
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('durable ready handoff overlaps unrelated chart work without changing deadlines or input order', async () => {
+  const setup = providers({ slowChartDelay: 5000, jevDelay: [5000, 0] })
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(at)
@@ -379,8 +472,105 @@ test('durable ready handoff overlaps unrelated base work without changing deadli
   )
 })
 
+test('bounds an in-flight provider by the enclosing admission deadline', async () => {
+  const setup = providers({ slowChartDelay: 5000 })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const dispatch = lateDispatches()[1]
+      if (dispatch === undefined) return yield* Effect.die('late deadline fixture is absent')
+      const dispatches = [dispatch]
+      const fiber = yield* evaluateClaimedEntryInferences(dispatches, {
+        admissionDeadlineAt: at + 60_000,
+      }).pipe(Effect.forkChild)
+      yield* TestClock.adjust(999)
+      expect(setup.providerStarts).toHaveLength(1)
+      expect(
+        setup.providerStarts.every(
+          ({ kind, at: started, budget }) => kind === 'chart' && started === at + 59_000 && budget === 1000,
+        ),
+      ).toBe(true)
+      expect(setup.jevBudgets).toHaveLength(0)
+      yield* TestClock.adjust(1)
+      const completions = yield* Fiber.join(fiber)
+      expect(completions).toHaveLength(1)
+      expect(completions.every(({ jev }) => jev.status === 'NOT_REQUESTED')).toBe(true)
+      expect(completions.every(({ completedAt }) => completedAt === utcInstantFromEpochMillis(at + 60_000))).toBe(true)
+      expect(setup.providerStarts.every(({ at: started }) => started < at + 60_000)).toBe(true)
+      expect(dispatches.every(({ request }) => request.expiresAt === utcInstantFromEpochMillis(at + 65_000))).toBe(true)
+      expect(
+        dispatches.every(({ visualClaim }) => visualClaim?.expiresAt === utcInstantFromEpochMillis(at + 65_000)),
+      ).toBe(true)
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('retains validated paid visual evidence when the provider returns at the admission boundary', async () => {
+  const setup = providers({ slowChartDelay: 1000 })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const dispatch = lateDispatches()[1]
+      if (dispatch === undefined) return yield* Effect.die('late boundary fixture is absent')
+      const fiber = yield* evaluateClaimedEntryInferences([dispatch], {
+        admissionDeadlineAt: at + 60_000,
+      }).pipe(Effect.forkChild)
+      yield* TestClock.adjust(1000)
+      const [completion] = yield* Fiber.join(fiber)
+      expect(completion?.jev.status).toBe('NOT_REQUESTED')
+      const failed = setup.handoffs[0]?.disposition
+      if (failed?.status !== 'VISUAL_FAILED') throw new Error('boundary visual failure is absent')
+      expect(failed.failure.category).toBe('DEADLINE')
+      expect(failed.failure.responseHash).not.toBeNull()
+      expect(failed.failure.usage).toEqual({ input_tokens: 100, output_tokens: 0 })
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('does not start a new stage after an admission deadline crossed during commit', async () => {
+  const setup = providers({ chartTerminalDelay: 2000 })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const fiber = yield* evaluateClaimedEntryInferences(lateDispatches(), {
+        admissionDeadlineAt: at + 60_000,
+      }).pipe(Effect.result, Effect.forkChild)
+      yield* TestClock.adjust(2000)
+      const result = yield* Fiber.join(fiber)
+      expect(Result.isFailure(result)).toBe(true)
+      expect(setup.providerStarts).toHaveLength(2)
+      expect(setup.providerStarts.every(({ kind, at: started }) => kind === 'chart' && started < at + 60_000)).toBe(
+        true,
+      )
+      expect(setup.jevBudgets).toHaveLength(0)
+      expect(setup.records).toHaveLength(0)
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
+test('bounds dependent Jev dispatches by the same admission deadline', async () => {
+  const setup = providers({ jevDelay: 5000 })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at + 59_000)
+      const fiber = yield* evaluateClaimedEntryInferences(lateDispatches(), {
+        admissionDeadlineAt: at + 60_000,
+      }).pipe(Effect.forkChild)
+      yield* TestClock.adjust(1000)
+      const completions = yield* Fiber.join(fiber)
+      expect(completions).toHaveLength(2)
+      expect(completions.every(({ jev }) => jev.status === 'FAILED' && jev.failure === JevFailure.Timeout)).toBe(true)
+      expect(setup.providerStarts.some(({ kind }) => kind === 'jev')).toBe(true)
+      expect(setup.providerStarts.every(({ at: started, budget }) => started < at + 60_000 && budget === 1000)).toBe(
+        true,
+      )
+      expect(setup.jevBudgets).toEqual([1000, 1000])
+    }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+  )
+})
+
 test('each Jev dispatch waits for its own durable journal commit', async () => {
-  const setup = providers({ baseDelay: 1000, journalCommitDelay: 2000 })
+  const setup = providers({ slowChartDelay: 1000, journalCommitDelay: 2000 })
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(at)
@@ -389,17 +579,17 @@ test('each Jev dispatch waits for its own durable journal commit', async () => {
       expect(setup.jevBudgets).toHaveLength(0)
       yield* TestClock.adjust(1)
       expect(setup.jevBudgets).toEqual([8000])
-      yield* TestClock.adjust(2999)
+      yield* TestClock.adjust(999)
       expect(setup.jevBudgets).toHaveLength(1)
       yield* TestClock.adjust(1)
       yield* Fiber.join(fiber)
-      expect(setup.jevBudgets).toEqual([8000, 5000])
+      expect(setup.jevBudgets).toEqual([8000, 7000])
     }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
   )
 })
 
 test('second journal failure settles the paid sibling and retains its receipt exactly once', async () => {
-  const setup = providers({ baseDelay: 1000, baseTerminalFails: true, jevDelay: 2000 })
+  const setup = providers({ slowChartDelay: 1000, slowChartCommitFails: true, jevDelay: 2000 })
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(at)
@@ -416,7 +606,7 @@ test('second journal failure settles the paid sibling and retains its receipt ex
 })
 
 test('interruption retains the already completed paid sibling once', async () => {
-  const setup = providers({ baseDelay: 5000 })
+  const setup = providers({ slowChartDelay: 5000 })
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(at)
@@ -444,8 +634,8 @@ test('first journal failure never starts either dependent provider group', async
   )
 })
 
-test('base provider failure does not discard the independent completed Jev evidence', async () => {
-  const setup = providers({ baseFailure: true })
+test('slow chart failure does not discard the independent completed Jev evidence', async () => {
+  const setup = providers({ slowChartFailure: true })
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(at)
@@ -462,8 +652,8 @@ test('base provider failure does not discard the independent completed Jev evide
 for (const receiptFailure of [false, true]) {
   test(`terminal cleanup failure still attempts independent paid receipts (receipt failure=${receiptFailure})`, async () => {
     const setup = providers({
-      baseDelay: 1000,
-      baseTerminalFails: true,
+      slowChartDelay: 1000,
+      slowChartCommitFails: true,
       cleanupTerminalFails: true,
       receiptFailure,
       jevDelay: 2000,

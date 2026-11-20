@@ -14,14 +14,28 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     requireSameOriginGet(request)
     const identity = await requireAdminIdentity(request)
     const workspaceId = z.uuid().parse((await context.params).workspaceId)
-    const cursor = z
-      .string()
-      .regex(/^[0-9]{1,19}$/)
-      .optional()
-      .parse(new URL(request.url).searchParams.get('cursor') ?? undefined)
+    const filters = z
+      .strictObject({
+        cursor: z
+          .string()
+          .regex(/^[0-9]{1,19}$/)
+          .optional(),
+        action: z
+          .string()
+          .max(128)
+          .regex(/^[^\p{Cc}]*$/u)
+          .optional(),
+        outcome: z.enum(['allowed', 'denied']).optional(),
+        actorId: z
+          .string()
+          .max(512)
+          .regex(/^[^\p{Cc}]*$/u)
+          .optional(),
+      })
+      .parse(Object.fromEntries(new URL(request.url).searchParams))
     const result = await ofzCall(
       PlatformAuthorizationService.method.readWorkspaceActivity,
-      { administrator: platformSession(identity), workspaceId, cursor: cursor || '' },
+      { administrator: platformSession(identity), workspaceId, ...filters },
       request.signal,
     )
     return Response.json(toJson(ReadWorkspaceActivityResponseSchema, result), { headers: noStoreHeaders() })

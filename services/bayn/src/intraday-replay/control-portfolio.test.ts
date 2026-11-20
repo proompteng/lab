@@ -11,6 +11,7 @@ import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { BrokerEnvironment } from '../broker/identity'
 import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
 
 import {
@@ -147,6 +148,7 @@ test('the explicit reserve experiment lowers late entry size while the legacy/de
   const policy = await Effect.runPromise(
     Effect.fromResult(makeExecutionRiskPolicy('control-fixture', equityMarketProfile.universe)),
   )
+  if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
   const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
   const input = {
     instruments: replayTestInstruments,
@@ -171,6 +173,36 @@ test('the explicit reserve experiment lowers late entry size while the legacy/de
   expect(reserved).toBeLessThan(legacy)
   expect((reserved * 100n * 2n) / 1000n).toBeLessThanOrEqual(21_000_000_000n)
 })
+test('uncapped paper replay retains full entry sizing above a million dollars for either turnover convention', () => {
+  const policy = Result.getOrThrow(
+    makeExecutionRiskPolicy('control-fixture', equityMarketProfile.universe, BrokerEnvironment.Sandbox),
+  )
+  const input = {
+    instruments: replayTestInstruments,
+    portfolio: flat(),
+    policy,
+    protocol: fixture.protocol,
+    targetWeight: 0.2,
+    symbol: 'AAPL',
+    referencePriceMicros: 100_000_000n,
+    atMs: at,
+    feeMultiplierPpm: 1_000_000,
+  }
+  const expected = Result.getOrThrow(controlEntryQuantity(input))
+  expect(expected).toBeGreaterThan(0n)
+  for (const turnoverPolicy of Object.values(EntryTurnoverPolicy)) {
+    expect(
+      Result.getOrThrow(
+        controlEntryQuantity({
+          ...input,
+          turnoverPolicy,
+          portfolio: { ...flat(), tradedNotionalMicros: 1_018_000_000_000n },
+        }),
+      ),
+    ).toBe(expected)
+  }
+})
+
 const entry = () => Result.getOrThrow(applyControlOrder(flat(), order(OrderSide.Buy))).portfolio
 const exiting = () =>
   Result.getOrThrow(

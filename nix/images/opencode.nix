@@ -8,6 +8,7 @@ let
   researchRoot = import ./bayn-runtime-root.nix {
     inherit pkgs lib repoRoot dependencySource depsHash bun nodejs;
     buildCommands = [
+      "BAYN_TEST_OPENCODE_BINARY=${cli}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
       "bun build services/bayn/src/opencode-command.ts --target=node --format=esm --packages=bundle --outfile=research.js"
     ];
     runtimeInstallPhase = ''

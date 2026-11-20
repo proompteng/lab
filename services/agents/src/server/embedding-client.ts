@@ -30,6 +30,7 @@ const toEmbeddingInput = (texts: readonly string[]) => (texts.length === 1 ? tex
 export const requestEmbeddings = async (
   texts: readonly string[],
   config: Pick<EmbeddingConfig, 'apiBaseUrl' | 'apiKey' | 'model' | 'dimension' | 'timeoutMs' | 'maxInputChars'>,
+  signal?: AbortSignal,
 ): Promise<number[][]> => {
   for (const text of texts) {
     if (text.length > config.maxInputChars) {
@@ -54,7 +55,9 @@ export const requestEmbeddings = async (
       input: toEmbeddingInput(texts),
       dimensions: config.dimension,
     }),
-    signal: AbortSignal.timeout(config.timeoutMs),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)])
+      : AbortSignal.timeout(config.timeoutMs),
   })
 
   if (!response.ok) {
@@ -83,8 +86,9 @@ export const requestEmbeddings = async (
 export const requestEmbedding = async (
   text: string,
   config: Pick<EmbeddingConfig, 'apiBaseUrl' | 'apiKey' | 'model' | 'dimension' | 'timeoutMs' | 'maxInputChars'>,
+  signal?: AbortSignal,
 ): Promise<number[]> => {
-  const embeddings = await requestEmbeddings([text], config)
+  const embeddings = await requestEmbeddings([text], config, signal)
   const embedding = embeddings[0]
   if (!embedding) {
     throw new Error('embedding response missing embeddings')

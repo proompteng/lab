@@ -10,6 +10,7 @@ import { getAgentRunLogsHandler } from './agent-run-logs'
 
 const requests: Array<{ path: string | undefined; authorization: string | undefined; range: string | undefined }> = []
 let oversized = false
+let longLine = false
 const server = createServer((request, response) => {
   requests.push({ path: request.url, authorization: request.headers.authorization, range: request.headers.range })
   const date = String(request.headers['x-amz-date'])
@@ -41,6 +42,14 @@ const server = createServer((request, response) => {
     response.end('x'.repeat(524289))
     return
   }
+  if (longLine) {
+    const content = Buffer.from('x'.repeat(300_000) + '\ncompleted\n')
+    const bytes = Number(request.headers.range?.match(/bytes=-(\d+)/)?.[1])
+    const start = Math.max(0, content.length - bytes)
+    response.writeHead(206, { 'content-range': `bytes ${start}-${content.length - 1}/${content.length}` })
+    response.end(content.subarray(start))
+    return
+  }
   response.writeHead(206, { 'content-range': 'bytes 100-199/200' })
   response.end('partial-record\n{"event":"first"}\n{"event":"last"}\n')
 })
@@ -58,6 +67,7 @@ afterAll(async () => {
 
 const fixture = () => {
   oversized = false
+  longLine = false
   requests.length = 0
   const kube: KubernetesClient = {
     apply: vi.fn(async () => ({})),
@@ -107,6 +117,20 @@ const fixture = () => {
 }
 
 describe('retained runner log transport', () => {
+  it('preserves the connector byte budget for retained logs with an oversized line', async () => {
+    const f = fixture()
+    longLine = true
+    const response = await getAgentRunLogsHandler(
+      new Request('http://test/logs?name=run-1&namespace=agents&tailLines=100'),
+      { ...f.deps, maxBytes: 131072 },
+    )
+    expect(response.status).toBe(200)
+    const value = await response.json()
+    expect(Buffer.byteLength(value.logs)).toBeLessThanOrEqual(131072)
+    expect(value.logs).toContain('completed\n')
+    expect(value.truncated).toBe(true)
+    expect(requests[0]?.range).toBe('bytes=-131071')
+  })
   it('retrieves a bounded authenticated S3 tail after the Pod is gone', async () => {
     const f = fixture()
     const response = await getAgentRunLogsHandler(

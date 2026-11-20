@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
+import { sha256 } from '../hash'
 import { Effect, Result, Schema } from 'effect'
 
 import { nativeJevFixture, nativeJevDecisionEvidence } from '../jev/native.test-support'
@@ -10,16 +11,20 @@ import {
   entryAbstentionWork,
   holdCompletionSupported,
   accountProtectionWork,
+  decisionMarketScopeSupported,
+  sourceFitsRegisteredSession,
 } from './decision-work'
 import { decideJevEntry } from '../jev/decision'
 import { registrationFixture, testHash } from './fixtures.test-support'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { qualificationCalendar } from './calendar'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import type { SystemRegistration } from './policy'
 import { accountProtectionFixture } from '../jev/account-protection.test-support'
 import { AccountProtectionInputsSchema, decideAccountProtection } from '../jev/account-protection'
 import { retainAutonomousCyclePassObservation, cyclePassLogFacts } from '../cycle/runner/pass-decisions'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 
 let document: ExecutionDecisionDocument
 let scopedRegistration: SystemRegistration
@@ -75,9 +80,28 @@ describe('strategy decision work evidence', () => {
       sequence: 1,
       receiptHash: testHash(decision),
       completedAt,
-      observation: retainAutonomousCyclePassObservation(passObservation),
+      observation: {
+        ...retainAutonomousCyclePassObservation(passObservation),
+        executionBuild: {
+          sourceRevision: 'a'.repeat(40),
+          imageRepository: 'registry.example.test/lab/bayn',
+          imageDigest: `sha256:${sha256('image')}`,
+        },
+      },
     })
     expect(Result.getOrThrow(accountProtectionWork(pass, registration, completedAt))?.correct).toBe(true)
+    const { executionBuild, ...unboundObservation } = pass.observation
+    for (const build of [
+      undefined,
+      { ...executionBuild, sourceRevision: 'b'.repeat(40) },
+      { ...executionBuild, imageDigest: `sha256:${'2'.repeat(64)}` },
+    ]) {
+      const changed = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+        ...pass,
+        observation: { ...unboundObservation, ...(build === undefined ? {} : { executionBuild: build }) },
+      })
+      expect(Result.getOrThrow(accountProtectionWork(changed, registration, completedAt))?.correct).toBe(false)
+    }
     expect(
       Result.getOrThrow(accountProtectionWork(pass, registration, decision.admissionProtection.validUntil))?.correct,
     ).toBe(false)
@@ -131,7 +155,63 @@ describe('strategy decision work evidence', () => {
         ),
       )?.correct,
     ).toBe(false)
+    if (inputs.schemaVersion !== 'bayn.account-protection-inputs.v2') throw new Error('Expected current inputs')
+    if (policy.maxDailyTradedNotionalMicros === null) throw new Error('Expected bounded fixture policy')
+    const turnoverInputs = {
+      ...inputs,
+      peakEquityMicros: inputs.portfolio.brokerState.account.equityMicros,
+      dailyTradedNotionalMicros: policy.maxDailyTradedNotionalMicros,
+    }
+    const turnoverPass = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+      ...pass,
+      observation: {
+        ...retained,
+        readiness: { reason: DecisionReadinessReason.TurnoverBudgetExhausted, message: 'Daily turnover exhausted' },
+        admissionProtection: { ...decision.admissionProtection, inputs: turnoverInputs },
+      },
+    })
+    expect(Result.getOrThrow(accountProtectionWork(turnoverPass, registration, completedAt))?.correct).toBe(true)
+    expect(
+      Result.getOrThrow(
+        accountProtectionWork(
+          {
+            ...turnoverPass,
+            observation: {
+              ...retained,
+              admissionProtection: { ...decision.admissionProtection, inputs: turnoverInputs },
+            },
+          },
+          registration,
+          completedAt,
+        ),
+      )?.correct,
+    ).toBe(false)
+    expect(
+      decideAccountProtection(
+        { ...turnoverInputs, dailyTradedNotionalMicros: (BigInt(policy.maxDailyTradedNotionalMicros) - 1n).toString() },
+        native.input.authorityGenerationHash,
+      ),
+    ).toBeUndefined()
+    const { dailyTradedNotionalMicros: _turnover, ...legacyFields } = inputs
+    const legacyInputs = { ...legacyFields, schemaVersion: 'bayn.account-protection-inputs.v1' as const }
+    expect(Schema.is(AccountProtectionInputsSchema)(legacyInputs)).toBe(true)
+    expect(
+      Result.getOrThrow(
+        accountProtectionWork(
+          {
+            ...pass,
+            observation: {
+              ...retained,
+              admissionProtection: { ...decision.admissionProtection, inputs: legacyInputs },
+            },
+          },
+          registration,
+          completedAt,
+        ),
+      )?.correct,
+    ).toBe(true)
     expect(JSON.stringify(cyclePassLogFacts(passObservation))).not.toContain('peakEquityMicros')
+    expect(JSON.stringify(cyclePassLogFacts(passObservation))).not.toContain('dailyTradedNotionalMicros')
     expect(JSON.stringify(cyclePassLogFacts(passObservation))).not.toContain(policy.accountId)
   })
   test('only a reproduced zero-entry decision with complete inputs can establish an abstention', () => {
@@ -174,6 +254,11 @@ describe('strategy decision work evidence', () => {
         recoveryAction: 'WAITING',
         observedAt: target.evidence.decidedAt,
         entryAbstention: target,
+        executionBuild: {
+          sourceRevision: 'a'.repeat(40),
+          imageRepository: 'registry.example.test/lab/bayn',
+          imageDigest: `sha256:${sha256('image')}`,
+        },
         readiness: { reason: 'NO_ELIGIBLE_CANDIDATE', message: 'No supported entries' },
       },
     })
@@ -212,6 +297,43 @@ describe('strategy decision work evidence', () => {
     const without = { ...document }
     delete without.strategyDecision
     expect(decisionDocumentWork(without, scopedRegistration)).toBeUndefined()
+  })
+  test('retains same-session decision context without counting work outside the registered period', () => {
+    const binding = document.bindings.executionMarketData
+    if (binding === undefined || !('feed' in binding)) throw new Error('Missing native snapshot binding')
+    const observedAt = Date.parse(binding.observedAt)
+    for (const [open, close] of [
+      [observedAt + 60_000, observedAt + 120_000],
+      [observedAt - 120_000, observedAt - 60_000],
+    ] as const) {
+      const registration = {
+        ...scopedRegistration,
+        calendar: {
+          ...scopedRegistration.calendar,
+          operatingHours: 'NATIVE' as const,
+          marketCalendar: Schema.decodeUnknownSync(MarketCalendarObservationSchema)(binding.calendar),
+          sessions: scopedRegistration.calendar.sessions.map((s) => ({
+            ...s,
+            openAt: new Date(open).toISOString(),
+            closeAt: new Date(close).toISOString(),
+          })),
+        },
+      }
+      expect(sourceFitsRegisteredSession(binding, registration, binding.observedAt)).toBe(false)
+      expect(decisionDocumentWork(document, registration)?.correct).toBe(false)
+      expect(decisionMarketScopeSupported(document, registration)).toBe(true)
+      for (const changed of [
+        { ...binding, feed: 'sip' },
+        { ...binding, universeSymbolHash: testHash('foreign universe') },
+        { ...binding, sessionDate: '2026-11-01' },
+      ] as const)
+        expect(
+          decisionMarketScopeSupported(
+            { ...document, bindings: { ...document.bindings, executionMarketData: changed } },
+            registration,
+          ),
+        ).toBe(false)
+    }
   })
   test('a hold needs ordered observation, completion and durable visibility strictly before expiry', () => {
     const instant = (n: number) => new Date(n).toISOString()

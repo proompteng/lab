@@ -1,0 +1,135 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: scrub debt has one warning instead of a duplicate cluster warning
+    interval: 30s
+    input_series:
+      - series: ceph_health_status{job="ceph-storage",instance="mgr",namespace="rook-ceph"}
+        values: 1+0x80
+      - series: ceph_health_detail{job="ceph-storage",instance="mgr",name="PG_NOT_DEEP_SCRUBBED"}
+        values: 1+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephClusterHealthWarning",alertstate="firing"}) or vector(0)
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="CephScrubDebt",alertstate="firing"})
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: another health check remains visible alongside scrub debt
+    interval: 30s
+    input_series:
+      - series: ceph_health_status{job="ceph-storage",instance="mgr",namespace="rook-ceph"}
+        values: 1+0x80
+      - series: ceph_health_detail{job="ceph-storage",instance="mgr",name="PG_NOT_SCRUBBED"}
+        values: 1+0x80
+      - series: ceph_health_detail{job="ceph-storage",instance="mgr",name="BLUESTORE_SLOW_OP_ALERT"}
+        values: 1+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephClusterHealthWarning",alertstate="firing"})
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+    alert_rule_test:
+      - alertname: CephClusterHealthWarning
+        eval_time: 30m
+        exp_alerts:
+          - exp_labels:
+              job: ceph-storage
+              instance: mgr
+              namespace: rook-ceph
+              severity: warning
+              service: ceph-storage
+              team: platform
+            exp_annotations:
+              summary: Ceph cluster reports HEALTH_WARN
+              description: "Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable. Active checks: BLUESTORE_SLOW_OP_ALERT; PG_NOT_SCRUBBED; Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident. BLUESTORE_SLOW_OP_ALERT can retain a past event for bluestore_slow_ops_warn_lifetime; inspect OSD event times and current client latency before changing storage."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md#investigate-retained-bluestore-slow-operation-warnings
+  - name: unavailable detail telemetry cannot hide a cluster warning
+    interval: 30s
+    input_series:
+      - series: ceph_health_status{job="ceph-storage",instance="mgr",namespace="rook-ceph"}
+        values: 1+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephClusterHealthWarning",alertstate="firing"})
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: health details from another manager cannot suppress this cluster
+    interval: 30s
+    input_series:
+      - series: ceph_health_status{job="ceph-storage",instance="mgr",namespace="rook-ceph"}
+        values: 1+0x80
+      - series: ceph_health_detail{job="ceph-storage",instance="other",name="PG_NOT_SCRUBBED"}
+        values: 1+0x80
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephClusterHealthWarning",alertstate="firing"})
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: commit latency keeps its threshold and bridges brief recovery
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_commit_latency_ms:max
+        values: 100+0x39 10+0x7 100+0x9 10+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 14m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 22m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 38m30s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyHigh",alertstate="firing"}) or vector(0)
+        eval_time: 39m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: queue latency bridges brief recovery without changing detection
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_queue_wait_seconds:estimated_mean5m{node="turin",ceph_daemon="osd.0"}
+        values: 0.2+0x29 0.01+0x7 0.2+0x9 0.01+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephOsdQueueWaitHigh",alertstate="firing"}) or vector(0)
+        eval_time: 9m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="CephOsdQueueWaitHigh",alertstate="firing"}) or vector(0)
+        eval_time: 17m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephOsdQueueWaitHigh",alertstate="firing"}) or vector(0)
+        eval_time: 34m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: critical commit latency still detects in five minutes and requires sustained recovery
+    interval: 30s
+    input_series:
+      - series: ceph_storage:osd_commit_latency_ms:max
+        values: 200+0x19 10+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyCritical",alertstate="firing"}) or vector(0)
+        eval_time: 4m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyCritical",alertstate="firing"}) or vector(0)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyCritical",alertstate="firing"}) or vector(0)
+        eval_time: 19m30s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephOsdCommitLatencyCritical",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: scrub debt keeps its thirty minute detection and ten minute recovery
+    interval: 30s
+    input_series:
+      - series: ceph_health_detail{job="ceph-storage",instance="mgr",name="PG_NOT_DEEP_SCRUBBED"}
+        values: 1+0x69 0+0x40
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CephScrubDebt",alertstate="firing"}) or vector(0)
+        eval_time: 29m30s
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="CephScrubDebt",alertstate="firing"}) or vector(0)
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephScrubDebt",alertstate="firing"}) or vector(0)
+        eval_time: 44m30s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="CephScrubDebt",alertstate="firing"}) or vector(0)
+        eval_time: 45m
+        exp_samples: [{labels: '{}', value: 0}]

@@ -6,12 +6,14 @@ import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { intentPlanSchemaVersion } from '../../execution/contracts'
 import {
   IntentStore,
+  IntentStoreError,
   makeExecutionIntentFromDecodedPlan,
   type IntentStoreService,
 } from '../../execution/intents/domain'
+import { ExpiredIntentRiskDecision } from '../../execution/risk-clock'
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { isProtectedEntryTarget } from '../../strategy/runtime-decision'
-import type { CycleDecisionDocument } from '../../shadow-decision-contract'
+import { decodeCycleDecisionDocument, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner/index'
 import { makeCycleBindingPrograms } from './binding-program'
 import { makeCycleLifecyclePrograms } from './lifecycle-program'
@@ -111,14 +113,18 @@ const commitBoundEntryIntents = (document: CycleDecisionDocument, intents: Pick<
           message: 'bound entry intent differs from its ordered decision identity',
         })
       yield* intents.commit(intent, risk.evaluation.decision).pipe(
-        Effect.mapError((cause) =>
-          cycleStoreError({
+        Effect.mapError((cause) => {
+          const expired =
+            cause instanceof IntentStoreError && cause.cause instanceof ExpiredIntentRiskDecision
+              ? cause.cause
+              : undefined
+          return cycleStoreError({
             operation: 'bind-decision',
-            failure: 'query',
+            failure: expired === undefined ? 'query' : 'risk-expired',
             message: 'entry intent and decision binding could not commit together',
-            cause,
-          }),
-        ),
+            cause: expired ?? cause,
+          })
+        }),
       )
     }
   })
@@ -132,16 +138,15 @@ export const withWriterFenceCycleStore = (
   acquire: (...args) => fenceMutation('acquire', store.acquire(...args), fence),
   activate: (...args) => fenceMutation('activate', store.activate(...args), fence),
   bindDecision: (cycleId, document, observedAt, evidence) =>
-    Effect.try({
-      try: () => structuredClone(document),
-      catch: (cause) =>
+    Effect.suspend(() => Effect.fromResult(decodeCycleDecisionDocument(document))).pipe(
+      Effect.mapError((cause) =>
         cycleStoreError({
           operation: 'bind-decision',
           failure: 'decode',
           message: 'decision binding could not retain its private source',
           cause,
         }),
-    }).pipe(
+      ),
       Effect.flatMap((retained) =>
         fenceMutation(
           'bind-decision',

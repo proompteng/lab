@@ -6,9 +6,14 @@ Bayn is a single-writer intraday trading service. The execution path is account-
 the same strategy, intent, risk, mutation, recovery, accounting, and reconciliation code. Broker environment and a
 durable capital activation determine where an otherwise identical execution plan may run.
 
-The active runtime contains one strategy, `jev`, using
-`bayn.jev.protocol.v20` over trading-signal state `v17`. Historical strategy and decision schemas remain readable only
-where persisted records require them; they are not runtime fallbacks and cannot start new cycles.
+The active runtime selects `jev`, using `bayn.jev.protocol.v40`, numerical input v24 and pinned `jev-1.14.0`.
+New entries are equity-only. Existing crypto positions retain risk-reducing exits, protection and recovery.
+Historical strategy and decision schemas remain readable where persisted financial records require them; they cannot
+start new cycles. Research control strategies are separate consumers, not additional active entry strategies.
+
+The [November 8 system audit](system-audit-2026-11-08.md) contains the file and process inventory, source-linked request
+flow, strategy arithmetic, transaction details, measured timing, live storage inventory, and ranked removal candidates.
+It distinguishes observed excess from changes that still require performance or consumer evidence.
 
 ## Ownership
 
@@ -20,8 +25,9 @@ where persisted records require them; they are not runtime fallbacks and cannot 
 - PostgreSQL is the authoritative ledger for activations, cycles, decisions, intents, mutations, reconciliation, and
   the compact controller status projection.
 - TigerBeetle is the authoritative accounting ledger for cash, fees, cost basis, and realized P&L.
-- Dorvud/Flink consumes original Kafka bars and publishes versioned rolling features. Each execution worker consumes
-  the raw and feature topics with a scoped `@platformatic/kafka` client and maintains a complete universe projection.
+- Dorvud/Flink consumes original Kafka bars and publishes versioned rolling features. Each execution worker owns a
+  separate projection thread with scoped `@platformatic/kafka` consumers. Original arrivals are appended to the
+  same PostgreSQL database as financial persistence, with immutable capture and ordered-prefix guards.
 - ClickHouse is the read-only archive for raw events and complete feature revisions, including Kafka provenance.
 - The broker adapter performs account-environment-neutral reads and mutations through the restricted egress proxy.
 - The public Bayn deployment serves read-only liveness, readiness, status, metrics, and traces. It does not schedule
@@ -35,9 +41,10 @@ where persisted records require them; they are not runtime fallbacks and cannot 
 3. During an eligible regular-market window, Bayn cuts its raw-plus-feature projection at one local observation.
    It requires exact feature-to-bar revision matches, the broker calendar, and fresh raw quotes and trades. A
    replacement worker rebuilds state through captured Kafka partition barriers within the five-minute startup budget.
-4. Bayn constructs verified trading-signal state for the pinned Jev model, retains the complete inference batch, and
+4. Bayn constructs verified candidate state for the pinned Jev model, retains the complete inference batch, and
    derives a target portfolio or typed readiness from that evidence. Missing candidate features remain explicit
-   exclusions; missing benchmark evidence blocks the observation. Unavailable inference stays distinct from a valid
+   exclusions. Current entry queries are candidate-only; benchmark requirements belong to the specific retained or
+   research contract that requests them. Unavailable inference stays distinct from a valid
    no-trade result. Existing positions retain their sealed plan's protective stop and profit limit, plus holding-time
    and session-close deadlines; whole-share equity entries register the stop and target as native bracket children.
    PostgreSQL retains exact raw rows, selected feature payloads, actual receipt times, consumer epoch and sequence,
@@ -63,27 +70,37 @@ where persisted records require them; they are not runtime fallbacks and cannot 
 
 The submission window opens with the regular session. After its first completed minute and two-second decision
 delay, Bayn evaluates up to 30 minutes of actual, possibly sparse history until five minutes before the close,
-without an extra clock warmup. It supplies verified prices, volume, computed technical indicators, quotes, benchmark
-relationships and position context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting.
+without an extra clock warmup. It supplies a deterministic candlestick image and source-bound context to Jev 1.14.
+Bayn owns arithmetic, timing, sizing, risk and accounting.
 
-Admission requires a typed setup judgment and a funded plan. Jev must classify the setup `upward` and select a
-complete plan whose target proceeds cover acquisition cost and the modeled entry and exit fees. The protocol has no
-entry or exit probability threshold, and no reported choice probability is a calibrated probability of profit. A
-candidate's entry quote must also pass its market profile's maximum spread: 5 basis points for equities and 25 for
-crypto. Complete batch evidence must arrive within its ten-second lifetime before authorization. Entry risk then
-binds a fresh execution quote for at most ten seconds from its event time. These parameters have not established a
-profitable trading advantage.
+One CHART call asks independent presence questions and Boxes for defended support, observed overhead resistance,
+and a completed consolidation base. Code maps valid Boxes to original candle IDs and constructs at most one funded
+support-recovery proposal and one funded base-breakout proposal. The base excludes the newest candle, spans at least
+two completed candles, and cannot contain a source-time gap. Its bid must exceed the base high.
+
+The support proposal places its stop below the source support candle's low and its target below the observed
+resistance candle's high, rounded to instrument precision. The base proposal places its stop below the base low and
+its target at `2 * baseHigh - baseLow`, rounded down. Source feasibility and fee-inclusive funding can reject a
+proposal before paid final judgment. Jev does not generate prices or quantities.
+
+The final JEV call asks whether each setup is confirmed and whether its stop invalidates the setup. Both judgments
+must be at least 0.70. Within a symbol, selection ranks eligible proposals by the lower of those judgments, then lower
+modeled stop loss, then stable proposal ID. These scores are not calibrated probabilities of profit. The parameters
+and target construction have not established a profitable trading advantage.
+
+Candidate pipelines run concurrently. Each CHART terminal and final-call handoff commits atomically before that
+candidate's final JEV dispatch; another candidate can still be in CHART. Both calls share the original ten-second
+evidence lifetime. There is no new budget at the handoff and no generic paid-call retry. Complete batch results and
+receipts are retained before authorization. Entry risk binds a fresh execution quote for at most ten seconds from its
+event time.
 
 The strategy selects at most one long position and caps it at 20% of account equity. Allocation bounds the actual
 weighted target by order, symbol, gross and net exposure limits and remaining daily buy-plus-sell turnover. It
 reserves slippage and current exposure's liquidation notional before sizing the target. The planner and allocation
 bounds use the same fixed-point weight precision.
 
-Code builds at most sixteen candidate plans from four representative stops and up to four targets per stop. Stop
-scenarios sit one, two, four and eight quarter-range steps below the observed bid; targets combine observed levels
-with a net-reward scenario whose proceeds cover acquisition cost plus the modeled stop loss. Jev selects the plan; the
-construction rules never select an entry or default exit. Whole-share equity entries submit a LIMIT/DAY bracket that
-binds the take-profit and stop before the parent fills; crypto and fractional inventory use individual protective
+Whole-share equity entries submit a LIMIT/DAY bracket that
+binds the take-profit and stop before the parent fills; retained crypto and fractional inventory use individual protective
 stop-limit orders. The sealed plan's profit limit, protective stop and 15-minute maximum holding period remain
 enforced; protection and exit pricing are rechecked against fresh quotes, and an application exit cancels outstanding
 protection and closes only reconciled residual inventory. Entries stop and forced flattening starts five minutes
@@ -157,9 +174,11 @@ Normal delivery is immutable and GitOps-only:
 
 1. merge reviewed source to `main`;
 2. build and publish the exact multi-architecture image;
-3. advance the generated Bayn deployment pins only when source, image, strategy, activation, and risk identities agree;
-4. let Argo reconcile the public status service, execution worker, and source-versioned activation hook; and
-5. verify the exact source and image live before accepting controller or broker evidence.
+3. let the Bayn Kargo Warehouse and authorized Stage select eligible Freight and write the generated `kargo/<stage>`
+   deployment commit, preserving source, image, strategy, activation, and risk identity checks;
+4. let Argo reconcile that exact generated commit for status, execution, research, and activation resources; and
+5. verify the exact source and image live before accepting controller or broker evidence. Follow the
+   [release contract](../release-automation.md); a manual digest bump does not replace promotion.
 
 The public status Deployment may surge because it has no execution authority. Multiple execution-worker replicas are
 safe because Restate serializes the account-keyed virtual object and PostgreSQL enforces the writer fence for every

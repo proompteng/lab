@@ -5,22 +5,54 @@
   repoRevision ? "dirty",
   bun,
   nodejs,
+  research ? false,
 }:
 
 let
-  openCode = import ./opencode-cli.nix { inherit pkgs lib; };
   frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
-  imageRepository = "registry.ide-newton.ts.net/lab/bayn";
+  imageName = if research then "bayn-research" else "bayn";
+  imageRepository = "registry.ide-newton.ts.net/lab/${imageName}";
+  runtimeCommands = if research then [
+    "restate-research-server"
+    "inference-cost-command"
+    "forward-performance-command"
+    "forward-performance-verification-worker"
+    "system-assessment-command"
+    "research-command"
+    "jev-evaluation-command"
+    "backtest-command"
+    "frozen-control-command"
+    "control-study-command"
+    "native-arrival-export-command"
+    "jev-study-export-command"
+    "webull-research-command"
+    "equity-edge-screen"
+  ] else [
+    "decision-construction-worker"
+    "index"
+    "forward-performance-command"
+    "forward-performance-verification-worker"
+    "control-opening-command"
+    "restate-execution-server"
+    "restate-execution-activate"
+    "market-projection-worker"
+    "inference-cost-command"
+    "streaming-diagnostics-command"
+    "glitchtip-smoke-command"
+    "valkey-command"
+    # Qualification verifies the replay executable against the actual trading image digest.
+    "backtest-command"
+  ];
   # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
-  # Canonical hash of the compiled bayn.jev.protocol.v36 document.
-  strategyParameterHash = "adc171283bdd8086af3357629e05b241253d9661a41d8f9c5bde33fb521b5611";
+  # Canonical hash of the compiled bayn.jev.protocol.v41 document.
+  strategyParameterHash = "004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "217ca19ddedd695eaff5de8c3c9471fb45e22c55c177280675b5662f8f311b0b";
-  # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  strategyProtocolHash = "b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9";
+  # Canonical uncapped sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
+  executionRiskPolicyHash = "817efba3d61cf0c3845999988cf4507e015a60ccf3d13c7f840dac366173007e";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -30,6 +62,11 @@ let
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
+  '';
+  systemAssessmentCommand = pkgs.writeShellScriptBin "bayn-system-assessment" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/system-assessment-command.js" "$@"
   '';
   researchCommand = pkgs.writeShellScriptBin "bayn-research" ''
     set -eu
@@ -56,6 +93,31 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
   '';
+  controlOpeningCommand = pkgs.writeShellScriptBin "bayn-control-opening" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/control-opening-command.js" "$@"
+  '';
+  nativeArrivalExportCommand = pkgs.writeShellScriptBin "bayn-native-arrival-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/native-arrival-export-command.js" "$@"
+  '';
+  studyExportCommand = pkgs.writeShellScriptBin "bayn-jev-study-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-study-export-command.js" "$@"
+  '';
+  webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/webull-research-command.js" "$@"
+  '';
+  equityEdgeScreenCommand = pkgs.writeShellScriptBin "bayn-equity-edge-screen" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/equity-edge-screen.js" "$@"
+  '';
   gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
@@ -63,7 +125,8 @@ let
       version = "0.1.4";
       pyproject = true;
       src = pkgs.fetchurl {
-        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        name = "8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        url = "https://codeload.github.com/gepa-ai/gepa/tar.gz/8f287de942f41a6d1e0e7e5b2d576247c4bedee9";
         hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
       };
       build-system = [ ps.setuptools ps.wheel ps.build ];
@@ -97,16 +160,28 @@ let
   depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
-    "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
+    # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
+    "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
     "bun --cwd=services/bayn run build ${buildDefines}"
+    "bun build services/bayn/src/jev-study-export-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
+    "bun build services/bayn/tools/equity-edge-screen.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=services/bayn/dist ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
+    "node --check services/bayn/dist/market-projection-worker.js"
+    "node --check services/bayn/dist/decision-construction-worker.js"
+    "node --check services/bayn/dist/forward-performance-verification-worker.js"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/system-assessment-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/native-arrival-export-command.js --help"
+    "node services/bayn/dist/jev-study-export-command.js --help"
+    "node services/bayn/dist/equity-edge-screen.js --help"
+    "node services/bayn/dist/control-opening-command.js --help"
+    "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -122,13 +197,16 @@ let
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
-    cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
-    rm "$out/app/services/bayn/dist/opencode-command.js"
+    for command in ${lib.concatStringsSep " " runtimeCommands}; do
+      cp "$TMPDIR/work/services/bayn/dist/$command.js" "$out/app/services/bayn/dist/"
+    done
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
+    ${lib.optionalString research ''
     cp "$TMPDIR/work/services/bayn/dist/frozen-control-compiler.json" "$out/app/services/bayn/dist/frozen-control-compiler.json"
-    cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     mkdir -p "$out/app/services/bayn/gepa"
     cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"
+    ''}
+    cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
@@ -157,6 +235,7 @@ import ./bun-workspace-service.nix {
     ;
   repoRoot = dependencySource;
   serviceName = "bayn";
+  inherit imageName;
   packageName = "@proompteng/bayn";
   # Bayn's fixed-output dependency closure is intentionally isolated from TypeScript source-tree topology.
   # Refreshed once after dependencySource became a manifest/lock/patch-only file set. Source-only tree changes
@@ -167,15 +246,17 @@ import ./bun-workspace-service.nix {
   sourcePaths = [ ];
   command = [
     "node"
-    "dist/index.js"
+    (if research then "dist/restate-research-server.js" else "dist/index.js")
   ];
   workingDir = "/app/services/bayn";
   includeBunRuntime = false;
   extraContents = [
     nodejs
     pkgs.cacert
-    forwardPerformanceCommand
     inferenceCostCommand
+    forwardPerformanceCommand
+  ] ++ lib.optionals (!research) [ controlOpeningCommand ] ++ lib.optionals research [
+    systemAssessmentCommand
     researchCommand
     gepaCommand
     gepaNativeCommand
@@ -185,6 +266,10 @@ import ./bun-workspace-service.nix {
     backtestCommand
     frozenControlCommand
     controlCommand
+    nativeArrivalExportCommand
+    studyExportCommand
+    webullResearchCommand
+    equityEdgeScreenCommand
     gepaPython
     pkgs.go-containerregistry
   ];

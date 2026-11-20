@@ -5,7 +5,7 @@ use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
 use tokio::time::{Instant, timeout_at};
 
-use super::{CodexCallResult, CodexOptions, GuestClient, GuestError, MAX_GUEST_JSON_BYTES};
+use super::{CodexCallResult, GuestClient, GuestError, MAX_GUEST_JSON_BYTES};
 
 #[cfg(test)]
 mod tests;
@@ -61,20 +61,14 @@ impl HistoryBudget {
 }
 
 impl GuestClient {
-    pub async fn resume_codex_thread(
-        &self,
-        thread_id: &str,
-        options: &CodexOptions,
-    ) -> Result<HistoryStream, GuestError> {
+    pub async fn read_codex_thread(&self, thread_id: &str) -> Result<HistoryStream, GuestError> {
         let deadline = Instant::now() + HISTORY_TIMEOUT;
         let params = json!({
-            "threadId": thread_id, "model": options.model, "config": options.thread_config(),
-            "cwd": "/workspace", "runtimeWorkspaceRoots": ["/workspace"],
-            "approvalPolicy": "on-request", "sandbox": "danger-full-access", "excludeTurns": true,
+            "threadId": thread_id, "includeTurns": false,
         });
         let mut snapshot = timeout_at(
             deadline,
-            self.codex_call_with_sequence("thread/resume", params.clone()),
+            self.codex_call_with_sequence("thread/read", params.clone()),
         )
         .await
         .map_err(|_| GuestError::CodexHistoryTimeout)??;
@@ -101,10 +95,10 @@ impl GuestClient {
             }
             Some("legacy") => {
                 let mut params = params;
-                params["excludeTurns"] = json!(false);
+                params["includeTurns"] = json!(true);
                 snapshot = timeout_at(
                     deadline,
-                    self.codex_call_with_sequence("thread/resume", params),
+                    self.codex_call_with_sequence("thread/read", params),
                 )
                 .await
                 .map_err(|_| GuestError::CodexHistoryTimeout)??;

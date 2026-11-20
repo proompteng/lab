@@ -120,6 +120,7 @@ export const reproduceSessionEconomics = (
         endAt: last.closeAt,
       },
       costs.policy,
+      registration.obligations.configuration.protocol,
     )
     if ((yield* canonicalHashV1Result(tariff)) !== (yield* canonicalHashV1Result(costs.inferenceTariff)))
       return yield* fail('Replay accounting changed the registered inference tariff')

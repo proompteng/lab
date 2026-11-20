@@ -45,6 +45,37 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 0
+  - name: finalization is diagnosed without requiring a slow build phase
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x6
+      - series: ci_job_oldest_execution_seconds{workflow="bayn-build-push.yml",architecture="arm64",runner_pool="arc",job_family="image",job_role="build",event="push"}
+        values: 1500+60x6
+      - series: ci_job_current_phase_age_seconds{workflow="bayn-build-push.yml",architecture="arm64",runner_pool="arc",job_family="image",job_role="build",event="push",phase="finalizing"}
+        values: 600+60x6
+      - series: ci_job_current_phase_age_seconds{workflow="other.yml",architecture="arm64",runner_pool="arc",job_family="image",job_role="build",event="push",phase="build"}
+        values: 4000+60x6
+    alert_rule_test:
+      - alertname: CiBuildStalled
+        eval_time: 3m
+        exp_alerts:
+          - exp_labels:
+              workflow: bayn-build-push.yml
+              architecture: arm64
+              runner_pool: arc
+              job_family: image
+              job_role: build
+              event: push
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            exp_annotations:
+              summary: An image job has exceeded twenty minutes
+              description: "bayn-build-push.yml on arm64 is still running after twenty minutes. Oldest active phases: finalizing=780s; Build, cache upload, artifact upload and GitHub finalization all count toward job age. Inspect the active job; this alert does not require a median regression."
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+              runbook_url: argocd/applications/observability/ci/README.md
   - name: cache metadata probe failure fires and recovery clears it
     interval: 1m
     input_series:

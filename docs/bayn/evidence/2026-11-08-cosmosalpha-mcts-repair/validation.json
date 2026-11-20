@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "mctsRepairSha256": "fe65e7f14e7e240bd21e1d8b19af05515e91ab9a7db1e120e2a7c8dc503f8591",
+  "combinedRepairSha256": "ca00b060eaaa8e02f2c8c4efdb94e4e43a9395b38e4612ab032c2c34c3f2ae7a",
+  "registeredSourceInventoryId": "65f7d303415e564d3d949f227e8c3e2ec4625f0840cd7f82d253aed3378f364f",
+  "sourceFiles": 101,
+  "changedAuthorFiles": 4,
+  "unchangedAuthorFiles": 97,
+  "before": "Empty-conversation HTTP400; unsupported request argument; real portrait template rejected for boundary whitespace. Native 300-token suggestions and 800-token portraits do not leave enough output for the self-hosted reasoning model.",
+  "after": "Three native prompt cases and 29 prior source/upstream cases pass; separate live probes produce usable suggestions and portrait JSON.",
+  "auxiliaryOutputLimits": {
+    "suggestion": 2000,
+    "portrait": 20000
+  },
+  "liveCalibration": {
+    "originalSuggestionCap": 300,
+    "emptySuggestionResponsesInStoppedAcceptance": 5,
+    "portraitCapsWithNoContent": [2000, 4000],
+    "successfulPortraitCap": 20000,
+    "successfulPortraitCompletionTokens": 10796
+  },
+  "sampling": "Frozen client profile with thinking enabled. Actual completion tokens remain charged to the same common budget.",
+  "scope": "Prompt bindings, JSON-object suggestions, boundary whitespace, unsupported request argument and declared auxiliary output limits. Search-score and evaluator math unchanged."
+}

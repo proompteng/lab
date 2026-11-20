@@ -5,22 +5,33 @@ import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import {
-  DecisionsInferenceSchema,
-  DecisionsUsageSchema,
-  decodeDecisionsResponse,
-  validDecisionsUsage,
-} from './decisions'
+  ChartStageInferenceSchema,
+  ChartStageUsageSchema,
+  decodeChartStageResponse,
+  validChartStageUsage,
+} from './chart-stage-contract'
 import { decodeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import * as chartStages from './staged-chart-questions'
+import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
+import * as observedChartStages from './retained-observed-staged-chart-questions'
 import { hasFeasibleEntrySource } from './entry-inference'
 import type { EntryInferenceMaterial } from './entry-inference-input'
+import { JevProviderDiagnosticsSchema } from './provider-diagnostics'
 
 export const VisualStageSchema = Schema.Literals(['CHART', 'BASE_START'])
+export type ChartStageCodecs = typeof chartStages | typeof retainedJevChartStages | typeof observedChartStages
+export type ChartCheckpointCodecs = Pick<ChartStageCodecs, 'makeInitialChartStageRequest'> & {
+  readonly makeSelectedBaseStartStageRequest?: (
+    | typeof retainedJevChartStages
+    | typeof observedChartStages
+  )['makeSelectedBaseStartStageRequest']
+}
 export const VisualStageFailureSchema = Schema.Struct({
   category: Schema.Literals(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE']),
   httpStatus: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
   responseHash: Schema.NullOr(Sha256Schema),
-  usage: Schema.NullOr(DecisionsUsageSchema),
+  usage: Schema.NullOr(ChartStageUsageSchema),
+  providerDiagnostics: Schema.optionalKey(JevProviderDiagnosticsSchema),
 })
 const ClaimMaterial = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.staged-dispatch-claim.v1'),
@@ -35,10 +46,10 @@ const ClaimMaterial = Schema.Struct({
 export const StagedDispatchClaimSchema = Schema.Struct({ ...ClaimMaterial.fields, claimHash: Sha256Schema })
 export type StagedDispatchClaim = typeof StagedDispatchClaimSchema.Type
 export const StageTerminalOutcomeSchema = Schema.Union([
-  Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
+  Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: ChartStageInferenceSchema }),
   Schema.Struct({ status: Schema.Literal('FAILED'), failure: VisualStageFailureSchema }),
 ])
-const TerminalMaterial = Schema.Struct({
+const RetainedTerminalMaterial = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.staged-terminal-receipt.v1'),
   stage: VisualStageSchema,
   requestId: Sha256Schema,
@@ -46,7 +57,24 @@ const TerminalMaterial = Schema.Struct({
   recordedAt: UtcInstantSchema,
   outcome: StageTerminalOutcomeSchema,
 })
-export const StagedTerminalReceiptSchema = Schema.Struct({ ...TerminalMaterial.fields, terminalHash: Sha256Schema })
+const UndispatchedTerminalMaterial = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.staged-terminal-receipt.v2'),
+  stage: VisualStageSchema,
+  requestId: Sha256Schema,
+  claimHash: Sha256Schema,
+  recordedAt: UtcInstantSchema,
+  outcome: Schema.Struct({
+    status: Schema.Literal('NOT_DISPATCHED'),
+    reason: Schema.Literals(['ORIGINAL_EXPIRY', 'ADMISSION_EXPIRY']),
+    deadlineAt: UtcInstantSchema,
+    checkedAt: UtcInstantSchema,
+  }),
+})
+const TerminalMaterial = Schema.Union([RetainedTerminalMaterial, UndispatchedTerminalMaterial])
+export const StagedTerminalReceiptSchema = Schema.Union([
+  Schema.Struct({ ...RetainedTerminalMaterial.fields, terminalHash: Sha256Schema }),
+  Schema.Struct({ ...UndispatchedTerminalMaterial.fields, terminalHash: Sha256Schema }),
+])
 export type StagedTerminalReceipt = typeof StagedTerminalReceiptSchema.Type
 export const BaseStartSkipReasonSchema = Schema.Literals([
   'INSUFFICIENT_BARS',
@@ -74,7 +102,7 @@ export const StagedCheckpointSchema = Schema.Struct({
 export type StagedCheckpoint = typeof StagedCheckpointSchema.Type
 export const BaseStartEvidenceSchema = Schema.Union([
   Schema.Struct({ status: Schema.Literal('NOT_REQUESTED'), skip: StagedSkipReceiptSchema }),
-  Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
+  Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: ChartStageInferenceSchema }),
   Schema.Struct({ status: Schema.Literal('FAILED'), failure: VisualStageFailureSchema }),
 ])
 export type BaseStartEvidence = typeof BaseStartEvidenceSchema.Type
@@ -85,17 +113,33 @@ export const makeStagedDispatchClaim = (input: typeof ClaimMaterial.Type) =>
     const value = yield* Schema.decodeUnknownResult(ClaimMaterial, strictParseOptions)(input)
     return { ...value, claimHash: yield* canonicalHashV1Result(value) }
   })
-export const makeStagedTerminalReceipt = (input: typeof TerminalMaterial.Type) =>
+const decodeTerminalReceipt = (input: typeof TerminalMaterial.Type) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(TerminalMaterial, strictParseOptions)(input)
     return { ...value, terminalHash: yield* canonicalHashV1Result(value) }
   })
+type TerminalReceiptFailure = Result.Result.Failure<ReturnType<typeof decodeTerminalReceipt>>
+export function makeStagedTerminalReceipt(
+  input: typeof RetainedTerminalMaterial.Type,
+): Result.Result<
+  Extract<StagedTerminalReceipt, { readonly schemaVersion: 'bayn.staged-terminal-receipt.v1' }>,
+  TerminalReceiptFailure
+>
+export function makeStagedTerminalReceipt(
+  input: typeof UndispatchedTerminalMaterial.Type,
+): Result.Result<
+  Extract<StagedTerminalReceipt, { readonly schemaVersion: 'bayn.staged-terminal-receipt.v2' }>,
+  TerminalReceiptFailure
+>
+export function makeStagedTerminalReceipt(input: typeof TerminalMaterial.Type) {
+  return decodeTerminalReceipt(input)
+}
 export const makeStagedSkipReceipt = (input: typeof SkipMaterial.Type) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(SkipMaterial, strictParseOptions)(input)
     return { ...value, skipHash: yield* canonicalHashV1Result(value) }
   })
-export const stageResponseIdentity = (inference: typeof DecisionsInferenceSchema.Type) => ({
+export const stageResponseIdentity = (inference: typeof ChartStageInferenceSchema.Type) => ({
   requestHash: inference.requestHash,
   responseHash: inference.responseHash,
   response: inference.response,
@@ -111,23 +155,33 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
 export const decodeStagedCheckpointForRequest = (
   request: Omit<JevEvaluationRequest, 'request'> & { readonly request: EntryInferenceMaterial },
   input: unknown,
-  stages: Pick<typeof chartStages, 'makeInitialChartStageRequest' | 'makeSelectedBaseStartStageRequest'>,
+  stages: ChartCheckpointCodecs,
 ) =>
   Result.gen(function* () {
     const checkpoint = yield* Schema.decodeUnknownResult(StagedCheckpointSchema, strictParseOptions)(input)
     for (const rows of [checkpoint.claims, checkpoint.terminals, checkpoint.skips])
       if (new Set(rows.map((row) => row.stage)).size !== rows.length)
         return yield* invalid('Duplicate staged journal row')
+    if (
+      (request.request.protocol.schemaVersion === 'bayn.jev.protocol.v41' ||
+        request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40') &&
+      (checkpoint.claims.some((claim) => claim.stage !== 'CHART') ||
+        checkpoint.terminals.some((terminal) => terminal.stage !== 'CHART') ||
+        checkpoint.skips.length !== 0)
+    )
+      return yield* invalid('Box checkpoints contain only the original CHART call')
     const chart = yield* makeNativeChartEvidence(request.request.chartSource)
     const chartSource = { chart, protocol: request.request.protocol, funding: request.request.funding }
     const initial = yield* stages.makeInitialChartStageRequest(chartSource)
     const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
     // Claims and terminals must reproduce the same selected request within this decode.
     // Keep the derivation local: every new decode still validates the full source graph.
-    let selectedBase: ReturnType<typeof chartStages.makeSelectedBaseStartStageRequest> | undefined
+    let selectedBase: ReturnType<NonNullable<ChartCheckpointCodecs['makeSelectedBaseStartStageRequest']>> | undefined
     const selectedBaseRequest = () => {
       if (chartTerminal?.outcome.status !== 'RECEIVED')
         return invalid('Base start requires a received chart predecessor')
+      if (stages.makeSelectedBaseStartStageRequest === undefined)
+        return invalid('Box charts cannot admit a second visual stage')
       return (selectedBase ??= stages.makeSelectedBaseStartStageRequest(
         chartSource,
         stageResponseIdentity(chartTerminal.outcome.inference),
@@ -177,7 +231,22 @@ export const decodeStagedCheckpointForRequest = (
         terminal.recordedAt < claim.claimedAt
       )
         return yield* invalid('Stage terminal has no exact immutable dispatch claim')
-      if (terminal.outcome.status === 'RECEIVED') {
+      if (terminal.outcome.status === 'NOT_DISPATCHED') {
+        const proof = terminal.outcome
+        if (
+          request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v41' ||
+          terminal.stage !== 'CHART' ||
+          proof.checkedAt < claim.claimedAt ||
+          proof.checkedAt > terminal.recordedAt ||
+          proof.checkedAt < proof.deadlineAt ||
+          proof.deadlineAt < request.observedAt ||
+          proof.deadlineAt > request.expiresAt ||
+          (proof.reason === 'ORIGINAL_EXPIRY'
+            ? proof.deadlineAt !== request.expiresAt
+            : proof.deadlineAt >= request.expiresAt)
+        )
+          return yield* invalid('Stage non-dispatch does not prove a source-bound expired deadline')
+      } else if (terminal.outcome.status === 'RECEIVED') {
         const inference = terminal.outcome.inference
         const prepared =
           terminal.stage === 'CHART'
@@ -194,10 +263,10 @@ export const decodeStagedCheckpointForRequest = (
           inference.startedAt >= request.expiresAt ||
           inference.completedAt < inference.startedAt ||
           inference.completedAt > terminal.recordedAt ||
-          Result.isFailure(decodeDecisionsResponse(prepared.request, inference.response))
+          Result.isFailure(decodeChartStageResponse(prepared.request, inference.response))
         )
           return yield* invalid('Stage terminal response does not reproduce its source-bound call')
-      } else if (terminal.outcome.failure.usage !== null && !validDecisionsUsage(terminal.outcome.failure.usage))
+      } else if (terminal.outcome.failure.usage !== null && !validChartStageUsage(terminal.outcome.failure.usage))
         return yield* invalid('Stage failure metering is invalid')
     }
     for (const skip of checkpoint.skips) {
@@ -223,7 +292,7 @@ export const decodeStagedCheckpointForRequest = (
           skip.recordedAt < chartTerminal.recordedAt
         )
           return yield* invalid('Base start skip lacks exact predecessor evidence')
-        if (chartTerminal.outcome.status === 'FAILED') {
+        if (chartTerminal.outcome.status !== 'RECEIVED') {
           if (skip.reason !== 'CHART_FAILED') return yield* invalid('Failed chart has a contradictory base start skip')
         } else {
           const next = yield* selectedBaseRequest()

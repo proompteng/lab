@@ -6,7 +6,6 @@ import { makeInferenceExpenseQuotes } from '../inference-expense'
 import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { makeInitialChartStageRequest } from './staged-chart-questions'
-import { makeStagedSkipReceipt } from './staged-checkpoint'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { decodeEntryHandoff } from './entry-inference-evidence'
@@ -28,24 +27,13 @@ const skipped = () => {
   const visual = Result.getOrThrow(
     makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
   )
-  const skip = Result.getOrThrow(
-    makeStagedSkipReceipt({
-      schemaVersion: 'bayn.staged-skip-receipt.v1',
-      stage: 'BASE_START',
-      requestId: request.requestId,
-      predecessorHash: null,
-      reason: 'SOURCE_INFEASIBLE',
-      recordedAt: request.observedAt,
-    }),
-  )
   const material = {
-    schemaVersion: 'bayn.entry-handoff.v4' as const,
+    schemaVersion: 'bayn.entry-handoff.v5' as const,
     requestId: request.requestId,
     inputHash: request.requestHash,
     visualRequestHash: visual.requestHash,
     recordedAt: request.observedAt,
     disposition: { status: 'SOURCE_INFEASIBLE' as const },
-    baseStart: { status: 'NOT_REQUESTED' as const, skip },
   }
   const handoff = Result.getOrThrow(
     decodeEntryHandoff(
@@ -70,7 +58,7 @@ const skipped = () => {
       },
     }),
   )
-  return { request, handoff, receipt, stagedCheckpoint: { claims: [], terminals: [], skips: [skip] } }
+  return { request, handoff, receipt, stagedCheckpoint: { claims: [], terminals: [], skips: [] } }
 }
 
 for (const completed of [true, false])
@@ -101,9 +89,9 @@ for (const completed of [true, false])
         { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
       ),
     )
-    expect(quotes).toHaveLength(completed ? 3 : 1)
-    expect(quotes.map((q) => ('stage' in q.line ? q.line.stage : null)).toSorted()).toEqual(
-      completed ? [InferenceStage.BaseStart, InferenceStage.Chart, InferenceStage.Jev] : [InferenceStage.BaseStart],
+    expect(quotes).toHaveLength(completed ? 2 : 0)
+    expect(quotes.map((q) => ('stage' in q.line ? q.line.stage : '')).toSorted((a, b) => a.localeCompare(b))).toEqual(
+      completed ? [InferenceStage.Chart, InferenceStage.Jev] : [],
     )
     for (const quote of quotes) {
       expect(quote.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)

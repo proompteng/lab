@@ -5,6 +5,7 @@ metadata:
   name: froussard
   namespace: froussard
   annotations:
+    argocd.argoproj.io/sync-wave: '1'
     serving.knative.dev/revision-history-limit: "3"
     serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller
@@ -56,7 +57,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   key: token
-                  name: github-token
+                  name: froussard-github-token
             - name: DISCORD_PUBLIC_KEY
               valueFrom:
                 secretKeyRef:
@@ -76,18 +77,22 @@ spec:
               value: v0.596.0-3471-g7bca4519e
             - name: FROUSSARD_COMMIT
               value: 7bca4519e3e7e39a1a55c777e750eb5db7309210
-            - name: LGTM_TEMPO_TRACES_ENDPOINT
-              value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
-            - name: LGTM_MIMIR_METRICS_ENDPOINT
-              value: http://jangar-alloy.jangar.svc.cluster.local:4317
-            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
-              value: grpc
-            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
-              value: grpc
+            - name: OTEL_TRACES_EXPORTER
+              value: otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://jangar-alloy.jangar.svc.cluster.local:4318/v1/metrics
             - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
               value: "20000"
             - name: LGTM_LOKI_ENDPOINT
               value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+            - name: FROUSSARD_RESTATE_INGRESS
+              value: http://restate.restate.svc.cluster.local:8080
           readinessProbe:
             httpGet:
               path: /health/readiness

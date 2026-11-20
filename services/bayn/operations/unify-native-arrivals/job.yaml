@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bayn-unify-native-arrivals
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 21600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-execution-controller
+        app.kubernetes.io/component: data-migration
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        network.proompteng.ai/100g: 'true'
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        runAsGroup: 26
+      containers:
+        - name: copy
+          image: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+          command: [/bin/bash, /migration/copy.sh]
+          resources:
+            requests:
+              cpu: '1'
+              memory: 256Mi
+            limits:
+              cpu: '2'
+              memory: 1Gi
+          env:
+            - name: SOURCE_HOST
+              value: bayn-native-arrival-db-rw.bayn.svc.cluster.local
+            - name: SOURCE_DATABASE
+              value: bayn_native_arrival
+            - name: SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-native-arrival-db-app
+                  key: username
+            - name: SOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-native-arrival-db-app
+                  key: password
+            - name: TARGET_HOST
+              value: bayn-db-rw.bayn.svc.cluster.local
+            - name: TARGET_DATABASE
+              value: bayn
+            - name: TARGET_USER
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: username
+            - name: TARGET_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: password
+          volumeMounts:
+            - name: script
+              mountPath: /migration
+              readOnly: true
+            - name: source-ca
+              mountPath: /certs/source
+              readOnly: true
+            - name: target-ca
+              mountPath: /certs/target
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: bayn-unify-native-arrivals
+        - name: source-ca
+          secret:
+            secretName: bayn-native-arrival-db-ca
+        - name: target-ca
+          secret:
+            secretName: bayn-db-ca

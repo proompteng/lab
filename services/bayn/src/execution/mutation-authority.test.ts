@@ -10,6 +10,7 @@ import { TestClock } from 'effect/testing'
 import {
   AccountStatus,
   AssetClass,
+  AssetStatus,
   AssetExchange,
   OrderClass,
   OrderSide as BrokerOrderSide,
@@ -18,6 +19,7 @@ import {
   PositionSide,
   TimeInForce as BrokerTimeInForce,
   type Account,
+  type AccountConfigurationObservation,
   type BrokerReadShape,
   type Order,
   type Position,
@@ -25,7 +27,9 @@ import {
   type ReadResult,
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { normalizeAccountConfigurationResult, normalizeAssetResult } from '../broker/alpaca/normalizers'
 import type { BrokerMutationShape } from '../broker/alpaca-mutations/model'
+import { MutationOperation, invalidRequest } from '../broker/alpaca-mutations/model'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from './contracts'
 import {
@@ -245,7 +249,9 @@ interface ScenarioInput {
   readonly positionsConfirmedAt?: string
   readonly ordersConfirmedAt?: string
   readonly assetOverrides?: Partial<ReturnType<typeof brokerAssetFixture>>
+  readonly shortConfiguration?: AccountConfigurationObservation
   readonly brokerAccount?: Account
+  readonly freshShortAccount?: Account
   readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
@@ -256,7 +262,7 @@ interface ScenarioInput {
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
   readonly maxNetExposureMicros?: string
   readonly currentDailyTradedNotionalMicros?: string
-  readonly maxDailyTradedNotionalMicros?: string
+  readonly maxDailyTradedNotionalMicros?: string | null
   readonly peakEquityMicros?: string
   readonly maxDrawdownMicros?: string
   readonly closeOnly?: boolean
@@ -281,7 +287,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         input.accountObservedAt,
       )
     }),
-    accountConfiguration: unusedRead,
+    accountConfiguration:
+      input.shortConfiguration === undefined ? unusedRead : Effect.succeed(readResult(input.shortConfiguration)),
     assetBySymbol: (symbol) =>
       Effect.succeed(readResult({ ...brokerAssetFixture(symbol, activeAt), ...input.assetOverrides })),
     positions: Effect.sync(() => {
@@ -344,6 +351,21 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         positionReads = input.positionSnapshots === undefined ? 0 : 1
         orderReads = input.orderSnapshots === undefined ? 0 : 1
         const cached = cachedBrokerStateFixture(input.brokerAccount ?? account(), cachedPositions, cachedOrders)
+        const read = submissionProjectionFixture(brokerRead)
+        const freshShortAccount = input.freshShortAccount
+        const shortRead =
+          freshShortAccount === undefined || read.projection === undefined
+            ? read
+            : {
+                ...read,
+                projection: {
+                  ...read.projection,
+                  fresh: {
+                    ...brokerRead,
+                    account: Effect.succeed(readResult(freshShortAccount, freshShortAccount.observedAt)),
+                  },
+                },
+              }
         const snapshot = yield* confirmExecutionBrokerState(
           {
             ...cached,
@@ -354,7 +376,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
             },
           },
           proposedIntent,
-          submissionProjectionFixture(brokerRead),
+          shortRead,
         )
         const persisted = yield* persistedCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
@@ -374,7 +396,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
             maxBrokerStateAgeMs: 300_000,
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
             currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
-            maxDailyTradedNotionalMicros: input.maxDailyTradedNotionalMicros ?? '1000000000',
+            maxDailyTradedNotionalMicros:
+              input.maxDailyTradedNotionalMicros === undefined ? '1000000000' : input.maxDailyTradedNotionalMicros,
             peakEquityMicros: input.peakEquityMicros ?? '1000000000',
             maxDrawdownMicros: input.maxDrawdownMicros ?? '1000000000',
           },
@@ -398,13 +421,114 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 test.each([
-  [4, 18, 1],
+  'eligible',
+  'borrow-revoked',
+  'shorting-disabled',
+  'configuration-disabled',
+  'stale-account',
+  'fresh-account-with-older-projection',
+  'cash-changed-after-projection',
+  'stale-asset',
+  'stale-configuration',
+  'collateral',
+  'cover-after-revocation',
+] as const)('native equity short final transmission: %s', async (scenario) => {
+  const at = '2026-07-28T14:30:00.000Z'
+  const stale = '2026-07-28T14:29:45.000Z'
+  const original = persistedGrantRecord(defaultLimits, BrokerEnvironment.Sandbox)
+  const { grantHash: _hash, ...material } = original
+  const grant = Result.getOrThrow(makeCapitalGrantRecord({ ...material, validUntil: '2026-07-28T15:00:00.000Z' }))
+  const covering = scenario === 'cover-after-revocation'
+  const refreshAccount =
+    scenario === 'fresh-account-with-older-projection' || scenario === 'cash-changed-after-projection'
+  const projectedAt = refreshAccount ? '2026-07-28T14:29:27.976Z' : scenario === 'stale-account' ? stale : at
+  const expectedSubmit = scenario === 'eligible' || scenario === 'fresh-account-with-older-projection' || covering
+  const observed = await runLiveSubmit({
+    environment: BrokerEnvironment.Sandbox,
+    grant,
+    observedAt: at,
+    accountObservedAt: projectedAt,
+    positionsObservedAt: at,
+    ordersObservedAt: at,
+    brokerAccount: account({
+      shortingEnabled: scenario !== 'shorting-disabled' && !covering,
+      observedAt: projectedAt,
+      buyingPowerMicros: scenario === 'collateral' ? '149999999' : '1000000000',
+    }),
+    ...(refreshAccount
+      ? {
+          freshShortAccount: account({
+            shortingEnabled: true,
+            observedAt: at,
+            cashMicros: scenario === 'cash-changed-after-projection' ? '990000000' : '1000000000',
+          }),
+        }
+      : {}),
+    shortConfiguration: Result.getOrThrow(
+      normalizeAccountConfigurationResult(
+        { fractional_trading: true, no_shorting: scenario === 'configuration-disabled' || covering },
+        scenario === 'stale-configuration' ? stale : at,
+      ),
+    ),
+    assetOverrides: Result.getOrThrow(
+      normalizeAssetResult(
+        {
+          id: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
+          symbol: 'AMD',
+          class: AssetClass.UsEquity,
+          exchange: AssetExchange.Nasdaq,
+          status: AssetStatus.Active,
+          tradable: true,
+          fractionable: true,
+          marginable: true,
+          shortable: scenario !== 'borrow-revoked' && !covering,
+          easy_to_borrow: scenario !== 'borrow-revoked' && !covering,
+        },
+        'AMD',
+        scenario === 'stale-asset' ? stale : at,
+      ),
+    ),
+    ...(covering
+      ? {
+          positions: [
+            position({
+              side: PositionSide.Short,
+              quantityAtoms: '-1000000000',
+              costBasisMicros: '-100000000',
+              marketValueMicros: '-100000000',
+              observedAt: at,
+            }),
+          ],
+          closeOnly: true,
+        }
+      : {}),
+    proposedIntent: intent({
+      side: covering ? OrderSide.Buy : OrderSide.Sell,
+      createdAt: at,
+      ...(covering
+        ? {}
+        : {
+            protection: {
+              _tag: 'EquityShortBracket',
+              stopPriceMicros: '102000000',
+              stopLimitPriceMicros: '103000000',
+              profitLimitPriceMicros: '97000000',
+            },
+          }),
+    }),
+  })
+  expect(observed.submits).toBe(expectedSubmit ? 1 : 0)
+  expect(observed.exit._tag).toBe(expectedSubmit ? 'Success' : 'Failure')
+})
+
+test.each([
+  [4, 18, 0],
   [3, 18, 0],
   [null, 18, 0],
-  [5, 18, 1],
+  [5, 18, 0],
   [4, null, 0],
-  [null, 25, 1],
-] as const)('final crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
+  [null, 25, 0],
+] as const)('disabled crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
   const result = await runLiveSubmit({
     maximumCryptoEntryTakerFeeBps: ceiling,
     brokerAccount: account({
@@ -421,10 +545,10 @@ test.each([
     }),
   })
   expect(result.submits).toBe(expected)
-  expect(Exit.isSuccess(result.exit)).toBe(expected === 1)
+  expect(Exit.isSuccess(result.exit)).toBe(false)
 })
 
-test('a cached crypto fee discount cannot cross the daily tier reset into transmission', async () => {
+test('a cached crypto fee discount cannot re-enable crypto entries', async () => {
   const result = await runLiveSubmit({
     maximumCryptoEntryTakerFeeBps: 18,
     brokerAccount: account({
@@ -443,8 +567,7 @@ test('a cached crypto fee discount cannot cross the daily tier reset into transm
   })
   expect(result.submits).toBe(0)
   expect(Exit.isFailure(result.exit)).toBe(true)
-  if (Exit.isFailure(result.exit))
-    expect(Cause.pretty(result.exit.cause)).toContain('exceeds the sealed entry estimate')
+  if (Exit.isFailure(result.exit)) expect(Cause.pretty(result.exit.cause)).toContain('crypto entries are disabled')
 })
 
 test('final submission admits a covered crypto protective stop through all capital and instrument checks', async () => {
@@ -532,8 +655,9 @@ describe('final broker mutation authority', () => {
               BrokerEnvironment.Sandbox,
             ),
           })
-          expect(atCap.exit._tag).toBe('Success')
-          expect(atCap.submits).toBe(1)
+          const entryAllowed = !symbol.includes('/') || side === OrderSide.Sell
+          expect(atCap.exit._tag).toBe(entryAllowed ? 'Success' : 'Failure')
+          expect(atCap.submits).toBe(entryAllowed ? 1 : 0)
           const overCap = await runLiveSubmit({
             ...common,
             grant: persistedGrantRecord(
@@ -541,7 +665,7 @@ describe('final broker mutation authority', () => {
               BrokerEnvironment.Sandbox,
             ),
           })
-          expect(failureTag(overCap.exit)).toBe('OrderNotionalLimitExceeded')
+          expect(failureTag(overCap.exit)).toBe(entryAllowed ? 'OrderNotionalLimitExceeded' : 'InstrumentError')
           expect(overCap.submits).toBe(0)
         },
       ),
@@ -549,7 +673,7 @@ describe('final broker mutation authority', () => {
   })
 
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'])
-    test(`${symbol} uses the common PAPER submission guard with native precision and cash authority`, async () => {
+    test(`${symbol} cannot enter despite valid native precision and PAPER cash authority`, async () => {
       const cryptoAccount = account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' })
       const proposedIntent = intent({
         symbol,
@@ -560,9 +684,9 @@ describe('final broker mutation authority', () => {
       })
       const common = { environment: BrokerEnvironment.Sandbox, brokerAccount: cryptoAccount, proposedIntent }
       const submitted = await runLiveSubmit(common)
-      if (Exit.isFailure(submitted.exit)) throw new Error(Cause.pretty(submitted.exit.cause))
-      expect(Exit.isSuccess(submitted.exit)).toBe(true)
-      expect(submitted.submits).toBe(1)
+      expect(Exit.isFailure(submitted.exit)).toBe(true)
+      expect(failureTag(submitted.exit)).toBe('InstrumentError')
+      expect(submitted.submits).toBe(0)
       for (const changed of [
         { brokerAccount: { ...cryptoAccount, cryptoStatus: 'INACTIVE' } },
         { brokerAccount: { ...cryptoAccount, nonMarginableBuyingPowerMicros: '1' } },
@@ -764,6 +888,22 @@ describe('final broker mutation authority', () => {
 
     expect(failureTag(observed.exit)).toBe('DailyTradedNotionalLimitExceeded')
     expect(observed.submits).toBe(0)
+  })
+
+  test('an explicitly uncapped turnover policy does not reject final submission above the former paper cap', async () => {
+    const observed = await runLiveSubmit({
+      currentDailyTradedNotionalMicros: '1018000000000',
+      maxDailyTradedNotionalMicros: null,
+    })
+    expect(Exit.isSuccess(observed.exit)).toBe(true)
+    expect(observed.submits).toBe(1)
+    const blocked = await runLiveSubmit({
+      currentDailyTradedNotionalMicros: '1018000000000',
+      maxDailyTradedNotionalMicros: null,
+      brokerAccount: account({ buyingPowerMicros: '99999999' }),
+    })
+    expect(failureTag(blocked.exit)).toBe('BuyingPowerExceeded')
+    expect(blocked.submits).toBe(0)
   })
 
   test('rejects a buy when refreshed broker equity exceeds the durable drawdown limit', async () => {
@@ -1417,6 +1557,44 @@ describe('final broker mutation authority', () => {
     expect(grantReads).toBe(0)
     expect(mismatched._tag).toBe('Failure')
   })
+
+  test.each(['failure', 'defect', 'interruption'] as const)(
+    'preserves compound authorization failure with %s',
+    async (kind) => {
+      const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected denial' })
+      const cleanup =
+        kind === 'failure'
+          ? Cause.fail({ _tag: 'WriterFenceError' })
+          : kind === 'defect'
+            ? Cause.die(new Error('injected cleanup defect'))
+            : Cause.interrupt()
+      const guarded = makeAuthorityGuardedBrokerMutation(
+        mutationAuthority(BrokerEnvironment.Sandbox, grantedCapitalAuthority(authorityGenerationHash)),
+        {
+          brokerMutation: {
+            submit: () => Effect.die('must not transmit'),
+            cancel: () => Effect.succeed(cancelReceipt),
+          },
+          finalSubmitAuthorization: () => Effect.failCause(Cause.combine(Cause.fail(denied), cleanup)),
+        },
+      )
+      const exit = await Effect.runPromiseExit(guarded.submit(intent()))
+      if (Exit.isSuccess(exit)) throw new Error('compound authorization failure must propagate')
+      expect(exit.cause.reasons).toHaveLength(2)
+      expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+      if (kind === 'failure') {
+        expect(exit.cause.reasons[1]).toMatchObject({
+          _tag: 'Fail',
+          error: { denialReason: SubmissionDenialReason.WriterFenceError },
+        })
+      } else {
+        const reason = cleanup.reasons[0]
+        if (reason === undefined || Cause.isFailReason(reason))
+          throw new Error('expected cleanup defect or interruption')
+        expect(exit.cause.reasons[1]).toEqual(reason)
+      }
+    },
+  )
 
   test('keeps cancellation available for containment after grant revocation', async () => {
     const grant = persistedGrantRecord()

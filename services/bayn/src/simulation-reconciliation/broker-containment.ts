@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit } from 'effect'
 
 import { BrokerReadError } from '../broker/alpaca/failures'
-import type { ExecutionStoreError, ReconciliationPersistence } from '../db/execution-store'
+import type { ExecutionStoreError, ReconciliationPersistence } from '../db/execution-store/contract'
 import type { WriterFenceError, WriterFenceService } from '../execution/writer-fence'
 import { ReconciliationError, incompletePassReason, type ReconciliationPassError } from './broker-reconciler-model'
 

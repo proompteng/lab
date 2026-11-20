@@ -12,7 +12,7 @@ import {
   SystemAssessmentError,
 } from './economics'
 import { CashFlowEvidenceSchema, cashFlowTotals, cashFlowsSupported, cashFlowsMatchSession } from './cash-flows'
-import { registeredAssessmentTerms, type SystemRegistration } from './policy'
+import { registeredFinancialTerms, type SystemRegistration } from './policy'
 import { JevAcceptanceVersion, usesLegacyAcceptance } from '../jev/acceptance'
 import { costAttributionRule, indexOperatingCosts } from './cost-attribution'
 import { validateFrozenCostAllocations } from './cost-allocation'
@@ -90,13 +90,15 @@ export const assessSession = (
   definition: SystemRegistration['policies'][number],
   asOf: string,
   verifiedSources: ReadonlySet<string>,
-  version = registration.schemaVersion === 'bayn.system-registration.v3'
+  version = registration.schemaVersion === 'bayn.system-registration.v4'
     ? JevAcceptanceVersion.Current
-    : JevAcceptanceVersion.RetainedV3,
+    : registration.schemaVersion === 'bayn.system-registration.v3'
+      ? JevAcceptanceVersion.RetainedV5
+      : JevAcceptanceVersion.RetainedV3,
 ) =>
   Result.gen(function* () {
     const legacy = usesLegacyAcceptance(version)
-    const terms = registeredAssessmentTerms(registration, definition.riskPolicy)
+    const terms = registeredFinancialTerms(registration, definition.riskPolicy)
     const missing: string[] = []
     const violations: string[] = []
     const requireSource = (hash: string) => {

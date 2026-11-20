@@ -105,12 +105,15 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     };
     let results = futures::future::join_all((0..8).map(|_| {
         client.check(
-            context.clone(),
-            Action::FilesObserve,
-            resource.clone(),
-            "/workspace/file".into(),
-            String::new(),
+            CheckRequest {
+                context: Some(context.clone()),
+                action: Action::FilesObserve as i32,
+                resource: Some(resource.clone()),
+                target: "/workspace/file".into(),
+                stream_receipt_id: String::new(),
+            },
             1,
+            false,
         )
     }))
     .await;
@@ -139,12 +142,15 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     *service.concurrent.lock().await = Some(Arc::new(tokio::sync::Barrier::new(8)));
     let parallel = futures::future::join_all((0..8).map(|_| {
         client.check(
-            context.clone(),
-            Action::FilesObserve,
-            resource.clone(),
-            "/workspace/file".into(),
-            String::new(),
+            CheckRequest {
+                context: Some(context.clone()),
+                action: Action::FilesObserve as i32,
+                resource: Some(resource.clone()),
+                target: "/workspace/file".into(),
+                stream_receipt_id: String::new(),
+            },
             1,
+            false,
         )
     }));
     let parallel = tokio::time::timeout(Duration::from_secs(3), parallel)
@@ -160,12 +166,15 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     assert_eq!(
         client
             .check(
-                context.clone(),
-                Action::FilesObserve,
-                resource.clone(),
-                "/workspace/file".into(),
-                String::new(),
-                1
+                CheckRequest {
+                    context: Some(context.clone()),
+                    action: Action::FilesObserve as i32,
+                    resource: Some(resource.clone()),
+                    target: "/workspace/file".into(),
+                    stream_receipt_id: String::new()
+                },
+                1,
+                false
             )
             .await
             .unwrap_err()
@@ -180,24 +189,30 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     service.allowed.store(true, Ordering::SeqCst);
     let other = client
         .check(
-            context.clone(),
-            Action::FilesObserve,
-            resource.clone(),
-            "/workspace/other".into(),
-            String::new(),
+            CheckRequest {
+                context: Some(context.clone()),
+                action: Action::FilesObserve as i32,
+                resource: Some(resource.clone()),
+                target: "/workspace/other".into(),
+                stream_receipt_id: String::new(),
+            },
             1,
+            false,
         )
         .await
         .unwrap();
     assert_ne!(other.audit_receipt_id, first);
     let controls = futures::future::join_all((0..4).map(|_| {
         client.check(
-            context.clone(),
-            Action::FilesWrite,
-            resource.clone(),
-            "/workspace/file".into(),
-            String::new(),
+            CheckRequest {
+                context: Some(context.clone()),
+                action: Action::FilesWrite as i32,
+                resource: Some(resource.clone()),
+                target: "/workspace/file".into(),
+                stream_receipt_id: String::new(),
+            },
             1,
+            false,
         )
     }))
     .await;
@@ -230,12 +245,15 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     let expired = tokio::time::timeout(
         Duration::from_millis(500),
         client.check(
-            short,
-            Action::FilesObserve,
-            resource,
-            "/workspace/cold".into(),
-            String::new(),
+            CheckRequest {
+                context: Some(short),
+                action: Action::FilesObserve as i32,
+                resource: Some(resource),
+                target: "/workspace/cold".into(),
+                stream_receipt_id: String::new(),
+            },
             1,
+            false,
         ),
     )
     .await
@@ -247,6 +265,85 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         "an expired queued request must never reach Ofz"
     );
     drop(guard);
+
+    let authority = crate::authz::WorkspaceAuthorization::new(client.clone());
+    let control = crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::CodexControl);
+    let auth = crate::auth::Authenticator::fixture("https://proompteng.ai".into());
+    let path = "/proompteng.runtime.v1.MicroVMControlPlane/GetActiveCodexRuns";
+    let request = crate::auth::signed_fixture_request(
+        crate::grpc::proto::GetActiveCodexRunsRequest {
+            id: "agent-test".into(),
+            thread_id: String::new(),
+        },
+        &control,
+        path,
+        auth.audience(),
+    );
+    let observation = auth.authorize(&request, path).await.unwrap();
+    let before = service.calls.lock().await.len();
+    let observations = futures::future::join_all((0..8).map(|_| {
+        let access = authority
+            .access(
+                &observation,
+                uid,
+                &observation.context.runtime_epoch,
+                "run-status",
+            )
+            .unwrap();
+        async move { access.require().await }
+    }))
+    .await;
+    assert!(observations.iter().all(Result::is_ok));
+    {
+        let calls = service.calls.lock().await;
+        assert_eq!(calls.len() - before, 8, "every run read must recheck Ofz");
+        assert_eq!(
+            calls[before..]
+                .iter()
+                .filter(|r| r.stream_receipt_id.is_empty())
+                .count(),
+            1,
+            "control-permission observations must share one committed receipt"
+        );
+        assert!(
+            calls[before..]
+                .iter()
+                .all(|r| r.action == Action::CodexControl as i32)
+        );
+    }
+    let before_controls = service.calls.lock().await.len();
+    for _ in 0..4 {
+        authority
+            .access(&control, uid, &control.context.runtime_epoch, "run-status")
+            .unwrap()
+            .require()
+            .await
+            .unwrap();
+    }
+    assert!(
+        service.calls.lock().await[before_controls..]
+            .iter()
+            .all(|r| r.stream_receipt_id.is_empty()),
+        "a control submission must never borrow the matching observation receipt"
+    );
+    service.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        authority
+            .access(
+                &observation,
+                uid,
+                &observation.context.runtime_epoch,
+                "run-status"
+            )
+            .unwrap()
+            .require()
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::PermissionDenied
+    );
+    assert_eq!(service.calls.lock().await.len(), before_controls + 5);
+    service.allowed.store(true, Ordering::SeqCst);
 
     service
         .database_clock_offset_ms

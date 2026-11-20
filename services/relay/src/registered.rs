@@ -23,6 +23,7 @@ pub struct Operation {
     pub action: String,
     pub target: Target,
     pub input_schema: Value,
+    pub read_only: bool,
 }
 
 pub struct RegisteredOperation {
@@ -76,6 +77,10 @@ impl RegisteredOperation {
         &self.definition.input_schema
     }
 
+    pub(crate) fn read_only(&self) -> bool {
+        self.definition.read_only
+    }
+
     fn resource(&self) -> PlatformResource {
         PlatformResource {
             kind: self.definition.target.kind.clone(),
@@ -101,12 +106,12 @@ impl RegisteredOperation {
                 name: self.definition.target.name.clone(),
                 resource: Some(resource),
             }],
-            read_only: true,
+            read_only: self.definition.read_only,
         })
     }
 
     pub fn normalize(&self, arguments: &[u8]) -> Result<Normalized, Status> {
-        if arguments.len() > 16_384 {
+        if arguments.len() > platform_client::MAX_EXECUTION_BODY_BYTES {
             return Err(Status::invalid_argument(
                 "connector arguments exceed their byte budget",
             ));
@@ -119,6 +124,7 @@ impl RegisteredOperation {
             ));
         }
         Ok(Normalized {
+            invocation: None,
             action: self.definition.action.clone(),
             resources: vec![self.resource()],
             prepared_request: serde_json::to_vec(&Prepared {

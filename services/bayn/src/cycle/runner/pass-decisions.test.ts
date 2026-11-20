@@ -7,12 +7,76 @@ import { RetainedAutonomousCyclePassObservationSchema } from './pass-observation
 import { DecisionReadinessReason } from './readiness'
 import { Reason as RiskReason } from '../../risk'
 import { strictParseOptions } from '../../schemas'
-import type { CyclePassObservation } from './model'
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
+import { OperationalError } from '../../errors'
+import { decisionBuildError, reconciliationRunnerError } from '../../observe-composition/decision-builder'
+import { CycleRunnerError, type CyclePassObservation } from './model'
+
+test('retains only typed local broker absence through decision failure and durable replay', () => {
+  const missingInput = {
+    operation: 'preflight',
+    kind: BrokerReadErrorKind.Timeout,
+    retryable: true,
+    observationFailure: 'NO_ADMISSIBLE_CUT',
+    message: 'A differently worded local projection failure',
+  } as const
+  const missing = new BrokerReadError(missingInput)
+  const decision = (cause: unknown, operation = 'reconciliation') =>
+    new CycleRunnerError({
+      operation: 'build-decision',
+      failure: 'market-data',
+      message: 'Decision construction failed',
+      cause: decisionBuildError(
+        new OperationalError({ component: 'market-data', operation, retryable: true, message: 'Read failed', cause }),
+      ),
+    })
+  const retain = (error: CycleRunnerError) =>
+    retainAutonomousCyclePassObservation({ outcome: 'FAILED', observedAt: '2026-09-04T14:30:02.000Z', error })
+  const decode = Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema, strictParseOptions)
+  for (const error of [decision(missing), reconciliationRunnerError(missing)]) {
+    const retained = retain(error)
+    expect(retained).toMatchObject({
+      result: 'FAILURE',
+      operation: error.operation,
+      failure: 'market-data',
+      message: error.message,
+      brokerObservationFailure: 'NO_ADMISSIBLE_CUT',
+    })
+    expect(decode(JSON.parse(JSON.stringify(retained)))).toEqual(retained)
+  }
+  for (const error of [
+    decision(
+      new BrokerReadError({
+        operation: 'preflight',
+        kind: BrokerReadErrorKind.Timeout,
+        retryable: true,
+        message: missing.message,
+      }),
+    ),
+    decision(new BrokerReadError({ ...missingInput, operation: 'account' })),
+    decision(new BrokerReadError({ ...missingInput, kind: BrokerReadErrorKind.InvalidResponse })),
+    decision(new BrokerReadError({ ...missingInput, retryable: false })),
+    decision(missing, 'snapshot'),
+    decision({ _tag: 'BrokerReadError', ...missingInput }),
+    new CycleRunnerError({ operation: 'build-decision', failure: 'market-data', message: missing.message }),
+  ]) {
+    const retained = retain(error)
+    expect(retained).not.toHaveProperty('brokerObservationFailure')
+    expect(decode(JSON.parse(JSON.stringify(retained)))).toEqual(retained)
+  }
+  const retained = retain(decision(missing))
+  for (const invalid of [
+    { ...retained, brokerObservationFailure: 'UNKNOWN' },
+    { ...retained, failure: 'database' },
+    { ...retained, operation: 'market-calendar' },
+  ])
+    expect(() => decode(invalid)).toThrow()
+})
 
 test('retains readiness and holding reasons through the durable observation schema and log projection', () => {
   const { cycle } = candidateObservationFixture()
   const readiness = {
-    reason: DecisionReadinessReason.SnapshotCoverage,
+    reason: DecisionReadinessReason.SnapshotCoverage as const,
     message: 'intraday symbol lacks the complete rolling lookback baseline',
     symbol: 'IWM',
   }

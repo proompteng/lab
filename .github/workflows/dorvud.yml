@@ -38,5 +38,5 @@ jobs:
         working-directory: services/dorvud
 
       - name: Run Dorvud tests
-        run: ./gradlew :platform:test :websockets:test :technical-analysis:test :technical-analysis-flink:test :hyperliquid-feed:test
+        run: ./gradlew :platform:test :websockets:test :technical-analysis:test :technical-analysis-flink:test :hyperliquid-feed:test :webull-feed:test
         working-directory: services/dorvud

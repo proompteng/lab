@@ -13,16 +13,15 @@ on:
       - 'packages/cx-tools/**'
       - 'packages/otel/**'
       - 'packages/scripts/src/agents/update-values.ts'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - '!services/agents/agentctl/**'
       - '!services/agents/Dockerfile*'
       - 'charts/agents/crds/**'
       - 'nix/images/agents.nix'
+      - 'patches/effect@4.1.4.patch'
       - 'nix/images/openai-codex-cli.nix'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'nix/oci-push.sh'
+      - 'nix/images/agentrun-tools.nix'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
       - '!**/__tests__/**'
@@ -92,7 +91,7 @@ jobs:
       - control-plane-image
       - agents-shell-image
       - runner-image
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     timeout-minutes: 15
     steps:
       - name: Checkout

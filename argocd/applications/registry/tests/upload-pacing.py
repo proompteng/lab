@@ -71,6 +71,7 @@ def slow_put():
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 5000), Backend)
 threading.Thread(target=server.serve_forever, daemon=True).start()
+Path("/control/freeze.map").write_text("freeze 0\n")
 config = Path("/tmp/registry-pacing.cfg")
 config.write_text(
     Path(sys.argv[1]).read_text().replace("global\n", "global\n  nbthread 4\n", 1)

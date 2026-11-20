@@ -130,6 +130,7 @@ const buildObjectUrl = (config: ArtifactUploadConfig, key: string) => {
 const requestS3Object = async (input: {
   method: 'GET' | 'PUT'
   range?: string
+  timeoutMs?: number
   config: ArtifactUploadConfig
   key: string
   body: Buffer
@@ -166,7 +167,7 @@ const requestS3Object = async (input: {
       ...(input.range ? { Range: input.range } : {}),
     },
     ...(input.method === 'PUT' ? { body: new Uint8Array(input.body).buffer } : {}),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 15_000),
   })
   if (!response.ok) {
     await response.body?.cancel()
@@ -188,6 +189,7 @@ export class ArtifactStorageError extends Error {
 }
 
 type S3ObjectRequest = {
+  timeoutMs?: number
   config: ArtifactUploadConfig
   key: string
   fetch: typeof fetch

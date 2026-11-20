@@ -10,10 +10,31 @@ import { ChartEntryTargetFields, makeChartEntryTargetMaterial, reproduceDecision
 import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, entryInferenceAvailableAt } from './evidence'
 import { EntryAblationSelection } from './entry-inference-input'
 import { JevPurpose } from './portfolio'
-import { entryProposalExitPlan, type JevFundedExitPlan } from './strategy-exit-plan'
+import { nativeEntryProposalExitPlan, nativeModeledLossMicros, isShortEntryProposal } from './native-entry-proposal'
+import type { ShortFundedExitPlan } from './short-exit-plan'
+import type { JevFundedExitPlan } from './strategy-exit-plan'
 import { jevEntryQuoteExclusion } from './trading-signals'
 
 /** The candidate's loss and identity tie-breakers, with the Jev ranking removed. */
+export const selectFundedEntryAblationProposal = ({
+  handoff,
+  jev,
+}: Pick<Result.Result.Success<ReturnType<typeof entryInferenceAvailableAt>>, 'handoff' | 'jev'>) =>
+  Result.gen(function* () {
+    if (handoff.disposition.status === 'SOURCE_INFEASIBLE' || handoff.disposition.status === 'NO_FUNDED_PROPOSALS')
+      return null
+    if (handoff.disposition.status !== 'READY' || jev.status !== 'OMITTED_BY_POLICY')
+      return yield* Result.fail(
+        new JevContractError({ message: 'Ablation requires actual funded chart proposals and explicit Jev omission' }),
+      )
+    const proposals = handoff.disposition.evaluation.proposals.toSorted((left, right) => {
+      const leftLoss = nativeModeledLossMicros(left)
+      const rightLoss = nativeModeledLossMicros(right)
+      return leftLoss < rightLoss ? -1 : leftLoss > rightLoss ? 1 : left.proposalId.localeCompare(right.proposalId)
+    })
+    return proposals[0] ?? null
+  })
+
 export const selectEntryAblationProposal = (input: {
   readonly request: unknown
   readonly receipt: unknown
@@ -35,18 +56,7 @@ export const selectEntryAblationProposal = (input: {
       input.decidedAt,
       'bayn.entry-ablation-input.v1',
     )
-    if (handoff.disposition.status === 'SOURCE_INFEASIBLE' || handoff.disposition.status === 'NO_FUNDED_PROPOSALS')
-      return { request, receipt, proposal: null }
-    if (handoff.disposition.status !== 'READY' || jev.status !== 'OMITTED_BY_POLICY')
-      return yield* Result.fail(
-        new JevContractError({ message: 'Ablation requires actual funded chart proposals and explicit Jev omission' }),
-      )
-    const proposals = handoff.disposition.evaluation.proposals.toSorted((left, right) => {
-      const leftLoss = BigInt(left.funding.acquisitionCostMicros) - BigInt(left.funding.estimatedStopNetMicros)
-      const rightLoss = BigInt(right.funding.acquisitionCostMicros) - BigInt(right.funding.estimatedStopNetMicros)
-      return leftLoss < rightLoss ? -1 : leftLoss > rightLoss ? 1 : left.proposalId.localeCompare(right.proposalId)
-    })
-    return { request, receipt, proposal: proposals[0] ?? null }
+    return { request, receipt, proposal: yield* selectFundedEntryAblationProposal({ handoff, jev }) }
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Ablation selection could not reproduce its source evidence', cause }),
@@ -58,7 +68,12 @@ export const decideEntryAblation = (input: unknown) =>
     const source = yield* reproduceDecisionEvidence(input, JevBatchPlanVersion.Ablation)
     if (source.observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* Result.fail(new JevContractError({ message: 'Ablation requires a flat entry observation' }))
-    const selected: { symbol: string; weight: number; modeledLossMicros: bigint; exitPlan: JevFundedExitPlan }[] = []
+    const selected: {
+      symbol: string
+      weight: number
+      modeledLossMicros: bigint
+      exitPlan: JevFundedExitPlan | ShortFundedExitPlan
+    }[] = []
     const entryPlanRejections: Record<string, 'NO_FUNDED_CANDIDATES'> = {}
     for (const candidate of source.evidence.batchPlan.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
@@ -82,11 +97,9 @@ export const decideEntryAblation = (input: unknown) =>
       if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
       selected.push({
         symbol: candidate.symbol,
-        weight: choice.proposal.funding.maximumTargetWeight,
-        modeledLossMicros:
-          BigInt(choice.proposal.funding.acquisitionCostMicros) -
-          BigInt(choice.proposal.funding.estimatedStopNetMicros),
-        exitPlan: entryProposalExitPlan(choice.proposal),
+        weight: choice.proposal.funding.maximumTargetWeight * (isShortEntryProposal(choice.proposal) ? -1 : 1),
+        modeledLossMicros: nativeModeledLossMicros(choice.proposal),
+        exitPlan: nativeEntryProposalExitPlan(choice.proposal),
       })
     }
     selected.sort((left, right) =>

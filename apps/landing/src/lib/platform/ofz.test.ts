@@ -104,3 +104,29 @@ test('audited checks can wait for commit while receipt renewals keep their short
     expect(error.status).toBe(503)
   }
 }, 15_000)
+
+test('only explicit Ofz rejection metadata releases a saved command across the BFF boundary', async () => {
+  const { platformRouteError } = await import('./http')
+  const { readPlatformResponse, PlatformClientError } = await import('./client')
+  for (const rejected of [false, true]) {
+    const metadata = new grpc.Metadata()
+    if (rejected) metadata.set('x-ofz-command-outcome', 'rejected')
+    const error = platformRpcError(
+      Object.assign(new Error('denied'), {
+        code: grpc.status.PERMISSION_DENIED,
+        details: 'platform membership required',
+        metadata,
+      }),
+    )
+    expect(error.commandRejected).toBe(rejected)
+    try {
+      await readPlatformResponse(platformRouteError(error))
+      throw new Error('Expected denial')
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(PlatformClientError)
+      if (!(cause instanceof PlatformClientError)) throw cause
+      expect(cause.status).toBe(403)
+      expect(cause.commandRejected).toBe(rejected)
+    }
+  }
+})

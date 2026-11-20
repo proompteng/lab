@@ -1,0 +1,117 @@
+{
+  "kind": "native-downstream-functional-diagnostic",
+  "status": "PASS",
+  "sourceExperimentId": "aed249f8285f2955eeeab8727ce005a8a2b30e21c7444c585fb78bd6e94507d5",
+  "nativeBackend": {
+    "kind": "synthetic-native-ABI-check",
+    "lightgbmVersion": "4.7.0",
+    "rows": 4,
+    "predictionCount": 4,
+    "finite": true,
+    "lightgbmBinarySha256": "bc392db609d97730a9ed2acec7a56529b356c03dfad39bebf689523fed7dff18",
+    "openmpBinarySha256": "358cc27d41211ea2d8ff19a393e646ae3b1dea051a3e2d8d91d7a6bd57f26403",
+    "marketDataUsed": false
+  },
+  "canonicalDownstreamFunctionUnchangedFrom": "5999b03404",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "downstreamRows": 1165440,
+  "runs": [
+    {
+      "runId": "calendar-acceptance-20260823-graph",
+      "status": "PASS",
+      "selectedFactorCount": 4,
+      "targetBindingMatches": true,
+      "artifacts": {
+        "model_ref": {
+          "artifactId": "024ee1dbab7582f45b4a0dfc9d971b0f885f2dcd7a309d0b415f9eddd6b144fa",
+          "sizeBytes": 28032
+        },
+        "training_curve_ref": {
+          "artifactId": "9429c5c529d0dd343ca690e9d43215b18b682b82695d377bc9578ddae2cadd9a",
+          "sizeBytes": 2191
+        },
+        "predictions_ref": {
+          "artifactId": "8cee8fd049532f4b9d8326737b57bf486097c0f04fd5c6fee7045225592f5dc3",
+          "sizeBytes": 5023089
+        },
+        "daily_signal_metrics_ref": {
+          "artifactId": "15d5c53f0057be4f88cc15cd12e281a96a8fbcbe10ae02a9e81d53a1da19aace",
+          "sizeBytes": 25783
+        },
+        "portfolio_report_ref": {
+          "artifactId": "aee5af5f0c856ae40a7d2533c399456c959613806faf412f4c5d7a264840e970",
+          "sizeBytes": 63751
+        },
+        "portfolio_positions_ref": {
+          "artifactId": "4b9d6235b29a9372752a3c3dd451a5882113b1f4a77c5d45a5fd7cabd7f139dc",
+          "sizeBytes": 1294945
+        }
+      }
+    },
+    {
+      "runId": "calendar-acceptance-20260823-mcts",
+      "status": "PASS",
+      "selectedFactorCount": 4,
+      "targetBindingMatches": true,
+      "artifacts": {
+        "model_ref": {
+          "artifactId": "39384d9d8554bbbb6ab37a74977f20e4650fb7852e2d8664ff0e4d629fed9002",
+          "sizeBytes": 32323
+        },
+        "training_curve_ref": {
+          "artifactId": "fdf3b79984e2a3b45b0160fe3249275a6c8810666eb1e3ba4c045c456acebb85",
+          "sizeBytes": 2187
+        },
+        "predictions_ref": {
+          "artifactId": "88e21fcebb5d25311907c1a2b9ca119a222e2da6753ec62ab61eb67c24aedc26",
+          "sizeBytes": 5051421
+        },
+        "daily_signal_metrics_ref": {
+          "artifactId": "1b9d081ad595d4a092fae16fe167fd66d10b0f53a9bbb90e39d24d47eccddef3",
+          "sizeBytes": 25781
+        },
+        "portfolio_report_ref": {
+          "artifactId": "ae4a21f90cb26d5c6c2b5a5cf89f5c7420760e847f4713e8385cbd4d155d723f",
+          "sizeBytes": 63707
+        },
+        "portfolio_positions_ref": {
+          "artifactId": "0da21f0198e11ed787c6887381cdfdd3d7702af53371d82336472e2af59aa13d",
+          "sizeBytes": 1278073
+        }
+      }
+    },
+    {
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "status": "PASS",
+      "selectedFactorCount": 4,
+      "targetBindingMatches": true,
+      "artifacts": {
+        "model_ref": {
+          "artifactId": "0865d289a55559ed8ff6ad8fac9ab0a2a1f2934ccbb43644d550523864265b52",
+          "sizeBytes": 68646
+        },
+        "training_curve_ref": {
+          "artifactId": "3a9ead1b0dd400310a9f7f07b98babe6b073e6cbf3980bbf51d9e48facc87f44",
+          "sizeBytes": 2556
+        },
+        "predictions_ref": {
+          "artifactId": "2c7901202a6a01e2e079e31ada5e549a954515e09f6f84263069ae5f7cf7e474",
+          "sizeBytes": 6254632
+        },
+        "daily_signal_metrics_ref": {
+          "artifactId": "90fcc0b13a4d694cfe79bb7da2e106bc922c9e6b7fd680fd42e6c838a3e7cd5f",
+          "sizeBytes": 25776
+        },
+        "portfolio_report_ref": {
+          "artifactId": "7e8d43c4afc9b1c03625a758c5e0510f5d89133e09a0b65b6ed1f1d425ad4ca6",
+          "sizeBytes": 63654
+        },
+        "portfolio_positions_ref": {
+          "artifactId": "c5efc79fbae3790168828de124a7bf46aed1453568c6853f3f8d4a9b86ee4918",
+          "sizeBytes": 1277724
+        }
+      }
+    }
+  ],
+  "interpretation": "Three actual native model fits and offline portfolio paths on retained frozen pools. Artifact integrity and target bindings verified. This does not resume the inconclusive acceptance trial or supply the nine-arm comparison."
+}

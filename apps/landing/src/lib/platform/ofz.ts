@@ -12,6 +12,7 @@ export class OfzError extends Error {
     readonly status: number,
     readonly auditReceiptId = '',
     cause?: unknown,
+    readonly commandRejected = false,
   ) {
     super(
       status === 401
@@ -79,5 +80,10 @@ export function platformRpcError(error: unknown) {
                       ? 429
                       : 503
   const receipt = failure.metadata?.get('x-ofz-audit-receipt')[0]
-  return new OfzError(status, typeof receipt === 'string' ? receipt : '', error)
+  return new OfzError(
+    status,
+    typeof receipt === 'string' ? receipt : '',
+    error,
+    failure.metadata?.get('x-ofz-command-outcome')[0] === 'rejected',
+  )
 }

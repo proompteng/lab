@@ -1,20 +1,20 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result, Schema } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 
 import type { ForwardPerformanceConfig } from './config'
+import { inferenceStageKey, InferenceCostError, type DecodedInferenceCostEvidence } from '../inference-costs'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import {
-  InferenceCostError,
-  inferenceStageKey,
-  makeInferenceCostReport,
-  type DecodedInferenceCostEvidence,
-} from '../inference-costs'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
-import { verifyInferenceExpenseCoverage, type InferenceExpenseQuote } from '../inference-expense'
+  verifyInferenceExpenseCoverage,
+  type InferenceExpenseQuote,
+  type InferenceExpenseRequestCoverage,
+} from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import type { WriterFenceService } from '../execution/writer-fence'
+import { ReportVerification, reportVerificationConcurrency, type ReportExpenseCoverage } from './verification'
 
 export interface ForwardInferenceExpenseSession {
   readonly sessionDate: string
@@ -25,6 +25,8 @@ export interface ForwardInferenceExpenseSession {
   readonly missingQuoteCount: number
   readonly unverifiedRequestCount: number
   readonly gapRequestCount: number
+  readonly matchedQuoteHashes: readonly string[]
+  readonly requestsWithCoverageIssues: readonly InferenceExpenseRequestCoverage[]
   readonly completeMeteredCoverage: boolean
   readonly exactSessionLedger: true
   readonly ledgerTimestampMax: string
@@ -32,59 +34,101 @@ export interface ForwardInferenceExpenseSession {
   readonly invoiceReconciled: false
 }
 
+const expenseSummary = (
+  evidence: DecodedInferenceCostEvidence,
+  authorityGenerationHash: string | undefined,
+  coverage: ReportExpenseCoverage,
+) =>
+  ({
+    sessionDate: evidence.sessionDate,
+    authorityGenerationHash: authorityGenerationHash ?? null,
+    ...coverage,
+    invoiceReconciled: false,
+  }) satisfies Omit<
+    ForwardInferenceExpenseSession,
+    'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
+  >
+
 export const summarizeForwardInferenceExpenses = (
   evidence: DecodedInferenceCostEvidence,
   accountId: string,
   frozen: readonly { readonly quote: InferenceExpenseQuote; readonly verifiedAt: string | null }[],
   authorityGenerationHash?: string,
 ) =>
-  Result.gen(function* () {
-    const sourceReport = yield* makeInferenceCostReport(evidence, {
-      schemaVersion: 'bayn.inference-rate-card.v1',
-      rates: [],
-    })
-    const selectedRequestIds = new Set(
-      evidence.requests
-        .filter(
-          (request) =>
-            authorityGenerationHash === undefined || request.authorityGenerationHash === authorityGenerationHash,
-        )
-        .map((request) => request.requestId),
-    )
-    const requests = new Map(
-      sourceReport.requests
-        .filter((request) => selectedRequestIds.has(request.requestId))
-        .map((request) => [inferenceStageKey(request), request]),
-    )
-    const rows = frozen.filter(({ quote }) => requests.has(inferenceStageKey(quote.line)))
-    const coverage = yield* verifyInferenceExpenseCoverage(evidence, accountId, frozen, authorityGenerationHash)
-    let known = 0n
-    for (const { quote } of rows) {
-      const request = requests.get(inferenceStageKey(quote.line))
-      if (
-        request !== undefined &&
-        quote.line.receiptHash === request.receiptHash &&
-        ('handoffHash' in quote.line ? quote.line.handoffHash : null) ===
-          ('handoffHash' in request ? request.handoffHash : null)
+  verifyInferenceExpenseCoverage(evidence, accountId, frozen, authorityGenerationHash).pipe(
+    Result.map((coverage) => expenseSummary(evidence, authorityGenerationHash, coverage)),
+  )
+
+export const readForwardInferenceExpenseSummary = (
+  evidence: DecodedInferenceCostEvidence,
+  accountId: string,
+  frozen: Parameters<typeof summarizeForwardInferenceExpenses>[2],
+  authorityGenerationHash?: string,
+) =>
+  Effect.gen(function* () {
+    const service = yield* Effect.serviceOption(ReportVerification)
+    if (Option.isNone(service))
+      return yield* Effect.fromResult(
+        summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
       )
-        known += BigInt(quote.line.estimatedCostPicoUsd ?? '0')
+    const partitions = Array.from({ length: reportVerificationConcurrency }, () => ({
+      requests: [] as DecodedInferenceCostEvidence['requests'][number][],
+      frozen: [] as (typeof frozen)[number][],
+    }))
+    const requestPartitions = new Map<string, (typeof partitions)[number]>()
+    for (const request of evidence.requests) {
+      let partition = requestPartitions.get(request.requestId)
+      if (partition === undefined) {
+        partition = partitions[requestPartitions.size % partitions.length]!
+        requestPartitions.set(request.requestId, partition)
+      }
+      // Keep duplicate sources together so conflicting fingerprints still fail verification.
+      partition.requests.push(request)
     }
-    return {
-      sessionDate: evidence.sessionDate,
-      authorityGenerationHash: authorityGenerationHash ?? null,
-      knownEstimatedCostPicoUsd: known.toString(),
-      sourceAsOf: coverage.sourceAsOf,
-      claimedRequestCount: coverage.claimedRequestCount,
-      missingQuoteCount: coverage.missingQuoteCount,
-      unverifiedRequestCount: coverage.unverifiedRequestCount,
-      gapRequestCount: coverage.gapRequestCount,
-      completeMeteredCoverage: coverage.completeMeteredCoverage,
-      invoiceReconciled: false,
-    } satisfies Omit<
-      ForwardInferenceExpenseSession,
-      'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
-    >
+    for (const row of frozen)
+      // Orphan quotes must reach the verifier and fail; never silently filter the session cut.
+      (requestPartitions.get(row.quote.line.requestId) ?? partitions[0]!).frozen.push(row)
+    const coverage = yield* Effect.forEach(
+      partitions.filter(
+        (partition, index) => index === 0 || partition.requests.length > 0 || partition.frozen.length > 0,
+      ),
+      (partition) =>
+        service.value.coverage({
+          evidence: { ...evidence, requests: partition.requests },
+          accountId,
+          frozen: partition.frozen,
+          ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
+        }),
+      { concurrency: reportVerificationConcurrency },
+    )
+    return expenseSummary(evidence, authorityGenerationHash, {
+      sourceAsOf: evidence.asOf,
+      claimedRequestCount: coverage.reduce((sum, part) => sum + part.claimedRequestCount, 0),
+      missingQuoteCount: coverage.reduce((sum, part) => sum + part.missingQuoteCount, 0),
+      unverifiedRequestCount: coverage.reduce((sum, part) => sum + part.unverifiedRequestCount, 0),
+      gapRequestCount: coverage.reduce((sum, part) => sum + part.gapRequestCount, 0),
+      knownEstimatedCostPicoUsd: coverage
+        .reduce((sum, part) => sum + BigInt(part.knownEstimatedCostPicoUsd), 0n)
+        .toString(),
+      matchedQuoteHashes: coverage.flatMap((part) => part.matchedQuoteHashes).sort(),
+      requestsWithCoverageIssues: coverage
+        .flatMap((part) => part.requestsWithCoverageIssues)
+        .sort((a, b) => inferenceStageKey(a).localeCompare(inferenceStageKey(b))),
+      completeMeteredCoverage: coverage.every((part) => part.completeMeteredCoverage),
+    })
   })
+
+export const inferenceExpenseSessionQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) => sql`
+  SELECT DISTINCT cycle.execution_session_date::text AS "sessionDate"
+  FROM jev_evaluation_requests AS request JOIN autonomous_cycles AS cycle USING (cycle_id)
+  WHERE cycle.account_id = ${accountId}
+    AND ${authorityGenerationHash === undefined ? sql`TRUE` : sql`request.authority_generation_hash = ${authorityGenerationHash}`}
+  ORDER BY "sessionDate" LIMIT 1001
+`
 
 export const readForwardInferenceExpenseSnapshots = (
   sql: PgClient.PgClient,
@@ -93,13 +137,7 @@ export const readForwardInferenceExpenseSnapshots = (
   writerFence?: WriterFenceService,
 ) =>
   Effect.gen(function* () {
-    const sessions = yield* sql`
-      SELECT DISTINCT cycle.execution_session_date::text AS "sessionDate"
-      FROM jev_evaluation_requests AS request JOIN autonomous_cycles AS cycle USING (cycle_id)
-      WHERE cycle.account_id = ${accountId}
-        AND (${authorityGenerationHash ?? null}::text IS NULL OR request.authority_generation_hash = ${authorityGenerationHash ?? null})
-      ORDER BY "sessionDate" LIMIT 1001
-    `.pipe(
+    const sessions = yield* inferenceExpenseSessionQuery(sql, accountId, authorityGenerationHash).pipe(
       Effect.flatMap(
         Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema })), strictParseOptions),
       ),
@@ -110,7 +148,7 @@ export const readForwardInferenceExpenseSnapshots = (
       })
     if (sessions.length === 0) return []
     return yield* Effect.forEach(sessions, ({ sessionDate }) =>
-      readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence),
+      acquireInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence),
     )
   }).pipe(
     Effect.mapError((cause) =>
@@ -120,7 +158,7 @@ export const readForwardInferenceExpenseSnapshots = (
     ),
   )
 
-export type ForwardInferenceExpenseSnapshot = Effect.Success<ReturnType<typeof readInferenceExpenseSnapshot>>
+export type ForwardInferenceExpenseSnapshot = Effect.Success<ReturnType<typeof acquireInferenceExpenseSnapshot>>
 
 export const readForwardInferenceExpenses = (
   config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
@@ -133,13 +171,12 @@ export const readForwardInferenceExpenses = (
     if (snapshots.length === 0) return []
     const client = yield* makeTigerBeetleRequestClient(config)
     const store = makeInferenceExpenseStore(sql, accountId)
-    return yield* Effect.forEach(snapshots, (snapshot) =>
+    return yield* Effect.forEach(snapshots, ({ verify }) =>
       Effect.gen(function* () {
+        const snapshot = yield* verify
         const { evidence, quotes: frozen } = snapshot
         const sessionDate = evidence.sessionDate
-        const summary = yield* Effect.fromResult(
-          summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
-        )
+        const summary = yield* readForwardInferenceExpenseSummary(evidence, accountId, frozen, authorityGenerationHash)
         const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
         return {
           ...summary,

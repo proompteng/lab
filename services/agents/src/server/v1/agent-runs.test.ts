@@ -44,18 +44,21 @@ const createStoreMock = (): AgentRunsApiStore =>
   }) satisfies AgentRunsApiStore
 
 const createKubeMock = (): KubernetesClient => ({
-  apply: vi.fn(async (resource) => ({
-    ...resource,
-    metadata: {
-      ...((resource.metadata ?? {}) as Record<string, unknown>),
-      name: 'demo-agent-run-1',
-      uid: 'agent-run-uid-1',
-    },
-    status: { phase: 'Running' },
-  })),
+  apply: vi.fn(async (resource) => resource),
+  createManifest: vi.fn(async (manifest) => {
+    const resource = JSON.parse(manifest)
+    return {
+      ...resource,
+      metadata: {
+        ...((resource.metadata ?? {}) as Record<string, unknown>),
+        name: 'demo-agent-run-1',
+        uid: 'agent-run-uid-1',
+      },
+      status: { phase: 'Running' },
+    }
+  }),
   applyManifest: vi.fn(async () => ({})),
   applyStatus: vi.fn(async (resource) => resource),
-  createManifest: vi.fn(async () => ({})),
   delete: vi.fn(async () => ({})),
   patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
   get: vi.fn(async (resource, name, namespace) => {
@@ -113,7 +116,7 @@ describe('AgentRun v1 API', () => {
       status: 'Running',
       externalRunId: 'demo-agent-run-1',
     })
-    expect(kube.apply).toHaveBeenCalledWith(
+    expect(JSON.parse(vi.mocked(kube.createManifest).mock.calls[0]![0])).toEqual(
       expect.objectContaining({
         kind: 'AgentRun',
         spec: expect.objectContaining({
@@ -162,7 +165,7 @@ describe('AgentRun v1 API', () => {
       )
 
       expect(response.status).toBe(201)
-      expect(kube.apply).toHaveBeenCalled()
+      expect(kube.createManifest).toHaveBeenCalled()
       expect(store.createAgentRun).toHaveBeenCalled()
       expect(store.createAuditEvent).toHaveBeenCalledTimes(2)
     } finally {
@@ -197,7 +200,7 @@ describe('AgentRun v1 API', () => {
     expect(store.getAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(store.assignAgentRunIdempotencyKey).not.toHaveBeenCalled()
-    expect(kube.apply).toHaveBeenCalled()
+    expect(kube.createManifest).toHaveBeenCalled()
   })
 
   it('previews AgentRun dry-runs without creating resources or projection records', async () => {
@@ -238,7 +241,7 @@ describe('AgentRun v1 API', () => {
       resolvedWorkloadImageSource: 'controller-default',
     })
     expect(validatePolicies).toHaveBeenCalledTimes(1)
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
     expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(store.assignAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(store.createAgentRun).not.toHaveBeenCalled()
@@ -294,7 +297,7 @@ describe('AgentRun v1 API', () => {
         'registry.ide-newton.ts.net/lab/anypi:a5796fc2b@sha256:4e4e7ac9f646c061baaa7478ae42bf3acefc2ab46b2640ffa52b677cb8ed86ca',
       resolvedWorkloadImageSource: 'provider',
     })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
     expect(store.createAgentRun).not.toHaveBeenCalled()
   })
 
@@ -335,7 +338,7 @@ describe('AgentRun v1 API', () => {
     )
 
     expect(response.status).toBe(201)
-    expect(kube.apply).toHaveBeenCalled()
+    expect(kube.createManifest).toHaveBeenCalled()
   })
 
   it('rejects a source provider outside the Agent allowlist before creating an AgentRun', async () => {
@@ -369,7 +372,7 @@ describe('AgentRun v1 API', () => {
     expect(await response.json()).toMatchObject({
       error: expect.stringContaining('implementation source provider github is not allowed'),
     })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
     expect(store.createAgentRun).not.toHaveBeenCalled()
   })
 
@@ -413,7 +416,7 @@ describe('AgentRun v1 API', () => {
     expect(await response.json()).toMatchObject({
       error: expect.stringContaining('implementation source provider github is not allowed'),
     })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
   })
 
   it('rejects invalid AgentRun dry-run values before mutating state', async () => {
@@ -440,7 +443,7 @@ describe('AgentRun v1 API', () => {
     expect(response.status).toBe(400)
     const body = (await response.json()) as { error?: string }
     expect(body.error).toContain('dryRun must be true, false, or All')
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
     expect(store.createAgentRun).not.toHaveBeenCalled()
     expect(store.createAuditEvent).not.toHaveBeenCalled()
   })
@@ -485,7 +488,7 @@ describe('AgentRun v1 API', () => {
     }
     expect(body.error).toBe('Namespace agents reached queue limit')
     expect(body.details).toMatchObject({ scope: 'namespace', limit: 1, queued: 1 })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
     expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(store.deleteAgentRunIdempotencyKey).not.toHaveBeenCalled()
   })
@@ -544,7 +547,74 @@ describe('AgentRun v1 API', () => {
       idempotencyKey: 'agent-run-request-1',
     })
     expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledTimes(2)
-    expect(kube.apply).toHaveBeenCalled()
+    expect(kube.createManifest).toHaveBeenCalled()
+  })
+
+  it('uses a deterministic name for an accepted Relay submission and rejects ambiguous or invalid names', async () => {
+    for (const metadata of [
+      { name: 'relay-original' },
+      { name: 'bad/name' },
+      { name: 'relay-original', generateName: 'other-' },
+    ]) {
+      const store = createStoreMock(),
+        kube = createKubeMock()
+      const response = await postAgentRunsHandler(
+        buildRequest({
+          agentRef: { name: 'demo-agent' },
+          namespace: 'agents',
+          metadata,
+          implementation: { text: 'Task' },
+          runtime: { type: 'job', config: {} },
+        }),
+        { storeFactory: () => store, kubeClient: kube, validatePolicies: vi.fn(async () => {}) },
+      )
+      if (metadata.name === 'relay-original' && !metadata.generateName) {
+        expect(response.status).toBe(201)
+        expect(JSON.parse(vi.mocked(kube.createManifest).mock.calls[0]![0])).toEqual(
+          expect.objectContaining({ metadata: expect.objectContaining({ name: 'relay-original' }) }),
+        )
+      } else {
+        expect(response.status).toBe(400)
+        expect(kube.createManifest).not.toHaveBeenCalled()
+      }
+    }
+  })
+
+  it('rejects a reused explicit name without replacing the accepted run or creating another projection', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    const resources = new Map<string, Record<string, unknown>>()
+    vi.mocked(kube.createManifest).mockImplementation(async (manifest) => {
+      const resource = JSON.parse(manifest)
+      if (resources.has(resource.metadata.name)) throw Object.assign(new Error('AlreadyExists'), { code: 409 })
+      resource.metadata.uid = 'original-uid'
+      resources.set(resource.metadata.name, resource)
+      return resource
+    })
+    const submit = (key: string, text: string) => {
+      const request = buildRequest({
+        agentRef: { name: 'demo-agent' },
+        namespace: 'agents',
+        metadata: { name: 'relay-original' },
+        implementation: { text },
+        runtime: { type: 'job', config: {} },
+      })
+      request.headers.set('idempotency-key', key)
+      return postAgentRunsHandler(request, {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      })
+    }
+    expect((await submit('first-request', 'Original task')).status).toBe(201)
+    const original = structuredClone(resources.get('relay-original'))
+    const response = await submit('second-request', 'Replacement task')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: 'AgentRun name already exists' })
+    expect(resources.get('relay-original')).toEqual(original)
+    expect(kube.apply).not.toHaveBeenCalled()
+    expect(store.createAgentRun).toHaveBeenCalledTimes(1)
+    expect(store.assignAgentRunIdempotencyKey).toHaveBeenCalledTimes(1)
   })
 
   it('preserves submitted AgentRun metadata while keeping Agents delivery labels authoritative', async () => {
@@ -576,7 +646,7 @@ describe('AgentRun v1 API', () => {
     )
 
     expect(response.status).toBe(201)
-    expect(kube.apply).toHaveBeenCalledWith(
+    expect(JSON.parse(vi.mocked(kube.createManifest).mock.calls[0]![0])).toEqual(
       expect.objectContaining({
         metadata: expect.objectContaining({
           generateName: 'domain-owned-run-',
@@ -639,7 +709,7 @@ describe('AgentRun v1 API', () => {
     )
 
     expect(response.status).toBe(201)
-    expect(kube.apply).toHaveBeenCalledWith(
+    expect(JSON.parse(vi.mocked(kube.createManifest).mock.calls[0]![0])).toEqual(
       expect.objectContaining({
         spec: expect.objectContaining({
           workflow: {
@@ -701,7 +771,7 @@ describe('AgentRun v1 API', () => {
     expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledWith(
       expect.objectContaining({ idempotencyKey: 'domain/request:with spaces and slashes' }),
     )
-    expect(kube.apply).toHaveBeenCalledWith(
+    expect(JSON.parse(vi.mocked(kube.createManifest).mock.calls[0]![0])).toEqual(
       expect.objectContaining({
         metadata: expect.objectContaining({
           labels: {
@@ -737,14 +807,14 @@ describe('AgentRun v1 API', () => {
     expect(response.status).toBe(400)
     const body = (await response.json()) as { error?: string }
     expect(body.error).toContain('parameters.prompt is not allowed')
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
     expect(store.createAgentRun).not.toHaveBeenCalled()
   })
 
-  it('categorizes Kubernetes apply failures and closes the store', async () => {
+  it('categorizes Kubernetes create failures and closes the store', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()
-    ;(kube.apply as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
+    ;(kube.createManifest as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
       new Error('api server refused AgentRun apply'),
     )
 
@@ -764,7 +834,7 @@ describe('AgentRun v1 API', () => {
 
     expect(response.status).toBe(502)
     const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('kubernetes apply-agent-run failed')
+    expect(body.error).toContain('kubernetes create-agent-run failed')
     expect(body.error).toContain('api server refused AgentRun apply')
     expect(store.deleteAgentRunIdempotencyKey).toHaveBeenCalledWith({
       namespace: 'agents',
@@ -825,13 +895,13 @@ describe('AgentRun v1 API', () => {
     const body = (await response.json()) as { error?: string }
     expect(body.error).toContain('policy denied for Agent agents/demo-agent')
     expect(body.error).toContain('budget denied')
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
   })
 
-  it('preserves the original Kubernetes apply failure when idempotency cleanup fails', async () => {
+  it('preserves the original Kubernetes create failure when idempotency cleanup fails', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()
-    ;(kube.apply as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
+    ;(kube.createManifest as unknown as { mockRejectedValueOnce: (error: unknown) => void }).mockRejectedValueOnce(
       new Error('api server refused AgentRun apply'),
     )
     ;(
@@ -854,7 +924,7 @@ describe('AgentRun v1 API', () => {
 
     expect(response.status).toBe(502)
     const body = (await response.json()) as { error?: string }
-    expect(body.error).toContain('kubernetes apply-agent-run failed')
+    expect(body.error).toContain('kubernetes create-agent-run failed')
     expect(body.error).toContain('api server refused AgentRun apply')
     expect(body.error).not.toContain('cleanup failed')
   })
@@ -897,7 +967,7 @@ describe('AgentRun v1 API', () => {
     const body = (await response.json()) as { idempotent?: boolean; agentRun?: Record<string, unknown> }
     expect(body.idempotent).toBe(true)
     expect(body.agentRun).toMatchObject({ id: 'existing-record-1', externalRunId: 'existing-agent-run' })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
   })
 
   it('rejects in-progress idempotency reservations with conflict details', async () => {
@@ -938,6 +1008,6 @@ describe('AgentRun v1 API', () => {
     }
     expect(body.error).toBe('AgentRun creation already in progress for idempotency key')
     expect(body.details).toMatchObject({ namespace: 'agents', agentName: 'demo-agent' })
-    expect(kube.apply).not.toHaveBeenCalled()
+    expect(kube.createManifest).not.toHaveBeenCalled()
   })
 })

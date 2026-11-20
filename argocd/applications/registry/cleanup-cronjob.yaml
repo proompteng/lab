@@ -22,7 +22,7 @@ spec:
         spec:
           serviceAccountName: registry-cleanup
           restartPolicy: Never
-          terminationGracePeriodSeconds: 420
+          terminationGracePeriodSeconds: 60
           nodeSelector:
             kubernetes.io/arch: amd64
           securityContext:
@@ -54,9 +54,13 @@ spec:
           containers:
             - name: cleanup
               image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
-              command: ["python3", "-u", "/scripts/scheduled.py"]
+              command: ["python3", "-u", "/scripts/run.py"]
               workingDir: /work
               env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
                 - name: PATH
                   value: /tools:/usr/local/bin:/usr/bin:/bin
                 - name: HOME

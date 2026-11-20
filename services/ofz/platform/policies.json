@@ -2,8 +2,73 @@
   "version": 1,
   "resources": [
     {
+      "kind": "tengri.workspace",
+      "nativeType": "workspace",
+      "relations": [],
+      "workspaceScoped": false
+    },
+    {
+      "kind": "platform.workspace",
+      "nativeType": "platform_workspace",
+      "workspaceScoped": false,
+      "relations": [
+        {
+          "name": "member",
+          "subjects": ["human"]
+        },
+        {
+          "name": "administrator",
+          "subjects": ["human"]
+        },
+        {
+          "name": "client",
+          "subjects": ["workload"]
+        }
+      ]
+    },
+    {
+      "kind": "agents.target",
+      "nativeType": "agents_target",
+      "workspaceScoped": true,
+      "relations": [
+        {
+          "name": "reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "log_reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "starter",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "canceller",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "reader_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "log_reader_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "starter_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "canceller_workspace",
+          "subjects": ["workspace"]
+        }
+      ]
+    },
+    {
       "kind": "kubernetes.namespace",
       "nativeType": "kubernetes_namespace",
+      "workspaceScoped": true,
       "relations": [
         {
           "name": "status_reader",
@@ -29,61 +94,85 @@
           "name": "event_workspace",
           "subjects": ["workspace"]
         }
-      ],
-      "workspaceScoped": true
+      ]
     },
     {
-      "kind": "tengri.workspace",
-      "nativeType": "workspace",
-      "relations": [],
-      "workspaceScoped": false
-    },
-    {
-      "kind": "platform.workspace",
-      "nativeType": "platform_workspace",
-      "workspaceScoped": false,
+      "kind": "google.project",
+      "nativeType": "google_project",
+      "workspaceScoped": true,
       "relations": [
         {
-          "name": "member",
-          "subjects": ["human"]
+          "name": "reader",
+          "subjects": ["human", "workload"]
         },
         {
-          "name": "administrator",
-          "subjects": ["human"]
-        },
-        {
-          "name": "client",
-          "subjects": ["workload"]
+          "name": "reader_workspace",
+          "subjects": ["workspace"]
         }
       ]
     }
   ],
   "actions": [
     {
-      "id": "kubernetes.status.read",
-      "resourceKind": "kubernetes.namespace",
-      "permission": "read_status",
-      "grantRelation": "status_reader",
-      "workspaceGrantRelation": "status_workspace"
-    },
-    {
-      "id": "kubernetes.logs.read",
-      "resourceKind": "kubernetes.namespace",
-      "permission": "read_logs",
-      "grantRelation": "log_reader",
-      "workspaceGrantRelation": "log_workspace"
-    },
-    {
-      "id": "kubernetes.events.read",
-      "resourceKind": "kubernetes.namespace",
-      "permission": "read_events",
-      "grantRelation": "event_reader",
-      "workspaceGrantRelation": "event_workspace"
-    },
-    {
       "id": "tengri.delegations.manage",
       "resourceKind": "tengri.workspace",
       "permission": "manage_grants"
+    },
+    {
+      "id": "agents.runs.read",
+      "permission": "read",
+      "grantRelation": "reader",
+      "workspaceGrantRelation": "reader_workspace",
+      "resourceKind": "agents.target"
+    },
+    {
+      "id": "agents.runs.logs",
+      "permission": "read_logs",
+      "grantRelation": "log_reader",
+      "workspaceGrantRelation": "log_reader_workspace",
+      "resourceKind": "agents.target"
+    },
+    {
+      "id": "agents.runs.start",
+      "permission": "start",
+      "grantRelation": "starter",
+      "workspaceGrantRelation": "starter_workspace",
+      "resourceKind": "agents.target"
+    },
+    {
+      "id": "agents.runs.cancel",
+      "permission": "cancel",
+      "grantRelation": "canceller",
+      "workspaceGrantRelation": "canceller_workspace",
+      "resourceKind": "agents.target"
+    },
+    {
+      "id": "kubernetes.status.read",
+      "permission": "read_status",
+      "grantRelation": "status_reader",
+      "workspaceGrantRelation": "status_workspace",
+      "resourceKind": "kubernetes.namespace"
+    },
+    {
+      "id": "kubernetes.logs.read",
+      "permission": "read_logs",
+      "grantRelation": "log_reader",
+      "workspaceGrantRelation": "log_workspace",
+      "resourceKind": "kubernetes.namespace"
+    },
+    {
+      "id": "kubernetes.events.read",
+      "permission": "read_events",
+      "grantRelation": "event_reader",
+      "workspaceGrantRelation": "event_workspace",
+      "resourceKind": "kubernetes.namespace"
+    },
+    {
+      "id": "google.project.read",
+      "permission": "read",
+      "grantRelation": "reader",
+      "workspaceGrantRelation": "reader_workspace",
+      "resourceKind": "google.project"
     }
   ]
 }

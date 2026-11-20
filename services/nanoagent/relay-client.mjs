@@ -46,8 +46,12 @@ async function privateFile(file, limit = 524288) {
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     const metadata = await handle.stat()
-    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0 || metadata.size > limit ||
-        (process.getuid && metadata.uid !== process.getuid()))
+    if (
+      !metadata.isFile() ||
+      (metadata.mode & 0o077) !== 0 ||
+      metadata.size > limit ||
+      (process.getuid && metadata.uid !== process.getuid())
+    )
       throw new Error('Connector credentials require an owner-only regular file')
     const bytes = Buffer.alloc(limit + 1)
     let total = 0
@@ -65,18 +69,39 @@ async function privateFile(file, limit = 524288) {
 
 async function readConfiguration(file) {
   const config = JSON.parse(await privateFile(file))
-  const generation = (value) => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value) && BigInt(value) <= 18446744073709551615n
-  if (!config || !uuid(config.connectionId) || !uuid(config.delegationId) ||
-      !generation(config.recoveryGeneration) || !generation(config.credentialGeneration) ||
-      config.clientService !== 'tengri-web' || config.binding?.service !== 'tengri' ||
-      !uuid(config.binding.id) || !uuid(config.binding.generation) ||
-      typeof config.keyFile !== 'string' || !config.keyFile || typeof config.endpoint !== 'string' ||
-      typeof config.connectorId !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(config.connectorId) ||
-      typeof config.credential !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(config.credential) ||
-      !Array.isArray(config.operations) || config.operations.length < 1 || config.operations.length > 128 ||
-      config.operations.some((operation) => !operation || typeof operation.name !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(operation.name) || operation.readOnly !== true || operation.inputSchema?.type !== 'object') ||
-      new Set(config.operations.map((operation) => operation.name)).size !== config.operations.length)
-    throw new Error('Invalid read-only connector configuration')
+  const generation = (value) =>
+    typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value) && BigInt(value) <= 18446744073709551615n
+  if (
+    !config ||
+    !uuid(config.connectionId) ||
+    !uuid(config.delegationId) ||
+    !generation(config.recoveryGeneration) ||
+    !generation(config.credentialGeneration) ||
+    config.clientService !== 'tengri-web' ||
+    config.binding?.service !== 'tengri' ||
+    !uuid(config.binding.id) ||
+    !uuid(config.binding.generation) ||
+    typeof config.keyFile !== 'string' ||
+    !config.keyFile ||
+    typeof config.endpoint !== 'string' ||
+    typeof config.connectorId !== 'string' ||
+    !/^[A-Za-z0-9_.-]{1,128}$/.test(config.connectorId) ||
+    typeof config.credential !== 'string' ||
+    !/^[A-Za-z0-9_-]{43}$/.test(config.credential) ||
+    !Array.isArray(config.operations) ||
+    config.operations.length < 1 ||
+    config.operations.length > 128 ||
+    config.operations.some(
+      (operation) =>
+        !operation ||
+        typeof operation.name !== 'string' ||
+        !/^[A-Za-z0-9_.-]{1,128}$/.test(operation.name) ||
+        typeof operation.readOnly !== 'boolean' ||
+        operation.inputSchema?.type !== 'object',
+    ) ||
+    new Set(config.operations.map((operation) => operation.name)).size !== config.operations.length
+  )
+    throw new Error('Invalid connector configuration')
   return config
 }
 
@@ -286,11 +311,16 @@ async function main() {
           break
         case 'tools/list':
           result = {
-            tools: config.operations.map(({ name, description, inputSchema }) => ({
+            tools: config.operations.map(({ name, description, inputSchema, readOnly }) => ({
               name,
               description,
               inputSchema,
-              annotations: { readOnlyHint: true, openWorldHint: true },
+              annotations: {
+                readOnlyHint: readOnly,
+                destructiveHint: !readOnly,
+                idempotentHint: readOnly,
+                openWorldHint: true,
+              },
             })),
           }
           break

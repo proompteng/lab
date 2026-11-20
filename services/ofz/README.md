@@ -33,7 +33,9 @@ bash test-policy.sh
 bash test-control.sh
 ```
 
-The policy fixture starts a disposable, loopback-only SpiceDB and an isolated PostgreSQL using the same pinned images as the cluster.
+The policy and platform fixtures start disposable, loopback-only SpiceDB and PostgreSQL processes using the production
+versions packaged in `nix build .#ofz-fixture-tools`. Add the resulting `bin` directory to `PATH`, or use the
+[AgentRun environment](../../docs/agents/runner-environment.md). These callers require no Docker daemon.
 It never reads or modifies production relationships. It checks the complete human role matrix, platform membership
 revocation, workspace isolation, and native grant expiration. API, crash, broker and product acceptance are
 separate gates; a schema fixture does not establish deployed application enforcement.
@@ -177,9 +179,12 @@ and verifies database TLS. Configure `OFZ_DATABASE_DSN`,
 This deployment uses the existing Ceph storage configuration without SSE or a separate key manager. Versioning,
 COMPLIANCE retention, payload hashes, version-specific readback and archive freshness gates remain required.
 
-The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a fifteen-second database
-idle-session limit bound abandoned connections. Every batch records ordered sequences, original receipts, target
-hashes and database timestamps. Its immutable key includes the complete payload hash. SQL acknowledges a batch only
+The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a ninety-second database
+idle-session limit bound abandoned connections. Archive requests allow two seconds to connect and twenty seconds to
+read, with a twenty-two-second total timeout. The database idle limit covers the four sequential storage requests
+that can occur between SQL statements. SQL statement, lock and idle-transaction limits remain unchanged.
+Every batch records ordered sequences, original receipts, target hashes and database timestamps. Its immutable key
+includes the complete payload hash. SQL acknowledges a batch only
 after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
@@ -301,7 +306,7 @@ The fixture promotes a two-node disposable database; it does not establish three
 synchronous write availability. Ofz CI runs the combined control and promotion fixture once, and rejects an empty
 selection of the exact promotion test. Shared runtime validation remains in the Tengri image workflow.
 
-The HA fixture also forms a two-node Keycloak 26.7.4 production cluster with JDBC discovery and transport mTLS.
+The HA fixture also forms a two-node Keycloak 26.8.2 production cluster with JDBC discovery and transport mTLS.
 Killing its serving process during an in-flight passkey challenge preserves the subject and credential identities,
 completing authentication on the survivor within thirty seconds. The fixture does not prove CNPG or Kubernetes
 node failover. Validate the complete prepared targets with `bash services/ofz/test-ha-manifests.sh`; the PR schema

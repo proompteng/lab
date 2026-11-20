@@ -15,11 +15,22 @@ import { jevBehaviorHash } from '../jev/protocol'
 import { canonicalHashV1Result } from '../hash'
 import { makeJevObservation } from '../jev/observation'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
+import { shortNativeEntryFixture } from '../jev/short-entry.test-support'
 
-export const makePersistenceDocumentFixture = (accountId: string) =>
+export const makePersistenceDocumentFixture = (accountId: string, authorityVersion = 1, short = false) =>
   Effect.gen(function* () {
-    const native = nativeJevFixture(JevPurpose.Entry, undefined, accountId)
-    const evidence = nativeJevDecisionEvidence(native)
+    const shortFixture = short ? Result.getOrThrow(shortNativeEntryFixture(accountId)) : undefined
+    const native =
+      shortFixture === undefined
+        ? nativeJevFixture(JevPurpose.Entry, undefined, accountId)
+        : {
+            ...shortFixture,
+            observation: {
+              payload: shortFixture.observation,
+              contentHash: Result.getOrThrow(canonicalHashV1Result(shortFixture.observation)),
+            },
+          }
+    const evidence = shortFixture?.evidence ?? nativeJevDecisionEvidence(native)
     const target = Result.getOrThrow(decideJevEntry(evidence))
     const { candidateEvidencePolicy: _candidates, candidateSymbols: _symbols, ...query } = native.query
     const pricing = streamingFixtureFromRaw(native.snapshot, {
@@ -28,7 +39,7 @@ export const makePersistenceDocumentFixture = (accountId: string) =>
       symbols: target.selectedSymbols,
       purpose: IntradaySnapshotPurpose.EntryPricing,
     }).snapshot
-    return yield* matchedCommittedDecisionFixture(native, evidence, '100000000000', pricing, 3)
+    return yield* matchedCommittedDecisionFixture(native, evidence, '100000000000', pricing, 3, authorityVersion)
   })
 
 export const persistenceDocumentFixture = makePersistenceDocumentFixture('jev-native-test')

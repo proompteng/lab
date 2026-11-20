@@ -1,7 +1,7 @@
 import { isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Option } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { BrokerMutationError, MutationOperation } from '../broker/alpaca-mutations/model'
 import type { AutonomousCycle } from '../cycle/model'
 import {
   intentPlanSchemaVersion,
@@ -11,6 +11,9 @@ import {
   OrderType,
   RiskOutcome,
   TimeInForce,
+  isBracketProtection,
+  isOcoProtection,
+  isStopProtection,
 } from '../execution/contracts'
 import { IntentStore, planExecutionIntent } from '../execution/intents/domain'
 import { MutationStore } from '../execution/mutations/model'
@@ -25,6 +28,7 @@ import { BrokerMode, evaluate, type Policy, type State } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { quantityScale } from '../quantity'
+import { isShortExitPlan } from '../strategy/funded-exit-plan'
 import type { CycleWaitReason } from '../cycle/runner/readiness'
 import { CycleRunnerError } from '../cycle/runner/model'
 import {
@@ -62,6 +66,8 @@ export const advancePositionProtection = (request: {
       return { _tag: 'Ready' } as const
     const plan = Object.values(target.exitPolicy.plans)[0]
     if (plan === undefined) return { _tag: 'Ready' } as const
+    const short = isShortExitPlan(plan)
+    const exitSide = short ? OrderSide.Buy : OrderSide.Sell
     const observedAt = yield* currentUtcInstant
     const intents = yield* IntentStore
     const mutations = yield* MutationStore
@@ -105,19 +111,19 @@ export const advancePositionProtection = (request: {
       const rootOrder = state.orders.find((order) => order.clientOrderId === record.intent.clientOrderId)
       if (record.intent.state === IntentState.Acknowledged && rootOrder !== undefined && terminal(rootOrder.status))
         return execute(record.intent.intentId, 'RECOVER_SUBMIT')
-      if (record.intent.state === IntentState.Approved && record.intent.protection?._tag !== 'Bracket') {
+      if (record.intent.state === IntentState.Approved && !isBracketProtection(record.intent.protection)) {
         if (capability._tag === 'RecoveryOnly') return wait('PROTECTION_RECOVERY_ONLY')
         return execute(record.intent.intentId, 'SUBMIT', request.closeExpiresAt)
       }
     }
     const workingEntry = entries.flatMap(Option.toArray).find(({ intent }) => intent.state !== IntentState.Terminal)
     if (workingEntry !== undefined) {
-      if (quantityAtoms > 0n || request.closeDue) return execute(workingEntry.intent.intentId, 'CANCEL')
+      if (quantityAtoms !== 0n || request.closeDue) return execute(workingEntry.intent.intentId, 'CANCEL')
       return { _tag: 'Ready' } as const
     }
     const open = state.orders.filter(
       (order) =>
-        order.side === OrderSide.Sell &&
+        order.side === exitSide &&
         !terminal(order.status) &&
         protective.some((record) => record.intent.intentId === order.intentId),
     )
@@ -125,7 +131,7 @@ export const advancePositionProtection = (request: {
       _tag: 'Wait',
       details: { waitReason: 'JEV_POSITION_HELD' },
     }
-    if (quantityAtoms > 0n && !request.closeDue) {
+    if (quantityAtoms !== 0n && !request.closeDue) {
       if (
         state.reconciliation.status !== 'EXACT' ||
         !reconciliation.report.metrics.accountingExact ||
@@ -156,22 +162,20 @@ export const advancePositionProtection = (request: {
         protection = {
           _tag: 'Armed',
           intentId: stop.intentId,
-          method:
-            owner.intent.protection._tag === 'Bracket'
-              ? 'BRACKET'
-              : owner.intent.protection._tag === 'Oco'
-                ? 'OCO'
-                : 'STOP_LIMIT',
+          method: isBracketProtection(owner.intent.protection)
+            ? 'BRACKET'
+            : isOcoProtection(owner.intent.protection)
+              ? 'OCO'
+              : 'STOP_LIMIT',
           quantityAtoms: BigInt(stop.quantityAtoms ?? '0') - BigInt(stop.filledQuantityAtoms),
           stopPriceMicros: BigInt(stop.stopPriceMicros ?? '0'),
           stopLimitPriceMicros: BigInt(stop.limitPriceMicros ?? '0'),
-          profitLimitPriceMicros:
-            owner.intent.protection._tag === 'StopLimit'
-              ? null
-              : BigInt(
-                  open.find((order) => order.intentId === stop.intentId && order.orderType === OrderType.Limit)
-                    ?.limitPriceMicros ?? '0',
-                ),
+          profitLimitPriceMicros: isStopProtection(owner.intent.protection)
+            ? null
+            : BigInt(
+                open.find((order) => order.intentId === stop.intentId && order.orderType === OrderType.Limit)
+                  ?.limitPriceMicros ?? '0',
+              ),
         }
     }
     const action = decidePositionProtection({
@@ -197,27 +201,34 @@ export const advancePositionProtection = (request: {
           management._tag === 'Exit' ? management.target : undefined,
         )
         .pipe(
-          Effect.catchTag('BrokerMutationError', (cause) =>
-            Effect.logWarning('Protective cancellation requires broker reconciliation').pipe(
-              Effect.annotateLogs({ brokerOrderId: order.brokerOrderId, failure: cause._tag }),
-              Effect.as(true),
-            ),
-          ),
+          Effect.catch((cause) => {
+            if (!(cause instanceof BrokerMutationError)) return Effect.fail(cause)
+            return Effect.logWarning('Protective cancellation requires broker reconciliation').pipe(
+              Effect.annotateLogs({
+                brokerOrderId: order.brokerOrderId,
+                failure: cause.failure,
+                outcome: cause.outcome,
+              }),
+              Effect.andThen(Effect.succeed(wait('PROTECTION_CANCEL_PENDING'))),
+            )
+          }),
         )
-      return advanced
-        ? ({
-            _tag: 'PostMutationReconciliation',
-            cycle,
-            delayMs: 5_000,
-            observedAt,
-            logContext: {
-              cycleId: cycle.identity.cycleId,
-              intentId: order.intentId,
-              mutationAction: 'CANCEL',
-              mutationPhase: 'CLOSE',
-            },
-          } as const)
-        : wait('PROTECTION_CANCEL_PENDING')
+      if (advanced._tag === 'Accepted' && advanced.phase === 'Fresh')
+        return {
+          _tag: 'PostMutationReconciliation',
+          cycle,
+          delayMs: 5_000,
+          observedAt,
+          protectionReleaseCycleId: cycle.identity.cycleId,
+          logContext: {
+            cycleId: cycle.identity.cycleId,
+            intentId: order.intentId,
+            mutationAction: 'CANCEL',
+            mutationPhase: 'CLOSE',
+          },
+        } as const
+      if (advanced._tag === 'Accepted') return wait('PROTECTION_PUBLICATION_PENDING')
+      return wait('PROTECTION_CANCEL_PENDING')
     }
     if (action._tag === 'Complete') {
       if (state.positions.some((position) => BigInt(position.quantityAtoms) !== 0n))
@@ -262,22 +273,25 @@ export const advancePositionProtection = (request: {
     )
     const conditional =
       action.method === 'OCO'
-        ? { _tag: 'Oco' as const, ...plan.levels, entryDecisionHash: document.contentHash }
+        ? {
+            _tag: short ? ('EquityShortOco' as const) : ('Oco' as const),
+            ...plan.levels,
+            entryDecisionHash: document.contentHash,
+          }
         : {
-            _tag: 'StopLimit' as const,
+            _tag: short ? ('EquityShortStopLimit' as const) : ('StopLimit' as const),
             stopPriceMicros: plan.levels.stopPriceMicros,
             entryDecisionHash: document.contentHash,
           }
-    const protectionTerms =
-      conditional._tag === 'Oco'
-        ? {
-            _tag: conditional._tag,
-            stopPriceMicros: conditional.stopPriceMicros,
-            stopLimitPriceMicros: conditional.stopLimitPriceMicros,
-            profitLimitPriceMicros: conditional.profitLimitPriceMicros,
-            entryDecisionHash: conditional.entryDecisionHash,
-          }
-        : conditional
+    const protectionTerms = isOcoProtection(conditional)
+      ? {
+          _tag: conditional._tag,
+          stopPriceMicros: conditional.stopPriceMicros,
+          stopLimitPriceMicros: conditional.stopLimitPriceMicros,
+          profitLimitPriceMicros: conditional.profitLimitPriceMicros,
+          entryDecisionHash: conditional.entryDecisionHash,
+        }
+      : conditional
     if (reconciliation.riskContext.authority === null || reconciliation.riskContext.authorityObservedAt === null)
       return yield* mutationRunnerError({
         message: 'Conditional protection has no current authority evidence',
@@ -328,12 +342,15 @@ export const advancePositionProtection = (request: {
         policyHash: document.bindings.policyHash,
         accountId: state.account.accountId,
         symbol: plan.levels.symbol,
-        side: OrderSide.Sell,
+        side: exitSide,
         orderType: action.method === 'OCO' ? OrderType.Limit : OrderType.StopLimit,
         timeInForce: protectionTimeInForce(action.method, plan.levels.symbol),
-        quantityAtoms: quantityAtoms.toString(),
+        quantityAtoms: action.quantityAtoms.toString(),
         limitPriceMicros: limit.toString(),
-        notionalLimitMicros: ((quantityAtoms * limit) / quantityScale).toString(),
+        notionalLimitMicros: (
+          (action.quantityAtoms * limit + (short ? quantityScale - 1n : 0n)) /
+          quantityScale
+        ).toString(),
         protection: protectionTerms,
         replanGenerationHash: generation,
         createdAt: observedAt,

@@ -16,6 +16,8 @@ Complete the requested change, prove it at the requested boundary, and stop.
 ## Scope and authority
 
 - Work directly. Do not spawn subagents.
+- Keep application-specific content in its owning repository. Shared infrastructure documentation must stay focused
+  on the infrastructure without importing unrelated application details from other repositories.
 - Requests to build, change, fix, or ship authorize implementation, validation, commit, push, PR, CI and review fixes,
   and merge after required gates pass. Respect narrower limits such as local-only, draft-only, or do-not-deploy.
   Investigation, review, explanation, and planning requests authorize findings unless the user also requests changes.
@@ -56,10 +58,12 @@ conflict remains, link and quote the exact instruction and explain its effect.
 Before substantial investigation or implementation, retrieve focused context:
 
 ```sh
-bun run --filter memories retrieve-memory --query "<task and identifiers>" --limit 10
+bun run context:retrieve --query "<task and identifiers>" --repository proompteng/lab --limit 3
 ```
 
-Verify important claims against current evidence. Unavailable memory is non-blocking. Save durable context only when
+This combines bounded code excerpts and durable notes. The CLI checks Atlas against the checkout commit; use Git and
+`rg` when the code snapshot is stale or unavailable. Verify note claims against current source or live behavior.
+Unavailable sources are non-blocking. Save durable context only when
 explicitly requested; never save secrets, personal data, raw logs, or transient status.
 
 For indexed production `main`, use:
@@ -198,7 +202,7 @@ validate manifests before an authorized apply.
   targets need a main-only immutable build, Warehouse, Stage, exact automatic policy, and authorized-stage annotation.
   Promotion must update the configured renderer's source inputs, with rendered output verified against the digest.
   Retained post-deploy workflows follow the exact Kargo branch and Stage-written paths; manual dispatch is diagnostic.
-  Use `lab-delivery` for promotion evidence and `argocd` for Application evidence.
+  Use the owning `<project>-release` namespace for promotion evidence and `argocd` for Application evidence.
 - Bayn uses the same Kargo image-delivery path. Its native activation hook and trading runtime retain account,
   strategy, grant, reconciliation, and order-risk enforcement; image promotion does not grant live capital authority.
 - Confirm the Kubernetes context and pass an explicit namespace to `kubectl`. On authorization failures, verify

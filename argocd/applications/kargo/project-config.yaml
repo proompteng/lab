@@ -1,90 +1,334 @@
+---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: ProjectConfig
 metadata:
-  name: lab-delivery
-  namespace: lab-delivery
+  name: agents-release
+  namespace: agents-release
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   promotionPolicies:
-    - stageSelector:
-        name: devbox
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: proompteng
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: app
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: synthesis
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: docs
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: bumba
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: oirat
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: froussard
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: arc-runner
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: attic
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: headlamp
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: hermes-toolchain
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: jangar
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: symphony
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: torghut
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: bilig
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: analysis
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: agents
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: ofz
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: tengri
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: buzz
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: forgejo
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: bayn
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: restate
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: temporal-worker
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: opencode
-      autoPromotionEnabled: true
-    - stageSelector:
-        name: relay
-      autoPromotionEnabled: true
+  - stageSelector:
+      name: agents
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: analysis-release
+  namespace: analysis-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: analysis
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: app-release
+  namespace: app-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: app
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: arc-release
+  namespace: arc-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: arc-runner
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: attic-release
+  namespace: attic-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: attic
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: bayn-release
+  namespace: bayn-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: bayn
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: bilig-release
+  namespace: bilig-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: bilig
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: bumba-release
+  namespace: bumba-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: bumba
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: buzz-release
+  namespace: buzz-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: buzz
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: devbox-release
+  namespace: devbox-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: devbox
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: docs-release
+  namespace: docs-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: docs
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: forgejo-release
+  namespace: forgejo-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: forgejo
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: froussard-release
+  namespace: froussard-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: froussard
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: headlamp-release
+  namespace: headlamp-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: headlamp
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: hermes-release
+  namespace: hermes-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: hermes-toolchain
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: jangar-release
+  namespace: jangar-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: jangar
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: ofz-release
+  namespace: ofz-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: proompteng
+    autoPromotionEnabled: true
+  - stageSelector:
+      name: tengri
+    autoPromotionEnabled: true
+  - stageSelector:
+      name: ofz
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: oirat-release
+  namespace: oirat-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: oirat
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: opencode-release
+  namespace: opencode-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: opencode
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: relay-release
+  namespace: relay-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: relay
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: restate-release
+  namespace: restate-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: restate
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: symphony-release
+  namespace: symphony-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: symphony
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: synthesis-release
+  namespace: synthesis-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: synthesis
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: temporal-release
+  namespace: temporal-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: temporal-worker
+    autoPromotionEnabled: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: torghut-release
+  namespace: torghut-release
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  promotionPolicies:
+  - stageSelector:
+      name: torghut
+    autoPromotionEnabled: true
+  - stageSelector:
+      name: torghut-webull-feed
+    autoPromotionEnabled: true

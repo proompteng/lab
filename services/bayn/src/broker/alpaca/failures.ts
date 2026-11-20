@@ -17,6 +17,13 @@ export enum BrokerReadErrorKind {
   AccountMismatch = 'ACCOUNT_MISMATCH',
 }
 
+/** Diagnostic only; never used to decide observation admission or retry authority. */
+export enum BrokerPollFailureReason {
+  AcquisitionDeadline = 'ACQUISITION_DEADLINE',
+  PollDeadline = 'POLL_DEADLINE',
+  SnapshotRejected = 'SNAPSHOT_REJECTED',
+}
+
 export type BrokerReadOperation =
   | 'configuration'
   | 'proxy'
@@ -28,6 +35,7 @@ export type BrokerReadOperation =
   | 'order-by-id'
   | 'order-by-client-id'
   | 'fill-activities'
+  | 'activity-stream'
   | 'fee-activities'
   | 'asset-by-symbol'
   | 'market-calendar'
@@ -41,8 +49,8 @@ export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
   readonly requestId?: string
   readonly contentHash?: string
   readonly observedAt?: string
-  /** Local projection absence, never inferred from a provider timeout or response. */
-  readonly observationFailure?: 'NO_ADMISSIBLE_CUT'
+  readonly observationFailure?: 'NO_ADMISSIBLE_CUT' | 'CASH_FEES_PENDING'
+  readonly pollFailureReason?: BrokerPollFailureReason
   readonly cause?: unknown
 }> {}
 

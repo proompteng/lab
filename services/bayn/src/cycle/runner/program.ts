@@ -1,18 +1,20 @@
 import { isChartEntryTarget } from '../../strategy/runtime-decision'
-import { continuousMarketHours, type MarketHours } from '../../market-hours'
+import type { MarketHours } from '../../market-hours'
 import { canonicalHashV1Result } from '../../hash'
 import { Cause, Effect, Option, pipe, Schema } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
 import { Authority } from '../../execution/contracts'
+import { ExpiredIntentRiskDecision } from '../../execution/risk-clock'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { IsoDateSchema } from '../../schemas'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
 import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
-import { CycleStore } from '../store/model'
+import { CycleStore, CycleStoreError } from '../store/model'
+import { unusedEntryExpiresAt } from '../entry-admission'
 import { isTerminalCycleState } from '../transitions'
 import { canRearmUnusedCycle } from './calendar-decisions'
 import { calendarQueryFailureError } from './errors'
@@ -26,6 +28,7 @@ import {
 } from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
+import { ClosedEntryWindowSchema } from './pass-observation'
 
 const hashCalendar = (hours: MarketHours) =>
   Effect.fromResult(canonicalHashV1Result(hours)).pipe(
@@ -81,67 +84,61 @@ export const discoverAutonomousCyclePass = <R>(
           }),
         ),
       )
-    let hours: MarketHours = continuousMarketHours
-    let hoursReadHash = yield* hashCalendar(continuousMarketHours)
-    // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
-    if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
-      const broker = yield* BrokerRead
-      const calendar = yield* broker.marketCalendar(query).pipe(
-        Effect.timeoutOrElse({
-          duration: 5_000,
-          orElse: () =>
-            Effect.fail(
-              new BrokerReadError({
-                operation: 'market-calendar',
-                kind: BrokerReadErrorKind.Timeout,
-                retryable: true,
-                message: 'Equity calendar discovery exceeded its five-second read budget',
-              }),
-            ),
+    const broker = yield* BrokerRead
+    const calendar = yield* broker.marketCalendar(query).pipe(
+      Effect.timeoutOrElse({
+        duration: 5_000,
+        orElse: () =>
+          Effect.fail(
+            new BrokerReadError({
+              operation: 'market-calendar',
+              kind: BrokerReadErrorKind.Timeout,
+              retryable: true,
+              message: 'Equity calendar discovery exceeded its five-second read budget',
+            }),
+          ),
+      }),
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'market-calendar',
+          failure: 'calendar-read',
+          message: 'authoritative equity calendar read failed',
+          cause,
         }),
-        Effect.catchTag('BrokerReadError', (cause) =>
-          cause.operation === 'market-calendar' &&
-          cause.retryable &&
-          [
-            BrokerReadErrorKind.Timeout,
-            BrokerReadErrorKind.Transport,
-            BrokerReadErrorKind.RateLimited,
-            BrokerReadErrorKind.Server,
-          ].includes(cause.kind)
-            ? Effect.logWarning(
-                'Equity discovery excluded unavailable calendar; continuous discovery remains eligible',
-              ).pipe(Effect.annotateLogs({ operation: cause.operation, kind: cause.kind }), Effect.as(null))
-            : Effect.fail(cause),
-        ),
-        Effect.mapError((cause) =>
-          runnerError({
-            operation: 'market-calendar',
-            failure: 'calendar-read',
-            message: 'authoritative equity calendar read failed',
-            cause,
-          }),
-        ),
-      )
-      const session =
-        calendar === null
-          ? undefined
-          : selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
-      if (
-        calendar !== null &&
-        session !== undefined &&
-        firstIntradayObservationAtMs(session, candidate.executionPolicy) <= Date.parse(observedAt)
-      ) {
-        hours = calendar.value
-        hoursReadHash = calendar.evidence.contentHash
-      }
-    }
+      ),
+    )
+    const hours = calendar.value
+    const hoursReadHash = calendar.evidence.contentHash
     const executionSession = selectIntradayExecutionSession(hours, candidate.executionPolicy, observedAt)
-    if (executionSession === undefined) {
-      return yield* runnerError({
-        operation: 'select-session',
-        failure: 'calendar-unavailable',
-        message: 'broker calendar has no session whose intraday entry cutoff remains open',
-      })
+    if (
+      executionSession === undefined ||
+      firstIntradayObservationAtMs(executionSession, candidate.executionPolicy) > Date.parse(observedAt)
+    ) {
+      const { requestId, status, contentHash, observedAt: availableAt } = calendar.evidence
+      return {
+        outcome: 'WINDOW_CLOSED',
+        observedAt,
+        closedEntryWindow: yield* Schema.decodeUnknownEffect(ClosedEntryWindowSchema)({
+          schemaVersion: 'bayn.closed-entry-window.v1',
+          accountId: context.accountId,
+          authorityGenerationHash: context.authorityGenerationHash ?? null,
+          strategyProtocolHash: context.strategyProtocolHash,
+          evaluatedAt: observedAt,
+          decidedAt: yield* currentUtcInstant,
+          executionPolicy: context.executionPolicy,
+          calendar: hours,
+          calendarRead: { requestId, status, contentHash, observedAt: availableAt },
+        }).pipe(
+          Effect.mapError((cause) =>
+            runnerError({
+              operation: 'build-cycle',
+              failure: 'contract',
+              message: 'closed equity window evidence is malformed',
+              cause,
+            }),
+          ),
+        ),
+      } as const
     }
     const firstAttemptDraft = yield* Effect.fromResult(
       makeIntradayCycleDraft(candidate, hours, executionSession, 1),
@@ -377,18 +374,6 @@ const recoverCycle = <R>(
                           withObservedStage('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
                         )
                       }),
-                      Effect.catchCause((failure) =>
-                        Effect.failCause(
-                          Cause.map(failure, (cause) =>
-                            runnerError({
-                              operation: 'recover-cycle',
-                              failure: 'store',
-                              message: 'durable shadow decision binding failed',
-                              cause,
-                            }),
-                          ),
-                        ),
-                      ),
                       Effect.map(
                         (binding): CycleRunResult => ({
                           outcome: 'RECOVERED',
@@ -397,6 +382,69 @@ const recoverCycle = <R>(
                           cycle: binding.cycle,
                         }),
                       ),
+                      Effect.catchCause((failure) => {
+                        const reason = failure.reasons.length === 1 ? failure.reasons[0] : undefined
+                        const rejected = reason !== undefined && Cause.isFailReason(reason) ? reason.error : undefined
+                        if (
+                          rejected instanceof CycleStoreError &&
+                          rejected.failure === 'risk-expired' &&
+                          rejected.cause instanceof ExpiredIntentRiskDecision
+                        ) {
+                          const evidence = rejected.cause.evidence
+                          return currentUtcInstant.pipe(
+                            Effect.flatMap((observedAt) => {
+                              if (Date.parse(observedAt) >= unusedEntryExpiresAt(selection.cycle))
+                                return CycleStore.pipe(
+                                  Effect.flatMap((store) =>
+                                    store.block(
+                                      selection.cycle.identity.cycleId,
+                                      CycleTerminalReason.UnusedEntryExpired,
+                                      observedAt,
+                                    ),
+                                  ),
+                                  Effect.map(
+                                    (receipt): CycleRunResult => ({
+                                      outcome: 'RECOVERED',
+                                      action: 'BLOCKED',
+                                      observedAt,
+                                      cycle: receipt.cycle,
+                                    }),
+                                  ),
+                                  Effect.mapError((cause) =>
+                                    runnerError({
+                                      operation: 'recover-cycle',
+                                      failure: 'store',
+                                      message: 'expired entry risk blocking failed',
+                                      cause,
+                                    }),
+                                  ),
+                                )
+                              return Effect.succeed<CycleRunResult>({
+                                outcome: 'RECOVERED',
+                                action: 'WAITING',
+                                observedAt,
+                                cycle: selection.cycle,
+                                readiness: {
+                                  reason: DecisionReadinessReason.ExecutionRiskExpired,
+                                  message:
+                                    'Execution risk approval expired before durable binding; awaiting fresh evidence',
+                                  riskClockRejection: evidence,
+                                },
+                              })
+                            }),
+                          )
+                        }
+                        return Effect.failCause(
+                          Cause.map(failure, (cause) =>
+                            runnerError({
+                              operation: 'recover-cycle',
+                              failure: 'store',
+                              message: 'durable shadow decision binding failed',
+                              cause,
+                            }),
+                          ),
+                        )
+                      }),
                     ),
                   ),
                 ),

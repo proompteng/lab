@@ -65,7 +65,7 @@ const getAstHandlerEffect = (request: Request) =>
 
       return jsonResponse({ ok: true, fileVersionId, summary: preview.summary ?? undefined, facts })
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
+    Effect.catch((error) => Effect.succeed(resolveServiceError(error.message))),
   )
 
 export const getAtlasAstHandler = async (request: Request) => handlerRuntime.runPromise(getAstHandlerEffect(request))

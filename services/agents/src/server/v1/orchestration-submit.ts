@@ -156,30 +156,30 @@ type OrchestrationRunIdGeneratorServiceDefinition = {
   readonly next: Effect.Effect<string>
 }
 
-export class OrchestrationRunStoreService extends Context.Tag('agents/OrchestrationRunStoreService')<
+export class OrchestrationRunStoreService extends Context.Service<
   OrchestrationRunStoreService,
   OrchestrationRunStoreServiceDefinition
->() {}
+>()('agents/OrchestrationRunStoreService') {}
 
-export class OrchestrationRunKubernetesService extends Context.Tag('agents/OrchestrationRunKubernetesService')<
+export class OrchestrationRunKubernetesService extends Context.Service<
   OrchestrationRunKubernetesService,
   OrchestrationRunKubernetesServiceDefinition
->() {}
+>()('agents/OrchestrationRunKubernetesService') {}
 
-export class OrchestrationRunPolicyService extends Context.Tag('agents/OrchestrationRunPolicyService')<
+export class OrchestrationRunPolicyService extends Context.Service<
   OrchestrationRunPolicyService,
   OrchestrationRunPolicyServiceDefinition
->() {}
+>()('agents/OrchestrationRunPolicyService') {}
 
-export class OrchestrationRunRepositoryService extends Context.Tag('agents/OrchestrationRunRepositoryService')<
+export class OrchestrationRunRepositoryService extends Context.Service<
   OrchestrationRunRepositoryService,
   OrchestrationRunRepositoryServiceDefinition
->() {}
+>()('agents/OrchestrationRunRepositoryService') {}
 
-export class OrchestrationRunIdGeneratorService extends Context.Tag('agents/OrchestrationRunIdGeneratorService')<
+export class OrchestrationRunIdGeneratorService extends Context.Service<
   OrchestrationRunIdGeneratorService,
   OrchestrationRunIdGeneratorServiceDefinition
->() {}
+>()('agents/OrchestrationRunIdGeneratorService') {}
 
 export type OrchestrationSubmitServices =
   | OrchestrationRunStoreService
@@ -237,7 +237,7 @@ const closeStoreEffect = (store: OrchestrationRunSubmitStore) =>
   Effect.tryPromise({
     try: () => store.close(),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void))
+  }).pipe(Effect.catch(() => Effect.void))
 
 const makeOrchestrationRunStoreService = (
   storeFactory: SubmitOrchestrationRunDeps['storeFactory'],
@@ -314,9 +314,9 @@ export const submitOrchestrationRun = async (
   input: OrchestrationRunSubmitInput,
   deps: SubmitOrchestrationRunDeps,
 ): Promise<OrchestrationRunSubmitResult> => {
-  const result = await Effect.runPromise(submitOrchestrationRunEffect(input, deps).pipe(Effect.either))
-  if (result._tag === 'Left') throw result.left
-  return result.right
+  const result = await Effect.runPromise(submitOrchestrationRunEffect(input, deps).pipe(Effect.result))
+  if (result._tag === 'Failure') throw result.failure
+  return result.success
 }
 
 export const submitOrchestrationRunEffect = (
@@ -383,9 +383,9 @@ export const submitOrchestrationRunWithServicesEffect = (
             subject: { kind: 'Orchestration', name: input.orchestrationRef.name, namespace: input.namespace },
           }
 
-          const policyDecision = yield* policies.validate(input.namespace, policyChecks, kube).pipe(Effect.either)
+          const policyDecision = yield* policies.validate(input.namespace, policyChecks, kube).pipe(Effect.result)
 
-          if (policyDecision._tag === 'Left') {
+          if (policyDecision._tag === 'Failure') {
             const auditEventId = yield* ids.next
             yield* stores
               .createAuditEvent(activeStore, {
@@ -396,11 +396,11 @@ export const submitOrchestrationRunWithServicesEffect = (
                 details: {
                   subject: policyChecks.subject,
                   checks: policyChecks,
-                  reason: describeOrchestrationSubmitError(policyDecision.left),
+                  reason: describeOrchestrationSubmitError(policyDecision.failure),
                 },
               })
-              .pipe(Effect.catchAll(() => Effect.void))
-            return yield* Effect.fail(policyDecision.left)
+              .pipe(Effect.catch(() => Effect.void))
+            return yield* Effect.fail(policyDecision.failure)
           }
 
           const auditEventId = yield* ids.next

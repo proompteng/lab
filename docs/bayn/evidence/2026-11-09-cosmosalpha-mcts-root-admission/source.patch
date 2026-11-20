@@ -1,0 +1,22 @@
+--- a/src/cosmosalpha/pipeline/mcts/controller.py
++++ b/src/cosmosalpha/pipeline/mcts/controller.py
+@@ -878,12 +878,16 @@
+         )
+         scores = _extract_eval_scores(loop_result, self._objects)
+         expression = _extract_expression(loop_result, self._objects)
+-        factor_id = expression and stable_sha256(
++        if not expression or scores["rank_ic"] is None:
++            raise ValueError(
++                "MCTS root requires a validated expression and evaluated RankIC"
++            )
++        factor_id = stable_sha256(
+             {"expression": expression, "frequency": base_context.frequency}
+         )
+         return self._build_node(
+-            factor_id=factor_id or "root",
+-            expression=expression or seed_expression or "chain-root",
++            factor_id=factor_id,
++            expression=expression,
+             experiment_ref=loop_result.experiment_ref,
+             rank_ic_mean=scores["rank_ic"],
+             action_label="original",

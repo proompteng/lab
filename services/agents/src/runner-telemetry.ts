@@ -1,8 +1,7 @@
 import type { TokenUsageBreakdown } from '@proompteng/codex'
 import { z } from 'zod'
 
-export const RUNNER_TELEMETRY_LABEL = 'agents.proompteng.ai/runner-telemetry'
-export const RUNNER_TELEMETRY_KEY = 'telemetry.json'
+export const runnerTelemetryKey = (namespace: string, uid: string) => `runner-telemetry/${namespace}/${uid}.json`
 export const RUNNER_LOG_SUFFIX = '.events.jsonl'
 
 const count = z.number().int().nonnegative()

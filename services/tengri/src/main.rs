@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
         Some("slot-runner") => "tengri-slot-runner",
         Some("slot-supervisor") => "tengri-slot-supervisor",
         Some("run-worker") => "tengri-run-worker",
+        Some("run-reader") => "tengri-run-reader",
         _ => "tengri",
     };
     let _telemetry = telemetry::init(role)?;
@@ -68,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some("slot-runner") => return slot::runner::run().await,
         Some("slot-supervisor") => return slot::supervisor::run().await,
+        Some("run-reader") => return runs::reader::serve().await,
         Some("run-worker") => {}
         Some(argument) => anyhow::bail!("unknown Tengri command {argument}"),
         None => {}

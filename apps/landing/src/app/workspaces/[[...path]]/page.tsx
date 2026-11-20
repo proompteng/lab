@@ -12,5 +12,5 @@ export default async function WorkspacePage({ params }: { params: Promise<{ path
     (path[1] && !portalSections.includes(path[1] as PortalSection))
   )
     notFound()
-  return <AdminPage workspaceId={path[0]} section={(path[1] as PortalSection | undefined) || 'integrations'} />
+  return <AdminPage workspaceId={path[0]} section={(path[1] as PortalSection | undefined) || 'overview'} />
 }

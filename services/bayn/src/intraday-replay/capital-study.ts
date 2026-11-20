@@ -173,7 +173,7 @@ export const replayCapitalSources = (
         Effect.gen(function* () {
           const manifest = dataset.manifest
           if (event.atMs < manifest.coverageStartMs || event.atMs > manifest.coverageEndMs) return null
-          yield* dataset.source.advanceTo(event.atMs)
+          yield* dataset.source.advanceTo(event.atMs, (work) => work)
           return {
             symbols: manifest.marketSources.flatMap((source) => source.symbols),
             projection: (yield* dataset.source.cursor).projection,

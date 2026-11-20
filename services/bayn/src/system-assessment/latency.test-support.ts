@@ -25,7 +25,10 @@ import { registeredSchedule } from './schedule'
 import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { latencyReplayExecutionModelHash, latencyReplayPolicyMaterial } from './latency-replay'
 import { BacktestInputSchema, prepareBacktest } from '../intraday-replay/backtest'
-import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import {
+  nativeReplayFixture as retainedReplayFixture,
+  retainedReplayCaptureFixture,
+} from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { instrumentMarket, MarketKind } from '../instruments'
@@ -340,18 +343,10 @@ export const nativeLatencyBacktestFixture = (
   )
   const inferenceTariff = replayRateCardFixture({
     jev:
-      policy === JevResearchPolicy.Candidate
+      policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation
         ? { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
         : null,
-    chart:
-      policy !== JevResearchPolicy.Momentum
-        ? {
-            inputMicrosPerMillionTokens: '100000',
-            outputMicrosPerMillionTokens: '0',
-            cachedInputMicrosPerMillionTokens: '0',
-            cacheWriteInputMicrosPerMillionTokens: '0',
-          }
-        : null,
+    chart: null,
   })
   const registration = withRegistrationCommitments({
     ...f.registration,
@@ -384,8 +379,10 @@ export const nativeLatencyBacktestFixture = (
     runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
   }
   const configuration = registration.obligations.configuration
+  if (configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+    throw new Error('Polling backtest fixture requires a retained polling runtime')
   const input = Schema.decodeUnknownSync(BacktestInputSchema)({
-    schemaVersion: 'bayn.backtest.v10',
+    schemaVersion: 'bayn.backtest.v11',
     policy,
     latencyStress: { registration, sourceCut: cut, brokerIdentity: f.identity },
     jevInstructionsHash: testHash(jevInstructions),
@@ -394,8 +391,8 @@ export const nativeLatencyBacktestFixture = (
       recording,
       recordingHash: testHash(recording),
       maximumCalls: 100,
-      models: { jev: 'jev-1.13.0', chart: 'gpt-6-luna' },
-      inputDefinition: 'bayn.jev-entry-state.v23',
+      models: { jev: configuration.protocol.model },
+      inputDefinition: 'bayn.jev-entry-state.v24',
       costs: inferenceTariff,
     },
     allocatedDataCostPerSessionMicros: '0',

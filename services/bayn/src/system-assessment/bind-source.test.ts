@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
 import { MutationEventSchema } from '../execution/mutations/model'
-import { bindSystemSourceCut, mutationObligations } from './bind-source'
+import { bindSystemSourceCut } from './bind-source'
+import { mutationObligations } from './operational-obligations'
 import { testHash } from './fixtures.test-support'
 import { evaluateSystemAssessment, ProfitabilityStatus, QualificationVerdict } from './assessment'
 import { ObligationClass } from './reliability'
@@ -143,7 +144,7 @@ describe('immutable source binding', () => {
         stageClaimHash: claim.claimHash,
         stageTerminalHash: terminal?.terminalHash ?? null,
         usageStatus: terminal === null ? InferenceUsageStatus.Unknown : InferenceUsageStatus.Received,
-        estimatedCostPicoUsd: terminal === null ? null : '100',
+        estimatedCostPicoUsd: terminal === null ? null : '4200000',
       })
       const assessment = Result.getOrThrow(
         assessSession(session, input.registration, definition, input.asOf, bound.verifiedSources),
@@ -154,71 +155,82 @@ describe('immutable source binding', () => {
     }
   })
 
-  test('endpoint bid marks derive unrealized PnL from captured basis while open inventory still blocks qualification', () => {
-    const { input, cut, verifiedSources } = capturedAccountsFixture()
-    const definition = input.registration.policies.find((p) => p.policy === 'JEV')
-    const calendar = input.registration.calendar.sessions[0]
-    if (definition === undefined || calendar === undefined) throw new Error('Missing marked fixture')
-    const source = {
-      ...cut,
-      financial: cut.financial.map((account) =>
-        account.policy !== 'JEV'
-          ? account
-          : {
-              ...account,
-              sessions: account.sessions.map((session, index) =>
-                index !== 0 || session.facts === null
-                  ? session
-                  : { ...session, facts: { ...session.facts, openingPositionCount: 1, closingPositionCount: 1 } },
-              ),
-            },
-      ),
-      accountMarks: cut.accountMarks.map((mark) => {
-        if (
-          mark.accountBindingHash !== definition.accountBindingHash ||
-          mark.at < calendar.openAt ||
-          mark.at > calendar.closeAt ||
-          mark.cashMicros === null
-        )
-          return mark
-        return {
-          ...mark,
-          cashMicros: (BigInt(mark.cashMicros) - 100_000_000n).toString(),
-          valuation: {
-            inventorySourceHash: testHash('open inventory basis'),
-            positions: [
-              {
-                symbol: 'AAPL',
-                quantityAtoms: '1000000000',
-                costBasisMicros: '80000000',
-                quoteSourceHash: testHash(mark.at),
-                bidPriceMicros: mark.at === calendar.openAt ? '100000000' : '110000000',
+  test.each([false, true])(
+    'endpoint executable marks derive unrealized PnL while open inventory blocks qualification; short=%s',
+    (short) => {
+      const { input, cut, verifiedSources } = capturedAccountsFixture()
+      const definition = input.registration.policies.find((p) => p.policy === 'JEV')
+      const calendar = input.registration.calendar.sessions[0]
+      if (definition === undefined || calendar === undefined) throw new Error('Missing marked fixture')
+      const source = {
+        ...cut,
+        financial: cut.financial.map((account) =>
+          account.policy !== 'JEV'
+            ? account
+            : {
+                ...account,
+                sessions: account.sessions.map((session, index) =>
+                  index !== 0 || session.facts === null
+                    ? session
+                    : { ...session, facts: { ...session.facts, openingPositionCount: 1, closingPositionCount: 1 } },
+                ),
               },
-            ],
-          },
-        }
-      }),
-    }
-    const bound = Result.getOrThrow(
-      bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources),
-    )
-    const session = bound.input.policies.find((p) => p.policy === 'JEV')?.sessions[0]
-    if (session === undefined) throw new Error('Missing bound session')
-    expect(session.financial).toMatchObject({
-      openingUnrealizedPnlMicros: '20000000',
-      closingUnrealizedPnlMicros: '30000000',
-      openingPositionCount: 1,
-      closingPositionCount: 1,
-    })
-    const assessment = Result.getOrThrow(
-      assessSession(session, input.registration, definition, input.asOf, bound.verifiedSources),
-    )
-    expect(assessment.netEconomicPnlMicros).toBe('1010000000')
-    expect(assessment.economicEvidenceComplete).toBe(true)
-    expect(assessment.missing).toContain('NONFLAT_SESSION')
-    expect(assessment.numerical.status).toBe('UNRESOLVED')
-    expect(assessment.violations).toEqual([])
-  })
+        ),
+        accountMarks: cut.accountMarks.map((mark) => {
+          if (
+            mark.accountBindingHash !== definition.accountBindingHash ||
+            mark.at < calendar.openAt ||
+            mark.at > calendar.closeAt ||
+            mark.cashMicros === null
+          )
+            return mark
+          return {
+            ...mark,
+            cashMicros: (BigInt(mark.cashMicros) + (short ? 100_000_000n : -100_000_000n)).toString(),
+            valuation: {
+              inventorySourceHash: testHash('open inventory basis'),
+              positions: [
+                short
+                  ? {
+                      symbol: 'AAPL',
+                      quantityAtoms: '-1000000000',
+                      costBasisMicros: '-120000000',
+                      quoteSourceHash: testHash(mark.at),
+                      askPriceMicros: mark.at === calendar.openAt ? '100000000' : '90000000',
+                    }
+                  : {
+                      symbol: 'AAPL',
+                      quantityAtoms: '1000000000',
+                      costBasisMicros: '80000000',
+                      quoteSourceHash: testHash(mark.at),
+                      bidPriceMicros: mark.at === calendar.openAt ? '100000000' : '110000000',
+                    },
+              ],
+            },
+          }
+        }),
+      }
+      const bound = Result.getOrThrow(
+        bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources),
+      )
+      const session = bound.input.policies.find((p) => p.policy === 'JEV')?.sessions[0]
+      if (session === undefined) throw new Error('Missing bound session')
+      expect(session.financial).toMatchObject({
+        openingUnrealizedPnlMicros: '20000000',
+        closingUnrealizedPnlMicros: '30000000',
+        openingPositionCount: 1,
+        closingPositionCount: 1,
+      })
+      const assessment = Result.getOrThrow(
+        assessSession(session, input.registration, definition, input.asOf, bound.verifiedSources),
+      )
+      expect(assessment.netEconomicPnlMicros).toBe('1010000000')
+      expect(assessment.economicEvidenceComplete).toBe(true)
+      expect(assessment.missing).toContain('NONFLAT_SESSION')
+      expect(assessment.numerical.status).toBe('UNRESOLVED')
+      expect(assessment.violations).toEqual([])
+    },
+  )
 
   test('all four policies reconstruct session boundary cash from their own retained movements and minute observations', () => {
     const { input, cut, verifiedSources } = capturedAccountsFixture()

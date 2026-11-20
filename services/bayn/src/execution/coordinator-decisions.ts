@@ -24,7 +24,7 @@ import type {
   RecoveryPersistenceDecision,
   RecoverySelection,
 } from '../cycle/runner/execution-recovery-model'
-import { IntentState, MutationOutcome, RiskOutcome, TerminalOutcome, type Intent } from './contracts'
+import { IntentState, MutationOutcome, RiskOutcome, TerminalOutcome, isStopProtection, type Intent } from './contracts'
 import { UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'
@@ -307,10 +307,9 @@ export const exactOrder = (intent: Intent, request: OrderRequestBody, order: Ord
     order.limitPriceMicros === (limitPrice.success === undefined ? undefined : limitPrice.success.toString()) &&
     order.extendedHours === request.extended_hours &&
     order.orderClass === (request.order_class ?? 'simple') &&
-    order.stopPriceMicros ===
-      (intent.protection?._tag === 'StopLimit' ? intent.protection.stopPriceMicros : undefined) &&
+    order.stopPriceMicros === (isStopProtection(intent.protection) ? intent.protection.stopPriceMicros : undefined) &&
     (intent.protection === undefined ||
-      intent.protection._tag === 'StopLimit' ||
+      isStopProtection(intent.protection) ||
       Result.isSuccess(
         verifyProtectionGroup(order, {
           symbol: intent.symbol,

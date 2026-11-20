@@ -77,7 +77,9 @@ async function mockReadyDesktop(page: Page) {
             ? { threads: [], nextCursor: null }
             : action.action === 'list-files'
               ? { path: action.path ?? '/workspace', entries: [] }
-              : null
+              : action.action === 'active-codex-runs'
+                ? []
+                : null
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ result }) })
   })
 }

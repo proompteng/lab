@@ -75,6 +75,25 @@ test('missing cycle telemetry is distinct from valid idle cycles and failed scra
   check('recovery retains existing five minute hold', series('0+0x8 1+0x51'), '6m', [observation])
   check('recovery clears after existing hold', series('0+0x8 1+0x51'), '8m')
   check('missing family recovery clears after existing hold', series('_x9 1+0x51'), '8m')
+  const recoveredFailure = [
+    ...series('1+0x60'),
+    { series: `bayn_cycle_condition{${scope},instance="a",condition="failed"}`, values: '0+0x3 1+0x5 0+0x51' },
+    { series: `bayn_cycle_phase{${scope},instance="a",phase="completed"}`, values: '0+0x9 1+0x51' },
+  ]
+  check('fail-closed condition remains pending before one minute', recoveredFailure, '1m45s')
+  check('fail-closed condition fires after one minute', recoveredFailure, '2m', ['BaynCycleFailed'])
+  check('completed recovery retains the existing five minute firing hold', recoveredFailure, '7m15s', [
+    'BaynCycleFailed',
+  ])
+  check('completed recovery clears after the existing firing hold', recoveredFailure, '7m30s')
+  check(
+    'brief fail-closed observation does not fire',
+    [
+      ...series('1+0x60'),
+      { series: `bayn_cycle_condition{${scope},instance="a",condition="failed"}`, values: '0+0x3 1+0x2 0+0x54' },
+    ],
+    '3m',
+  )
   check('failed scrape with missing family is only scrape unavailable', series(null, '0+0x60'), '2m', [scrape])
   check(
     'stale observation during failed scrape is only scrape unavailable',

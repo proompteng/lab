@@ -1,3 +1,4 @@
+import { retainedJevProtocolV38Document } from './protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -61,6 +62,44 @@ const fixture = (input = source) => {
 }
 
 describe('source-anchored complete entry proposals', () => {
+  for (const structure of ['support', 'resistance', 'base'] as const) {
+    for (const probability of [0, 0.1, 0.3]) {
+      test(`negative ${structure} presence ${probability} blocks only its dependent setup`, () => {
+        const input = fixture()
+        input.assessments[structure].presence.probability = probability
+        const result = Result.getOrThrow(makeEntryProposals(input))
+        const rejected = structure === 'base' ? EntrySetup.BaseBreakout : EntrySetup.SupportRecovery
+        const surviving = structure === 'base' ? EntrySetup.SupportRecovery : EntrySetup.BaseBreakout
+        expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([surviving])
+        expect(result.rejections).toEqual([{ setup: rejected, reason: ProposalRejection.NoStructure }])
+      })
+    }
+    for (const probability of [0.30000000000000004, 0.5, 0.7, 1]) {
+      test(`uncertain or positive ${structure} presence ${probability} retains its anchored proposal`, () => {
+        const input = fixture()
+        input.assessments[structure].presence.probability = probability
+        const result = Result.getOrThrow(makeEntryProposals(input))
+        expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([
+          EntrySetup.SupportRecovery,
+          EntrySetup.BaseBreakout,
+        ])
+        expect(result.rejections).toEqual([])
+      })
+    }
+  }
+
+  test('retained v38 proposals preserve negative presence and selected anchors as original evidence', () => {
+    const input = fixture()
+    input.assessments.support.presence.probability = 0.1
+    input.assessments.resistance.presence.probability = 0.25
+    input.assessments.base.presence.probability = 0.1
+    const result = Result.getOrThrow(makeEntryProposals({ ...input, protocol: retainedJevProtocolV38Document }))
+    expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([
+      EntrySetup.SupportRecovery,
+      EntrySetup.BaseBreakout,
+    ])
+  })
+
   test('an unidentified base cannot remove an independently funded recovery', () => {
     const input = fixture()
     const result = Result.getOrThrow(

@@ -1,7 +1,9 @@
-import type { EntryInferenceInput } from './entry-inference-input'
+import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
+import { buildChartQuestions, chartQuestionPolicy } from './chart-questions'
+import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
+import { shortEntryJudgmentPolicy } from './short-entry-questions'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -256,29 +258,38 @@ export const usableEntryBatchInferences = (
   })
 
 export const jevBatchQuestionSetHash = (
-  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: EntryInferenceInput } }[],
+  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: EntryInferenceMaterial } }[],
 ) =>
   Result.gen(function* () {
     const specifications = []
     for (const candidate of candidates) {
       if (candidate.request === undefined) continue
-      const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
-      const visual = yield* makeInitialChartStageRequest({
-        chart,
-        protocol: candidate.request.request.protocol,
-        funding: candidate.request.request.funding,
-      })
+      const input = candidate.request.request
+      const { protocol } = input
+      const usesBoxes =
+        protocol.schemaVersion === 'bayn.jev.protocol.v41' || protocol.schemaVersion === 'bayn.jev.protocol.v40'
+      const visual = usesBoxes
+        ? { model: protocol.model, questions: buildChartQuestions() }
+        : (yield* retainedJevChartStages.makeInitialChartStageRequest({
+            chart: yield* makeNativeChartEvidence(input.chartSource),
+            protocol,
+            funding: input.funding,
+          })).request
       specifications.push({
         symbol: candidate.symbol,
-        visual: { model: visual.request.model, questions: visual.request.questions },
+        visual: { model: visual.model, questions: visual.questions },
         staged: {
-          policy: stagedChartQuestionPolicy,
-          inputHash: yield* canonicalHashV1Result(candidate.request.request),
+          policy: usesBoxes ? chartQuestionPolicy : retainedJevChartStages.stagedChartQuestionPolicy,
+          inputHash: yield* canonicalHashV1Result(input),
         },
         jev:
-          candidate.request.request.schemaVersion === 'bayn.entry-ablation-input.v1'
-            ? { status: 'OMITTED_BY_POLICY', selectionPolicy: candidate.request.request.selectionPolicy }
-            : entryJudgmentPolicy,
+          input.schemaVersion === 'bayn.entry-ablation-input.v1'
+            ? { status: 'OMITTED_BY_POLICY', selectionPolicy: input.selectionPolicy }
+            : {
+                ...entryJudgmentPolicy,
+                model: protocol.model,
+                ...(protocol.schemaVersion === 'bayn.jev.protocol.v41' ? { short: shortEntryJudgmentPolicy } : {}),
+              },
       })
     }
     return yield* hash(specifications)

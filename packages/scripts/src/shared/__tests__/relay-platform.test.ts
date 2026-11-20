@@ -7,7 +7,10 @@ const manifests = (file: string) => YAML.parseAllDocuments(source(file)).map((do
 
 test('the registered Kubernetes namespaces match the executor RBAC without granting clients cluster credentials', () => {
   const config = JSON.parse(source('argocd/applications/relay/config.json'))
-  const namespaces = config.connectors[0].namespaces.map((namespace: { name: string }) => namespace.name).sort()
+  const namespaces = config.connectors
+    .filter((connector: { type: string }) => connector.type === 'kubernetes')
+    .flatMap((connector: { namespaces: { name: string }[] }) => connector.namespaces.map(({ name }) => name))
+    .sort()
   const rbac = manifests('argocd/applications/relay/rbac.yaml')
   expect(
     rbac

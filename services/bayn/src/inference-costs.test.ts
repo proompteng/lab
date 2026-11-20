@@ -2,11 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { parseInferenceCostArgs } from './inference-cost-command'
+import { makeInferenceExpenseSessionReport, parseInferenceCostArgs } from './inference-cost-command'
 import { researchReaderConfig } from './db/research-reader-config'
 import { InferenceCostCoverage, InferenceUsageStatus } from './inference-costs'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
-import { costReportFromEvidence, expenseSourceFixture } from './inference-expense.test-support'
+import {
+  costReportFromEvidence,
+  expenseCoverageFromEvidence,
+  expenseSourceFixture,
+} from './inference-expense.test-support'
+import { makeInferenceExpenseQuote } from './inference-expense'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
 import { responseFixture } from './jev/test-support'
 import { decodeJevEvaluationRequest } from './jev/evidence'
@@ -56,6 +61,63 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test.each([true, false])(
+    'versions ledger-session coverage without changing posted totals (missing usage: %s)',
+    (missing) => {
+      const source = expenseSourceFixture({ missing })
+      const quote = Result.getOrThrow(makeInferenceExpenseQuote(source, rateCard))
+      const { accountId, sessionDate, asOf, ...request } = source
+      const coverage = Result.getOrThrow(
+        expenseCoverageFromEvidence(
+          {
+            schemaVersion: 'bayn.inference-cost-evidence.v2',
+            accountBindingHash: quote.accountBindingHash,
+            sessionDate,
+            asOf,
+            requests: [request],
+          },
+          accountId,
+          [{ quote, verifiedAt: missing ? asOf : null }],
+        ),
+      )
+      const ledger = {
+        schemaVersion: 'bayn.inference-expense-ledger-report.v2',
+        accountBindingHash: quote.accountBindingHash,
+        sessionDate,
+        sourceAsOf: asOf,
+        ledgerTimestampMax: '1',
+        verifiedSessionTransferCount: 0,
+        ledger: 7002,
+        unit: 'USD_PICO',
+        invoiceReconciled: false,
+        exactLedgerPrefix: true,
+        quotedRequestCount: 1,
+        claimedRequestCount: 1,
+        pricedRequestCount: missing ? 0 : 1,
+        gapRequestCount: missing ? 1 : 0,
+        transferCount: 0,
+        knownEstimatedCostPicoUsd: '0',
+      } as const
+      const report = makeInferenceExpenseSessionReport(ledger, coverage, asOf)
+      expect(report.schemaVersion).toBe('bayn.inference-expense-ledger-report.v3')
+      expect(ledger.schemaVersion).toBe('bayn.inference-expense-ledger-report.v2')
+      expect(report.ledgerObservedAt).toBe(asOf)
+      expect(report.coverage).toMatchObject({
+        knownEstimatedCostPicoUsd: missing ? '0' : '42000',
+        matchedQuoteHashes: [quote.quoteHash],
+        completeMeteredCoverage: false,
+        requestsWithCoverageIssues: [
+          { requestId: request.requestId, stage: 'JEV', issues: [missing ? 'UNKNOWN_USAGE' : 'UNVERIFIED_LEDGER'] },
+        ],
+      })
+      expect(report.knownEstimatedCostPicoUsd).toBe('0')
+      expect(report.invoiceReconciled).toBe(false)
+      expect(JSON.stringify(report)).not.toContain(accountId)
+      expect(JSON.stringify(report)).not.toContain('requestHash')
+      expect(JSON.stringify(report)).not.toContain('rejectedResponse')
+    },
+  )
+
   test.each([
     { options: {}, startedAt: '1970-01-01T00:00:00.000Z', cost: '10500000' },
     { options: { rejected: true }, startedAt: null, cost: '10500000' },

@@ -126,6 +126,7 @@ test('a verified empty recovery class is not applicable, while required empty cl
     status: ReliabilityStatus.NotApplicable,
   })
   expect(Result.getOrThrow(measureReliability(input, true)).status).toBe(ReliabilityStatus.Undetermined)
+  expect(Result.getOrThrow(measureReliability(input, false, false)).status).toBe(ReliabilityStatus.Undetermined)
   expect(Result.getOrThrow(measureReliability({ asOf, schedule: [], completions: [] })).status).toBe(
     ReliabilityStatus.Undetermined,
   )

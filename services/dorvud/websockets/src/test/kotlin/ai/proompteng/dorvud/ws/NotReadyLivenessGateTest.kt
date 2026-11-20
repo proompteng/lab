@@ -1,10 +1,58 @@
 package ai.proompteng.dorvud.ws
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class NotReadyLivenessGateTest {
+  @Test
+  fun `trade update failures still restart while market channels are starved`() {
+    for (tradeError in listOf(ReadinessErrorClass.AlpacaAuth, null)) {
+      var now = 1_000L
+      val gate = NotReadyLivenessGate(killAfterMs = 120_000) { now }
+      repeat(5) {
+        val error =
+          ReadinessClassifier.readinessErrorClassForGates(
+            ready = false,
+            gates = ReadinessGates(alpacaWs = true, kafka = true, tradeUpdates = false, marketDataChannels = false),
+            alpacaErrorClass = null,
+            kafkaErrorClass = null,
+            tradeUpdatesErrorClass = tradeError,
+            fallbackErrorClass = ReadinessErrorClass.MarketDataChannelStarvation,
+            marketDataChannelErrorClass = ReadinessErrorClass.MarketDataChannelStarvation,
+          )
+        assertEquals(tradeError ?: ReadinessErrorClass.Unknown, error)
+        gate.recordReadiness(ready = false, livenessFailureEligible = requireNotNull(error).shouldEscalateToLivenessFailure())
+        now += 30_000
+      }
+      assertTrue(gate.shouldFailLiveness())
+    }
+  }
+
+  @Test
+  fun `channel starvation keeps readiness false without restarting an authenticated forwarder`() {
+    var now = 1_000L
+    val gate = NotReadyLivenessGate(killAfterMs = 120_000) { now }
+    val error =
+      ReadinessClassifier.readinessErrorClassForGates(
+        ready = false,
+        gates = ReadinessGates(alpacaWs = true, kafka = true, tradeUpdates = true, marketDataChannels = false),
+        alpacaErrorClass = null,
+        kafkaErrorClass = null,
+        tradeUpdatesErrorClass = null,
+        fallbackErrorClass = ReadinessErrorClass.MarketDataChannelStarvation,
+      )
+    assertEquals(ReadinessErrorClass.MarketDataChannelStarvation, error)
+    gate.recordReadiness(ready = false, livenessFailureEligible = requireNotNull(error).shouldEscalateToLivenessFailure())
+    now += 300_000
+    assertFalse(gate.shouldFailLiveness())
+
+    gate.recordReadiness(ready = false, livenessFailureEligible = ReadinessErrorClass.KafkaProduce.shouldEscalateToLivenessFailure())
+    now += 120_000
+    assertTrue(gate.shouldFailLiveness())
+  }
+
   @Test
   fun `liveness stays healthy while readiness has not failed`() {
     var now = 1_000L

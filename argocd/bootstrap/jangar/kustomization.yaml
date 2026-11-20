@@ -18,6 +18,12 @@ patches:
         name: open-webui-before-0-11-3
   - patch: |-
       $patch: delete
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshot
+      metadata:
+        name: open-webui-before-0-13-3
+  - patch: |-
+      $patch: delete
       apiVersion: batch/v1
       kind: Job
       metadata:

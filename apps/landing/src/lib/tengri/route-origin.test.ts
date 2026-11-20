@@ -7,16 +7,23 @@ let authConfigured = true
 const auth = await import('../platform/auth')
 let restoreAuth = () => {}
 
-const [{ GET: getSnapshot }, { GET: watchCodexEvents }, { GET: watchFileEvents }] = await Promise.all([
-  import('../../app/api/tengri/route'),
-  import('../../app/api/tengri/events/route'),
-  import('../../app/api/tengri/files/events/route'),
-])
+const [{ GET: getSnapshot }, { GET: watchCodexEvents }, { GET: watchFileEvents }, { GET: generatedImage }] =
+  await Promise.all([
+    import('../../app/api/tengri/route'),
+    import('../../app/api/tengri/events/route'),
+    import('../../app/api/tengri/files/events/route'),
+    import('../../app/api/tengri/generated-images/route'),
+  ])
 
 const handlers = [
   ['desktop snapshot', getSnapshot, 'https://proompteng.ai/api/tengri'],
   ['Codex events', watchCodexEvents, 'https://proompteng.ai/api/tengri/events?agentId=agent-test'],
   ['file events', watchFileEvents, 'https://proompteng.ai/api/tengri/files/events?agentId=agent-test&path=/workspace'],
+  [
+    'generated image',
+    generatedImage,
+    'https://proompteng.ai/api/tengri/generated-images?agentId=agent-test&path=/home/nanoagent/.codex/generated_images/thread-cat/exec-cat.png',
+  ],
 ] as const
 
 describe('Tengri BFF GET origin enforcement', () => {

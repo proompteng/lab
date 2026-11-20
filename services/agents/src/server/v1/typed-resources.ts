@@ -39,10 +39,10 @@ type TypedResourceKubernetesServiceShape = {
   readonly client: KubernetesClient
 }
 
-export class TypedResourceKubernetesService extends Context.Tag('agents/TypedResourceKubernetesService')<
+export class TypedResourceKubernetesService extends Context.Service<
   TypedResourceKubernetesService,
   TypedResourceKubernetesServiceShape
->() {}
+>()('agents/TypedResourceKubernetesService') {}
 
 export type TypedResourceDeps = {
   kubeClient?: KubernetesClient
@@ -239,7 +239,7 @@ const describeTypedResourceError = (error: TypedResourceError) => {
 const runTypedResourceEffect = async <A>(
   effect: Effect.Effect<A, TypedResourceError, TypedResourceKubernetesService>,
   deps: TypedResourceDeps,
-) => Effect.runPromise(effect.pipe(Effect.provide(makeTypedResourceLayer(deps)), Effect.either))
+) => Effect.runPromise(effect.pipe(Effect.provide(makeTypedResourceLayer(deps)), Effect.result))
 
 export const listTypedResourceEffect = (
   kind: ControlPlaneResourceKind,
@@ -377,10 +377,10 @@ export const typedResourceResponse = async (
   successStatus = 200,
 ) => {
   const result = await runTypedResourceEffect(effect, deps)
-  if (result._tag === 'Right') {
-    return okResponse(result.right, successStatus)
+  if (result._tag === 'Success') {
+    return okResponse(result.success, successStatus)
   }
-  const error = describeTypedResourceError(result.left)
+  const error = describeTypedResourceError(result.failure)
   return errorResponse(error.message, error.status, 'details' in error ? error.details : undefined)
 }
 

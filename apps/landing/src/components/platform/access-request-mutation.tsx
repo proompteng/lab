@@ -2,7 +2,7 @@
 
 import { fromJson } from '@bufbuild/protobuf'
 import { Button } from '@proompteng/design/ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { accessRequestMutationSchema, type AccessRequestMutation } from '@/lib/platform/access-requests'
 import { startSignIn } from '@/lib/platform/auth-client'
 import { PlatformClientError, readPlatformResponse } from '@/lib/platform/client'
@@ -13,6 +13,14 @@ import {
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 
 export function useAccessRequestMutation(storageKey: string, onChanged: () => void) {
+  const inFlight = useRef(false)
+  const active = useRef(true)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
   const [ready, setReady] = useState(false)
   const [pending, setPending] = useState<AccessRequestMutation>()
   const [busy, setBusy] = useState(false)
@@ -30,15 +38,25 @@ export function useAccessRequestMutation(storageKey: string, onChanged: () => vo
     }
   }, [storageKey])
   const save = async (intent: AccessRequestMutation) => {
+    if (inFlight.current || !active.current) return
+    inFlight.current = true
     setBusy(true)
     setError(undefined)
     try {
-      sessionStorage.setItem(storageKey, JSON.stringify(intent))
+      const saved = sessionStorage.getItem(storageKey)
+      if (
+        saved &&
+        JSON.stringify(accessRequestMutationSchema.parse(JSON.parse(saved))) !==
+          JSON.stringify(accessRequestMutationSchema.parse(intent))
+      )
+        throw new Error('Reconcile the saved change before submitting a different operation.')
+      const body = saved || JSON.stringify(accessRequestMutationSchema.parse(intent))
+      sessionStorage.setItem(storageKey, body)
       setPending(intent)
       const json = await fetch('/api/platform/access-requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(intent),
+        body,
       }).then(readPlatformResponse)
       const result =
         intent.kind === 'create'
@@ -50,16 +68,21 @@ export function useAccessRequestMutation(storageKey: string, onChanged: () => vo
         throw new Error('The request is unconfirmed. Retry the saved request.')
       sessionStorage.removeItem(storageKey)
       setPending(undefined)
-      onChanged()
+      if (active.current) onChanged()
     } catch (cause) {
-      if (cause instanceof PlatformClientError && cause.status < 500 && ![401, 428].includes(cause.status)) {
+      if (
+        cause instanceof PlatformClientError &&
+        ((cause.commandRejected && ![401, 428].includes(cause.status)) ||
+          (cause.status < 500 && ![401, 403, 408, 428, 429, 499].includes(cause.status)))
+      ) {
         sessionStorage.removeItem(storageKey)
         setPending(undefined)
-        onChanged()
+        if (active.current) onChanged()
       }
       setError(cause instanceof Error ? cause : new Error('The request could not be confirmed.'))
     } finally {
-      setBusy(false)
+      inFlight.current = false
+      if (active.current) setBusy(false)
     }
   }
   return { ready, pending, busy, error, save }

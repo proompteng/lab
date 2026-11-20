@@ -6,7 +6,14 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { OrderSide, type Fill } from '../execution/contracts'
-import { brokerFeeLedgerPlan, prepareAccounting, rebuildAccountingLedger } from './domain'
+import { hashLedgerPlanResult } from '../ledger-plan'
+import {
+  brokerFeeLedgerPlan,
+  cashSettlementLedgerPlan,
+  coinFeeLedgerPlan,
+  prepareAccounting,
+  rebuildAccountingLedger,
+} from './domain'
 import type { AccountingFailure } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
 
@@ -42,6 +49,120 @@ const postedMicros = (prepared: PreparedAccounting): bigint =>
   prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n)
 
 describe('execution accounting', () => {
+  test.each([
+    {
+      name: 'buy with fee',
+      overrides: { feeMicros: '2500' },
+      prior: emptyPosition,
+      ledgerPlanHash: '918948628ef0e46c31b8adfd6b40a269a6ade2d66004c310a2dfd217e5e860b1',
+      contentHash: '7048ddd9a74ba9a77695926d8a54243564535ba73edf52b24ddba04233cb2cdd',
+    },
+    {
+      name: 'partial gain with fee',
+      overrides: { side: OrderSide.Sell, priceAtoms: '120000000000', feeMicros: '2500' },
+      prior: { quantityAtoms: '3000000000', costMicros: '300000000' },
+      ledgerPlanHash: 'ee0192ccf02a378bd8e95ec1276e7f2073b0579405661ffab2d3342421dcf574',
+      contentHash: '86b220e92634d9ab696bab88a9794c938d98202ea9fe3393ee65a0aab00ab44a',
+    },
+    {
+      name: 'full loss with fee',
+      overrides: {
+        side: OrderSide.Sell,
+        quantityAtoms: '3000000000',
+        priceAtoms: '90000000000',
+        feeMicros: '500',
+      },
+      prior: { quantityAtoms: '3000000000', costMicros: '300000001' },
+      ledgerPlanHash: '0fc004aa986e538ab268abbbd70cfd5fa9a2a6c4df9da98b0c0428a406b5f50b',
+      contentHash: 'a4d3c291d411bac3858d1447805825c2cc34adda685cf425fcc080d8335f1e1b',
+    },
+    {
+      name: 'partial sale with rounded zero basis',
+      overrides: { side: OrderSide.Sell, quantityAtoms: '1000', priceAtoms: '1000000000' },
+      prior: { quantityAtoms: '3000', costMicros: '1' },
+      ledgerPlanHash: '4b993ba02e623db370ec4382c9268a7142c8260f87e568062e41b472794f8fe3',
+      contentHash: '2029c37fecc918d40bbdd43ea621086d27a6b4dcaf8389c482599dadc6d50054',
+    },
+  ])(
+    'preserves the complete historical ledger identity for $name',
+    ({ overrides, prior, ledgerPlanHash, contentHash }) => {
+      const prepared = successOf(prepareAccounting(eventId, fill(overrides), prior, 7001))
+      expect(Result.getOrThrow(hashLedgerPlanResult(prepared.ledger))).toBe(ledgerPlanHash)
+      expect(prepared.transaction).toMatchObject({ ledgerPlanHash, contentHash })
+      expect(successOf(rebuildAccountingLedger(prepared.transaction, 7001))).toEqual(prepared.ledger)
+    },
+  )
+
+  test.each([
+    {
+      amount: '0',
+      fee: '06039382d0f602bb290ac1d5270fe96a1b06df59d8f0379a1f92542e95ba8fd2',
+      settlement: '06039382d0f602bb290ac1d5270fe96a1b06df59d8f0379a1f92542e95ba8fd2',
+    },
+    {
+      amount: '2300',
+      fee: 'dd03ac463bc61969659e53dea81e2aefcfe2c775630dafbdd0c000051adc401f',
+      settlement: 'aaf531cf64820d9d2c986e76dc19b9b5c07d66b5baff0434e074073bb2f381ca',
+    },
+    {
+      amount: '-2300',
+      fee: 'c190b516fb06e09162700467c5342d7736fd839a8ef3eeaffa013ed013efe4ff',
+      settlement: 'eee511bd75f0709ce3b651c9f919553850f626db2e557edcd7edb77a81c4e091',
+    },
+  ])('preserves broker fee and cash settlement identities for $amount micros', ({ amount, fee, settlement }) => {
+    expect(Result.getOrThrow(hashLedgerPlanResult(brokerFeeLedgerPlan('paper-account', 'fee-1', amount, 7001)))).toBe(
+      fee,
+    )
+    expect(
+      Result.getOrThrow(hashLedgerPlanResult(cashSettlementLedgerPlan('paper-account', 'settlement-1', amount, 7001))),
+    ).toBe(settlement)
+  })
+
+  test.each([
+    { amount: '0', hash: '06039382d0f602bb290ac1d5270fe96a1b06df59d8f0379a1f92542e95ba8fd2' },
+    { amount: '2300', hash: '591d92a0b1c267207c29978463c582e6ef1cf4cbd95fb5efc3d0f3b0f88cf231' },
+  ])('preserves the historical coin fee identity for $amount micros', ({ amount, hash }) => {
+    expect(
+      Result.getOrThrow(
+        hashLedgerPlanResult(coinFeeLedgerPlan('paper-account', 'coin-fee-1', 'BTC/USD', amount, 7001)),
+      ),
+    ).toBe(hash)
+  })
+
+  test('keeps reconstructed records isolated across plans, accounts and ledgers', () => {
+    const builders = [
+      () => successOf(prepareAccounting(eventId, fill({ feeMicros: '2500' }), emptyPosition, 7001)).ledger,
+      () => brokerFeeLedgerPlan('paper-account', 'fee-1', '-2300', 7001),
+      () => cashSettlementLedgerPlan('paper-account', 'settlement-1', '2300', 7001),
+      () => coinFeeLedgerPlan('paper-account', 'coin-fee-1', 'BTC/USD', '2300', 7001),
+    ]
+    for (const build of builders) {
+      const first = build()
+      const witness = structuredClone(first)
+      const replay = build()
+      assert(first.accounts[0] !== undefined && first.transfers[0] !== undefined)
+      expect(replay.accounts[0]).not.toBe(first.accounts[0])
+      expect(replay.transfers[0]).not.toBe(first.transfers[0])
+      Object.assign(first.accounts[0], { debits_posted: 999n })
+      Object.assign(first.transfers[0], { amount: 999n })
+      expect(replay).toEqual(witness)
+      expect(build()).toEqual(witness)
+    }
+    const other = brokerFeeLedgerPlan('other-account', 'fee-1', '-2300', 7002)
+    const original = brokerFeeLedgerPlan('paper-account', 'fee-1', '-2300', 7001)
+    expect(other.runKey).not.toBe(original.runKey)
+    expect(other.runTag).not.toBe(original.runTag)
+    expect(other.accounts.every((account) => account.ledger === 7002 && account.user_data_128 === other.runKey)).toBe(
+      true,
+    )
+    expect(
+      other.transfers.every((transfer) => transfer.ledger === 7002 && transfer.user_data_64 === other.runTag),
+    ).toBe(true)
+    expect(
+      original.accounts.every((account) => account.ledger === 7001 && account.user_data_128 === original.runKey),
+    ).toBe(true)
+  })
+
   test('posts delayed broker fees and refunds with stable identities and the existing cash and expense accounts', () => {
     const fee = brokerFeeLedgerPlan('paper-account', 'fee-1', '-230000', 7001)
     const replay = brokerFeeLedgerPlan('paper-account', 'fee-1', '-230000', 7001)

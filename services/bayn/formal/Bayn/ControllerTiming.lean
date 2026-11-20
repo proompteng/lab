@@ -5,6 +5,58 @@ import Lean.Elab.Tactic.Omega
 
 namespace Bayn
 
+def marketHandoffReadiness (ready failed : Bool) (deadline : Option Int) (now : Int) : String :=
+  if failed then "FAILED"
+  else if ready then "READY"
+  else if deadline.any (fun bound => bound < now) then "EXPIRED"
+  else "WAITING"
+
+theorem market_handoff_requires_ready_nonfailed_history (r f : Bool) (d : Option Int) (now : Int)
+    (passes : marketHandoffReadiness r f d now = "READY") : r = true ∧ f = false := by
+  cases r <;> cases f <;> simp_all [marketHandoffReadiness]
+  split at passes <;> contradiction
+
+theorem market_handoff_cannot_restart_expired_bootstrap (d now : Int) (expired : d < now) :
+    marketHandoffReadiness false false (some d) now = "EXPIRED" := by
+  simp [marketHandoffReadiness, expired]
+
+theorem market_handoff_failure_overrides_old_readiness (r : Bool) (d : Option Int) (now : Int) :
+    marketHandoffReadiness r true d now = "FAILED" := by
+  simp [marketHandoffReadiness]
+
+example : marketHandoffReadiness false false (some 5000) 5000 = "WAITING" ∧
+    marketHandoffReadiness false false (some 5000) 5001 = "EXPIRED" ∧
+    marketHandoffReadiness true false (some 5000) 10000 = "READY" := by decide
+
+/-- This checks retained build claims; receipt authenticity is a separate evidence requirement. -/
+def controllerBuildBound (registeredSource registeredDigest workerSource workerDigest
+    registeredRepository workerRepository : Option String) : Bool :=
+  match registeredSource, registeredDigest, workerSource, workerDigest with
+  | some rs, some rd, some ws, some wd =>
+    rs == ws && rd == wd && (registeredRepository.isNone || registeredRepository == workerRepository)
+  | _, _, _, _ => false
+
+theorem controller_build_bound_requires_both_identities
+    (rs rd ws wd rr wr : Option String) (bound : controllerBuildBound rs rd ws wd rr wr = true) :
+    rs = ws ∧ rd = wd ∧ rs.isSome = true ∧ rd.isSome = true := by
+  cases rs <;> cases rd <;> cases ws <;> cases wd <;> simp_all [controllerBuildBound]
+
+theorem missing_worker_build_cannot_bind (rs rd rr wr : Option String) :
+    controllerBuildBound rs rd none none rr wr = false := by
+  cases rs <;> cases rd <;> rfl
+
+theorem registered_repository_must_match (rs rd ws wd : Option String) (rr : String) (wr : Option String)
+    (bound : controllerBuildBound rs rd ws wd (some rr) wr = true) :
+    wr = some rr := by
+  cases rs <;> cases rd <;> cases ws <;> cases wd <;> simp_all [controllerBuildBound]
+
+example : controllerBuildBound (some "source") (some "image") (some "source") (some "image")
+      (some "repository") (some "repository") = true ∧
+    controllerBuildBound (some "source") (some "image") (some "source") (some "image")
+      (some "repository") (some "foreign") = false ∧
+    controllerBuildBound (some "source") (some "image") (some "source") (some "image")
+      none (some "foreign") = true := by decide
+
 structure ControllerClock where
   issuedAt : Int
   observedAt : Int

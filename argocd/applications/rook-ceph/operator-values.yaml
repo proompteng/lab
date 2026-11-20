@@ -1,6 +1,6 @@
 image:
   repository: docker.io/rook/ceph
-  tag: v1.20.7
+  tag: v1.21.1
   pullPolicy: IfNotPresent
 
 crds:
@@ -40,7 +40,7 @@ cephCommandsTimeoutSeconds: "120"
 
 csi:
   installCsiOperator: true
-  # Rook v1.20.7 defaults to v8.5.0. The cluster is Kubernetes v1.37 with
+  # The cluster is Kubernetes v1.37 with
   # VolumeGroupSnapshot v1 and v1beta2 APIs served; keep the generated image
   # set on the latest stable external-snapshotter release.
   snapshotter:

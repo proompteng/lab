@@ -108,6 +108,68 @@ test('controller identity reaches the mounted SPIFFE workload API', () => {
   })
 })
 
+test('run reads stay private without giving controllers Restate admin access', () => {
+  const reader = cutoverManifest('tengri', 'Deployment', 'tengri-run-reader')
+  const controller = cutoverManifest('tengri', 'Deployment', 'tengri')
+  expect(reader.getIn(['metadata', 'namespace'])).toBe('restate')
+  expect(controller.getIn(['metadata', 'namespace'])).toBe('tengri')
+  const pod = reader.getIn(['spec', 'template', 'spec'])
+  if (!isMap(pod)) throw new Error('Missing reader Pod')
+  expect(pod.get('automountServiceAccountToken')).toBe(false)
+  expect(pod.get('serviceAccountName')).toBe('tengri-run-reader')
+  expect(pod.get('volumes')).toBeUndefined()
+  expect(pod.getIn(['containers', 0, 'env']).toJSON()).toEqual([
+    { name: 'TENGRI_RESTATE_ADMIN', value: 'http://restate.restate.svc.cluster.local:9070/' },
+  ])
+  expect(pod.getIn(['containers', 0, 'args']).toJSON()).toEqual(['run-reader'])
+  expect(pod.getIn(['containers', 0, 'image'])).toBe(
+    controller.getIn(['spec', 'template', 'spec', 'containers', 0, 'image']),
+  )
+  expect(cutoverManifest('tengri', 'PeerAuthentication', 'tengri-run-reader').getIn(['spec', 'mtls', 'mode'])).toBe(
+    'STRICT',
+  )
+  expect(
+    cutoverManifest('tengri', 'AuthorizationPolicy', 'tengri-run-reader').getIn(['spec', 'rules']).toJSON(),
+  ).toEqual([
+    {
+      from: [{ source: { principals: ['proompteng.ai/ns/tengri/sa/tengri'] } }],
+      to: [{ operation: { ports: ['8080'], methods: ['POST'], paths: ['/status', '/active'] } }],
+    },
+  ])
+  const policy = cutoverManifest('tengri', 'NetworkPolicy', 'tengri-run-reader')
+  expect(policy.getIn(['metadata', 'namespace'])).toBe('restate')
+  expect(policy.getIn(['spec', 'ingress']).toJSON()).toEqual([
+    {
+      from: [
+        {
+          namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'tengri' } },
+          podSelector: {
+            matchLabels: { 'app.kubernetes.io/name': 'tengri', 'app.kubernetes.io/component': 'control-plane' },
+          },
+        },
+      ],
+      ports: [{ protocol: 'TCP', port: 8080 }],
+    },
+  ])
+  const controllerPolicy = networkPolicies.find((entry) => entry.metadata?.name === 'tengri-control-plane')
+  expect(controllerPolicy?.spec?.egress?.flatMap((entry) => entry.ports ?? []).some((port) => port.port === 9070)).toBe(
+    false,
+  )
+  const identity = manifest('argocd/applications/spire-server/values.yaml').getIn([
+    'spire-server',
+    'controllerManager',
+    'identities',
+    'clusterSPIFFEIDs',
+    'tengri-run-reader-proxy',
+  ])
+  if (!isMap(identity)) throw new Error('Missing private reader mesh identity')
+  expect(identity.get('spiffeIDTemplate')).toBe('spiffe://{{ .TrustDomain }}/ns/restate/sa/tengri-run-reader')
+  expect(identity.get('workloadSelectorTemplates').toJSON()).toEqual([
+    'k8s:sa:tengri-run-reader',
+    'k8s:container-name:istio-proxy',
+  ])
+})
+
 test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'tengri-promotion-')))
   const image = `registry.ide-newton.ts.net/lab/nanoagent@sha256:${'e'.repeat(64)}`
@@ -143,7 +205,7 @@ test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
   }
 })
 
-test('the namespace can admit six slot leases with rolling-upgrade headroom', () => {
+test('the namespace can admit six slots with rolling-upgrade headroom', () => {
   const quota = manifest('argocd/applications/tengri/resource-quota.yaml')
   const source = readFileSync(new URL('../../../../services/tengri/src/controller.rs', import.meta.url), 'utf8')
   const slots = /const SLOT_COUNT: usize = (\d+);/.exec(source)
@@ -151,6 +213,14 @@ test('the namespace can admit six slot leases with rolling-upgrade headroom', ()
   expect(Number(quota.getIn(['spec', 'hard', 'count/leases.coordination.k8s.io']))).toBeGreaterThanOrEqual(
     Number(slots[1]) + 1,
   )
+  for (const [resource, headroomGiB] of [
+    ['requests.memory', 3],
+    ['limits.memory', 9],
+  ] as const) {
+    const quantity = String(quota.getIn(['spec', 'hard', resource]))
+    expect(quantity).toMatch(/^\d+Gi$/)
+    expect(Number(quantity.slice(0, -2))).toBeGreaterThanOrEqual(Number(slots[1]) * 12 + headroomGiB)
+  }
 })
 
 test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {

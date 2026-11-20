@@ -174,11 +174,12 @@ export const makeReplayDecisionLatency = (
       ? store
       : {
           ...store,
-          begin: (plan, observation) =>
+          begin: (batch) =>
             Effect.gen(function* () {
+              const { plan } = batch
               const issuedAt = admitted.get(plan.batchId) ?? commandIssuedAt
               if (issuedAt === undefined) return yield* fail('Batch admission is outside its replay command')
-              const evidence = yield* store.begin(plan, observation)
+              const evidence = yield* store.begin(batch)
               admitted.set(plan.batchId, issuedAt)
               return yield* release(evidence)
             }),

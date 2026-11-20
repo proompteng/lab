@@ -1,14 +1,26 @@
 import assert from 'node:assert/strict'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { mock } from 'node:test'
-import { Consumer } from '@platformatic/kafka'
+import { AuthenticationError, Consumer, MultipleErrors, ProtocolError } from '@platformatic/kafka'
 import { Redacted } from 'effect'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
 import { platformaticProjectionTransport } from '../market-data/streaming/kafka.ts'
 
 const mode = process.argv[2]
 let finishJoin
-const closeMock = mock.method(Consumer.prototype, 'close')
+const coordinatorFailure = new ProtocolError('COORDINATOR_NOT_AVAILABLE')
+const closeFailure =
+  mode === 'coordinator-fatal-close'
+    ? new MultipleErrors('failed group shutdown', [coordinatorFailure, new AuthenticationError('private detail')])
+    : coordinatorFailure
+const originalClose = Consumer.prototype.close
+const closeMock = mock.method(Consumer.prototype, 'close', function (force, callback) {
+  if (mode === 'coordinator-close' || mode === 'coordinator-fatal-close') {
+    callback(closeFailure)
+    return
+  }
+  return originalClose.call(this, force, callback)
+})
 const commitMock = mock.method(Consumer.prototype, 'commit', () => {
   throw new Error('ephemeral market readers must not commit offsets')
 })
@@ -34,16 +46,20 @@ const transport = platformaticProjectionTransport(
 )
 const positions = [{ topic: 'bars', partition: 0, offset: '0' }]
 const failures = []
+let progress = 0
+const progressed = () => {
+  progress++
+}
 if (mode === 'closed') {
   await transport.close()
   await assert.rejects(
-    transport.consume(positions, (cause) => failures.push(cause)),
+    transport.consume(positions, (cause) => failures.push(cause), progressed),
     /closed/i,
   )
   assert.equal(finishJoin, undefined)
 } else if (mode === 'late') {
   const rejected = assert.rejects(
-    transport.consume(positions, (cause) => failures.push(cause)),
+    transport.consume(positions, (cause) => failures.push(cause), progressed),
     /closed/i,
   )
   const closing = transport.close()
@@ -51,7 +67,13 @@ if (mode === 'closed') {
   await closing
   await rejected
 } else {
-  assert.ok(mode === 'construct' || mode === 'shutdown' || mode === 'payloads')
+  assert.ok(
+    mode === 'construct' ||
+      mode === 'shutdown' ||
+      mode === 'payloads' ||
+      mode === 'coordinator-close' ||
+      mode === 'coordinator-fatal-close',
+  )
   const constructionError = new Error('offset refresh failed during construction')
   mock.method(Consumer.prototype, 'listOffsets', function (_options, callback) {
     callback(mode === 'construct' ? constructionError : null, new Map([['bars', [mode === 'payloads' ? 3n : 0n]]]))
@@ -103,7 +125,7 @@ if (mode === 'closed') {
       ),
     )
   }
-  const attempt = transport.consume(positions, (cause) => failures.push(cause))
+  const attempt = transport.consume(positions, (cause) => failures.push(cause), progressed)
   setImmediate(() => finishJoin())
   const stream = await attempt
   if (mode === 'construct') {
@@ -113,6 +135,7 @@ if (mode === 'closed') {
     const records = []
     for await (const record of stream) records.push(record)
     assert.equal(records.length, payloads.length)
+    assert.ok(progress >= payloads.length)
     payloads.forEach((bytes, index) => {
       assert.equal(records[index].offset, String(index))
       assert.equal(records[index].value, bytes.toString('utf-8'))
@@ -122,11 +145,13 @@ if (mode === 'closed') {
     })
   } else {
     await nextTurn()
-    await transport.close()
+    if (mode === 'coordinator-fatal-close') await assert.rejects(transport.close(), closeFailure)
+    else await transport.close()
   }
 }
 await nextTurn()
-await transport.close()
+if (mode === 'coordinator-fatal-close') await assert.rejects(transport.close(), closeFailure)
+else await transport.close()
 await nextTurn()
 assert.equal(closeMock.mock.callCount(), 1)
 assert.equal(closeMock.mock.calls[0].this.closed, true)

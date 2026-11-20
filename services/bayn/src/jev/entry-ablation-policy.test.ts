@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import { fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeEntryAblationRuntime } from '../strategy'
+import { makeEntryAblationRuntime } from '../intraday-replay/strategy'
 import { prepareObserveStartup } from '../observe-composition/startup'
 import {
   decodeEntryAblationPolicy,

@@ -125,6 +125,7 @@ export const projectReadDiagnostic = (operation: string, raw: unknown): ReadDiag
           fields: {
             date: reportedDate,
             status: field(row, 'status', (value) => statuses.has(value)),
+            activity_sub_type: field(row, 'activity_sub_type', (value) => subtypes.has(value)),
             activity_subtype: field(row, 'activity_subtype', (value) => subtypes.has(value)),
             entry_sub_type: field(row, 'entry_sub_type', (value) => subtypes.has(value)),
             settle_date: field(row, 'settle_date', date),

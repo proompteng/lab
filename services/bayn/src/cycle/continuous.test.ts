@@ -118,7 +118,7 @@ test('completed crypto cycles rearm after their old entry deadline with all cryp
   }
 })
 
-test('an unused expired continuous lease rearms under the same approved contract after its deadline and cooldown', () => {
+test('an unused expired continuous lease rearms under the same approved contract after its original deadline', () => {
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const policy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
   if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('Expected current policy')
@@ -161,7 +161,14 @@ test('an unused expired continuous lease rearms under the same approved contract
   }
   expect(canRearmUnusedCycle(cycle, candidate, calendar, equitySession, nextAt)).toBe(true)
   expect(nextIntradayEntryAttemptOrdinal(cycle, nextAt, next.entryCutoffAt, true)).toBe(2)
-  expect(nextIntradayEntryAttemptOrdinal(cycle, '2026-10-12T14:31:59.999Z', next.entryCutoffAt, true)).toBeUndefined()
+  expect(
+    nextIntradayEntryAttemptOrdinal(
+      cycle,
+      new Date(Date.parse(cycle.terminalAt) - 1).toISOString(),
+      next.entryCutoffAt,
+      true,
+    ),
+  ).toBeUndefined()
   expect(canRearmUnusedCycle(cycle, candidate, continuousMarketHours, oldWindow, at)).toBe(false)
   expect(
     canRearmUnusedCycle(cycle, { ...candidate, accountId: 'another-account' }, continuousMarketHours, next, nextAt),

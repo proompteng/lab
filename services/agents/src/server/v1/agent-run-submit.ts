@@ -85,7 +85,7 @@ type AgentRunKubernetesServiceDefinition = {
     now: number,
     recordQueueDepth: AgentRunQueueDepthRecorder,
   ) => Effect.Effect<AdmissionDecision, AgentRunKubeError>
-  readonly applyAgentRun: (
+  readonly createAgentRun: (
     kube: KubernetesClient,
     resource: AgentRunKubernetesResource,
     namespace: string,
@@ -152,40 +152,39 @@ type AgentRunRuntimeConfigServiceDefinition = {
   readonly now: () => Effect.Effect<number>
 }
 
-export class AgentRunKubernetesService extends Context.Tag('agents/AgentRunKubernetesService')<
+export class AgentRunKubernetesService extends Context.Service<
   AgentRunKubernetesService,
   AgentRunKubernetesServiceDefinition
->() {}
+>()('agents/AgentRunKubernetesService') {}
 
-export class AgentRunPolicyService extends Context.Tag('agents/AgentRunPolicyService')<
-  AgentRunPolicyService,
-  AgentRunPolicyServiceDefinition
->() {}
+export class AgentRunPolicyService extends Context.Service<AgentRunPolicyService, AgentRunPolicyServiceDefinition>()(
+  'agents/AgentRunPolicyService',
+) {}
 
-export class AgentRunAuditContextService extends Context.Tag('agents/AgentRunAuditContextService')<
+export class AgentRunAuditContextService extends Context.Service<
   AgentRunAuditContextService,
   AgentRunAuditContextServiceDefinition
->() {}
+>()('agents/AgentRunAuditContextService') {}
 
-export class AgentRunRepositoryService extends Context.Tag('agents/AgentRunRepositoryService')<
+export class AgentRunRepositoryService extends Context.Service<
   AgentRunRepositoryService,
   AgentRunRepositoryServiceDefinition
->() {}
+>()('agents/AgentRunRepositoryService') {}
 
-export class AgentRunQueueDepthService extends Context.Tag('agents/AgentRunQueueDepthService')<
+export class AgentRunQueueDepthService extends Context.Service<
   AgentRunQueueDepthService,
   AgentRunQueueDepthServiceDefinition
->() {}
+>()('agents/AgentRunQueueDepthService') {}
 
-export class AgentRunIdGeneratorService extends Context.Tag('agents/AgentRunIdGeneratorService')<
+export class AgentRunIdGeneratorService extends Context.Service<
   AgentRunIdGeneratorService,
   AgentRunIdGeneratorServiceDefinition
->() {}
+>()('agents/AgentRunIdGeneratorService') {}
 
-export class AgentRunRuntimeConfigService extends Context.Tag('agents/AgentRunRuntimeConfigService')<
+export class AgentRunRuntimeConfigService extends Context.Service<
   AgentRunRuntimeConfigService,
   AgentRunRuntimeConfigServiceDefinition
->() {}
+>()('agents/AgentRunRuntimeConfigService') {}
 
 const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
   if (!value) return undefined
@@ -215,6 +214,12 @@ const normalizeStringMap = (
     output[key] = raw
   }
   return Object.keys(output).length > 0 ? output : undefined
+}
+
+const normalizeMetadataName = (value: unknown): string => {
+  if (typeof value !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value))
+    throw new Error('metadata.name must be a Kubernetes name of at most 63 characters')
+  return value
 }
 
 const normalizeMetadataGenerateName = (value: unknown): string | undefined => {
@@ -490,9 +495,12 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   if (payload.metadata != null && !metadataRaw) {
     throw new Error('metadata must be an object')
   }
+  if (metadataRaw?.name != null && metadataRaw.generateName != null)
+    throw new Error('Choose metadata.name or metadata.generateName')
   const metadata =
     metadataRaw != null
       ? {
+          name: metadataRaw.name == null ? undefined : normalizeMetadataName(metadataRaw.name),
           generateName: normalizeMetadataGenerateName(metadataRaw.generateName),
           labels: normalizeStringMap(asRecord(metadataRaw.labels), 'metadata.labels'),
           annotations: normalizeStringMap(asRecord(metadataRaw.annotations), 'metadata.annotations'),
@@ -789,8 +797,10 @@ export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
         kubeEffect('evaluate-admission-limits', RESOURCE_MAP.AgentRun, namespace, () =>
           evaluateAdmissionLimits(kube, namespace, repository, config, now, recordQueueDepth),
         ),
-      applyAgentRun: (kube, resource, namespace) =>
-        kubeEffect('apply-agent-run', RESOURCE_MAP.AgentRun, namespace, () => kube.apply(resource)),
+      createAgentRun: (kube, resource, namespace) =>
+        kubeEffect('create-agent-run', RESOURCE_MAP.AgentRun, namespace, () =>
+          kube.createManifest(JSON.stringify(resource), namespace),
+        ),
     }),
     Layer.succeed(AgentRunPolicyService, {
       validate: (namespace, checks, kube) =>
@@ -843,7 +853,9 @@ export const createAgentRunResource = (
   apiVersion: 'agents.proompteng.ai/v1alpha1',
   kind: 'AgentRun',
   metadata: {
-    generateName: parsed.metadata?.generateName ?? `${parsed.agentRef.name}-`,
+    ...(parsed.metadata?.name
+      ? { name: parsed.metadata.name }
+      : { generateName: parsed.metadata?.generateName ?? `${parsed.agentRef.name}-` }),
     namespace: parsed.namespace,
     labels: {
       ...parsed.metadata?.labels,
@@ -887,9 +899,9 @@ export const submitAgentRun = async (
   request: Request,
   deps: AgentRunsApiDependencies,
 ): Promise<AgentRunSubmitSuccess> => {
-  const result = await Effect.runPromise(submitAgentRunEffect(request, deps).pipe(Effect.either))
-  if (result._tag === 'Left') throw result.left
-  return result.right
+  const result = await Effect.runPromise(submitAgentRunEffect(request, deps).pipe(Effect.result))
+  if (result._tag === 'Failure') throw result.failure
+  return result.success
 }
 
 type AgentRunSubmitServices =
@@ -1207,9 +1219,9 @@ export const submitAgentRunWithServicesEffect = (
             )
           }
 
-          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.either)
+          const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.result)
 
-          if (policyDecision._tag === 'Left') {
+          if (policyDecision._tag === 'Failure') {
             if (!dryRun) {
               const auditEventId = yield* ids.next
               yield* stores
@@ -1221,12 +1233,12 @@ export const submitAgentRunWithServicesEffect = (
                   details: {
                     subject: policyChecks.subject,
                     checks: policyChecks,
-                    reason: describeAgentRunSubmitError(policyDecision.left),
+                    reason: describeAgentRunSubmitError(policyDecision.failure),
                   },
                 })
-                .pipe(Effect.catchAll(() => Effect.void))
+                .pipe(Effect.catch(() => Effect.void))
             }
-            return yield* Effect.fail(policyDecision.left)
+            return yield* Effect.fail(policyDecision.failure)
           }
 
           if (!dryRun) {
@@ -1240,7 +1252,7 @@ export const submitAgentRunWithServicesEffect = (
                 details: { subject: policyChecks.subject, checks: policyChecks },
               })
               .pipe(
-                Effect.catchAll((error) =>
+                Effect.catch((error) =>
                   Effect.sync(() => {
                     console.warn('[agents] failed to persist AgentRun policy.allowed audit event', error)
                   }),
@@ -1315,7 +1327,7 @@ export const submitAgentRunWithServicesEffect = (
                   agentName: parsed.agentRef.name,
                   idempotencyKey: runIdempotencyKey,
                 })
-                .pipe(Effect.catchAll(() => Effect.void))
+                .pipe(Effect.catch(() => Effect.void))
               reservation = yield* stores.reserveIdempotencyKey(activeStore, {
                 namespace: parsed.namespace,
                 agentName: parsed.agentRef.name,
@@ -1383,8 +1395,8 @@ export const submitAgentRunWithServicesEffect = (
           }
 
           const resource = createAgentRunResource(parsed, deliveryId, runIdempotencyKey)
-          const appliedResult = yield* kubernetes.applyAgentRun(kube, resource, parsed.namespace).pipe(Effect.either)
-          if (appliedResult._tag === 'Left') {
+          const createdResult = yield* kubernetes.createAgentRun(kube, resource, parsed.namespace).pipe(Effect.result)
+          if (createdResult._tag === 'Failure') {
             if (idempotencyReservation) {
               yield* stores
                 .deleteIdempotencyKey(activeStore, {
@@ -1392,15 +1404,23 @@ export const submitAgentRunWithServicesEffect = (
                   agentName: idempotencyReservation.agentName,
                   idempotencyKey: idempotencyReservation.idempotencyKey,
                 })
-                .pipe(Effect.catchAll(() => Effect.void))
+                .pipe(Effect.catch(() => Effect.void))
             }
-            return yield* Effect.fail(appliedResult.left)
+            if (asRecord(createdResult.failure.cause)?.code === 409) {
+              return yield* Effect.fail(
+                new AgentRunConflictError({
+                  message: 'AgentRun name already exists',
+                  details: { namespace: parsed.namespace, name: parsed.metadata?.name },
+                }),
+              )
+            }
+            return yield* Effect.fail(createdResult.failure)
           }
 
-          const applied = appliedResult.right
-          const metadata = (applied.metadata ?? {}) as Record<string, unknown>
+          const created = createdResult.success
+          const metadata = (created.metadata ?? {}) as Record<string, unknown>
           const externalRunId = asString(metadata.name)
-          const runtimeProvider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
+          const runtimeProvider = asString(readNested(created, ['spec', 'runtime', 'type'])) ?? 'unknown'
 
           if (idempotencyReservation && externalRunId) {
             yield* stores.assignIdempotencyKey(activeStore, {
@@ -1412,14 +1432,14 @@ export const submitAgentRunWithServicesEffect = (
             })
           }
 
-          const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
+          const statusPhase = asString(asRecord(created.status)?.phase) ?? 'Pending'
           const record = yield* stores.createRun(activeStore, {
             agentName: parsed.agentRef.name,
             deliveryId,
             provider: runtimeProvider,
             status: statusPhase,
             externalRunId,
-            payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
+            payload: { request: payload, resource: created, status: asRecord(created.status) ?? {} },
           })
           yield* stores
             .createAuditEvent(activeStore, {
@@ -1431,18 +1451,18 @@ export const submitAgentRunWithServicesEffect = (
                 agent: parsed.agentRef.name,
                 agentRunId: record.id,
                 agentRunName: externalRunId,
-                agentRunUid: asString(asRecord(applied.metadata)?.uid),
+                agentRunUid: asString(asRecord(created.metadata)?.uid),
                 provider: runtimeProvider,
               },
             })
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.sync(() => {
                   console.warn('[agents] failed to persist AgentRun created audit event', error)
                 }),
               ),
             )
-          return { status: 201, body: { ok: true, agentRun: record, resource: applied } }
+          return { status: 201, body: { ok: true, agentRun: record, resource: created } }
         }),
       stores.close,
     )

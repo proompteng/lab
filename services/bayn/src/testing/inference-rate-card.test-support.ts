@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { InferenceRateCardSchema, type InferenceRateSchema, prepareInferenceRateCard } from '../inference-costs'
-import { jevModel } from '../jev/contract'
+import { jevModel, retainedJevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
 
 type Rate = typeof InferenceRateSchema.Type
@@ -14,11 +14,14 @@ type ChartPrices = Pick<
   | 'cacheWriteInputMicrosPerMillionTokens'
 >
 
-export const replayRateCardFixture = (tariff: { readonly jev: Prices | null; readonly chart: ChartPrices | null }) => {
+export const replayRateCardFixture = (
+  tariff: { readonly jev: Prices | null; readonly chart: ChartPrices | null },
+  model: typeof jevModel | typeof retainedJevModel = jevModel,
+) => {
   const card = Schema.decodeUnknownSync(InferenceRateCardSchema)({
     schemaVersion: 'bayn.inference-rate-card.v1',
     rates: [
-      ...(tariff.jev === null ? [] : [{ provider: 'typesafe', model: jevModel, ...tariff.jev }]),
+      ...(tariff.jev === null ? [] : [{ provider: 'typesafe', model, ...tariff.jev }]),
       ...(tariff.chart === null ? [] : [{ provider: 'openai', model: decisionsModel, ...tariff.chart }]),
     ].map((rate) => ({
       ...rate,

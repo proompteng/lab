@@ -33,6 +33,40 @@ const createKubeMock = (overrides: Partial<KubernetesClient> = {}): KubernetesCl
 })
 
 describe('getAgentRunLogs', () => {
+  it('restricts connector logs to the recorded run UID and rejects a changed target', async () => {
+    const kube = createKubeMock({
+      list: vi.fn(async () => ({ items: [buildPod('original-pod', 'Running', ['runner'])] })),
+      logs: vi.fn(async () => 'original logs'),
+    })
+    const record = {
+      id: 'projection',
+      agentName: 'agent',
+      deliveryId: 'delivery',
+      provider: 'job',
+      status: 'Running',
+      externalRunId: 'run-1',
+      payload: { request: { namespace: 'agents' }, resource: { metadata: { uid: 'original-uid' } } },
+    }
+    const response = await getAgentRunLogsHandler(
+      new Request('http://agents/logs?name=run-1&namespace=agents&tailLines=1'),
+      { kubeClient: kube, record, maxBytes: 131072 },
+    )
+    expect(response.status).toBe(200)
+    expect(kube.list).toHaveBeenCalledWith(
+      'pods',
+      'agents',
+      'agents.proompteng.ai/agent-run=run-1,agents.proompteng.ai/run-uid=original-uid',
+    )
+    expect(kube.logs).toHaveBeenCalledWith(expect.objectContaining({ limitBytes: 131072, tailLines: 1 }))
+    vi.mocked(kube.logs).mockClear()
+    const changed = await getAgentRunLogsHandler(new Request('http://agents/logs?name=run-1&namespace=other'), {
+      kubeClient: kube,
+      record,
+    })
+    expect(changed.status).toBe(502)
+    expect(kube.logs).not.toHaveBeenCalled()
+  })
+
   it('returns pods and logs for the selected pod', async () => {
     const kube = createKubeMock({
       list: vi.fn(async () => ({
@@ -178,12 +212,12 @@ describe('getAgentRunLogs', () => {
     const result = await Effect.runPromise(
       getAgentRunLogsEffect(new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents')).pipe(
         Effect.provide(makeAgentRunLogsKubeLayer({ kubeClient: kube })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    if (result._tag !== 'Left') throw new Error('expected log read to fail')
-    expect(result.left).toBeInstanceOf(AgentRunLogsKubeError)
-    expect(result.left).toMatchObject({ operation: 'list-pods', namespace: 'agents', name: 'run-1' })
+    if (result._tag !== 'Failure') throw new Error('expected log read to fail')
+    expect(result.failure).toBeInstanceOf(AgentRunLogsKubeError)
+    expect(result.failure).toMatchObject({ operation: 'list-pods', namespace: 'agents', name: 'run-1' })
   })
 })

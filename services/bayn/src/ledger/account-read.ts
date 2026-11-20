@@ -11,7 +11,7 @@ import {
 import type { TigerBeetleRequestClient } from '../tigerbeetle-client'
 import { accountReconciliationQueries } from './decisions'
 
-const readRecords = <A extends { readonly timestamp: bigint }>(
+export const readLedgerRecords = <A extends { readonly timestamp: bigint }>(
   query: LedgerQueryFilter,
   expectedCount: number,
   readPage: (filter: LedgerQueryFilter) => Effect.Effect<readonly A[], OperationalError>,
@@ -39,6 +39,14 @@ const readRecords = <A extends { readonly timestamp: bigint }>(
             material: { previousTimestamp: timestamp, actualTimestamp: record.timestamp },
           })
         }
+        if (query.timestamp_max !== 0n && record.timestamp > query.timestamp_max) {
+          return yield* ledgerValidationError({
+            operation: 'verify-account',
+            reason: 'invalid-query-page',
+            message: 'TigerBeetle account query returned a record after its pinned timestamp',
+            material: { maximumTimestamp: query.timestamp_max, actualTimestamp: record.timestamp },
+          })
+        }
         timestamp = record.timestamp
         records.push(record)
       }
@@ -51,10 +59,10 @@ export const readAccountLedger = (client: TigerBeetleRequestClient, plan: Ledger
   const queries = accountReconciliationQueries(plan, ledger)
   return Effect.all(
     {
-      accounts: readRecords(queries.accounts, plan.accounts.length, (filter) =>
+      accounts: readLedgerRecords(queries.accounts, plan.accounts.length, (filter) =>
         client.request('verify-account-accounts', (active) => active.queryAccounts(filter)),
       ),
-      transfers: readRecords(queries.transfers, plan.transfers.length, (filter) =>
+      transfers: readLedgerRecords(queries.transfers, plan.transfers.length, (filter) =>
         client.request('verify-account-transfers', (active) => active.queryTransfers(filter)),
       ),
     },

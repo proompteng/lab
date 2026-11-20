@@ -60,7 +60,7 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'read-authority-slot'
     | 'read-decision-document'
     | 'read-oldest-unfinished'
-  readonly failure: 'conflict' | 'decode' | 'entry-expired' | 'invariant' | 'not-found' | 'query'
+  readonly failure: 'conflict' | 'decode' | 'entry-expired' | 'risk-expired' | 'invariant' | 'not-found' | 'query'
   readonly persistenceFailure?: 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
   readonly message: string
   readonly cause?: unknown
@@ -111,6 +111,7 @@ const defaultPersistenceFailure = (
   switch (failure) {
     case 'conflict':
     case 'entry-expired':
+    case 'risk-expired':
       return 'constraint'
     case 'decode':
       return 'decode'

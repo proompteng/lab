@@ -1,3 +1,36 @@
+import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
+import protectionClosePlans from '../../migrations/0204_protection_close_plans'
+import protectionReadAllowance from '../../migrations/0203_protection_read_allowance'
+import protectionReleaseProofs from '../../migrations/0202_protection_release_proofs'
+import notDispatchedVisualEvidence from '../../migrations/0201_not_dispatched_visual_evidence'
+import nativeEquityShorts from '../../migrations/0200_native_equity_shorts'
+import equityShortObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
+import equityShortAccounting from '../../migrations/0198_equity_short_accounting'
+import inferenceExpenseWakeups from '../../migrations/0197_inference_expense_wakeups'
+import streamingOperationalController from '../../migrations/0196_streaming_operational_controller'
+import jevInferenceWork from '../../migrations/0195_jev_inference_work'
+import brokerNotificationReceipts from '../../migrations/0194_broker_notification_receipts'
+import uncappedPaperTurnover from '../../migrations/0192_uncapped_paper_turnover'
+import executionControllerAtomicRotation from '../../migrations/0191_execution_controller_atomic_rotation'
+import settleRetiredJevBatches from '../../migrations/0190_settle_retired_jev_batches'
+import nativeProtectionCancelReceipts from '../../migrations/0189_native_protection_cancel_receipts'
+import jevBoxInference from '../../migrations/0188_jev_box_inference'
+import inferenceRequestGenerationIndex from '../../migrations/0187_inference_request_generation_index'
+import jev114ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
+import chartPresenceSkip from '../../migrations/0185_chart_presence_skip'
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
+import effectiveEntryObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
+import conditionalStatisticalQualification from '../../migrations/0182_conditional_statistical_qualification'
+import webullObserveCutover from '../../migrations/0179_webull_observe_cutover'
+import jevEntryWindowIndex from '../../migrations/0180_jev_entry_window_index'
+import operationalSafetyBaseline from '../../migrations/0181_operational_safety_baseline'
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
+import riskClockRejection from '../../migrations/0177_risk_clock_rejection'
+import operationalSourceRecords from '../../migrations/0176_operational_source_records'
+import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
+import operationalPeriod from '../../migrations/0174_operational_period'
+import inferenceExpenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
+import jevOnlyInference from '../../migrations/0172_jev_only_inference'
 import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
 import researchQualification from '../../migrations/0170_research_qualification'
 import economicQualification from '../../migrations/0169_economic_qualification'
@@ -173,6 +206,36 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '205_inference_source_seals': inferenceSourceSeals,
+  '204_protection_close_plans': protectionClosePlans,
+  '203_protection_read_allowance': protectionReadAllowance,
+  '202_protection_release_proofs': protectionReleaseProofs,
+  '201_not_dispatched_visual_evidence': notDispatchedVisualEvidence,
+  '197_inference_expense_wakeups': inferenceExpenseWakeups,
+  '198_equity_short_accounting': equityShortAccounting,
+  '199_equity_short_observe_cutover': equityShortObserveCutover,
+  '200_native_equity_shorts': nativeEquityShorts,
+  '196_streaming_operational_controller': streamingOperationalController,
+  '195_jev_inference_work': jevInferenceWork,
+  '194_broker_notification_receipts': brokerNotificationReceipts,
+  '192_uncapped_paper_turnover': uncappedPaperTurnover,
+  '191_execution_controller_atomic_rotation': executionControllerAtomicRotation,
+  '190_settle_retired_jev_batches': settleRetiredJevBatches,
+  '189_native_protection_cancel_receipts': nativeProtectionCancelReceipts,
+  '188_jev_box_inference': jevBoxInference,
+  '187_inference_request_generation_index': inferenceRequestGenerationIndex,
+  '186_jev114_observe_cutover': jev114ObserveCutover,
+  '185_chart_presence_skip': chartPresenceSkip,
+  '184_effective_entry_allowance_input': effectiveEntryAllowanceInput,
+  '183_effective_entry_observe_cutover': effectiveEntryObserveCutover,
+  '179_webull_observe_cutover': webullObserveCutover,
+  '178_webull_entry_context': webullEntryContext,
+  '176_operational_source_records': operationalSourceRecords,
+  '180_jev_entry_window_index': jevEntryWindowIndex,
+  '181_operational_safety_baseline': operationalSafetyBaseline,
+  '182_conditional_statistical_qualification': conditionalStatisticalQualification,
+  '177_risk_clock_rejection': riskClockRejection,
+  '175_operational_controller_evidence': operationalControllerEvidence,
   '164_focused_entry_evidence': focusedEntryEvidence,
   '165_observed_resistance': observedResistance,
   '166_candidate_entry_evidence': candidateEntryEvidence,
@@ -180,6 +243,9 @@ export const migrationLoader = PgMigrator.fromRecord({
   '169_economic_qualification': economicQualification,
   '170_research_qualification': researchQualification,
   '171_dated_execution_fees': datedExecutionFees,
+  '172_jev_only_inference': jevOnlyInference,
+  '174_operational_period': operationalPeriod,
+  '173_inference_expense_source_queue': inferenceExpenseSourceQueue,
   '167_chart_structure_before_funding': chartStructureBeforeFunding,
   '163_jev_observation_window_index': jevObservationWindowIndex,
   '160_crypto_quote_evidence': cryptoQuoteEvidence,

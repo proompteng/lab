@@ -1,6 +1,6 @@
 import { ContinuousMarketHoursSchema } from '../../market-hours'
 import { Schema } from 'effect'
-import { MarketCalendarProviderSessionSchema } from '../../broker/alpaca/model'
+import { MarketCalendarObservationSchema } from '../../broker/alpaca/model'
 
 import {
   IsoDateSchema,
@@ -20,15 +20,9 @@ import {
 import { SimulatedSnapshotEvidenceSchema, StreamingSnapshotEvidenceSchema } from './evidence-schema'
 
 const ExchangeSnapshotCalendarSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v2'),
-  source: Schema.Literal('alpaca-v2-calendar'),
-  requestedRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
-  timeZone: Schema.Literal('UTC'),
-  sessions: Schema.Array(
-    Schema.Struct({ date: IsoDateSchema, openAt: UtcInstantSchema, closeAt: UtcInstantSchema }),
-  ).check(Schema.isMinLength(1)),
-  providerSessions: Schema.Array(MarketCalendarProviderSessionSchema).check(Schema.isMinLength(1)),
-  normalizedResponseHash: Sha256Schema,
+  ...MarketCalendarObservationSchema.fields,
+  sessions: MarketCalendarObservationSchema.fields.sessions.check(Schema.isMinLength(1)),
+  providerSessions: MarketCalendarObservationSchema.fields.providerSessions.check(Schema.isMinLength(1)),
 })
 export const SnapshotCalendarSchema = Schema.Union([ExchangeSnapshotCalendarSchema, ContinuousMarketHoursSchema])
 

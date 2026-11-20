@@ -3,7 +3,7 @@ import { mkdir, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import * as S from '@effect/schema/Schema'
+import * as S from 'effect/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 import {
@@ -993,7 +993,7 @@ export const handleChatCompletionEffect = (request: Request) =>
                 worktreePath,
               }
             }),
-            Effect.catchAll((error) => {
+            Effect.catch((error) => {
               if (error instanceof ChatStateStoreError) {
                 console.warn('[chat] openwebui state unavailable; falling back to stateless', {
                   chatId,
@@ -1086,7 +1086,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             })
             yield* pipe(
               threadContext.threadState.clearChat(threadContext.chatId),
-              Effect.catchAll((error) => {
+              Effect.catch((error) => {
                 console.warn('[chat] failed to clear thread after transcript mismatch', {
                   chatId: threadContext.chatId,
                   error: String(error),
@@ -1096,7 +1096,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             )
             yield* pipe(
               transcriptState.clearTranscript(threadContext.chatId),
-              Effect.catchAll((error) => {
+              Effect.catch((error) => {
                 console.warn('[chat] failed to clear transcript after transcript mismatch', {
                   chatId: threadContext.chatId,
                   error: String(error),
@@ -1124,7 +1124,7 @@ export const handleChatCompletionEffect = (request: Request) =>
                     Effect.all([
                       pipe(
                         threadContext.threadState.clearChat(threadContext.chatId),
-                        Effect.catchAll((error) => {
+                        Effect.catch((error) => {
                           console.warn('[chat] failed to clear thread after transcript finalization issue', {
                             chatId: threadContext.chatId,
                             threadId: result.threadId,
@@ -1136,7 +1136,7 @@ export const handleChatCompletionEffect = (request: Request) =>
                       ),
                       pipe(
                         transcriptState.clearTranscript(threadContext.chatId),
-                        Effect.catchAll((error) => {
+                        Effect.catch((error) => {
                           console.warn('[chat] failed to clear transcript after transcript finalization issue', {
                             chatId: threadContext.chatId,
                             threadId: result.threadId,
@@ -1169,7 +1169,7 @@ export const handleChatCompletionEffect = (request: Request) =>
 
                 await pipe(
                   transcriptState.setTranscript(threadContext.chatId, completedSignature),
-                  Effect.catchAll((error) => {
+                  Effect.catch((error) => {
                     console.warn('[chat] failed to persist completed chat transcript signature', {
                       chatId: threadContext.chatId,
                       threadId: result.threadId,
@@ -1238,7 +1238,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         }
 
         const prompt = promptFit.prompt
-        const client = yield* getCodexClient()
+        const client = yield* getCodexClient({ defaultModel: model })
         let clientReleased = false
         const releaseClient = () => {
           if (clientReleased) return
@@ -1272,7 +1272,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         }
       }),
     ),
-    Effect.catchAll((error) => {
+    Effect.catch((error) => {
       if (error instanceof RequestError) {
         return Effect.succeed(
           sseError(

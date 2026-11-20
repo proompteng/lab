@@ -2,8 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { SymbolSchema } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessmentsMaterial } from './chart-questions'
-import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
+import type { ChartAssessmentsMaterial } from './/chart-assessments'
+import { JevContractError, retainedJevModel as jevModel, prepareJevRequest, type JevRequest } from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { retainedEntryInstructions as jevInstructions } from './retained-entry-instructions'
 

@@ -118,6 +118,7 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['torghut-webull-feed', ['.github/workflows/torghut-webull-feed-build-push.yaml', 'argocd/applications/kargo']],
   ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
   ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
@@ -163,6 +164,16 @@ type KargoImageContract = {
 } & ({ kind: 'pinned' } | { kind: 'promotion-template'; bootstrapReferences: string[] })
 
 const kargoImageApps = new Map<string, KargoImageContract>([
+  [
+    'torghut-webull-feed',
+    {
+      kind: 'promotion-template',
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/torghut-webull-feed:unpublished'],
+      reason: 'Native Webull ingestion uses a verified CI image and its dedicated Kargo Stage',
+      repositories: ['registry.ide-newton.ts.net/lab/torghut-webull-feed'],
+      workflowPaths: ['.github/workflows/torghut-webull-feed-build-push.yaml', 'argocd/applications/kargo'],
+    },
+  ],
   [
     'ofz',
     {

@@ -3,91 +3,11 @@ import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
+import { executionControllerPlanHash } from '../../../../../services/bayn/src/execution/controller-plan'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 const readManifest = (path: string): Record<string, any> => YAML.parse(readRepoFile(path))
-
-test('native market capture has separate WAL without weakening replication or exposing financial data', () => {
-  const [clusterDocument, backupDocument, policyDocument] = YAML.parseAllDocuments(
-    readRepoFile('argocd/applications/bayn/native-arrival-postgres.yaml'),
-  )
-  const cluster = clusterDocument?.toJS()
-  const backup = backupDocument?.toJS()
-  const policy = policyDocument?.toJS()
-  const financial = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
-  expect(cluster.metadata.name).not.toBe(financial.metadata.name)
-  expect(cluster.spec.bootstrap.initdb).toEqual({
-    database: 'bayn_native_arrival',
-    owner: 'bayn_native_arrival',
-    encoding: 'UTF8',
-    dataChecksums: true,
-  })
-  for (const key of [
-    'instances',
-    'imageName',
-    'enablePDB',
-    'enableSuperuserAccess',
-    'minSyncReplicas',
-    'maxSyncReplicas',
-    'affinity',
-    'storage',
-    'postgresql',
-  ])
-    expect(cluster.spec[key]).toEqual(financial.spec[key])
-  expect(cluster.metadata.annotations['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
-  expect(cluster.spec.managed).toBeUndefined()
-  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([{ name: 'cnpg-default-monitoring', key: 'queries' }])
-  expect(cluster.spec.plugins[0].parameters).toEqual({
-    barmanObjectName: 'bayn-db',
-    serverName: 'bayn-native-arrival-db-live',
-  })
-  expect(backup.spec.cluster.name).toBe(cluster.metadata.name)
-  expect(backup.spec.target).toBe('prefer-standby')
-  expect(backup.spec.schedule).not.toBe(
-    readManifest('argocd/applications/bayn/postgres-scheduled-backup.yaml').spec.schedule,
-  )
-  expect(policy.spec.podSelector.matchLabels['cnpg.io/cluster']).toBe(cluster.metadata.name)
-  expect(policy.spec.ingress[0].from).toEqual([
-    { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
-  ])
-  const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
-  const container = controller.spec.template.spec.containers[0]
-  expect(
-    container.env.find((entry: Record<string, any>) => entry.name === 'BAYN_NATIVE_ARRIVAL_POSTGRES_URL')?.valueFrom
-      .secretKeyRef,
-  ).toEqual({ name: `${cluster.metadata.name}-app`, key: 'fqdn-uri' })
-  expect(
-    controller.spec.template.spec.volumes.find(
-      (entry: Record<string, any>) => entry.name === 'native-arrival-postgres-ca',
-    )?.secret.secretName,
-  ).toBe(`${cluster.metadata.name}-ca`)
-  expect(
-    container.volumeMounts.find((entry: Record<string, any>) => entry.name === 'native-arrival-postgres-ca'),
-  ).toMatchObject({ mountPath: '/var/run/secrets/bayn/native-arrival-postgres', readOnly: true })
-  for (const path of ['deployment.yaml', 'execution-activation.yaml', 'research-worker.yaml'])
-    expect(
-      readManifest(`argocd/applications/bayn/${path}`).spec.template.spec.containers[0].env.some(
-        (entry: Record<string, any>) => entry.name === 'BAYN_NATIVE_ARRIVAL_POSTGRES_URL',
-      ),
-    ).toBe(false)
-  const controllerPolicy = readManifest('argocd/applications/bayn/execution-controller-networkpolicy.yaml')
-  const wave = (resource: Record<string, any>) =>
-    Number(resource.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0)
-  expect(wave(policy)).toBeLessThan(wave(cluster))
-  expect(wave(cluster)).toBeLessThan(wave(controller))
-  expect(wave(controllerPolicy)).toBeLessThan(wave(controller))
-  expect(
-    controllerPolicy.spec.egress.find((rule: Record<string, any>) =>
-      rule.to.some(
-        (peer: Record<string, any>) => peer.podSelector?.matchLabels?.['cnpg.io/cluster'] === cluster.metadata.name,
-      ),
-    )?.ports,
-  ).toEqual([{ port: 5432, protocol: 'TCP' }])
-  expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain(
-    'native-arrival-postgres.yaml',
-  )
-})
 
 test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   const cluster = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
@@ -98,8 +18,8 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     instances: 2,
     enablePDB: true,
     enableSuperuserAccess: false,
-    minSyncReplicas: 1,
-    maxSyncReplicas: 1,
+    postgresql: { synchronous: { method: 'any', number: 1, dataDurability: 'required' } },
+    walStorage: { storageClass: 'local-path', size: '32Gi', resizeInUseVolumes: false },
     primaryUpdateMethod: 'switchover',
     primaryUpdateStrategy: 'unsupervised',
     affinity: {
@@ -116,9 +36,9 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
       topologyKey: 'kubernetes.io/hostname',
     },
     storage: {
-      storageClass: 'rook-ceph-block',
-      size: '100Gi',
-      resizeInUseVolumes: true,
+      storageClass: 'local-path',
+      size: '500Gi',
+      resizeInUseVolumes: false,
     },
     resources: {
       requests: { cpu: '250m', memory: '2Gi' },
@@ -133,7 +53,17 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
       },
     },
   })
-  expect(cluster.spec.walStorage).toBeUndefined()
+  expect(cluster.spec.minSyncReplicas).toBeUndefined()
+  expect(cluster.spec.maxSyncReplicas).toBeUndefined()
+  const localPath = readManifest('argocd/applications/local-path/patches/local-path-config.patch.yaml')
+  const paths = JSON.parse(localPath.data['config.json']).storageClassConfigs[cluster.spec.storage.storageClass]
+    .nodePathMap
+  expect(paths).toEqual(
+    expect.arrayContaining([
+      { node: 'talos-192-168-1-85', paths: ['/var/mnt/local-path-provisioner'] },
+      { node: 'turin', paths: ['/var/local-path-provisioner'] },
+    ]),
+  )
   expect(cluster.spec.imageName).toBe(
     'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
@@ -149,20 +79,27 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([
     { name: 'cnpg-default-monitoring', key: 'queries' },
     { name: 'bayn-postgres-monitoring', key: 'queries' },
+    { name: 'bayn-postgres-monitoring', key: 'financial-queries' },
   ])
   const monitor = readManifest('argocd/applications/bayn/postgres-monitoring.yaml')
   expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
   expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
-  const queries = YAML.parse(monitor.data.queries)
+  const commonQueries = YAML.parse(monitor.data.queries)
+  for (const query of Object.values(commonQueries) as Record<string, unknown>[])
+    expect(query.target_databases).toBeUndefined()
+  const queries = { ...commonQueries, ...YAML.parse(monitor.data['financial-queries']) }
   expect(Object.keys(queries).sort()).toEqual([
     'bayn_generation_index',
     'bayn_io',
     'bayn_io_timing',
+    'bayn_native_arrivals',
     'bayn_replication',
     'bayn_waits',
   ])
   expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
   expect(queries.bayn_replication.primary).toBe(true)
+  expect(queries.bayn_native_arrivals.primary).toBe(true)
+  expect(queries.bayn_native_arrivals.target_databases).toEqual(['bayn'])
   expect(queries.bayn_generation_index.primary).toBe(true)
   expect(queries.bayn_generation_index.query).toContain('autonomous_cycle_shadow_decisions_generation_idx')
   expect(queries.bayn_generation_index.metrics.map((entry: Record<string, unknown>) => Object.keys(entry)[0])).toEqual([
@@ -278,6 +215,10 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   })
 
   expect(controller.spec.replicas).toBe(2)
+  expect(controller.spec.template.spec.containers[0].env).toContainEqual({
+    name: 'BAYN_REPORTING_ALLOWED',
+    value: 'false',
+  })
   expect(controller.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(controller.spec.template.spec.topologySpreadConstraints).toEqual([
     {
@@ -313,18 +254,16 @@ test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
   const encodedSidecarImage = sidecarSecretPatch.patch.match(/path: \/data\/SIDECAR_IMAGE\n\s+value: (\S+)/)?.[1]
 
   expect(platform.resources).toContain(
-    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.15.0/manifest.yaml',
+    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.16.0/manifest.yaml',
   )
   expect(patches).toContain(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.15.0@sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.16.0@sha256:6404a416718bd7aad943c67a25a7bb20d0558b43edfeab0bf167f013ca435882',
   )
   expect(encodedSidecarImage).toBeDefined()
   expect(Buffer.from(encodedSidecarImage ?? '', 'base64').toString('utf8')).toBe(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.15.0@sha256:06c78deca670525daa35fb1e5323159092785d11cf87b86217bdd5c679a41a84',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.16.0@sha256:c669259e20ed1e11fad821f735c396c19d929985aa05b9544b13ecc8b5a386d0',
   )
-  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-2b4mtt7m69')
-  expect(sidecarSecretPatch.patch).toContain('path: /metadata/name')
-  expect(sidecarSecretPatch.patch).toContain('value: plugin-barman-cloud-m5m67kfh8f')
+  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-5kkd8f288d')
 })
 
 test('Bayn backups use an isolated protected plugin object store and bounded schedule', () => {
@@ -349,7 +288,7 @@ test('Bayn backups use an isolated protected plugin object store and bounded sch
       retentionPolicyIntervalSeconds: 1800,
       resources: {
         requests: { cpu: '100m', memory: '128Mi' },
-        limits: { cpu: '500m', memory: '512Mi' },
+        limits: { cpu: '500m', memory: '1Gi' },
       },
     },
     configuration: {
@@ -398,6 +337,10 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   const applicationPolicy = policies.find((policy) => policy.metadata.name === 'bayn')
   const databasePolicy = policies.find((policy) => policy.metadata.name === 'bayn-db')
   const egressProxyPolicy = policies.find((policy) => policy.metadata.name === 'bayn-egress-proxy')
+  const brokerFeed = readManifest('argocd/applications/bayn/broker-feed.yaml')
+  expect(Number(egressProxyPolicy.metadata.annotations['argocd.argoproj.io/sync-wave'])).toBeLessThan(
+    Number(brokerFeed.metadata.annotations['argocd.argoproj.io/sync-wave']),
+  )
   const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
 
   expect(applicationPolicy.spec.egress).toContainEqual({
@@ -457,6 +400,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-broker-feed' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
@@ -525,7 +469,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'BAYN_BROKER_PROVIDER',
     'BAYN_BROKER_ENVIRONMENT',
     'BAYN_ALPACA_BASE_URL',
-    'BAYN_CYCLE_POLL_INTERVAL_MS',
     'BAYN_RECONCILIATION_INTERVAL_MS',
     'BAYN_OPERATION_TIMEOUT_MS',
     'BAYN_TIGERBEETLE_CLUSTER_ID',
@@ -562,6 +505,10 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
       newName: 'registry.ide-newton.ts.net/lab/bayn',
       newTag: imageTag,
       digest: imageDigest,
+    },
+    {
+      name: 'bayn-broker-feed',
+      newName: 'registry.ide-newton.ts.net/lab/bayn-broker-feed',
     },
   ])
 
@@ -626,7 +573,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc',
+    executionControllerPlanHash,
   )
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   if (mandateIdentity !== undefined) expect(request).toBeString()
@@ -640,7 +587,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
   const activationGeneration = activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value
   expect(activationGeneration).toMatch(/^[0-9a-f]{64}$/)
-  if (mandateIdentity !== undefined) expect(activationGeneration).toBe(mandateIdentity.requestHash)
+  // Kargo binds this invocation key to each promoted image digest. The mandate remains bound through
+  // the lineage checks above and packages/scripts/src/bayn/kargo.test.ts, independently of that key.
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
     name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
     valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },

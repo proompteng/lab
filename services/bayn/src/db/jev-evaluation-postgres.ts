@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Array as Arr, Effect, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -18,6 +18,30 @@ const persistError = (cause: unknown) =>
     cause,
   })
 
+export const insertJevEvaluationReceipts = (
+  sql: PgClient.PgClient,
+  entries: Arr.NonEmptyReadonlyArray<JevEvaluationRecord>,
+) =>
+  sql`INSERT INTO jev_evaluation_receipts ${sql.insert(
+    Arr.map(entries, ({ request, receipt }) => ({
+      request_id: request.requestId,
+      receipt_hash: receipt.receiptHash,
+      payload: sql.json(receipt),
+    })),
+  )} ON CONFLICT (request_id) DO NOTHING`
+
+export const insertJevEvaluationResolutions = (
+  sql: PgClient.PgClient,
+  resolutions: Arr.NonEmptyReadonlyArray<JevResolution>,
+) =>
+  sql`INSERT INTO jev_evaluation_resolutions ${sql.insert(
+    Arr.map(resolutions, (resolution) => ({
+      request_id: resolution.requestId,
+      resolution_hash: resolution.resolutionHash,
+      payload: sql.json(resolution),
+    })),
+  )} ON CONFLICT (request_id) DO NOTHING RETURNING request_id`
+
 /** Writes in the caller's transaction so final receipts and their batch share one commit. */
 export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: readonly JevEvaluationRecord[]) =>
   Effect.gen(function* () {
@@ -30,7 +54,7 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
     if (new Set(entries.map(({ request }) => request.requestId)).size !== entries.length)
       return yield* persistError('A receipt batch repeats a request')
     const resolutions = new Map<string, JevResolution>()
-    if (entries.length === 0) return resolutions
+    if (!Arr.isArrayNonEmpty(entries)) return resolutions
     const ids = entries.map(({ request }) => request.requestId)
     const scopes = [
       ...new Map(
@@ -68,22 +92,26 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
         return yield* persistError('Receipt request differs from its committed payload')
     }
     const { evidence } = yield* readJevEvaluationEvidence(sql, ids)
-    yield* sql`INSERT INTO jev_evaluation_receipts ${sql.insert(
-      entries.map(({ request, receipt }) => ({
-        request_id: request.requestId,
-        receipt_hash: receipt.receiptHash,
-        payload: sql.json(receipt),
-      })),
-    )} ON CONFLICT (request_id) DO NOTHING`
+    yield* insertJevEvaluationReceipts(sql, entries)
+    yield* Schema.decodeUnknownEffect(
+      Matches,
+      strictParseOptions,
+    )(
+      yield* sql`SELECT NOT EXISTS (
+        SELECT 1 FROM jsonb_to_recordset(${sql.json(
+          Arr.map(entries, ({ request, receipt }) => ({
+            request_id: request.requestId,
+            receipt_hash: receipt.receiptHash,
+            payload: receipt,
+          })),
+        )}::jsonb) AS expected(request_id text, receipt_hash text, payload jsonb)
+        LEFT JOIN jev_evaluation_receipts AS stored USING (request_id)
+        WHERE stored.receipt_hash IS DISTINCT FROM expected.receipt_hash
+          OR stored.payload IS DISTINCT FROM expected.payload
+      ) AS matches`,
+    )
+    const pending: JevResolution[] = []
     for (const { request, receipt } of entries) {
-      yield* Schema.decodeUnknownEffect(
-        Matches,
-        strictParseOptions,
-      )(
-        yield* sql`
-        SELECT receipt_hash=${receipt.receiptHash} AND payload=${sql.json(receipt)} AS matches
-        FROM jev_evaluation_receipts WHERE request_id=${request.requestId}`,
-      )
       const existing = evidence.get(request.requestId)?.resolution
       const resolution =
         existing ??
@@ -95,10 +123,12 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
             receiptHash: receipt.receiptHash,
           }),
         ))
-      if (existing == null)
-        yield* sql`INSERT INTO jev_evaluation_resolutions (request_id,resolution_hash,payload)
-        VALUES (${request.requestId},${resolution.resolutionHash},${sql.json(resolution)})`
+      if (existing == null) pending.push(resolution)
       resolutions.set(request.requestId, resolution)
+    }
+    if (Arr.isArrayNonEmpty(pending)) {
+      const inserted = yield* insertJevEvaluationResolutions(sql, pending)
+      if (inserted.length !== pending.length) return yield* persistError('A competing evaluation resolution committed')
     }
     return resolutions
   }).pipe(Effect.mapError(persistError))

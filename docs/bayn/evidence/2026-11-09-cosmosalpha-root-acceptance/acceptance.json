@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-reconstructed-root-diagnostic.v1",
+  "classification": "RETAINED_DIAGNOSTIC_ON_PRIOR_SOURCE",
+  "experimentId": "100e2e9359d14d8eb4c077f10f1d14f83d0a0c48e3d6b997c0a93635a2bb224c",
+  "frozenAt": "2026-11-10T06:46:04.931656+00:00",
+  "sourceInventoryId": "d881fb60c4cb560e5aafce650291ed50dd2ca3d8db99a7eac1eadac1dd99f778",
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "planSha256": "4a2f38edf6c3c27ff5c9dcef69767ae2134faafeb030d222402c06f3c787e435",
+  "resultSha256": "d4eb1872f53286a38296cf6eb4a1ee3cae6ec015597effdf281f34653e52430c",
+  "sourceIdentitySha256": "27d7c6b8c604845ad7e28003e3ab08d61537d9d8c8a0f6e3115e4fb0e800ea06",
+  "supervisor": {
+    "startedAt": "2026-11-10T06:49:17.313058+00:00",
+    "finishedAt": "2026-11-10T07:24:38.310834+00:00",
+    "wallSeconds": 2120.997812503978,
+    "wallLimitReached": false,
+    "exitCode": 0,
+    "resultSha256": "d4eb1872f53286a38296cf6eb4a1ee3cae6ec015597effdf281f34653e52430c",
+    "scope": "Supervisor status. Scientific/model completion requires retained runner results and independent audit."
+  },
+  "limitsPerArm": {
+    "evaluable_factors": 4,
+    "proposal_slots": 16,
+    "physical_requests": 80,
+    "completion_tokens": 800000,
+    "max_output_tokens": 20000
+  },
+  "resources": {
+    "requestedProposalSlots": 20,
+    "physicalRequests": 39,
+    "completionTokens": 130694,
+    "promptTokens": 105066,
+    "evaluableFactors": 12,
+    "unknownUsageRequests": 0,
+    "heldCompletionTokens": 0,
+    "pendingEvaluations": 0,
+    "successfulAuxiliaryResponses": 3,
+    "failedAuxiliaryResponses": 0
+  },
+  "arms": [
+    {
+      "arm": "graph",
+      "runId": "calendar-acceptance-20260823-graph",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "wallSeconds": 522.3190166720015,
+      "resources": {
+        "requestedProposalSlots": 6,
+        "physicalRequests": 14,
+        "completionTokens": 39208,
+        "promptTokens": 37558,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 0,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      }
+    },
+    {
+      "arm": "mcts",
+      "runId": "calendar-acceptance-20260823-mcts",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "wallSeconds": 862.0844512360054,
+      "resources": {
+        "requestedProposalSlots": 8,
+        "physicalRequests": 11,
+        "completionTokens": 51310,
+        "promptTokens": 30192,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 3,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      }
+    },
+    {
+      "arm": "no-flow",
+      "runId": "calendar-acceptance-20260823-no-flow",
+      "seed": 20260823,
+      "status": "COMPLETE",
+      "wallSeconds": 542.8151605000021,
+      "resources": {
+        "requestedProposalSlots": 6,
+        "physicalRequests": 14,
+        "completionTokens": 40176,
+        "promptTokens": 37316,
+        "rejectedRequests": 0,
+        "heldCompletionTokens": 0,
+        "unknownUsageRequests": 0,
+        "evaluableFactors": 4,
+        "evaluationAttempts": 4,
+        "completedEvaluations": 4,
+        "pendingEvaluations": 0,
+        "successfulAuxiliaryResponses": 0,
+        "failedAuxiliaryResponses": 0,
+        "blocked": {}
+      }
+    }
+  ],
+  "modelsCompleted": 3,
+  "frozenAudit": {
+    "status": "PASS",
+    "verificationFailures": 0,
+    "reportSha256": "ac3628631dd44219cfb6dfa9ecf4c9439099acb799f517ed026ebbc408ace430"
+  },
+  "independentDownstreamVerification": {
+    "status": "PASS",
+    "reportSha256": "348fdda4be50e395f12f8d28e8d3237c5bbdfb0d48a83dd0bb026fc300e3336a",
+    "verifierSha256": "2907c406e7938e99b08a09c8e08bc8668b9394da69818fa9c68efe9bf5ea7bee",
+    "modelCount": 3,
+    "outputArtifactsVerified": 18,
+    "predictionTargetRowsVerified": 1076118,
+    "maximumMetricAbsoluteError": 5.551115123125783e-17,
+    "dailySignalRowsVerified": 3630,
+    "portfolioReturnRowsVerified": 3636,
+    "findings": []
+  },
+  "nativeCandidateAudit": {
+    "reportSha256": "989008cfd5f09833d78dd1b75e6866f980563344a83547fe239edf36ddb6ce4c",
+    "records": 4,
+    "status": "PASS",
+    "candidateCountPerRecord": 1
+  },
+  "runtime": {
+    "python": "3.12.9",
+    "platform": "Linux-6.18.58-talos-x86_64-with-glibc2.40",
+    "lightgbmBinarySha256": "573d57e8a2c6290c2271b99b87afa7a802e796eafc9e8d66aefa0913cbc1616a",
+    "installedDistributionCount": 197,
+    "dependencySnapshotFile": "requirements-linux.txt",
+    "selectedPackages": {
+      "numpy": "2.5.4",
+      "pandas": "2.3.3",
+      "pyqlib": "0.9.7",
+      "lightgbm": "4.7.0",
+      "scipy": "1.18.1"
+    }
+  },
+  "reconstructedInputs": {
+    "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+    "authorConfigHashes": {
+      "graph_experiment.toml": "ca130f4c8f87c5a32cf7df1580dbb6872955f0e7fc0d67f9887cd72bb66a65d2",
+      "lightgbm_integration.example.toml": "129c7f9283edb51d902349f486925146d0ffbe5dcf5e7f79b393b2a5821da4ba"
+    },
+    "overrides": {
+      "qlib.*.provider_uri": "reconstructed checksum-verified public bundle",
+      "llm.timeout_seconds": {
+        "before": 60,
+        "after": 300
+      },
+      "llm.max_output_tokens": {
+        "before": 12000,
+        "after": 20000
+      }
+    },
+    "scope": "Reconstructed author inputs. Earlier task-local TOMLs unavailable. Frozen runner applies its separately recorded arm, provider, model, seed, storage, and target bindings."
+  },
+  "externalModelFeeUsd": 0,
+  "localHardwareAndResearchCost": "UNALLOCATED",
+  "capitalAuthority": "NONE",
+  "scope": "Separate Linux reconstruction from pinned author examples; original TOML bytes are unavailable. Complete functional diagnostic on d881 source; candidate binding defect was separately reproduced and repaired, so this is not acceptance of 651a. No scientific matrix, industry-PIT qualification or executable costed edge."
+}

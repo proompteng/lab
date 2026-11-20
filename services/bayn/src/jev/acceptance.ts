@@ -40,8 +40,15 @@ const protocol = {
   ],
 }
 
+export const conditionalStatisticalModel = {
+  method: 'CONDITIONAL_HOEFFDING_V1',
+  meanModel: 'DETERMINISTIC_CONDITIONAL_SESSION_MEANS',
+  estimand: 'AVERAGE_REGISTERED_EXPECTED_SESSION_NET',
+} as const
+
 export enum JevAcceptanceVersion {
-  Current = 'RESEARCH_EVIDENCE_V5',
+  Current = 'CONDITIONAL_EVIDENCE_V6',
+  RetainedV5 = 'RESEARCH_EVIDENCE_V5',
   RetainedV4 = 'ECONOMIC_EVIDENCE_V4',
   RetainedV3 = 'REGISTERED_WINDOW_V3',
   RetainedV2 = 'RETAINED_V2',
@@ -137,7 +144,18 @@ export class JevAcceptanceError extends Data.TaggedError('JevAcceptanceError')<{
 export const jevAcceptanceProtocolHash = (version = JevAcceptanceVersion.Current) =>
   canonicalHashV1Result(
     !usesLegacyAcceptance(version)
-      ? protocol
+      ? version === JevAcceptanceVersion.Current
+        ? {
+            ...protocol,
+            schemaVersion: 'bayn.jev-acceptance-policy.v5',
+            evaluation: {
+              ...protocol.evaluation,
+              ...conditionalStatisticalModel,
+              uncertainty: 'CONDITIONAL_HOEFFDING_BOUNDED_SUPPORT',
+              resolution: 'EXACT_INTEGER_OUTWARD_ROUNDING',
+            },
+          }
+        : protocol
       : version === JevAcceptanceVersion.RetainedV3
         ? retainedRegisteredWindowPolicy
         : retainedProtocol,
@@ -385,7 +403,7 @@ const numericalReport = (
   }
 }
 
-export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVersion.Current) =>
+export const evaluateRetainedJevAcceptance = (input: unknown, version = JevAcceptanceVersion.RetainedV5) =>
   Schema.decodeUnknownResult(
     JevAcceptanceInputSchema,
     strictParseOptions,
@@ -393,6 +411,13 @@ export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVer
     Result.mapError((cause) => new JevAcceptanceError({ message: 'Jev acceptance input is malformed', cause })),
     Result.flatMap((data) =>
       Result.gen(function* () {
+        if (version === JevAcceptanceVersion.Current)
+          return yield* Result.fail(
+            new JevAcceptanceError({
+              message:
+                'Current statistical qualification uses the system evaluator; bootstrap is retained research evidence only',
+            }),
+          )
         const protocol = protocolFor(version)
         const legacy = usesLegacyAcceptance(version)
         const protocolHash = yield* jevAcceptanceProtocolHash(version)
@@ -510,7 +535,7 @@ export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVer
           schemaVersion: 'bayn.jev-acceptance-report.v1',
           scope:
             'Numerical targets only. Source receipts, preregistration, execution, costs and deployment require independent verification. This report grants no trading authority.',
-          ...(version === JevAcceptanceVersion.Current
+          ...(version === JevAcceptanceVersion.RetainedV5
             ? { statisticalEvidence: { status: 'RESEARCH_ONLY', reason: 'STATISTICAL_COVERAGE_NOT_ESTABLISHED' } }
             : {}),
           protocolHash,

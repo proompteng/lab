@@ -8,7 +8,7 @@ import {
   ReconciliationStore,
   ValuationStore,
   type ReconciliationPersistence,
-} from './db/execution-store'
+} from './db/execution-store/contract'
 import { WriterFence } from './execution/writer-fence'
 import { currentUtcInstant } from './time'
 import { runReconciliation } from './simulation-reconciliation/broker-reconciler-program'

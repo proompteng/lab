@@ -2,24 +2,18 @@ import { CodexAppServerClient } from '@proompteng/codex'
 import { Effect } from 'effect'
 
 import { MockCodexAppServerClient, shouldUseMockCodexClient } from './mock-codex-client'
-import { resolveCodexClientConfig } from './runtime-tooling-config'
+import { type CodexClientConfig, resolveCodexClientConfig } from './runtime-tooling-config'
 
-type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
+type Factory = (options: { defaultModel: string }) => CodexAppServerClient
 type JsonValue = number | string | boolean | JsonValue[] | { [key: string]: JsonValue | undefined } | null
 
-const resolveAgentsMcpUrl = () => resolveCodexClientConfig(process.env).agentsMcpUrl
-
-const resolveAtlasMcpUrl = () => resolveCodexClientConfig(process.env).atlasMcpUrl
-
-const resolveCodexBinary = () => resolveCodexClientConfig(process.env).binaryPath
-
-const buildMcpServers = () => {
+const buildMcpServers = (config: CodexClientConfig) => {
   const servers: Record<string, { [key: string]: JsonValue | undefined }> = {
     memories: {
-      url: resolveAgentsMcpUrl(),
+      url: config.agentsMcpUrl,
     },
     atlas: {
-      url: resolveAtlasMcpUrl(),
+      url: config.atlasMcpUrl,
     },
   }
   if (process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY) {
@@ -41,14 +35,31 @@ const defaultFactory: Factory = (options) => {
     return new MockCodexAppServerClient() as unknown as CodexAppServerClient
   }
 
+  const config = resolveCodexClientConfig()
+  const flamingo = config.flamingo?.model === options.defaultModel ? config.flamingo : null
+  const provider = flamingo ? 'flamingo' : 'openai'
+  const cliConfigOverrides = ['mcp_servers={}', 'notify=[]', `model_provider=${JSON.stringify(provider)}`]
+  if (flamingo) {
+    cliConfigOverrides.push(
+      'model_providers.flamingo.name="Flamingo"',
+      `model_providers.flamingo.base_url=${JSON.stringify(flamingo.baseUrl)}`,
+      'model_providers.flamingo.wire_api="responses"',
+      'model_providers.flamingo.requires_openai_auth=false',
+      `model_reasoning_effort=${JSON.stringify(flamingo.reasoningEffort)}`,
+      'web_search="disabled"',
+      'features.apps=false',
+    )
+  }
   return new CodexAppServerClient({
-    binaryPath: resolveCodexBinary(),
-    cliConfigOverrides: ['mcp_servers={}', 'notify=[]'],
-    defaultModel: options?.defaultModel,
+    binaryPath: config.binaryPath,
+    cliConfigOverrides,
+    defaultModel: options.defaultModel,
+    defaultEffort: flamingo?.reasoningEffort,
     threadConfig: {
+      model_provider: provider,
       'features.rmcp_client': true,
-      web_search: 'live',
-      mcp_servers: buildMcpServers(),
+      web_search: flamingo ? 'disabled' : 'live',
+      mcp_servers: buildMcpServers(config),
     },
   })
 }
@@ -70,7 +81,7 @@ const stopAllClients = () => {
   }
 }
 
-export const getCodexClient = (options?: { defaultModel?: string }) =>
+export const getCodexClient = (options: Parameters<Factory>[0]) =>
   Effect.sync(() => {
     const client = factory(options)
     activeClients.add(client)

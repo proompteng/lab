@@ -19,6 +19,7 @@ import {
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
+import { freezeEvidence } from '../immutable-evidence'
 import { JevContractError } from './contract'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { instrumentMarket, MarketKind } from '../instruments'
@@ -28,12 +29,16 @@ import {
   JevCandidatePlanStatus,
   JevEntryExclusion,
   makeJevBatchPlan,
+  type JevBatchPlan,
 } from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
-import { reproduceJevCandidateObservation } from './observation'
+import { isOwnedJevObservation, reproduceJevCandidateObservation, type OwnedJevObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
-import type { JevProtocol } from './protocol'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
+import { webullEntryContext } from './webull-entry-context'
+import { equityShortIsEligible, type EquityShortEligibility } from '../execution/equity-short'
+import { equityClockSession } from '../equity-hours'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -293,10 +298,15 @@ export const commonMomentumPrices = (
     }
   })
 
-const requestFromSnapshot = (
+// Shared deterministic material preserves v38 reconstruction; each caller applies its own strict version decoder.
+export const jevTradingSignalRequestMaterial = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
-  native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  native: {
+    readonly protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
+    readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
+    readonly portfolio: JevPortfolio
+  },
   selectionPolicy: EntryAblationSelection | null,
 ) =>
   Result.gen(function* () {
@@ -329,7 +339,8 @@ const requestFromSnapshot = (
       askMicros: candidate.prices.ask,
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
-    return yield* prepareEntryInferenceInput({
+    const webullContext = yield* webullEntryContext(snapshot, symbol)
+    return {
       ...(selectionPolicy === null
         ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
@@ -351,11 +362,25 @@ const requestFromSnapshot = (
         askMicros: candidate.prices.ask.toString(),
         capitalMicros: native.portfolio.brokerState.account.equityMicros,
         cryptoFeeTier,
+        ...(native.protocol.schemaVersion === 'bayn.jev.protocol.v41' &&
+        equityClockSession(snapshot.manifest.observedAt) === 'regular' &&
+        equityShortIsEligible(
+          native.equityShortEligibility?.[symbol],
+          native.portfolio.brokerState.account.accountId,
+          symbol,
+          snapshot.manifest.observedAt,
+        )
+          ? {
+              accountId: native.portfolio.brokerState.account.accountId,
+              equityShortEligibility: native.equityShortEligibility?.[symbol],
+            }
+          : {}),
       },
       numericalState: {
         schemaVersion: native.protocol.inputDefinition,
+        webullContext,
         task: {
-          positionPolicy: 'long-only',
+          positionPolicy: native.protocol.positionPolicy,
           horizonMinutes: native.protocol.horizonMinutes,
           decisionPurpose: native.portfolio.purpose,
           purpose:
@@ -405,8 +430,22 @@ const requestFromSnapshot = (
         },
         candidate: candidate.state,
       },
-    })
+    }
   })
+
+const requestFromSnapshot = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  native: {
+    readonly protocol: JevProtocol
+    readonly portfolio: JevPortfolio
+    readonly equityShortEligibility?: Readonly<Record<string, EquityShortEligibility>>
+  },
+  selectionPolicy: EntryAblationSelection | null,
+) =>
+  jevTradingSignalRequestMaterial(snapshot, symbol, native, selectionPolicy).pipe(
+    Result.flatMap(prepareEntryInferenceInput),
+  )
 
 export const makeJevTradingSignalRequest = (input: unknown, symbol: string) =>
   reproduceJevCandidateObservation(input).pipe(
@@ -522,6 +561,36 @@ export const makeJevTradingSignalBatch = (input: {
   reproduceJevCandidateObservation(input.observation).pipe(
     Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt, input.planVersion)),
   )
+
+const PreparedBatchTypeId: unique symbol = Symbol('PreparedJevBatch')
+
+export interface PreparedJevBatch {
+  readonly [PreparedBatchTypeId]: true
+  readonly plan: JevBatchPlan
+  readonly source: OwnedJevObservation
+}
+
+// Admission authenticates the original frozen object, including its plan and source pairing.
+const preparedBatches = new WeakSet<PreparedJevBatch>()
+
+export const isPreparedJevBatch = (batch: PreparedJevBatch) => preparedBatches.has(batch)
+
+export const prepareJevTradingSignalBatch = (
+  source: OwnedJevObservation,
+  expiresAt: string,
+  planVersion: JevBatchPlanVersion,
+) =>
+  Result.gen(function* () {
+    if (!isOwnedJevObservation(source)) return yield* unavailable('Jev batch requires an independently verified source')
+    const plan = yield* batchFromObservation(source.verified, expiresAt, planVersion)
+    const batch = Object.freeze({
+      [PreparedBatchTypeId]: true,
+      plan: freezeEvidence(plan),
+      source,
+    } satisfies PreparedJevBatch)
+    preparedBatches.add(batch)
+    return batch
+  })
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {

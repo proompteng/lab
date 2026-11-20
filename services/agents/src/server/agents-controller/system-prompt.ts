@@ -112,7 +112,7 @@ const readSystemPromptResource = (options: ResolveSystemPromptOptions, ref: Syst
 const readSystemPromptResourceResult = (options: ResolveSystemPromptOptions, ref: SystemPromptRef) =>
   readSystemPromptResource(options, ref).pipe(
     Effect.map((resource) => ({ ok: true as const, resource })),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed({
         ok: false as const,
         reason: 'SystemPromptRefReadFailed' as const,

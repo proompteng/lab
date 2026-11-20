@@ -10,7 +10,7 @@ import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { ExecutionEvidenceKind, measureRealism, RealismStatus } from './realism'
 import { OrderSchema, OrderSide, OrderStatus, OrderType, TimeInForce } from '../execution/contracts'
 import { TargetPlanStatus } from '../target-planner'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { earliestDurableWitnesses } from './obligation-witnesses'
 import { bindSystemSourceCut } from './bind-source'
 import { capturedAccountsFixture } from './source-cut.test-support'
@@ -207,7 +207,13 @@ describe('durable execution realism bindings', () => {
 
   test('a committed admission bounds decision persistence before routing despite a later controller observation', () => {
     const f = admittedFixture()
-    const bound = Result.getOrThrow(decisionAdmissionWitnesses(f.cut, document.bindings.authorityGenerationHash))
+    const bound = Result.getOrThrow(
+      decisionAdmissionWitnesses(
+        f.cut,
+        document.bindings.authorityGenerationHash,
+        indexDecisionAdmissionMutations(f.cut.mutations),
+      ),
+    )
     expect(bound.sources.has(f.receipt.sourceHash)).toBe(true)
     expect(bound.witnesses).toEqual([
       {
@@ -225,8 +231,9 @@ describe('durable execution realism bindings', () => {
     expect(witnesses.get(`DECISION:${document.contentHash}`)?.witnessedAt).toBe(f.routing.startedAt)
     const pending = Result.getOrThrow(
       decisionAdmissionWitnesses(
-        { ...f.cut, mutations: f.cut.mutations.filter((row) => row.event.sequence === 1) },
+        { ...f.cut },
         document.bindings.authorityGenerationHash,
+        indexDecisionAdmissionMutations(f.cut.mutations.filter((row) => row.event.sequence === 1)),
       ),
     )
     expect(pending.witnesses).toEqual([])
@@ -313,7 +320,15 @@ describe('durable execution realism bindings', () => {
         ],
       },
     ])
-      expect(Result.isFailure(decisionAdmissionWitnesses(cut, document.bindings.authorityGenerationHash))).toBe(true)
+      expect(
+        Result.isFailure(
+          decisionAdmissionWitnesses(
+            cut,
+            document.bindings.authorityGenerationHash,
+            indexDecisionAdmissionMutations(cut.mutations),
+          ),
+        ),
+      ).toBe(true)
   })
   const iocFixture = (status = OrderStatus.Canceled) => {
     const value = fixture()

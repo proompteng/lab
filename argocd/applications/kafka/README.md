@@ -4,9 +4,23 @@ This application owns the existing Strimzi cluster, its three controllers, three
 The [controller and broker separation design](../../../docs/kafka-kraft-controller-broker-separation-design-2026-03-11.md)
 describes the storage and quorum layout.
 
-Both node pools require `network.proompteng.ai/100g=true`. Their existing preferred separation permits three
-controllers and three brokers across Turin and Altra while excluding Ryzen. Retain each Ceph claim and let Strimzi
-roll replicas individually; require controller quorum and no under-replicated partitions before the next move.
+Both node pools require one member per physical host across Altra, Turin, and Ryzen. Kafka explicitly tolerates
+Ryzen's compute-local taint; its network label remains unchanged. Let Strimzi roll replicas individually and require
+controller quorum and no under-replicated partitions before the next move.
+
+`nvme-storage.yaml` reserves retained, node-bound NVMe volumes for the original Kafka claim names. Each host runs
+one controller with a 30 GiB volume and one broker with a 200 GiB volume. Turin uses Intel NVMe for its controller
+and Transcend NVMe for its broker; Altra and Ryzen use separate directories on their local NVMe filesystems.
+These reservations total 690 GiB across the cluster. Local PV capacities do not impose filesystem quotas.
+
+Strimzi runs with one operator replica. Future storage maintenance must pause reconciliation and stop the operator
+for the verified copy and original-name PVC handoff. Restore it only when all replacement claims and StrimziPodSet
+storage annotations agree with the reviewed desired classes. The retained local volumes remain bound through
+operator-managed Pod recreation.
+
+Follow the [migration and recovery runbook](../../../docs/runbooks/kafka-broker-storage-recovery.md). Capture and
+compare the complete Kafka inventory with `packages/scripts/src/kafka/verify-nvme-migration.ts`; its Kubernetes
+context is mandatory. A successful copy must precede every PVC handoff and every next-node catch-up gate.
 
 ## Broker heartbeat tolerance
 

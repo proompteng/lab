@@ -1,4 +1,5 @@
 import 'server-only'
+import type { AgentRunCommand } from './agent-runs'
 import { randomUUID } from 'node:crypto'
 import { platformSession, type PlatformIdentity } from '../platform/auth'
 import { humanContext } from './authorization'
@@ -273,7 +274,7 @@ async function renewConnection(
           name: operation.name,
           description: operation.description,
           inputSchema: JSON.parse(new TextDecoder().decode(operation.inputSchemaJson)),
-          readOnly: true,
+          readOnly: operation.readOnly,
         })),
       }),
     )
@@ -359,4 +360,51 @@ export async function disconnectConnection(
     }
   }
   return { revoked: true, cleanupPending: true }
+}
+
+export async function runConnectionCommand(identity: PlatformIdentity, command: AgentRunCommand, signal?: AbortSignal) {
+  const context = await authority(identity, command.agentId, signal)
+  const subject = { clientService: 'tengri-web', identity: { case: 'human' as const, value: context.issuer } }
+  const [snapshot, catalog] = await Promise.all([
+    list(context),
+    relayCall(RelayService.method.listOperations, { subject }, signal),
+  ])
+  const connection = snapshot.connections.find(
+    (item) => item.enabled && item.clientReference === connectionReference(context.agent.uid, 'agents'),
+  )
+  if (!connection) throw new OfzError(403)
+  const scope = savedConnectionOperations(catalog.operations, connection, context.agent.uid)
+  const allowed = (name: string) =>
+    scope.operations.some(
+      (op) =>
+        op.name === name &&
+        op.targets.some(
+          (target) =>
+            target.resource?.kind === 'agents.target' &&
+            target.resource.id === command.targetId &&
+            connection.resources.some(
+              (resource) => resource.kind === 'agents.target' && resource.id === command.targetId,
+            ),
+        ),
+    )
+  if (!allowed(command.operation)) throw new OfzError(403)
+  const response = await relayCall(
+    RelayService.method.execute,
+    {
+      subject,
+      body: new TextEncoder().encode(
+        JSON.stringify({
+          operationId: command.operationId,
+          clientService: 'tengri-web',
+          connectorId: 'agents',
+          operation: command.operation,
+          arguments: { runId: command.runId },
+          binding: context.binding,
+          delegationId: null,
+        }),
+      ),
+    },
+    signal,
+  )
+  return { result: new TextDecoder('utf-8', { fatal: true }).decode(response.result), canCancel: allowed('cancel_run') }
 }

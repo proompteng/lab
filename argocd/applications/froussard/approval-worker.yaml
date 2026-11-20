@@ -1,0 +1,89 @@
+apiVersion: restate.dev/v1beta1
+kind: RestateDeployment
+metadata:
+  name: froussard-approvals
+  namespace: froussard
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  minReadySeconds: 5
+  restate:
+    register:
+      service:
+        name: restate
+        namespace: restate
+        port: 9070
+    useHttp11: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: froussard
+      app.kubernetes.io/component: approvals
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: froussard
+        app.kubernetes.io/component: approvals
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:7d78ee1839cc5f13d709eeaf9c72ce71b286454170f732d2c494afa5c01ae59a
+          command: [bun, dist/approval-server.mjs]
+          ports:
+            - name: restate
+              containerPort: 9080
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: froussard-github-token
+                  key: token
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-secret
+                  key: webhook-secret
+            - name: RESTATE_REQUEST_IDENTITY_KEYS
+              value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
+            - name: FROUSSARD_COMMIT
+              value: 7881563863ea86a31683c6c14d007988626faf67
+            - name: FROUSSARD_VERSION
+              value: kargo-sha-7881563863ea86a31683c6c14d007988626faf67
+            - name: OTEL_SERVICE_NAMESPACE
+              value: froussard
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: restate
+          livenessProbe:
+            httpGet:
+              path: /health/readiness
+              port: restate
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi

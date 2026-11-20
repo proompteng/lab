@@ -128,6 +128,7 @@ const makeCosts = (prepared: Result.Result.Success<ReturnType<typeof prepareFroz
           prepared.definition.inferenceRateCard,
           { startAt: windows[0]!.openAt, endAt: windows.at(-1)!.closeAt },
           JevResearchPolicy.Deployed,
+          registration.obligations.configuration.protocol,
         ),
       ),
       sessions: policy.sessions.map((session) => ({ ...session.operatingCosts, trading: null })),

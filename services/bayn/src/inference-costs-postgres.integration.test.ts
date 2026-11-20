@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Exit, ManagedRuntime, Redacted, Result } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Stream } from 'effect'
 import { Statement } from 'effect/sql'
 
-import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { InferenceStage, makeInferenceCostReport } from './inference-costs'
 import { evaluationRequestFixture } from './jev/test-support'
 import { baynTestPostgresUrl } from './test-environment.test-support'
@@ -12,6 +13,7 @@ import { forwardPerformanceSnapshot } from './forward-performance/postgres/snaps
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
 import { makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
 import { canonicalHashV1Result } from './hash'
+import { PostgresClientLive } from './db/postgres-client'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_inference_test'
@@ -44,6 +46,20 @@ const insertSources = (sql: PgClient.PgClient, sources: readonly InferenceExpens
         SELECT * FROM jsonb_to_recordset(${sql.json(sources.map((source) => ({ request_id: source.requestId, payload: source.resolution })))})
         AS row(request_id text,payload jsonb)`
     }
+  })
+
+const tapSnapshotRows = (sql: PgClient.PgClient, observe: (input: unknown) => Effect.Effect<void>) =>
+  new Proxy(sql, {
+    apply(target, thisArg, argumentsList) {
+      const statement = Reflect.apply(target, thisArg, argumentsList) as Statement.Statement<unknown>
+      if (typeof argumentsList[0] === 'string' || !statement.compile()[0].trimStart().startsWith('WITH cut AS'))
+        return statement
+      return new Proxy(statement, {
+        get(target, property, receiver) {
+          return property === 'stream' ? Stream.tap(target.stream, observe) : Reflect.get(target, property, receiver)
+        },
+      })
+    },
   })
 
 describePostgres('read-only inference cost PostgreSQL scope', () => {
@@ -112,17 +128,151 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
   })
 
   test('filters account and session, including blocked and no-trade claims without receipts', async () => {
+    let sourceStatements = 0
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+        return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            Effect.sync(() => {
+              if (statement.compile()[0].trimStart().startsWith('WITH cut AS')) sourceStatements++
+              return statement
+            }),
+          ),
+        )
       }),
     )
+    expect(sourceStatements).toBe(1)
     expect(result.evidence.requests.map((row) => row.requestId).sort()).toEqual(
       [request.requestId, otherRequest.requestId].sort(),
     )
     expect(result.evidence.requests.every((row) => row.receipt === null && row.resolution === null)).toBe(true)
     expect(jsonText(result)).not.toContain('fixture-account')
+  })
+
+  test('drains the complete owned snapshot and releases its transaction before verifying request evidence', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        const sources = Array.from({ length: 128 }, (_, index) => retainedSource(index, 48))
+        yield* insertSources(sql, sources)
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
+        let observedRows = 0
+        let committedSnapshots = 0
+        const observed = tapSnapshotRows(sql, () =>
+          Effect.sync(() => {
+            observedRows++
+          }),
+        )
+        const tracked = new Proxy(observed, {
+          get(target, property, receiver) {
+            if (property === 'withTransaction')
+              return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                target.withTransaction(effect).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      committedSnapshots++
+                    }),
+                  ),
+                )
+            return Reflect.get(target, property, receiver)
+          },
+        })
+        const before = yield* sql`SELECT pg_backend_pid() AS pid`
+        const result = yield* acquireInferenceExpenseSnapshot(tracked, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+          Effect.result,
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        expect(committedSnapshots).toBe(1)
+        expect(observedRows).toBe(sources.length + 1)
+        expect(yield* sql`SELECT pg_backend_pid() AS pid`).toEqual(before)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([
+          { count: sources.length },
+        ])
+      }),
+    )
+  })
+
+  test('request verification failure still rolls back an enclosing writer transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
+        const fence = yield* WriterFence
+        const result = yield* fence
+          .transaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO autonomous_cycles VALUES ('capture-write', 'fixture-account', '1970-01-01', 'NO_TRADE')`
+              return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01', fence).pipe(
+                Effect.flatMap(({ verify }) => verify),
+              )
+            }),
+          )
+          .pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(
+          yield* sql`SELECT count(*)::integer AS count FROM autonomous_cycles WHERE cycle_id='capture-write'`,
+        ).toEqual([{ count: 0 }])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([{ count: 4 }])
+      }).pipe(Effect.provide(WriterFenceLive)),
+    )
+  })
+
+  test('releases the enclosing read snapshot before slow verification under the production socket guard', async () => {
+    const parsed = new URL(testUrl)
+    parsed.searchParams.set('options', `-c search_path=${ownedSchema}`)
+    const guarded = ManagedRuntime.make(
+      PostgresClientLive(
+        {
+          operationTimeoutMs: 2_000,
+          postgres: { url: Redacted.make(parsed.toString()), tls: false, caPath: '/unused' },
+        },
+        { maxConnections: 1, applicationName: 'bayn-expense-snapshot-test' },
+      ).pipe(Layer.provide(NodeServices.layer)),
+    )
+    try {
+      await guarded.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const captured = yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
+              return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+            }),
+          )
+          yield* Effect.sleep('1800 millis')
+          const snapshot = yield* captured.verify
+          expect(snapshot.evidence.requests).toHaveLength(2)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([{ count: 4 }])
+          expect(yield* sql`SHOW statement_timeout`).toEqual([{ statement_timeout: '1s' }])
+        }),
+      )
+    } finally {
+      await guarded.dispose()
+    }
+  })
+
+  test('deferred verification retains the captured malformed source after later database repair', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid' WHERE request_id=${request.requestId}`
+        const captured = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
+            return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+          }),
+        )
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash=${request.authorityGenerationHash} WHERE request_id=${request.requestId}`
+        const verified = yield* captured.verify.pipe(Effect.result)
+        expect(Result.isFailure(verified)).toBe(true)
+        const repaired = yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+        expect((yield* repaired.verify).evidence.requests).toHaveLength(2)
+      }),
+    )
   })
 
   test('retains and orders a wide claimed session without spilling its evidence payloads to disk', async () => {
@@ -134,7 +284,8 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         yield* insertSources(sql, sources)
         yield* sql`SET work_mem='64kB'`
         yield* sql`SET temp_file_limit='0'`
-        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+        return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
           Effect.ensuring(sql`RESET work_mem`.pipe(Effect.andThen(sql`RESET temp_file_limit`), Effect.orDie)),
         )
       }),
@@ -154,16 +305,17 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${otherRequest.requestId}`
-        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+        return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+        )
       }),
     )
     const report = Result.getOrThrow(
       makeInferenceCostReport(result.evidence, { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }),
     )
     expect(request.schemaVersion).toBe('bayn.jev-evaluation-request.v3')
-    expect(report.unknownUsageCount).toBe(3)
+    expect(report.unknownUsageCount).toBe(2)
     expect(report.requests.flatMap((line) => ('stage' in line ? [line.stage] : [])).sort()).toEqual([
-      InferenceStage.BaseStart,
       InferenceStage.Chart,
       InferenceStage.Jev,
     ])
@@ -177,7 +329,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
         yield* insertSources(sql, sources, true)
-        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+        return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+        )
       }),
     )
     expect(result.evidence.requests).toHaveLength(512)
@@ -199,7 +353,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
-        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+        return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+        )
       }),
     )
     expect(result.evidence.requests).toEqual([])
@@ -231,7 +387,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
                   }),
                 ),
               )
-              const costs = yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+              const costs = yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+                Effect.flatMap(({ verify }) => verify),
+              )
               return { before, costs }
             }),
           )
@@ -261,7 +419,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         return yield* fence.transaction(
           Effect.gen(function* () {
             yield* sql`SELECT 1`
-            const evidence = yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01', fence)
+            const evidence = yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01', fence).pipe(
+              Effect.flatMap(({ verify }) => verify),
+            )
             yield* sql`INSERT INTO autonomous_cycles VALUES ('writer-append', 'fixture-account', '1970-01-01', 'NO_TRADE')`
             return evidence
           }),
@@ -271,22 +431,38 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     expect(result.evidence.requests).toHaveLength(2)
   })
 
-  test('fails instead of silently truncating a large session', async () => {
+  test('captures every request and quote in a large owned cost session', async () => {
+    const sources = Array.from({ length: 10_001 }, (_, index) => retainedSource(index, 1))
+    const quotes = sources.map((source) => Result.getOrThrow(makeInferenceExpenseQuote(source, expenseRateFixture)))
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
-        yield* sql`INSERT INTO jev_evaluation_requests
-          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash}, '{}'::jsonb
-          FROM generate_series(1, 10001) AS n`
-        return yield* Effect.result(readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01'))
+        yield* insertSources(sql, sources, true)
+        yield* sql`INSERT INTO inference_expense_quotes
+          SELECT * FROM jsonb_to_recordset(${sql.json(
+            quotes.map((quote) => ({
+              quote_hash: quote.quoteHash,
+              account_id: 'fixture-account',
+              session_date: quote.sessionDate,
+              payload: quote,
+              verified_at: '1970-01-01T00:01:00Z',
+            })),
+          )}) AS row(quote_hash text,account_id text,session_date date,payload jsonb,verified_at timestamptz)`
+        return yield* acquireInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+        )
       }),
     )
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) expect(result.failure.message).toContain('complete-report limit')
-  })
+    expect(result.evidence.requests).toHaveLength(sources.length)
+    expect(result.quotes).toHaveLength(quotes.length)
+    const requests = new Set(result.evidence.requests.map((row) => row.requestId))
+    expect(sources.every((source) => requests.has(source.requestId))).toBe(true)
+    const capturedQuotes = new Set(result.quotes.map((row) => row.quote.quoteHash))
+    expect(quotes.every((quote) => capturedQuotes.has(quote.quoteHash))).toBe(true)
+  }, 30_000)
 
-  test('keeps one cursor snapshot across concurrent writes in a read-committed writer transaction', async () => {
+  test('keeps one streamed statement snapshot across concurrent writes in a read-committed writer transaction', async () => {
     const parsed = new URL(testUrl)
     parsed.searchParams.set('options', `-c search_path=${ownedSchema}`)
     const writer = ManagedRuntime.make(
@@ -294,7 +470,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     )
     const source = expenseSourceFixture()
     const quote = Result.getOrThrow(makeInferenceExpenseQuote(source, expenseRateFixture))
-    let fetches = 0
+    let observedRows = 0
     try {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
@@ -309,40 +485,35 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
           return yield* fence.transaction(
             Effect.gen(function* () {
               yield* sql`SELECT 1`
-              const captured = yield* readInferenceExpenseSnapshot(
-                sql,
+              const before = yield* sql`SELECT pg_backend_pid() AS pid`
+              const observed = tapSnapshotRows(sql, () =>
+                Effect.gen(function* () {
+                  observedRows++
+                  if (observedRows !== 1) return
+                  yield* Effect.promise(() =>
+                    writer.runPromise(
+                      Effect.gen(function* () {
+                        const write = yield* PgClient.PgClient
+                        yield* write`DELETE FROM jev_evaluation_requests WHERE request_id=${request.requestId}`
+                        yield* write`UPDATE inference_expense_quotes SET verified_at=clock_timestamp() WHERE quote_hash=${quote.quoteHash}`
+                      }),
+                    ),
+                  )
+                }),
+              )
+              const captured = yield* acquireInferenceExpenseSnapshot(
+                observed,
                 source.accountId,
                 source.sessionDate,
                 fence,
-              ).pipe(
-                Effect.provideService(Statement.CurrentTransformer, (statement) =>
-                  Effect.gen(function* () {
-                    if (statement.compile()[0].trimStart().startsWith('FETCH NEXT')) {
-                      fetches++
-                      if (fetches === 2)
-                        yield* Effect.promise(() =>
-                          writer.runPromise(
-                            Effect.gen(function* () {
-                              const write = yield* PgClient.PgClient
-                              yield* write`DELETE FROM jev_evaluation_requests WHERE request_id=${request.requestId}`
-                              yield* write`UPDATE inference_expense_quotes SET verified_at=clock_timestamp() WHERE quote_hash=${quote.quoteHash}`
-                            }),
-                          ),
-                        )
-                    }
-                    return statement
-                  }),
-                ),
-              )
-              expect(
-                yield* sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
-              ).toEqual([{ count: 0 }])
+              ).pipe(Effect.flatMap(({ verify }) => verify))
+              expect(yield* sql`SELECT pg_backend_pid() AS pid`).toEqual(before)
               return captured
             }),
           )
         }).pipe(Effect.provide(WriterFenceLive)),
       )
-      expect(fetches).toBeGreaterThan(2)
+      expect(observedRows).toBeGreaterThan(2)
       expect(result.evidence.requests.map((row) => row.requestId)).toContain(request.requestId)
       expect(result.quotes).toEqual([{ quote, verifiedAt: null }])
       const after = await writer.runPromise(
@@ -357,44 +528,45 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     }
   })
 
-  test('rolls back its cursor when capture is interrupted', async () => {
-    const exit = await runtime.runPromiseExit(
-      Effect.flatMap(PgClient.PgClient, (sql) =>
-        readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
-          Effect.provideService(Statement.CurrentTransformer, (statement) =>
-            statement.compile()[0].trimStart().startsWith('FETCH NEXT') ? Effect.interrupt : Effect.succeed(statement),
-          ),
-        ),
-      ),
-    )
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true)
-    expect(
-      await runtime.runPromise(
-        Effect.flatMap(
-          PgClient.PgClient,
-          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
-        ),
-      ),
-    ).toEqual([{ count: 0 }])
-  })
-
-  test('rolls back its cursor when a fetched source fails validation', async () => {
-    const result = await runtime.runPromise(
+  test('drains an interrupted stream and reuses the same backend after rollback', async () => {
+    await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
-        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(Effect.result)
-      }),
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        yield* insertSources(
+          sql,
+          Array.from({ length: 512 }, (_, index) => retainedSource(index, 48)),
+        )
+        const before = yield* sql`SELECT pg_backend_pid() AS pid`
+        const first = yield* Deferred.make<void>()
+        let observedRows = 0
+        const observed = tapSnapshotRows(sql, () =>
+          Effect.gen(function* () {
+            observedRows++
+            yield* Deferred.succeed(first, undefined)
+            return yield* Effect.never
+          }),
+        )
+        const capture = acquireInferenceExpenseSnapshot(observed, 'fixture-account', '1970-01-01').pipe(
+          Effect.flatMap(({ verify }) => verify),
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            Effect.succeed(
+              statement.compile()[0].trimStart().startsWith('WITH cut AS')
+                ? sql`SELECT source.*, pg_sleep(0.01) AS capture_delay FROM (${statement}) AS source`
+                : statement,
+            ),
+          ),
+        )
+        const fiber = yield* Effect.forkChild(capture)
+        yield* Deferred.await(first)
+        yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+        expect(observedRows).toBe(1)
+        expect(yield* sql`SELECT pg_backend_pid() AS pid`).toEqual(before)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([{ count: 512 }])
+      }).pipe(Effect.scoped),
     )
-    expect(Result.isFailure(result)).toBe(true)
-    expect(
-      await runtime.runPromise(
-        Effect.flatMap(
-          PgClient.PgClient,
-          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
-        ),
-      ),
-    ).toEqual([{ count: 0 }])
   })
 })

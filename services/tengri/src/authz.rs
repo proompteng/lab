@@ -11,8 +11,8 @@ use crate::{
     ofz::{
         self, Client,
         proto::{
-            Action, BeginWorkspaceEnrollment, CompleteWorkspaceRemoval, EnrollWorkspace,
-            RequestContext, Resource, ResourceKind, SetWorkspaceRuntime,
+            Action, BeginWorkspaceEnrollment, CheckRequest, CompleteWorkspaceRemoval,
+            EnrollWorkspace, RequestContext, Resource, ResourceKind, SetWorkspaceRuntime,
             execute_command_request::Command,
         },
     },
@@ -59,6 +59,7 @@ pub(crate) struct WorkspaceAccess {
     action: Action,
     target: String,
     receipt: Arc<Mutex<String>>,
+    observation: bool,
 }
 
 impl WorkspaceAuthorization {
@@ -123,6 +124,7 @@ impl WorkspaceAuthorization {
             action: principal.action,
             target: target.into(),
             receipt: Arc::new(Mutex::new(String::new())),
+            observation: principal.observation,
         })
     }
 
@@ -541,15 +543,18 @@ impl WorkspaceAccess {
                 context.deadline_unix_ms = decision_deadline;
                 let decision = client
                     .check(
-                        context.clone(),
-                        self.action,
-                        Resource {
-                            kind: ResourceKind::Workspace as i32,
-                            id: context.workspace_uid,
+                        CheckRequest {
+                            context: Some(context.clone()),
+                            action: self.action as i32,
+                            resource: Some(Resource {
+                                kind: ResourceKind::Workspace as i32,
+                                id: context.workspace_uid,
+                            }),
+                            target: self.target.clone(),
+                            stream_receipt_id: receipt.clone(),
                         },
-                        self.target.clone(),
-                        receipt.clone(),
                         self.recovery_generation,
+                        self.observation,
                     )
                     .await?;
                 *receipt = decision.audit_receipt_id.clone();

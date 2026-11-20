@@ -78,6 +78,11 @@ impl Command {
             }
         }
         match &mut intent {
+            Self::Relationships(request) => {
+                if let Some(session) = &mut request.administrator {
+                    session.session_id.clear();
+                }
+            }
             Self::RequestAccess(request) => {
                 if let Some(session) = &mut request.requester {
                     session.session_id.clear();
@@ -247,8 +252,12 @@ pub async fn execute(
     crate::commands::reconcile(database, native, &mut connection.client).await?;
     let client = &mut connection.client;
     onboarding::verify(database).await?;
-    if let Some(row)=client.query_opt("SELECT workload_id,fingerprint,response FROM ofz.platform_commands WHERE operation_id=$1 AND completed", &[&operation]).await.map_err(sql_error)? {
-        if row.get::<_,String>(0)!=peer || row.get::<_,Vec<u8>>(1)!=fingerprint {return Err(Status::already_exists("operation ID belongs to another command"));}
+    if let Some(row)=client.query_opt("SELECT workload_id,prepared,response FROM ofz.platform_commands WHERE operation_id=$1 AND completed", &[&operation]).await.map_err(sql_error)? {
+        // Recompute from immutable intent so an operation recorded before session-independent
+        // relationship fingerprints can also be reconciled after sign-in. Identity, origin,
+        // workspace, expected version and the entire change remain bound to that intent.
+        let original: Prepared = store::decode(row.get(1))?;
+        if row.get::<_,String>(0)!=peer || original.command.fingerprint()?!=fingerprint {return Err(Status::already_exists("operation ID belongs to another command"));}
         if let Command::PutConnection(request) = &command {
             connections::scope_authority(database,native,caller,&request.actions,&request.resources,request.binding.as_ref(),&session.human_id).await?;
         }
@@ -528,6 +537,12 @@ pub async fn execute(
                 .parse()
                 .map_err(|_| Status::internal("invalid audit receipt"))?,
         );
+        // Under the command lock, reconciliation and completed replay have finished and
+        // validation failed before journaling. Consumers may release this rejected intent;
+        // authentication/transport failures outside this boundary remain uncertain.
+        error
+            .metadata_mut()
+            .insert("x-ofz-command-outcome", "rejected".parse().unwrap());
         return Err(error);
     }
     client.execute("INSERT INTO ofz.platform_commands(operation_id,workload_id,fingerprint,prepared) VALUES($1,$2,$3,$4)", &[&operation,&peer,&fingerprint,&store::encode(&prepared)?]).await.map_err(sql_error)?;
@@ -688,6 +703,55 @@ async fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relationship_reconciliation_binds_everything_except_the_renewed_session() {
+        let original = proto::WritePolicyRelationshipsRequest {
+            administrator: Some(proto::PlatformHumanSession {
+                human_id: "1".repeat(64),
+                session_id: Uuid::new_v4().to_string(),
+                origin: "https://admin.proompteng.ai".into(),
+            }),
+            operation_id: Uuid::new_v4().to_string(),
+            workspace_id: Uuid::new_v4().to_string(),
+            expected_policy_version: 42,
+            reason: "Synthetic membership change".into(),
+            ..Default::default()
+        };
+        let expected = Command::Relationships(original.clone())
+            .fingerprint()
+            .unwrap();
+        let mut renewed = original.clone();
+        renewed.administrator.as_mut().unwrap().session_id = Uuid::new_v4().to_string();
+        assert_eq!(
+            Command::Relationships(renewed).fingerprint().unwrap(),
+            expected
+        );
+        let mut changed = original.clone();
+        changed.administrator.as_mut().unwrap().human_id = "2".repeat(64);
+        assert_ne!(
+            Command::Relationships(changed).fingerprint().unwrap(),
+            expected
+        );
+        let mut changed = original.clone();
+        changed.workspace_id = Uuid::new_v4().to_string();
+        assert_ne!(
+            Command::Relationships(changed).fingerprint().unwrap(),
+            expected
+        );
+        let mut changed = original.clone();
+        changed.reason = "Different intent".into();
+        assert_ne!(
+            Command::Relationships(changed).fingerprint().unwrap(),
+            expected
+        );
+        let mut changed = original;
+        changed.administrator.as_mut().unwrap().origin = "https://proompteng.ai".into();
+        assert_ne!(
+            Command::Relationships(changed).fingerprint().unwrap(),
+            expected
+        );
+    }
 
     #[test]
     fn saved_consent_keeps_its_identity_across_verification_and_runtime_changes() {

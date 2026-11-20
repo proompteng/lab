@@ -31,10 +31,11 @@ Exact native terminal evidence releases the fence. Cancellation requires the ver
 `processesStopped: true`, including cleanup of that turn's owned background terminals. UI completion without
 cleanup evidence keeps cancellation pending.
 
-Status reads retain a two-second signed admission lifetime and allow five seconds for an accepted response.
-Read recovery has one total fifteen-second budget shared by active lookup and snapshot. Each transient retry
-signs a new query. Admission expiry uses HTTP 408; signature and authority denials fail immediately.
-This recovery does not replay submissions or controls. Power settings re-fetch the MicroVM after authorization,
+Status reads use the private, mesh-authenticated reader of Restate state rather than durable read handlers.
+The controller checks current Ofz authority first; the reader binds owner, workspace, run and input digest.
+Reads retain a two-second admission lifetime and one total fifteen-second recovery budget shared by active lookup
+and snapshot. Admission expiry uses HTTP 408; authority denials fail immediately. A lost admission acknowledgement
+is reconciled by the same run ID and digest. This recovery never replays submissions or controls. Power settings re-fetch the MicroVM after authorization,
 verify its UID, owner, and runtime epoch, then patch against its current Kubernetes revision.
 
 An arbitrary shell or browser action is not made transactional by a workflow wrapper. Authoritative readback

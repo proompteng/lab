@@ -129,12 +129,16 @@ export const postFeeAccruals = (
   journal: JournalService,
   accountId: string,
   identity: Identity,
+  mode: 'post' | 'verify-only' = 'post',
 ) =>
   Effect.gen(function* () {
     const rows = yield* readFeeAccruals(sql, accountId, identity)
+    let changed = false
     const acknowledged = yield* readAcknowledgedFeePostings(sql, accountId, FeePostingKind.Accrual)
     for (const row of rows) {
       if (row.posted && acknowledged.has(row.accrualId)) continue
+      if (mode === 'verify-only')
+        return yield* invariant('Fee accrual posting requires an independently committed preparation')
       if (row.plan.transfers.length > 0)
         yield* journal.post(row.plan).pipe(
           Effect.mapError(
@@ -147,11 +151,13 @@ export const postFeeAccruals = (
               }),
           ),
         )
-      if (!row.posted)
+      if (!row.posted) {
         yield* sql`UPDATE broker_fee_accruals SET posted_at=clock_timestamp() WHERE accrual_id=${row.accrualId}`
+        changed = true
+      }
       yield* acknowledgeFeePosting(sql, accountId, FeePostingKind.Accrual, row.accrualId, row.ledger_plan_hash)
     }
-    return rows
+    return changed ? yield* readFeeAccruals(sql, accountId, identity) : rows
   })
 export const feeAccrualSources = <A extends { readonly date: string }>(
   rows: readonly A[],

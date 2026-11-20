@@ -11,6 +11,7 @@ import {
   getCodexAccount,
   getCodexLogin,
   getCodexRun,
+  recoverCodexRun,
   getActiveCodexRuns,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
@@ -189,10 +190,14 @@ async function runAction(request: Request) {
         result = await listCodexModels(identity, action.agentId, action.cursor, request.signal)
         break
       case 'active-codex-runs':
-        result = await getActiveCodexRuns(identity, action.agentId)
+        result = await getActiveCodexRuns(identity, action.agentId, action.threadId, request.signal)
+        break
+      case 'recover-run':
+        await recoverCodexRun(identity, action.agentId, action.runId, action.operationId)
+        result = null
         break
       case 'codex-run':
-        result = await getCodexRun(identity, action.agentId, action.runId)
+        result = await getCodexRun(identity, action.agentId, action.runId, request.signal)
         break
       case 'create-thread':
         result = await createCodexThread(identity, action.agentId, {
@@ -208,16 +213,7 @@ async function runAction(request: Request) {
         result = null
         break
       case 'resume-thread':
-        return await resumeCodexThread(
-          identity,
-          action.agentId,
-          action.threadId,
-          {
-            model: action.model,
-            reasoningEffort: action.reasoningEffort,
-          },
-          request.signal,
-        )
+        return await resumeCodexThread(identity, action.agentId, action.threadId, request.signal)
       case 'send-turn':
         result = await sendCodexTurn(
           identity,

@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from './protocol'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import fc from 'fast-check'
@@ -76,7 +77,7 @@ test('the entry target seals the exit policy and rejects a rehashed policy subst
     true,
   )
   expect(
-    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v12' })),
+    Result.isFailure(decodeJevProtocol({ ...retainedJevProtocolV39Document, schemaVersion: 'bayn.jev.protocol.v12' })),
   ).toBe(true)
 })
 

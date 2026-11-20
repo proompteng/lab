@@ -1,10 +1,13 @@
+import { isDeepStrictEqual } from 'node:util'
 import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
 import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
-import { rebuildAccountingLedger } from '../accounting/domain'
+import { AccountingInventorySide, prepareAccounting } from '../accounting/domain'
+import type { PositionCost, PreparedAccounting } from '../accounting/model'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
+import { equityShortAccountingSchemaVersion } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { MutationEventType } from '../execution/mutations/model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
@@ -137,6 +140,7 @@ type AccountingAmountSource = 'opening-cash' | 'transaction-cash-delta'
 type ReconciliationIdentityOperation = 'content-hash' | 'decode' | 'reconciliation-id'
 
 export type ReconciliationAlgebraFailure =
+  | { readonly _tag: 'AccountingTransactionMismatch'; readonly transactionId: string; readonly brokerEventId: string }
   | {
       readonly _tag: 'AccountingPlanFailed'
       readonly transactionId: string
@@ -368,8 +372,77 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
+interface AccountingHistoryRow {
+  readonly transaction: AccountingTransaction
+  readonly fill: Fill
+  readonly prior: PositionCost
+}
+
+export const makeAccountingHistoryVerifier = (ledger: number) => {
+  type VerifiedRow = { readonly input: AccountingHistoryRow; readonly accounting: PreparedAccounting }
+  let previous = new Map<string, VerifiedRow>()
+
+  return (
+    history: readonly AccountingHistoryRow[],
+  ): Result.Result<readonly PreparedAccounting[], ReconciliationAlgebraFailure> =>
+    Result.gen(function* () {
+      const next = new Map<string, VerifiedRow>()
+      const prepared: PreparedAccounting[] = []
+      for (const row of history) {
+        const { transaction, fill, prior } = row
+        const cached = previous.get(transaction.transactionId)
+        if (cached !== undefined && isDeepStrictEqual(row, cached.input)) {
+          next.set(transaction.transactionId, cached)
+          prepared.push(cached.accounting)
+          continue
+        }
+        const expected = yield* Result.mapError(
+          prepareAccounting(
+            transaction.brokerEventId,
+            fill,
+            prior,
+            ledger,
+            transaction.schemaVersion === equityShortAccountingSchemaVersion
+              ? AccountingInventorySide.Short
+              : AccountingInventorySide.Long,
+          ),
+          (cause): ReconciliationAlgebraFailure => ({
+            _tag: 'AccountingPlanFailed',
+            transactionId: transaction.transactionId,
+            brokerEventId: transaction.brokerEventId,
+            cause,
+          }),
+        )
+        // Reconstruction verifies the expected hashes; compare every stored field, including its claimed hashes.
+        if (!isDeepStrictEqual(transaction, expected.transaction))
+          return yield* fail({
+            _tag: 'AccountingTransactionMismatch',
+            transactionId: transaction.transactionId,
+            brokerEventId: transaction.brokerEventId,
+          })
+        // The next cut can share plans with consumers only while every retained record is immutable.
+        expected.ledger.accounts.forEach(Object.freeze)
+        expected.ledger.transfers.forEach(Object.freeze)
+        Object.freeze(expected.ledger.accounts)
+        Object.freeze(expected.ledger.transfers)
+        Object.freeze(expected.ledger)
+        Object.freeze(expected.transaction)
+        const accounting = Object.freeze(expected)
+        next.set(transaction.transactionId, {
+          input: { transaction: { ...transaction }, fill: { ...fill }, prior: { ...prior } },
+          accounting,
+        })
+        prepared.push(accounting)
+      }
+      previous = next
+      return prepared
+    })
+}
+
+export type AccountingHistoryVerifier = ReturnType<typeof makeAccountingHistoryVerifier>
+
 export const verifyAccountingReceipts = (
-  transactions: readonly AccountingTransaction[],
+  prepared: readonly PreparedAccounting[],
   receipts: readonly AccountingReceipt[],
   config: AccountingLedgerIdentity,
 ): Result.Result<AccountingVerification, ReconciliationAlgebraFailure> =>
@@ -382,33 +455,14 @@ export const verifyAccountingReceipts = (
       receiptBrokerEvents.add(receipt.brokerEventId)
     }
     const receiptsByEvent = new Map(receipts.map((receipt) => [receipt.brokerEventId, receipt]))
-    const planned: {
-      readonly transaction: AccountingTransaction
-      readonly plan: LedgerPlan
-    }[] = []
-    for (const transaction of transactions) {
-      planned.push({
-        transaction,
-        plan: yield* Result.mapError(
-          rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
-          (cause): ReconciliationAlgebraFailure => ({
-            _tag: 'AccountingPlanFailed',
-            transactionId: transaction.transactionId,
-            brokerEventId: transaction.brokerEventId,
-            cause,
-          }),
-        ),
-      })
-    }
-
     const exactReceipts = new Map<string, boolean>()
-    for (const { transaction, plan } of planned) {
+    for (const { transaction, ledger: plan } of prepared) {
       exactReceipts.set(
         transaction.brokerEventId,
         yield* receiptMatches(transaction, receiptsByEvent.get(transaction.brokerEventId), plan, config),
       )
     }
-    return { exactReceipts, plans: planned.map(({ plan }) => plan) }
+    return { exactReceipts, plans: prepared.map(({ ledger }) => ledger) }
   })
 
 export const compareOpeningCash = (input: {
@@ -744,6 +798,12 @@ export const reconciliationAlgebraFailureDetails = (
   failure: ReconciliationAlgebraFailure,
 ): ReconciliationAlgebraFailureDetails => {
   switch (failure._tag) {
+    case 'AccountingTransactionMismatch':
+      return {
+        failure: 'invariant',
+        message: `accounting transaction ${failure.transactionId} differs from its fill and inventory history`,
+        cause: failure,
+      }
     case 'AccountingPlanFailed':
       return {
         failure: 'invariant',

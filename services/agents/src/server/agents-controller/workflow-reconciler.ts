@@ -134,7 +134,7 @@ const evaluateLoopConditionExpression = (expression: string, context: LoopCondit
       }
       return { ok: true as const, value: result }
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.succeed({
           ok: false as const,
           message: error instanceof Error ? error.message : String(error),
@@ -239,7 +239,7 @@ const parseLoopControlPayload = (job: Record<string, unknown>, loopControlPath: 
       }
       return { kind: 'ok' as const, control }
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.succeed({
           kind: 'invalid' as const,
           message: error instanceof Error ? error.message : String(error),

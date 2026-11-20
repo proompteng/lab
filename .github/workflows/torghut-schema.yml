@@ -1,0 +1,30 @@
+name: torghut-schema
+
+on:
+  pull_request:
+    paths:
+      - argocd/applications/torghut/clickhouse/**
+      - .github/workflows/torghut-schema.yml
+  push:
+    branches: [main]
+    paths:
+      - argocd/applications/torghut/clickhouse/**
+      - .github/workflows/torghut-schema.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: torghut-schema-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check shell syntax
+        run: bash -n argocd/applications/torghut/clickhouse/schema/reconcile.sh
+      - name: Exercise real replicated schema reconciliation
+        run: python3 argocd/applications/torghut/clickhouse/tests/schema.py

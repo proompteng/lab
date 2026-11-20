@@ -5,6 +5,7 @@ import {
   codexImageMatchesMediaType,
   isCodexAttachmentPath,
   isWorkspaceImagePath,
+  parseCodexGeneratedImagePath,
   MAX_CODEX_IMAGE_BYTES,
   type TengriCodexImage,
 } from './codex-images'
@@ -54,7 +55,8 @@ import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import { codexRunSchema, type TengriCodexRun } from './codex-run'
 import { parseCodexThreadPage } from './codex-threads'
-import type { CodexHistoryPage } from './codex-history'
+import { readCodexHistory, type CodexHistoryPage } from './codex-history'
+import { generatedImageContent } from './generated-image-content'
 import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
 
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
@@ -330,6 +332,35 @@ export async function readWorkspaceImage(identity: PlatformIdentity, agentId: st
   return { content: result.content, mediaType }
 }
 
+export async function readCodexGeneratedImage(
+  identity: PlatformIdentity,
+  agentId: string,
+  path: string,
+  signal: AbortSignal,
+) {
+  const image = parseCodexGeneratedImagePath(path)
+  if (!image) throw new TengriUnavailableError('Invalid generated image path', 400)
+  const response = await resumeCodexThread(identity, agentId, image.threadId, signal)
+  const history = await readCodexHistory(
+    response,
+    image.threadId,
+    signal,
+    (record) =>
+      new TengriUnavailableError(
+        'Generated image history is unavailable',
+        record.status === 401 || record.status === 403 ? record.status : 502,
+      ),
+  )
+  let result: ReturnType<typeof generatedImageContent>
+  try {
+    result = generatedImageContent(history.rawJson, image.path)
+  } catch {
+    throw new TengriUnavailableError('Invalid generated image', 415)
+  }
+  if (!result) throw new TengriUnavailableError('Generated image could not be found', 404)
+  return result
+}
+
 async function readFileBytes(identity: PlatformIdentity, agentId: string, filePath: string) {
   const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
@@ -583,12 +614,11 @@ export async function resumeCodexThread(
   identity: PlatformIdentity,
   agentId: string,
   threadId: string,
-  options: TengriCodexOptions = {},
   signal: AbortSignal = new AbortController().signal,
 ) {
   const source = await stream(
     'resumeCodexThread',
-    { agentId, threadId, ...options },
+    { agentId, threadId },
     identity,
     NO_PRESERVED_SCALAR_DEFAULTS,
     TENGRI_UNARY_TIMEOUT_MS,
@@ -676,14 +706,30 @@ export async function sendCodexTurn(
   )
 }
 
-export async function getActiveCodexRuns(identity: PlatformIdentity, agentId: string) {
-  const result = await unary<RawRecord>('getActiveCodexRuns', { id: agentId }, identity)
+export async function getActiveCodexRuns(
+  identity: PlatformIdentity,
+  agentId: string,
+  threadId?: string,
+  signal?: AbortSignal,
+) {
+  const result = await unary<RawRecord>(
+    'getActiveCodexRuns',
+    { id: agentId, threadId },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
   if (!Array.isArray(result.runs)) throw new TengriUnavailableError('Invalid active run list')
-  return result.runs.map(normalizeRun)
+  const runs = result.runs.map(normalizeRun)
+  if (runs.some((run) => run.agentId !== agentId || (threadId !== undefined && run.threadId !== threadId)))
+    throw new TengriUnavailableError('Invalid active run scope')
+  return runs
 }
 
-export async function getCodexRun(identity: PlatformIdentity, agentId: string, runId: string) {
-  return normalizeRun(await unary<RawRecord>('getCodexRun', { agentId, runId }, identity))
+export async function getCodexRun(identity: PlatformIdentity, agentId: string, runId: string, signal?: AbortSignal) {
+  return normalizeRun(
+    await unary<RawRecord>('getCodexRun', { agentId, runId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal),
+  )
 }
 
 function normalizeRun(value: RawRecord): TengriCodexRun {
@@ -729,6 +775,10 @@ export async function steerCodexTurn(
       identity,
     ),
   )
+}
+
+export async function recoverCodexRun(identity: PlatformIdentity, agentId: string, runId: string, operationId: string) {
+  await unary('recoverCodexRun', { agentId, runId, operationId }, identity)
 }
 
 export async function interruptCodexTurn(

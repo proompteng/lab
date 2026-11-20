@@ -80,6 +80,8 @@ export const bindLatencyReplayInput = (
 ) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    if (registration.obligations.configuration.schemaVersion !== 'bayn.qualification-runtime.v1')
+      return yield* fail('Polling latency replay cannot establish a streaming runtime registration')
     const definition = registration.policies.find((p) => p.policy === input.policy)
     const first = registration.calendar.sessions[0]
     const last = registration.calendar.sessions.at(-1)
@@ -103,7 +105,12 @@ export const bindLatencyReplayInput = (
       definition.riskPolicy,
     )
     const identity = yield* nativeReplayPolicyIdentity(input.policy, configuration.protocol)
-    const tariff = yield* registeredReplayInferenceTariff(definition.inferenceRateCard, input.interval, input.policy)
+    const tariff = yield* registeredReplayInferenceTariff(
+      definition.inferenceRateCard,
+      input.interval,
+      input.policy,
+      configuration.protocol,
+    )
     if (
       brokerIdentity.environment !== BrokerEnvironment.Sandbox ||
       registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)?.accountBindingHash !==

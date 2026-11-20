@@ -86,10 +86,9 @@ export interface IssueRunnerServiceDefinition {
   ) => Effect.Effect<string, WorkflowError | ConfigError | TrackerError | WorkspaceError | CodexProtocolError>
 }
 
-export class IssueRunnerService extends Context.Tag('symphony/IssueRunnerService')<
-  IssueRunnerService,
-  IssueRunnerServiceDefinition
->() {}
+export class IssueRunnerService extends Context.Service<IssueRunnerService, IssueRunnerServiceDefinition>()(
+  'symphony/IssueRunnerService',
+) {}
 
 export const makeIssueRunnerLayer = (logger: Logger) =>
   Layer.effect(
@@ -113,7 +112,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
 
           if (toolName === 'linear_graphql' && typeof args === 'string') {
             const response = yield* tracker.executeLinearGraphql(args).pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.succeed({
                   error: error.message,
                   code: error.code,
@@ -140,7 +139,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
             }
 
             const response = yield* tracker.executeLinearGraphql(query, variables).pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.succeed({
                   error: error.message,
                   code: error.code,
@@ -160,23 +159,23 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
             } satisfies DynamicToolCallResponse
           }
 
-          const workflowResult = yield* Effect.either(workflow.current)
-          if (workflowResult._tag === 'Left') {
+          const workflowResult = yield* Effect.result(workflow.current)
+          if (workflowResult._tag === 'Failure') {
             return {
               success: false,
               contentItems: [
                 {
                   type: 'inputText',
                   text: JSON.stringify({
-                    error: workflowResult.left.message,
-                    code: workflowResult.left.code,
+                    error: workflowResult.failure.message,
+                    code: workflowResult.failure.code,
                   }),
                 },
               ],
             } satisfies DynamicToolCallResponse
           }
 
-          const { config } = workflowResult.right
+          const { config } = workflowResult.success
           const repo = typeof raw.repo === 'string' && raw.repo.trim().length > 0 ? raw.repo.trim() : config.target.repo
           const action = typeof raw.action === 'string' ? raw.action : ''
 
@@ -238,7 +237,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                 return { error: 'unsupported_action', detail: action || null }
             }
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.succeed({
                 error: error.message,
                 code: error.code,
@@ -378,7 +377,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                           issueState: lastIssue.state,
                         })
                         .pipe(
-                          Effect.catchAll((error) =>
+                          Effect.catch((error) =>
                             Effect.sync(() => {
                               runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
                             }),

@@ -1,5 +1,5 @@
-import * as S from '@effect/schema/Schema'
-import * as Either from 'effect/Either'
+import * as S from 'effect/Schema'
+import * as Result from 'effect/Result'
 
 import { resolveFeatureFlagsClientConfig } from './integrations-config'
 
@@ -81,9 +81,9 @@ export const getBooleanFeatureFlag = async (request: BooleanFlagRequest): Promis
     if (!response.ok) return request.defaultValue
 
     const body = await response.json()
-    const decoded = S.decodeUnknownEither(BooleanEnabledSchema)((body as { enabled?: unknown } | null)?.enabled)
-    if (Either.isLeft(decoded)) return request.defaultValue
-    return decoded.right
+    const decoded = S.decodeUnknownResult(BooleanEnabledSchema)((body as { enabled?: unknown } | null)?.enabled)
+    if (Result.isFailure(decoded)) return request.defaultValue
+    return decoded.success
   } catch {
     return request.defaultValue
   } finally {

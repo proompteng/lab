@@ -284,3 +284,26 @@
     overflow: hidden;
   }
 }
+
+/* Portal menus are portaled to body; scope touch and reduced-motion treatment to this application. */
+@media (max-width: 767px) {
+  body:has([data-admin-console])
+    :is(
+      [data-slot='button'],
+      [data-slot='sidebar-menu-button'],
+      [role='combobox'],
+      [role='option'],
+      [role='menuitem']
+    ) {
+    min-height: 2.75rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body:has([data-admin-console]) *,
+  body:has([data-admin-console]) *::before,
+  body:has([data-admin-console]) *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -5,7 +5,7 @@ import { NodeServices } from '@effect/platform-node'
 import { Effect, Redacted, Result } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
-import { PostgresClientResourceLive } from './resources'
+import { PostgresClientLive } from '../db/postgres-client'
 
 const server = createServer()
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -17,7 +17,7 @@ try {
   const result = await Effect.runPromise(
     Effect.void.pipe(
       Effect.provide(
-        PostgresClientResourceLive({
+        PostgresClientLive({
           operationTimeoutMs: 10_000,
           postgres: {
             url: Redacted.make(`postgresql://fixture@127.0.0.1:${address.port}/fixture`),

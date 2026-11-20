@@ -18,12 +18,7 @@ import {
   JevOutcome,
   type JevEvaluationRequest,
 } from '../jev/evidence'
-import {
-  EntryInferenceJournal,
-  prepareClaimedEntry,
-  type EntryHandoff,
-  type EntryStageTransition,
-} from '../jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff, type EntryStageTransition } from '../jev/entry-inference'
 import { JevFailure } from '../jev/contract'
 import { decodeStagedCheckpoint, type StagedDispatchClaim, type StagedTerminalReceipt } from '../jev/staged-checkpoint'
 import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
@@ -38,7 +33,11 @@ import {
   makeJevResolution,
   type JevEvaluationEvidence,
 } from '../jev/resolution'
-import { reproduceJevTradingSignalBatch, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
+import {
+  isPreparedJevBatch,
+  reproduceJevTradingSignalBatch,
+  reproduceJevTradingSignalBatchEvidence,
+} from '../jev/trading-signals'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -283,13 +282,12 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             return pending.sort()
           }),
         ),
-      begin: (raw, suppliedObservation) =>
+      begin: (batch) =>
         atomic(
           Effect.gen(function* () {
-            const decoded = yield* Effect.fromResult(decodeJevBatchPlan(raw))
-            yield* Effect.fromResult(reproduceJevTradingSignalBatch(suppliedObservation, decoded))
-            yield* recordObservation({ contentHash: decoded.observationHash, payload: suppliedObservation })
-            const plan = yield* readBatchSource(decoded)
+            if (!isPreparedJevBatch(batch)) return yield* failure('Jev control admission requires a prepared batch')
+            yield* recordObservation({ contentHash: batch.plan.observationHash, payload: batch.source.payload })
+            const plan = yield* readBatchSource(batch.plan)
             const saved = yield* readBatch(plan.batchId)
             if (saved !== null) return { ...saved, dispatches: [] }
             const claimedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
@@ -300,23 +298,13 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
               if (candidate.status === JevCandidatePlanStatus.Requested) {
                 yield* write('request', candidate.request.requestId, candidate.request)
                 plannedRequests.set(candidate.request.requestId, candidate.request)
-                const initial = yield* Effect.fromResult(
-                  prepareClaimedEntry({
-                    requestId: candidate.request.requestId,
-                    input: candidate.request.request,
-                    observedAt: candidate.request.observedAt,
-                    expiresAt: candidate.request.expiresAt,
-                    claimedAt,
-                  }),
-                )
-                if (initial.visualClaim !== null) {
-                  const admitted = yield* recordClaim(initial.visualClaim)
+                const dispatch = yield* Effect.fromResult(makeJevDispatch({ request: candidate.request, claimedAt }))
+                if (dispatch.visualClaim !== null) {
+                  const admitted = yield* recordClaim(dispatch.visualClaim)
                   if (!admitted.dispatchAllowed)
                     return yield* failure('Initial visual claim was not admitted with its request')
                 }
-                dispatches.push(
-                  makeJevDispatch({ request: candidate.request, claimedAt, visualClaim: initial.visualClaim }),
-                )
+                dispatches.push(dispatch)
               }
             }
             return { plan, result: null, dispatches }
@@ -518,14 +506,6 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             input,
           ),
         )
-        const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
-        if (skip !== undefined) {
-          const checkpoint = yield* staged(request)
-          yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
-          const stored = yield* read('base-start-skip', input.requestId)
-          if (stored === null) yield* write('base-start-skip', input.requestId, skip)
-          else yield* same(stored, skip)
-        }
         const existing = yield* read('handoff', request.requestId)
         yield* Effect.fromResult(verifyStagedCheckpointHandoff(yield* staged(request), handoff))
         if (existing !== null) {
@@ -571,21 +551,11 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 Effect.gen(function* () {
                   if (terminal === null)
                     return { requestId: successor.handoff.requestId, ...(yield* recordHandoff(successor.handoff)) }
-                  if (
-                    (successor.kind === 'VISUAL' &&
-                      (terminal.stage !== 'CHART' ||
-                        successor.claim.stage !== 'BASE_START' ||
-                        successor.claim.requestId !== terminal.requestId)) ||
-                    (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
-                  )
+                  if (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
                     return yield* failure('A visual successor must belong to its terminal request and stage')
                   yield* recordTerminal(terminal)
                   const admission =
-                    successor.kind === 'NONE'
-                      ? { dispatchAllowed: false }
-                      : successor.kind === 'VISUAL'
-                        ? yield* recordClaim(successor.claim)
-                        : yield* recordHandoff(successor.handoff)
+                    successor.kind === 'NONE' ? { dispatchAllowed: false } : yield* recordHandoff(successor.handoff)
                   return { requestId: terminal.requestId, ...admission }
                 }),
               ),
@@ -625,13 +595,23 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             if ((yield* Effect.fromResult(canonicalHashV1Result(call.request))) !== call.requestHash)
               return yield* failure('Provider call differs from its sealed request bytes')
             const subject = Schema.Struct({ symbol: SymbolSchema })
-            const { symbol } = yield* call.stage !== 'JEV'
+            const { symbol } = yield* call.schemaVersion === 'bayn.replay-inference-call.v4'
               ? call.stage === 'CHART'
-                ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
-                : Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(
-                    call.request.input[0].content[2].data,
-                  ).pipe(Effect.map((value) => value.source))
-              : Schema.decodeUnknownEffect(subject)(call.request.state)
+                ? Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(call.request.state).pipe(
+                    Effect.map((value) => value.source),
+                  )
+                : call.stage === 'BASE_START'
+                  ? Schema.decodeUnknownEffect(Schema.Struct({ source: Schema.Struct({ source: subject }) }))(
+                      call.request.state,
+                    ).pipe(Effect.map((value) => value.source.source))
+                  : Schema.decodeUnknownEffect(subject)(call.request.state)
+              : call.stage !== 'JEV'
+                ? call.stage === 'CHART'
+                  ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
+                  : Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(
+                      call.request.input[0].content[2].data,
+                    ).pipe(Effect.map((value) => value.source))
+                : Schema.decodeUnknownEffect(subject)(call.request.state)
             const matches = []
             for (const request of plannedRequests.values()) {
               if (

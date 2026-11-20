@@ -29,6 +29,9 @@ Runtime expectations:
 - a valid release must include both artifacts; a client-only Vite build is not sufficient
 - the application runs without a Docker daemon, Docker socket mounts, or runtime Docker/Buildx clients
 - the workspace bootstrap init container exits after preparing the persistent `/workspace`; it is not a sidecar
+- Jangar uses Effect 4.1.2, including the shared Agents client, service layers and core Schema APIs
+- `bun run --cwd services/jangar test:production-runtime` starts the built server and checks health, model discovery
+  and chat input validation plus a completion using the built-in mock Codex backend; CI and the Nix runtime assembly both run it before release
 
 ## Image Build
 
@@ -83,7 +86,7 @@ Checks:
 
 1. `jangar-build-push` validates the runtime contract, completes the final multi-architecture index, and publishes the
    eligible `kargo-sha-<40>` image after a merge to `main`; legacy `sha-*` and mutable `latest` are not Warehouse inputs.
-2. The Kargo `jangar` Warehouse discovers the image and creates Freight in `lab-delivery`.
+2. The Kargo `jangar` Warehouse discovers the image and creates Freight in `jangar-release`.
 3. The exact automatic `jangar` Stage policy promotes the Freight. Kargo copies the source commit and writes the full
    digest/build metadata to `kargo/jangar`, then Argo tracks that branch and waits for sync/health.
 4. The configured Jangar post-deploy health checks validate the rollout, promoted digest, running image ID, and Argo

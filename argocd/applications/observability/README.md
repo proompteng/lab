@@ -39,6 +39,17 @@ See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) f
 
 ## Sources of truth
 
+Torghut websocket scrape loss pages after five minutes, including a disappeared target. Failed or missing readiness
+pages after two minutes on a reachable target, including overnight crypto operation. Both alerts require an enabled
+deployment and aggregate by service so a failed old pod cannot override a healthy replacement. Kafka publication
+stalls retain the existing UTC market window and page only while readiness is healthy. All three use `notify: email`.
+Recent container restarts remain visible as warnings for ten minutes; availability alerts own sustained failures.
+
+`RegistryCleanupMissed` warns by email when the latest scheduled cleanup has no subsequent success after its two-hour
+Job deadline and five-minute alert delay. It uses the CronJob's native last-success timestamp, so an owned recovery
+clears it without deleting retained failed Jobs. [Native scenarios](tests/torghut-registry-alerts.yaml) cover outage,
+recovery, missing telemetry, pod replacement, scale-to-zero, restart expiry and cleanup deadlines.
+
 The cluster Alloy collector retains Bayn API, execution, activation, research, PostgreSQL, broker egress-proxy and
 TigerBeetle logs by an explicit container allowlist. Valkey logs use their existing failover-pod discovery. Current
 Loki readback must verify the actual container and pod labels; an `up` scrape establishes metric delivery only.
@@ -77,6 +88,11 @@ failure. These observations do not establish replication correctness or a succes
 The rules use the existing `notify: email` route. Native Prometheus scenarios in [platform-alerts.yaml](tests/platform-alerts.yaml)
 exercise firing delays, recovery, idle promotions and missing observations. Argo health and scrape health remain
 infrastructure evidence; application acceptance still requires actual authorized connector results and durable receipts.
+
+`PlatformApplicationUnhealthy` owns Tengri's Argo health alert too, so one unhealthy application produces one alert.
+Restate replica scrape and failure-detector degradation warn after five minutes, allowing a short single-node
+replacement. Missing metadata quorum still pages after two minutes, including when all metadata telemetry disappears.
+[Restate scenarios](tests/restate-alerts.yaml) exercise both recovery and sustained quorum loss.
 
 ## Required buckets
 
@@ -164,8 +180,15 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   its existing scrape and workers use native Effect OTLP metrics. See the
   [cache observability runbook](../../../docs/runbooks/bayn-cache-observability.md) for collection, alerts and acceptance.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
-  health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
+  health, stale Buzz and Bayn backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+
+`BaynDatabaseBackupStale` uses the existing cluster-labelled CNPG completion metric and email route. It fires after
+five minutes without an observed completed `bayn-db` backup from the last thirty-six hours, including missing
+completion telemetry. The newest completed backup wins; running or failed backups and the retired native-arrival
+cluster cannot clear it. A daily full backup can take hours, so this is not a short running-job timeout. A completed
+backup does not establish a successful restore. [Native scenarios](tests/bayn-backup-alerts.yaml) cover the age and
+hold boundaries, recovery, missing telemetry, excluded clusters and stable alert identity.
 
 The TA and market-data archive scrapes retain separate pipeline identities. Their critical email alerts detect a
 missing scrape, no running Flink job, and stalled or missing checkpoints, with mutually exclusive failure conditions
@@ -190,6 +213,19 @@ reviewed Alertmanager revision bump, as described in the [email runbook](../../.
 Ceph host read-latency incidents have a dedicated route with ten-second first delivery, fifteen-minute updates and
 four-hour repeats. Their stable node identity and ten-minute recovery hold avoid OSD membership churn while the
 annotations retain individual OSD latencies. Other critical Ceph alerts keep the general critical route.
+
+Ceph queue wait, commit latency, health warning and scrub-debt incidents require ten continuous minutes of recovery
+before resolving. Detection thresholds and firing delays are unchanged. The generic health warning excludes
+scrub-only debt, which has its own thirty-minute alert. Any additional active health check keeps the generic warning,
+and missing detail telemetry cannot suppress it. Its notification lists the active check names. Review a retained
+crash with `ceph crash info <id>` before acknowledging that exact report with `ceph crash archive <id>`;
+archiving preserves the crash evidence and leaves new-crash detection enabled.
+
+PVC free-space alerts retain the 15% warning for thirty minutes and 5% critical for ten minutes.
+The critical rule excludes capacity-only block-device observations with both available and used bytes zero.
+Alloy retains kubelet used bytes alongside available and capacity bytes. Missing used-byte telemetry leaves
+critical detection enabled, and any positive used-byte observation preserves detection of a completely full filesystem.
+Raw block-device capacity does not establish free space inside a VM; that requires guest filesystem telemetry.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`

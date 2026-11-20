@@ -1,0 +1,264 @@
+rule_files:
+- rules.yaml
+evaluation_interval: 1m
+tests:
+- name: readiness failure pages overnight after two minutes and resolves on recovery
+  interval: 1m
+  input_series:
+  - &id001
+    series: kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}
+    values: 1+0x160
+  - &id002
+    series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 1+0x25
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x4 1+0x20
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing"}) or vector(0)
+    eval_time: 1m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing",notify="email",team="trading",job="torghut",namespace="torghut",service="torghut-ws",pod="",instance=""})
+      or vector(0)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing"}) or vector(0)
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: failed scrape pages once without readiness duplication
+  interval: 1m
+  input_series:
+  - series: kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}
+    values: 1+0x160
+  - series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x15
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x15
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderDown",alertstate="firing"}) or vector(0)
+    eval_time: 4m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TorghutWSForwarderDown",alertstate="firing",notify="email",team="trading",job="torghut",namespace="torghut",service="torghut-ws",pod="",instance=""})
+      or vector(0)
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing"}) or vector(0)
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: disappeared target pages once
+  interval: 1m
+  input_series:
+  - series: kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}
+    values: 1+0x160
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderDown",alertstate="firing"}) or vector(0)
+    eval_time: 4m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TorghutWSForwarderDown",alertstate="firing",notify="email",team="trading",job="torghut",namespace="torghut",service="torghut-ws",pod="",instance=""})
+      or vector(0)
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing"}) or vector(0)
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: reachable target with missing readiness metric pages
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing",notify="email",team="trading",job="torghut",namespace="torghut",service="torghut-ws",pod="",instance=""})
+      or vector(0)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: intentional scale to zero stays quiet
+  interval: 1m
+  input_series:
+  - series: kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}
+    values: 0+0x15
+  - series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x15
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x15
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderDown",alertstate="firing"}) or vector(0)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing"}) or vector(0)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: failed old target cannot override healthy replacement
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 1+0x25
+  - series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="old",pod="old"}
+    values: 0+0x25
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="old",pod="old"}
+    values: 0+0x25
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderDown",alertstate="firing"}) or vector(0)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing"}) or vector(0)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: stale healthy telemetry cannot hide missing readiness on current target
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="old",pod="old"}
+    values: 0+0x25
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="old",pod="old"}
+    values: 1+0x25
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSForwarderNotReady",alertstate="firing",notify="email",team="trading",job="torghut",namespace="torghut",service="torghut-ws",pod="",instance=""})
+      or vector(0)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: recent restart warns then clears despite retained OOM reason
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 1+0x25
+  - series: kube_pod_container_status_restarts_total{namespace="torghut",pod="torghut-ws-current",container="torghut-ws"}
+    values: 0 1+0x24
+  - series: kube_pod_container_status_last_terminated_reason{namespace="torghut",pod="torghut-ws-current",container="torghut-ws",reason="OOMKilled"}
+    values: 1+0x25
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSContainerRestarts",alertstate="firing",severity="warning",notify=""}) or vector(0)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="TorghutWSContainerRestarts",alertstate="firing"}) or vector(0)
+    eval_time: 15m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TorghutWSRestartsOrOOM",alertstate="firing"}) or vector(0)
+    eval_time: 15m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: cleanup warns after two hour deadline and clears on owned recovery
+  interval: 1m
+  input_series:
+  - &id003
+    series: kube_cronjob_created{namespace="registry",cronjob="registry-cleanup"}
+    values: 1+0x160
+  - &id004
+    series: kube_cronjob_status_last_schedule_time{namespace="registry",cronjob="registry-cleanup"}
+    values: 60+0x160
+  - series: kube_cronjob_status_last_successful_time{namespace="registry",cronjob="registry-cleanup"}
+    values: 0+0x135 8160+0x24
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="RegistryCleanupMissed",alertstate="firing"}) or vector(0)
+    eval_time: 120m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="RegistryCleanupMissed",alertstate="firing",severity="warning",notify="email",namespace="registry",cronjob="registry-cleanup"})
+      or vector(0)
+    eval_time: 127m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="RegistryCleanupMissed",alertstate="firing"}) or vector(0)
+    eval_time: 137m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: cleanup without previous success still warns
+  interval: 1m
+  input_series:
+  - *id003
+  - *id004
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="RegistryCleanupMissed",alertstate="firing",notify="email"}) or vector(0)
+    eval_time: 127m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: successful cleanup stays quiet regardless of retained failed jobs
+  interval: 1m
+  input_series:
+  - *id004
+  - series: kube_cronjob_status_last_successful_time{namespace="registry",cronjob="registry-cleanup"}
+    values: 120+0x160
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="RegistryCleanupMissed",alertstate="firing"}) or vector(0)
+    eval_time: 127m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: market-hours Kafka stall pages only with healthy readiness 1
+  interval: 1m
+  input_series:
+  - series: kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}
+    values: 1+0x860
+  - series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 1+0x860
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 1+0x860
+  - series: torghut_ws_kafka_send_latency_seconds_count{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x860
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSKafkaSendsStalledDuringMarketHours",alertstate="firing",notify="email",team="trading",namespace="torghut",service="torghut-ws"})
+      or vector(0)
+    eval_time: 14h10m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: market-hours Kafka stall pages only with healthy readiness 0
+  interval: 1m
+  input_series:
+  - series: kube_deployment_spec_replicas{namespace="torghut",deployment="torghut-ws"}
+    values: 1+0x860
+  - series: up{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 1+0x860
+  - series: torghut_ws_readyz_status{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x860
+  - series: torghut_ws_kafka_send_latency_seconds_count{job="torghut",namespace="torghut",service="torghut-ws",instance="current",pod="current"}
+    values: 0+0x860
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TorghutWSKafkaSendsStalledDuringMarketHours",alertstate="firing",notify="email",team="trading",namespace="torghut",service="torghut-ws"})
+      or vector(0)
+    eval_time: 14h10m
+    exp_samples:
+    - labels: '{}'
+      value: 0

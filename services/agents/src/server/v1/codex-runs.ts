@@ -87,7 +87,7 @@ const withCodexRunProjectionStore = <A>(
     const stores = yield* CodexRunProjectionStoreService
     return yield* Effect.acquireUseRelease(
       stores.open,
-      (store) => stores.ready(store).pipe(Effect.zipRight(run(store, stores))),
+      (store) => stores.ready(store).pipe(Effect.andThen(run(store, stores))),
       stores.close,
     )
   })
@@ -209,9 +209,9 @@ const codexRunsStatus = (error: CodexRunsError) => {
 }
 
 const runHandler = async (effect: Effect.Effect<Record<string, unknown>, CodexRunsError>): Promise<Response> => {
-  const result = await Effect.runPromise(effect.pipe(Effect.either))
-  if (result._tag === 'Right') return okResponse(result.right)
-  return errorResponse(describeCodexRunsError(result.left), codexRunsStatus(result.left))
+  const result = await Effect.runPromise(effect.pipe(Effect.result))
+  if (result._tag === 'Success') return okResponse(result.success)
+  return errorResponse(describeCodexRunsError(result.failure), codexRunsStatus(result.failure))
 }
 
 export const getCodexRunHistoryHandler = (request: Request, deps: CodexRunsApiDependencies = {}) =>

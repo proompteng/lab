@@ -29,7 +29,6 @@ import { unusedEntryExpiresAt } from '../entry-admission'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
-export const intradayEntryRearmDelayMs = 60_000
 
 export type IsoDateShiftCause =
   | { readonly _tag: 'IsoDateInputInvalid'; readonly date: string; readonly epochMillis: number }
@@ -190,7 +189,7 @@ export const nextIntradayEntryAttemptOrdinal = (
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
       ? cycle.identity.entryAttemptOrdinal
       : undefined
-  const rearmAt = Date.parse(cycle.terminalAt) + intradayEntryRearmDelayMs
+  const rearmAt = Date.parse(cycle.terminalAt)
   return currentAttempt !== undefined &&
     currentAttempt < 2_147_483_647 &&
     Number.isFinite(rearmAt) &&
@@ -203,7 +202,7 @@ export const nextIntradayEntryAttemptOrdinal = (
  * An authority rollover or expired entry lease can leave an unused cycle without a decision. Reconstruct its
  * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
  * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
- * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
+ * current execution authority. The terminal-time boundary, cutoff and fresh admission checks still apply.
  */
 export const canRearmUnusedCycle = (
   cycle: AutonomousCycle,

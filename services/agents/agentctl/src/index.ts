@@ -1,14 +1,13 @@
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 
-import { Command, HelpDoc, ValidationError } from '@effect/cli'
-import { BunContext, BunRuntime } from '@effect/platform-bun'
-import { NodeContext, NodeRuntime } from '@effect/platform-node'
+import { CliError, CliOutput, Command } from 'effect/cli'
+import { BunRuntime, BunServices } from '@effect/platform-bun'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
 
 import { makeApp } from './cli/app'
 import { makeAgentctlContextLayer } from './cli/context'
@@ -20,26 +19,18 @@ import { EXIT_UNKNOWN, EXIT_VALIDATION, getVersion } from './runtime'
 import { TransportLive } from './transport'
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined'
-const platformLayer = isBun ? BunContext.layer : NodeContext.layer
+const platformLayer = isBun ? BunServices.layer : NodeServices.layer
 const runMain = isBun ? BunRuntime.runMain : NodeRuntime.runMain
 
 const handleExit = (exit: Exit.Exit<unknown, unknown>, onExit: (code: number) => void) => {
-  if (Exit.isSuccess(exit) || Cause.isInterruptedOnly(exit.cause)) {
+  if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
     onExit(0)
     return
   }
 
-  const failure = Option.getOrUndefined(Cause.failureOption(exit.cause))
-  if (failure && ValidationError.isValidationError(failure)) {
-    const text = HelpDoc.toAnsiText(failure.error)
-    if (failure._tag === 'HelpRequested') {
-      console.log(text)
-      console.log(renderGlobalFlags())
-      onExit(0)
-    } else {
-      console.error(text)
-      onExit(EXIT_VALIDATION)
-    }
+  const failure = Cause.squash(exit.cause)
+  if (CliError.isCliError(failure)) {
+    onExit(failure._tag === 'ShowHelp' && failure.errors.length === 0 ? 0 : EXIT_VALIDATION)
     return
   }
 
@@ -96,7 +87,6 @@ const main = async () => {
     process.env.NO_COLOR = '1'
   }
   const teardownPager = setupPager(flags.pager)
-  const commandArgv = [process.argv[0] ?? 'node', process.argv[1] ?? 'agentctl', ...argv]
   const config = await loadConfig()
   const { resolved, warnings } = resolveConfig(flags, config)
   warnings.forEach((warning) => {
@@ -111,14 +101,26 @@ const main = async () => {
   })
   const transportLayer = Layer.provide(TransportLive, contextLayer)
   const appLayer = Layer.mergeAll(contextLayer, transportLayer)
-  const runtimeLayer = Layer.mergeAll(appLayer, platformLayer)
+  const outputLayer = CliOutput.layerPresenter({
+    present: (event) =>
+      Effect.gen(function* () {
+        if (event._tag === 'InvalidInvocation') {
+          const formatter = yield* CliOutput.Formatter
+          console.error(formatter.formatHelpDoc(event.helpDoc))
+          console.error(formatter.formatErrors(event.errors))
+          return
+        }
+        yield* CliOutput.defaultPresenter.present(event)
+        if (event._tag === 'Help') console.log(renderGlobalFlags())
+      }),
+  })
+  const runtimeLayer = Layer.mergeAll(appLayer, platformLayer, outputLayer)
   const app = makeApp()
-  const run = Command.run({ name: 'agentctl', version: getVersion() })(app)
-  const program = Effect.provide(run(commandArgv), runtimeLayer)
+  const run = Command.runWith(app, { version: getVersion() })
+  const program = Effect.provide(run(argv), runtimeLayer)
 
   runMain(program, {
     disableErrorReporting: true,
-    disablePrettyLogger: true,
     teardown: (exit, onExit) => {
       if (teardownPager) teardownPager()
       handleExit(exit, onExit)

@@ -55,6 +55,7 @@ export class CandidateObservationStore extends Context.Service<
       observation: CandidateObservation,
       momentumPolicy?: RepeatedMomentumPolicy,
     ) => Effect.Effect<void, OperationalError>
+    // Entry consumption follows the standing policy across cycles; management stays with its owning cycle.
     readonly latestJevWindowEnd: (input: {
       readonly cycleId: string
       readonly purpose: JevPurpose

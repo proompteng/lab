@@ -2,6 +2,15 @@
 
 This runbook documents the current Rook-Ceph configuration for the Talos-based `galactic` cluster.
 
+## Version rollout
+
+The GitOps pins select Rook 1.21.1 and Ceph 21.2.0 Umbrella. The Ceph image is pinned to the
+multi-architecture digest in `argocd/applications/rook-ceph/cluster-values.yaml`, shared by the daemons and toolbox.
+Argo applies the operator and CSI resources before the CephCluster at wave 3. Rook then performs its native
+daemon-by-daemon upgrade with the existing health checks. Keep `osd_max_scrubs=3` and the existing CephX generations.
+After reconciliation, verify all daemon versions, six OSDs up/in, available clean PGs, and actual reads and writes
+through the existing RBD, CephFS and RGW clients. A completed version rollout does not prove lower client latency.
+
 Current Kubernetes and Talos access endpoints are tracked in
 `docs/runbooks/galactic-kubernetes-access.md`. The Kubernetes node names below
 still contain old `192.168.1.*` addresses, but the current LAN reachability path
@@ -177,6 +186,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
 1. OSD pod resources: request `1000m` CPU and `8Gi` memory, limit `12Gi`
+1. Manager pod resources: request `500m` CPU and `1Gi` memory, limit `4Gi`
 1. CSI read affinity enabled with `kubernetes.io/hostname`
 
 Do not leave recovery-only overrides in the Ceph config store after backfill is

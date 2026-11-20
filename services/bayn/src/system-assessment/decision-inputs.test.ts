@@ -7,7 +7,6 @@ import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-
 import { requiredInferenceInputs } from './decision-inputs'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { makeJevBatchResult } from '../jev/batch'
@@ -39,9 +38,6 @@ describe('all used model responses retain their actual availability', () => {
                 dispatchAllowed: true,
               })),
             ),
-        }),
-        Effect.provideService(DecisionsClient, {
-          evaluate: () => Effect.die('Infeasible source cannot call chart provider'),
         }),
         Effect.provideService(JevClient, { evaluate: () => Effect.die('Infeasible source cannot call Jev provider') }),
         Effect.provide(TestClock.layer()),
@@ -115,13 +111,6 @@ describe('all used model responses retain their actual availability', () => {
         expect(inputs).toContainEqual({
           contentHash: jev.inference.responseHash,
           availableAt: jev.inference.completedAt,
-        })
-      }
-      if (handoff.baseStart.status === 'RECEIVED') {
-        responses++
-        expect(inputs).toContainEqual({
-          contentHash: handoff.baseStart.inference.responseHash,
-          availableAt: handoff.baseStart.inference.completedAt,
         })
       }
     }

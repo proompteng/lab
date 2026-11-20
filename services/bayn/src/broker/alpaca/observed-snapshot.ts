@@ -2,7 +2,7 @@ import { ObservedFeeActivitySchema } from '../fee-activity'
 import { Context, Effect, Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
-import { BrokerReadError, BrokerReadErrorKind } from './failures'
+import { BrokerReadError, BrokerReadErrorKind, type BrokerPollFailureReason } from './failures'
 import { CashReportingQuantumSchema } from './cash-reporting'
 import { CryptoFeeTierSchema } from '../crypto-fees'
 import {
@@ -58,6 +58,7 @@ const account = Schema.Struct({
   accountBlocked: Schema.Boolean,
   tradingBlocked: Schema.Boolean,
   tradeSuspendedByUser: Schema.Boolean,
+  shortingEnabled: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
 })
 const position = Schema.Struct({
@@ -114,6 +115,7 @@ const order = Schema.Struct({
   ...orderLeaf.fields,
   legs: Schema.optionalKey(Schema.Array(orderLeaf).check(Schema.isMaxLength(2))),
 })
+export const BrokerOrderReadResultSchema = observed(order)
 const fill = Schema.Struct({
   accountId: Schema.String,
   activityId: Schema.String,
@@ -133,6 +135,7 @@ const configuration = Schema.Struct({
   source: Schema.Literal(accountConfigurationObservationSource),
   requestHash: Sha256Schema,
   fractionalTrading: Schema.Boolean,
+  noShorting: Schema.optionalKey(Schema.Boolean),
   observedAt: UtcInstantSchema,
   normalizedResponseHash: Sha256Schema,
 })
@@ -143,6 +146,7 @@ export interface ObservedBrokerSnapshot {
   readonly openOrders: ReadResult<readonly Order[]>
   readonly recentOrders: ReadResult<readonly Order[]>
   readonly recentFills: ReadResult<FillActivityPage>
+  readonly pendingCashFeeCount: number
   readonly startedAt: string
   readonly completedAt: string
   readonly observedAt: string
@@ -162,6 +166,7 @@ export const ObservedBrokerSnapshotSchema = Schema.Struct({
   openOrders: observed(Schema.Array(order)),
   recentOrders: observed(Schema.Array(order)),
   recentFills: observed(Schema.Struct({ items: Schema.Array(fill), nextPageToken: Schema.optionalKey(Schema.String) })),
+  pendingCashFeeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
   observedAt: UtcInstantSchema,
@@ -184,6 +189,7 @@ export const observedBrokerState = (value: ObservedBrokerSnapshot): ObservedBrok
   openOrders: value.openOrders,
   recentOrders: value.recentOrders,
   recentFills: value.recentFills,
+  pendingCashFeeCount: value.pendingCashFeeCount,
   startedAt: value.startedAt,
   completedAt: value.completedAt,
   observedAt: value.observedAt,
@@ -191,12 +197,30 @@ export const observedBrokerState = (value: ObservedBrokerSnapshot): ObservedBrok
 
 export const decodeObservedBrokerSnapshot = Schema.decodeUnknownResult(ObservedBrokerSnapshotSchema, strictParseOptions)
 
-export const observationUnavailable = (message: string, cause?: unknown): BrokerReadError =>
+export const requireSettledCashFees = ({ pendingCashFeeCount }: Pick<ObservedBrokerState, 'pendingCashFeeCount'>) =>
+  pendingCashFeeCount === 0
+    ? Effect.void
+    : Effect.fail(
+        new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.ObservationPending,
+          observationFailure: 'CASH_FEES_PENDING',
+          retryable: true,
+          message: 'Broker observation is awaiting authoritative cash fee records',
+        }),
+      )
+
+export const observationUnavailable = (
+  message: string,
+  cause?: unknown,
+  pollFailureReason?: BrokerPollFailureReason,
+): BrokerReadError =>
   new BrokerReadError({
     operation: 'preflight',
     kind: BrokerReadErrorKind.Timeout,
     retryable: true,
     message,
+    ...(pollFailureReason === undefined ? {} : { pollFailureReason }),
     ...(cause === undefined ? {} : { cause }),
   })
 

@@ -1,6 +1,5 @@
-import * as S from '@effect/schema/Schema'
-import { formatErrorSync } from '@effect/schema/TreeFormatter'
-import * as Either from 'effect/Either'
+import * as S from 'effect/Schema'
+import * as Result from 'effect/Result'
 
 const ToolEventEnvelopeSchema = S.Struct({
   id: S.optional(S.String),
@@ -47,18 +46,18 @@ const pickChanges = (envelope: ToolEventEnvelope): unknown[] | undefined => {
   return Array.isArray(envelope.changes) ? envelope.changes : undefined
 }
 
-export const decodeToolEvent = (input: unknown, fallbackId: string): Either.Either<ToolEvent, string> => {
-  const decoded = S.decodeUnknownEither(ToolEventEnvelopeSchema)(input)
-  if (Either.isLeft(decoded)) {
-    return Either.left(formatErrorSync(decoded.left))
+export const decodeToolEvent = (input: unknown, fallbackId: string): Result.Result<ToolEvent, string> => {
+  const decoded = S.decodeUnknownResult(ToolEventEnvelopeSchema)(input)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(decoded.failure.message)
   }
 
-  const envelope = decoded.right
+  const envelope = decoded.success
   const data = asRecord(envelope.data)
   const id = asNonEmptyString(envelope.id) ?? fallbackId
   const toolKind = asNonEmptyString(envelope.toolKind) ?? 'tool'
 
-  return Either.right({
+  return Result.succeed({
     id,
     toolKind,
     status: asNonEmptyString(envelope.status),

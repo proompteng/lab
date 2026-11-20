@@ -17,12 +17,12 @@ export type TranscriptStateService = {
   clearTranscript: (chatId: string) => Effect.Effect<void, Error>
 }
 
-export class TranscriptState extends Context.Tag('TranscriptState')<TranscriptState, TranscriptStateService>() {}
+export class TranscriptState extends Context.Service<TranscriptState, TranscriptStateService>()('TranscriptState') {}
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-export const TranscriptStateLive = Layer.scoped(
+export const TranscriptStateLive = Layer.effect(
   TranscriptState,
   Effect.gen(function* () {
     let store: ChatTranscriptStore | null = null
@@ -31,7 +31,7 @@ export const TranscriptStateLive = Layer.scoped(
       if (!store) return Effect.void
       return pipe(
         store.shutdown(),
-        Effect.catchAll((error) => {
+        Effect.catch((error) => {
           console.warn('[chat] failed to close transcript store', { error: String(error) })
           return Effect.void
         }),

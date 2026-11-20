@@ -8,6 +8,17 @@ pub struct Normalized {
     pub action: String,
     pub resources: Vec<PlatformResource>,
     pub prepared_request: Vec<u8>,
+    pub invocation: Option<Invocation>,
+}
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Invocation {
+    pub operation_id: String,
+    pub client_service: String,
+    pub actor: String,
+    pub authorization_receipt_id: String,
+    pub action: String,
+    pub resources: Vec<PlatformResource>,
 }
 pub struct Output {
     pub bytes: Vec<u8>,

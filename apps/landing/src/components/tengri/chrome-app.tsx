@@ -180,7 +180,7 @@ export function ChromeApp({
           title="Chrome browser"
           src={connectionGeneration ? session.previewOrigin : session.launchUrl}
           data-window-default-focus
-          className="h-full w-full border-0"
+          className="h-[200%] w-[200%] origin-top-left scale-50 border-0"
           allow={`clipboard-read ${session.previewOrigin}; clipboard-write ${session.previewOrigin}`}
           referrerPolicy="no-referrer"
           sandbox="allow-same-origin allow-scripts"

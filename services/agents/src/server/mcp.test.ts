@@ -35,6 +35,9 @@ const makeService = (): { service: MemoryNotesMcpService; saved: AgentsMemoryNot
           tags: tags ?? [],
           metadata: metadata ?? {},
           createdAt: new Date().toISOString(),
+          retiredAt: null,
+          retirementReason: null,
+          replacementId: null,
         }
         saved.push(record)
         return record

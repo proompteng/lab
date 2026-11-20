@@ -10,13 +10,13 @@ import { insertBatchSize, makeSnapshotRepository, partitionInsertRows } from './
 
 describe('ClickHouse readback contract', () => {
   test.each([1_000, 180_000])(
-    'keeps insert quorum and server deadlines inside the %i ms client budget',
+    'checks connectivity and keeps insert deadlines inside the %i ms client budget',
     async (budget) => {
-      const requests: Array<{ readonly url: URL; readonly body: string }> = []
+      const requests: Array<{ readonly method: string | undefined; readonly url: URL; readonly body: string }> = []
       const server = createServer(async (request, response) => {
         let body = ''
         for await (const chunk of request) body += String(chunk)
-        requests.push({ url: new URL(request.url ?? '/', 'http://fixture'), body })
+        requests.push({ method: request.method, url: new URL(request.url ?? '/', 'http://fixture'), body })
         response.writeHead(200)
         response.end()
       })
@@ -44,6 +44,8 @@ describe('ClickHouse readback contract', () => {
             ),
           ),
         )
+        expect(requests[0]?.method).toBe('GET')
+        expect(requests[0]?.url.pathname).toBe('/ping')
         const inserted = requests.find((request) => request.url.searchParams.get('query')?.startsWith('INSERT INTO'))
         if (inserted === undefined) throw new Error('ClickHouse driver did not send an insert')
         const requestUrl = inserted.url

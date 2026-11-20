@@ -32,7 +32,7 @@ cp services/restate-example/src/server.ts /tmp/restate-example-bundle/src/server
   cd /tmp/restate-example-bundle
   bun install --no-save --ignore-scripts
   bun build src/server.ts --target=bun --minify --outfile=server.min.js
-  gzip -c server.min.js > server.min.js.gz
+  gzip -n -c server.min.js > server.min.js.gz
   base64 -w0 server.min.js.gz > server.min.js.gz.b64
 )
 rm -f argocd/applications/restate-example/source/*.b64

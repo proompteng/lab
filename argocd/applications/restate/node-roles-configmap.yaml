@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restate-node-roles
+data:
+  node-0.toml: |
+    roles = ["http-ingress", "admin", "worker", "log-server", "metadata-server"]
+  node-1.toml: |
+    roles = ["http-ingress", "admin", "log-server", "metadata-server"]
+  node-2.toml: |
+    roles = ["http-ingress", "admin", "worker", "log-server", "metadata-server"]

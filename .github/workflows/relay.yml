@@ -15,7 +15,7 @@ on:
       - 'argocd/applications/relay/**'
       - 'nix/packages/relay.nix'
       - 'nix/images/relay.nix'
-      - '.github/workflows/relay.yml'
+      - 'nix/images/agentrun-tools.nix'
   push:
     branches: [main]
     paths:
@@ -30,14 +30,12 @@ on:
       - 'proto/proompteng/authz/**'
       - 'proto/proompteng/relay/**'
       - 'argocd/applications/relay/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
-      - 'nix/**'
       - 'flake.nix'
       - 'flake.lock'
-      - '.github/workflows/relay.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
+      - nix/packages/relay.nix
+      - nix/images/relay.nix
+      - nix/packages.nix
 permissions:
   contents: read
 concurrency:
@@ -66,6 +64,14 @@ jobs:
           cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
           cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
           cargo test --manifest-path services/relay/Cargo.toml --locked -p platform-client
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned native platform fixture tools
+        run: |
+          set -euo pipefail
+          tools="$(nix build --no-link --print-out-paths .#ofz-fixture-tools)"
+          echo "${tools}/bin" >> "$GITHUB_PATH"
       - name: Qualify native policy package
         run: bash services/ofz/qualify-platform.sh
       - name: Execute both platform clients through Ofz and Relay
@@ -74,7 +80,12 @@ jobs:
         with:
           bun-version: 1.4.2
       - name: Install client fixture dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design --filter @proompteng/agents
+      - name: Verify connector registrations
+        run: |
+          bun services/relay/generate.ts --check
+          bun test services/relay/onboarding.test.ts
+          bunx tsc --ignoreConfig --noEmit --skipLibCheck --moduleResolution bundler --module esnext --target esnext --types bun services/relay/onboarding.ts services/relay/generate.ts services/relay/connectors/*.ts services/relay/onboarding.test.ts
       - name: Verify MCP clients and public proxy with attested TLS peers
         run: bash services/relay/test-client.sh
   image:

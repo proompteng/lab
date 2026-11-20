@@ -26,6 +26,9 @@ pub struct Principal {
     pub action: Action,
     #[serde(skip)]
     verified_rpc_admission: bool,
+    // The signed RPC classifies reads; stored workflow authority cannot inherit that classification.
+    #[serde(skip)]
+    pub(crate) observation: bool,
 }
 
 impl Principal {
@@ -52,6 +55,7 @@ impl Principal {
             recovery_generation: 1,
             action,
             verified_rpc_admission: false,
+            observation: false,
             context: RequestContext {
                 actor: Some(ofz::proto::Actor {
                     identity: Some(Identity::HumanId(owner_hash.into())),
@@ -304,6 +308,10 @@ impl Authenticator {
             recovery_generation,
             action,
             verified_rpc_admission: true,
+            observation: matches!(
+                method,
+                "GetActiveCodexRuns" | "GetCodexRun" | "ResumeCodexThread"
+            ),
         })
     }
 }
@@ -362,6 +370,36 @@ pub fn deterministic_agent_id(owner_hash: &str, reservation_id: &str) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn signed_run_reads_reuse_receipts_without_changing_control_authority() {
+        let auth = Authenticator::fixture("https://proompteng.ai".into());
+        let principal = Principal::fixture(&"a".repeat(64), "", Action::CodexControl);
+        for (method, observation) in [
+            ("GetActiveCodexRuns", true),
+            ("GetCodexRun", true),
+            ("ResumeCodexThread", true),
+            ("SendCodexInput", false),
+            ("RecoverCodexRun", false),
+        ] {
+            let path = format!("/proompteng.runtime.v1.MicroVMControlPlane/{method}");
+            let request = signed_fixture_request(
+                crate::grpc::proto::GetAgentRequest { id: "agent".into() },
+                &principal,
+                &path,
+                auth.audience(),
+            );
+            let admitted = auth.authorize(&request, &path).await.unwrap();
+            assert_eq!(admitted.action, Action::CodexControl);
+            assert_eq!(admitted.observation, observation, "{method}");
+            let restored: Principal =
+                serde_json::from_value(serde_json::to_value(admitted).unwrap()).unwrap();
+            assert!(
+                !restored.observation,
+                "stored capabilities cannot inherit RPC classification"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn signed_authentication_does_not_wait_for_postgresql() {

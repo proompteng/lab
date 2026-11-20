@@ -23,6 +23,7 @@ import {
 } from '../contracts'
 import { legacyRiskDecisionSchemaVersion } from '../legacy-wire'
 import type { State } from '../../risk'
+import { MutationEvidenceSchema, type CancelReceipt } from '../../broker/alpaca-mutations/model'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -311,10 +312,35 @@ export const planExecutionIntent = (
 
 export class IntentStoreError extends Data.TaggedError('IntentStoreError')<{
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
-  readonly operation: 'commit' | 'read'
+  readonly operation: 'commit' | 'read' | 'protection-cancel'
   readonly message: string
   readonly cause?: unknown
 }> {}
+
+export const NativeProtectionCancelCommandSchema = Schema.Struct({
+  intentId: Sha256,
+  accountId: NonEmptyString,
+  brokerOrderId: NonEmptyString,
+  requestedAt: UtcInstant,
+})
+export type NativeProtectionCancelCommand = typeof NativeProtectionCancelCommandSchema.Type
+
+export const NativeProtectionCancelReceiptSchema = Schema.Struct({
+  command: NativeProtectionCancelCommandSchema,
+  requestHash: Sha256,
+  evidence: MutationEvidenceSchema,
+})
+export type NativeProtectionCancelReceipt = typeof NativeProtectionCancelReceiptSchema.Type
+
+export type ProtectionCancelAdmission =
+  | { readonly _tag: 'New'; readonly command: NativeProtectionCancelCommand }
+  | { readonly _tag: 'Accepted'; readonly receipt: NativeProtectionCancelReceipt }
+  | { readonly _tag: 'PendingUnknown'; readonly command: NativeProtectionCancelCommand }
+  | { readonly _tag: 'NotEligible' }
+
+export type ProtectionCancelAcceptance =
+  | { readonly _tag: 'Accepted'; readonly receipt: NativeProtectionCancelReceipt }
+  | { readonly _tag: 'PendingUnknown'; readonly command: NativeProtectionCancelCommand }
 
 export interface StoredIntent {
   readonly intent: Intent
@@ -345,7 +371,11 @@ export interface IntentStoreService {
     brokerOrderId: string,
     observedAt: string,
     exitTarget: JevExitTarget | undefined,
-  ) => Effect.Effect<boolean, IntentStoreError | WriterFenceError>
+  ) => Effect.Effect<ProtectionCancelAdmission, IntentStoreError | WriterFenceError>
+  readonly recordProtectionCancelAccepted: (
+    command: NativeProtectionCancelCommand,
+    receipt: CancelReceipt,
+  ) => Effect.Effect<ProtectionCancelAcceptance, IntentStoreError | WriterFenceError>
 }
 
 export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()(

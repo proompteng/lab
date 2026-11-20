@@ -4,7 +4,7 @@ import { BrokerEnvironment, type BrokerIdentity } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { SystemAssessmentError } from './economics'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import { ObligationClass } from './reliability'
 import { registeredSchedule } from './schedule'
 import type { SystemSourceCut } from './source-cut'
@@ -34,7 +34,7 @@ export const controllerClockDurations = (clock: {
 
 /** Observed controller work, including failed and waiting passes. This is not a portfolio stress result. */
 export const measureControllerLatency = (
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   cut: SystemSourceCut,
   identity: BrokerIdentity,
 ) =>
@@ -110,7 +110,8 @@ export const measureControllerLatency = (
         missing.push(`MISSING_COMMAND_CLOCK:${pass.receiptHash}`)
         continue
       }
-      // A retry carries its first issuedAt. It cannot cover a later unstarted schedule window.
+      // Journaled failure/delivery retries retain their first issuedAt and cannot cover a later unstarted window.
+      // An unjournaled abandoned attempt supplies no completion evidence; only the committed re-execution counts.
       const firstDue = firstDueBySession.get(session.sessionDate)
       if (firstDue !== undefined && issuedAt >= firstDue) {
         const interval = registration.obligations.decisionIntervalMs

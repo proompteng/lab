@@ -69,6 +69,16 @@ export function reportServerError(error: unknown, operation: string, status?: nu
   })
 }
 
+export function reportServerWarning(message: string, operation: string) {
+  Sentry.withScope((scope) => {
+    scope.setTag('service', 'tengri-bff')
+    scope.setTag('operation', operation)
+    const traceId = trace.getActiveSpan()?.spanContext().traceId
+    if (traceId) scope.setTag('trace_id', traceId)
+    Sentry.captureMessage(message, 'warning')
+  })
+}
+
 export async function observeRequest(request: Request, operation: string, run: () => Promise<Response>) {
   const parent = propagation.extract(ROOT_CONTEXT, request.headers, {
     keys: () => ['traceparent', 'tracestate'],

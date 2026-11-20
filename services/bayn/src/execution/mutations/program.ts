@@ -3,7 +3,13 @@ import { Effect, Layer } from 'effect'
 
 import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { storeError } from './decisions'
-import { MutationStore, MutationStoreError, type MutationStoreShape } from './model'
+import {
+  MutationStore,
+  MutationStoreError,
+  type ExpiredEntryCancellationAdmission,
+  type MutationStoreShape,
+  type ProtectionCloseCommit,
+} from './model'
 import { makeMutationEventPostgres } from './postgres/events'
 import { makeMutationOutcomePostgres } from './postgres/outcome'
 import { makeMutationStartPostgres } from './postgres/start'
@@ -32,7 +38,14 @@ export const makePostgresMutationStore = Effect.gen(function* () {
 
   return {
     authorizeSubmit: (intentId, closeOnly) => run('begin-submit', start.authorizeSubmit(intentId, closeOnly)),
-    beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt, closeOnly) =>
+    beginSubmit: (
+      intentId,
+      requestHash,
+      consistencyDelayMs,
+      occurredAt,
+      closeOnly,
+      protectionClose?: ProtectionCloseCommit,
+    ) =>
       run(
         'begin-submit',
         start.begin(
@@ -43,6 +56,8 @@ export const makePostgresMutationStore = Effect.gen(function* () {
           occurredAt,
           undefined,
           closeOnly,
+          undefined,
+          protectionClose,
         ),
       ),
     submitAccepted: (intentId, requestHash, brokerOrderId, evidence, terminalOutcome) =>
@@ -75,10 +90,26 @@ export const makePostgresMutationStore = Effect.gen(function* () {
         'record-submit',
         appendOutcome({ _tag: 'SubmitUnknown' }, intentId, requestHash, occurredAt, evidence, brokerOrderId),
       ),
-    beginCancel: (intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) =>
+    beginCancel: (
+      intentId,
+      requestHash,
+      brokerOrderId,
+      consistencyDelayMs,
+      occurredAt,
+      expiredEntryCancellation?: ExpiredEntryCancellationAdmission,
+    ) =>
       run(
         'begin-cancel',
-        start.begin(MutationOperation.Cancel, intentId, requestHash, consistencyDelayMs, occurredAt, brokerOrderId),
+        start.begin(
+          MutationOperation.Cancel,
+          intentId,
+          requestHash,
+          consistencyDelayMs,
+          occurredAt,
+          brokerOrderId,
+          undefined,
+          expiredEntryCancellation,
+        ),
       ),
     cancelAccepted: (intentId, requestHash, brokerOrderId, evidence) =>
       run(

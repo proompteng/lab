@@ -14,6 +14,7 @@ import { canonicalJsonV1Result } from './hash'
 
 import { technicalFeatureMatchesBars } from './market-data/features/technical-contract'
 import { technicalReceiptAvailableAt } from './market-data/streaming/technical-projection'
+import { selectWebullBars } from './market-data/streaming/webull-projection'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
 
@@ -71,6 +72,27 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
               offset,
               matchedRawBars: 30,
               values: value.material.values,
+            })),
+          },
+        }),
+    ...(projection.webull.topic === undefined
+      ? {}
+      : {
+          webull: {
+            topic: projection.webull.topic,
+            retainedBars: projection.webull.bars.get(symbol)?.length ?? 0,
+            completedMinute: selectWebullBars(
+              projection.webull,
+              [symbol],
+              Math.floor(observedAtMs / 60_000) * 60_000,
+              observedAtMs,
+            ).map((bar) => ({
+              value: bar.value,
+              captureId: bar.captureId,
+              availableAtMs: bar.delivery.availableAtMs,
+              sourcePartition: bar.delivery.record.partition,
+              sourceOffset: bar.delivery.record.offset,
+              availabilityLagMs: bar.delivery.availableAtMs - bar.value.startMs - 60_000,
             })),
           },
         }),
@@ -200,6 +222,9 @@ const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
               ...(query.feed === 'us' || config.technicalFeaturesTopic === undefined
                 ? {}
                 : { technicalFeatures: config.technicalFeaturesTopic }),
+              ...(query.feed === 'us' || config.webullBarsTopic === undefined
+                ? {}
+                : { webullBars: config.webullBarsTopic }),
             },
           },
         ],
@@ -224,6 +249,9 @@ const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
             bootstrap: cut.bootstrap,
             positions: cut.positions,
             sequence: cut.projection.sequence,
+            ...(cut.projection.webull.topic === undefined
+              ? {}
+              : { webullRejections: cut.projection.webull.rejections }),
             rejections: Object.fromEntries(cut.projection.rejections),
             ...(cut.projection.technicalTopic === undefined
               ? {}

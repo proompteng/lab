@@ -12,6 +12,7 @@ import { Result, Schema } from 'effect'
 import type { RawMarketEvent } from './raw-events'
 import type { TechnicalMarketFeature } from '../features/technical-contract'
 import { incorporateTechnicalRecord, type TechnicalInputRejection } from './technical-projection'
+import { emptyWebullProjection, incorporateWebullRecord, type WebullProjection } from './webull-projection'
 
 import { compareIntradayInstants, intradayInstantNanos } from '../intraday/time'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
@@ -54,6 +55,7 @@ export interface ObservedFeature<A = NativeMarketFeature> extends ObservedMarket
   readonly offset: string
 }
 export interface StreamingProjection {
+  readonly webull: WebullProjection
   readonly availabilityMode: 'observed' | 'simulated'
   readonly epoch: string
   readonly sequence: number
@@ -80,7 +82,12 @@ export interface StreamingProjection {
     readonly { readonly availableAtMs: number; readonly offset: string; readonly reason: string }[]
   >
 }
-export const emptyStreamingProjection = (epoch: string, technicalTopic?: string): StreamingProjection => ({
+export const emptyStreamingProjection = (
+  epoch: string,
+  technicalTopic?: string,
+  webullTopic?: string,
+): StreamingProjection => ({
+  webull: emptyWebullProjection(webullTopic),
   availabilityMode: 'observed',
   epoch,
   sequence: 0,
@@ -160,6 +167,8 @@ const incorporateDecodedRecord = (
   featureRecordedAtMs = availableAtMs,
   technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
+  if (universe.topics.webullBars !== undefined && record.topic === universe.topics.webullBars)
+    return incorporateWebullRecord(previous, record, universe, availableAtMs)
   if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
     return incorporateTechnicalRecord(previous, record, universe, availableAtMs, technicalRecordedAtMs)
   if (

@@ -103,6 +103,7 @@ export const postCashSettlements = (
   journal: JournalService,
   accountId: string,
   identity: Identity,
+  mode: 'post' | 'verify-only' = 'post',
 ) =>
   Effect.gen(function* () {
     const records = yield* readCashSettlements(sql, accountId)
@@ -112,6 +113,8 @@ export const postCashSettlements = (
     const posted: string[] = []
     for (const settlement of verified) {
       if (settlement.posted) continue
+      if (mode === 'verify-only')
+        return yield* invariant('Cash settlement posting requires an independently committed preparation')
       yield* journal.post(settlement.plan).pipe(
         Effect.mapError(
           (cause) =>

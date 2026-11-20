@@ -1,6 +1,8 @@
 import { expect, request as playwrightRequest, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { codexModelFixtures } from './codex-models.fixture'
 
+test.use({ deviceScaleFactor: 2 })
+
 test.afterEach(async ({ request }, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus || process.env.TENGRI_EDITOR_BROWSER_FIXTURE !== '1') return
   const response = await request
@@ -166,7 +168,9 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     .poll(async () => {
       const display = (await computer({ action: 'screenshot' })).structuredContent
       const bounds = await canvas.boundingBox()
-      return bounds && display.width === Math.round(bounds.width) && display.height === Math.round(bounds.height)
+      return (
+        bounds && display.width === Math.round(bounds.width * 2) && display.height === Math.round(bounds.height * 2)
+      )
     })
     .toBe(true)
   await canvas.click({ position: { x: 350, y: 60 } })
@@ -177,6 +181,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await state()).loaded?.url).toBe(humanUrl)
   await expect.poll(async () => (await state()).loaded?.userAgent).toContain('Chrome/')
+  expect((await state()).loaded.devicePixelRatio).toBe(2)
   await frame.getByRole('button', { name: 'Take control', exact: true }).click()
   await expect(frame.getByRole('button', { name: 'Let agent use browser', exact: true })).toBeVisible()
   expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)

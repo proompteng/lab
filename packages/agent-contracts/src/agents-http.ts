@@ -103,10 +103,9 @@ export type AgentsHttpClientService = {
   ) => Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError>
 }
 
-export class AgentsHttpClient extends Context.Tag('agent-contracts/AgentsHttpClient')<
-  AgentsHttpClient,
-  AgentsHttpClientService
->() {}
+export class AgentsHttpClient extends Context.Service<AgentsHttpClient, AgentsHttpClientService>()(
+  'agent-contracts/AgentsHttpClient',
+) {}
 
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -167,7 +166,7 @@ const makeAgentsHttpClientService = (fetchImpl: AgentsFetch = defaultAgentsFetch
   const requestJson = <T>(
     request: AgentsJsonEffectRequest,
   ): Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError> =>
-    Effect.gen(function* (_) {
+    Effect.gen(function* () {
       const env = request.env ?? process.env
       const targetUrl = buildAgentsServiceUrl(request.path, env)
       const method = request.method
@@ -269,7 +268,7 @@ export const AgentsHttpClientLive = makeAgentsHttpClientLayer()
 export const requestAgentsJsonEffect = <T>(
   request: AgentsJsonEffectRequest,
 ): Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError, AgentsHttpClient> =>
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     const client = yield* AgentsHttpClient
     return yield* client.requestJson<T>(request)
   })
@@ -278,7 +277,7 @@ export const fetchAgentsJsonEffect = <T>(
   path: string,
   env: EnvSource = process.env,
 ): Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError, AgentsHttpClient> =>
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     const client = yield* AgentsHttpClient
     return yield* client.fetchJson<T>(path, env)
   })
@@ -288,7 +287,7 @@ export const postAgentsJsonEffect = <T>(
   payload: unknown,
   options: AgentsJsonRequestOptions = {},
 ): Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError, AgentsHttpClient> =>
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     const client = yield* AgentsHttpClient
     return yield* client.postJson<T>(path, payload, options)
   })
@@ -298,7 +297,7 @@ export const patchAgentsJsonEffect = <T>(
   payload: unknown,
   options: AgentsJsonRequestOptions = {},
 ): Effect.Effect<AgentsServiceJsonSuccess<T>, AgentsHttpClientError, AgentsHttpClient> =>
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     const client = yield* AgentsHttpClient
     return yield* client.patchJson<T>(path, payload, options)
   })
@@ -329,7 +328,7 @@ export const runAgentsJsonPromise = <T>(
   Effect.runPromise(
     effect.pipe(
       Effect.provide(AgentsHttpClientLive),
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.succeed<AgentsServiceJsonResult<T>>({
           ok: false,
           status: statusForAgentsHttpError(error),

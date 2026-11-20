@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "237f0a56895fd295542e202be8f62be48d6e9995",
+  "repairSha256": "95b69f370e03db22d9633dde215db1169a9ace77a1c7c808577eaa748c3e9237",
+  "registeredSourceInventoryId": "de5aa3ca19cc3bf888ac0908527d7e6222280d962383432d7141d76987d94db3",
+  "sourceFiles": 101,
+  "changedInstalledFilesSinceAcceptance": ["src/cosmosalpha/pipeline/mcts/controller.py"],
+  "regressionFile": "packages/scripts/src/bayn/check_cosmosalpha_experiment_native.py",
+  "regression": "NativeContracts.test_native_multi_tree_charges_only_completed_rounds",
+  "before": {
+    "roundAllowances": [1, 3, 5],
+    "completedOneRoundTrees": [1, 2, 3],
+    "failingSubcases": 2
+  },
+  "after": {
+    "roundAllowances": [1, 3, 5],
+    "completedOneRoundTrees": [1, 3, 5],
+    "nativeContractsPassed": 9,
+    "sourceRegressionsPassed": 19,
+    "portableCasesPassed": 30,
+    "bunWrapperPassed": 1
+  },
+  "patchChainReproducesInstalledMCTS": true,
+  "modelCalls": 0,
+  "scope": "Synthetic expansion results exercise native tree search, budget exhaustion, backpropagation, persistence and transitions across roots. No live or scientific acceptance is claimed for this new source inventory."
+}

@@ -1,0 +1,53 @@
+name: registry-cleanup
+
+on:
+  pull_request:
+    paths:
+      - argocd/applications/registry/**
+      - packages/scripts/src/registry/**
+      - .github/workflows/registry-cleanup-ci.yml
+  push:
+    branches: [main]
+    paths:
+      - argocd/applications/registry/**
+      - packages/scripts/src/registry/**
+      - .github/workflows/registry-cleanup-ci.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-cleanup-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test retention and worker shutdown
+        run: python3 -m unittest discover -s packages/scripts/src/registry -p 'test_*.py'
+      - name: Build native fixtures
+        run: |
+          docker build -f argocd/applications/registry/tests/Dockerfile -t registry-pacing-test argocd/applications/registry
+          docker build -f argocd/applications/registry/tests/cleanup.Dockerfile -t registry-cleanup-test .
+      - name: Verify the shared upload budget
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --tmpfs /tmp --tmpfs /control:uid=99,gid=99,mode=0770
+          --memory 128m --cpus 1 --pids-limit 128 registry-pacing-test
+      - name: Verify cleanup fencing and recovery
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --tmpfs /tmp --tmpfs /control:uid=99,gid=99,mode=0770
+          --tmpfs /var/lib/registry:uid=99,gid=99,mode=0770
+          --memory 256m --cpus 2 --pids-limit 128 registry-cleanup-test
+      - name: Verify repush after real Distribution cleanup
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --tmpfs /tmp --tmpfs /control:uid=99,gid=99,mode=0770
+          --tmpfs /var/lib/registry:uid=99,gid=99,mode=0770
+          --tmpfs /etc/docker/registry:uid=99,gid=99,mode=0770
+          --memory 256m --cpus 2 --pids-limit 128
+          --entrypoint python3 registry-cleanup-test /cache-test.py

@@ -2,7 +2,7 @@ import { CashReportingQuantumSchema } from '../../broker/alpaca/cash-reporting'
 import { Data, Schema } from 'effect'
 import type { AccountingTransaction } from '../../accounting/schema'
 import { FinalizedSnapshotProvenanceSchema } from '../../contracts'
-import { DiscrepancySchema, type AccountingReceipt } from '../../execution/contracts'
+import { DiscrepancySchema, OrderSchema, type AccountingReceipt } from '../../execution/contracts'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../../db/accounting-rows'
 import {
   ImageDigestSchema,
@@ -11,7 +11,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions,
 } from '../../schemas'
-import type { CycleDecisionDocument } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument, RetainedJevExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { IntradayPerformanceDecisionManifestSchema } from '../intraday-schema'
 import type {
   ForwardPerformanceCashYieldEvidence,
@@ -102,8 +102,14 @@ export const CycleDecisionRow = Schema.Struct({
   document: Schema.Unknown,
   created_at: Schema.Date,
 })
+export const CycleDecisionJsonRow = Schema.Struct({
+  cycle_id: Sha256,
+  decision_hash: Sha256,
+  document_json: Schema.NullOr(Schema.String),
+  created_at: Schema.Date,
+})
 export type VerifiedCycleDecisionRow = Omit<typeof CycleDecisionRow.Type, 'document'> & {
-  readonly document: CycleDecisionDocument
+  readonly document: CycleDecisionDocument | RetainedJevExecutionDecisionDocument
 }
 export const MarketVolumeBindingRow = Schema.Struct({
   cycle_id: Sha256,
@@ -144,6 +150,7 @@ export const OrderExecutionRow = Schema.Struct({
   observed_at: Schema.Date,
 })
 export const FillExecutionRow = Schema.Struct({
+  source_sequence: Schema.optionalKey(Schema.String),
   event_id: Sha256,
   fill_id: NonEmptyString,
   broker_order_id: NonEmptyString,
@@ -158,6 +165,11 @@ export const FillExecutionRow = Schema.Struct({
   source_timestamp: Schema.String,
   occurred_at: Schema.Date,
   observed_at: Schema.Date,
+})
+export const NativeProtectionOrderRow = Schema.Struct({
+  event_id: Sha256,
+  occurred_at: Schema.Date,
+  order: OrderSchema,
 })
 
 export const decodeCycles = Schema.decodeUnknownEffect(Schema.Array(TerminalCycleRow), strictParseOptions)
@@ -181,7 +193,6 @@ export const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(Transa
 export const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 export const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
 export const decodeDurableExecutions = Schema.decodeUnknownEffect(Schema.Array(DurableExecutionRow), strictParseOptions)
-export const decodeCycleDecisions = Schema.decodeUnknownEffect(Schema.Array(CycleDecisionRow), strictParseOptions)
 export const decodeMarketVolumeBindings = Schema.decodeUnknownEffect(
   Schema.Array(MarketVolumeBindingRow),
   strictParseOptions,

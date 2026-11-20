@@ -350,7 +350,51 @@ pub async fn list(
         .get()
         .await
         .map_err(|_| Status::unavailable("access request database unavailable"))?;
-    let requests = connection.query("SELECT id,issuer_id,client_service,workspace_id,resource,actions,reason,state,decision_reason,created_at_ms,updated_at_ms FROM ofz.platform_access_requests WHERE workspace_id=$1 AND state=1 ORDER BY created_at_ms LIMIT 128", &[&decision::parse_uuid(&request.workspace_id)?]).await.map_err(sql_error)?.into_iter().map(decode).collect::<Result<Vec<_>, _>>()?;
+    let (before_time, before_id) = if request.cursor.is_empty() {
+        (i64::MAX, Uuid::max())
+    } else {
+        let (time, id) = request
+            .cursor
+            .split_once(':')
+            .ok_or_else(|| Status::invalid_argument("invalid request cursor"))?;
+        let time = time
+            .parse::<i64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| Status::invalid_argument("invalid request cursor"))?;
+        (time, decision::parse_uuid(id)?)
+    };
+    let request_id = if request.request_id.is_empty() {
+        None
+    } else {
+        Some(decision::parse_uuid(&request.request_id)?)
+    };
+    if request_id.is_some() && !request.cursor.is_empty() {
+        return Err(Status::invalid_argument(
+            "request details cannot use a page cursor",
+        ));
+    }
+    let rows = connection.query(
+        "SELECT id,issuer_id,client_service,workspace_id,resource,actions,reason,state,decision_reason,created_at_ms,updated_at_ms
+         FROM ofz.platform_access_requests WHERE workspace_id=$1
+         AND (($5::uuid IS NOT NULL AND id=$5) OR ($5 IS NULL AND (CASE WHEN $2 THEN state<>1 ELSE state=1 END) AND (created_at_ms,id)<($3,$4)))
+         ORDER BY created_at_ms DESC,id DESC LIMIT 129",
+        &[&decision::parse_uuid(&request.workspace_id)?, &request.history, &before_time, &before_id, &request_id],
+    ).await.map_err(sql_error)?;
+    let cursor = if rows.len() > 128 {
+        format!(
+            "{}:{}",
+            rows[127].get::<_, i64>(9),
+            rows[127].get::<_, Uuid>(0)
+        )
+    } else {
+        String::new()
+    };
+    let requests = rows
+        .into_iter()
+        .take(128)
+        .map(decode)
+        .collect::<Result<Vec<_>, _>>()?;
     let mut receipt = store::receipt(
         &context,
         peer,
@@ -370,5 +414,5 @@ pub async fn list(
         return Err(Status::aborted("workspace authority changed"));
     }
     workspaces::manage(native, &request.workspace_id, &session.human_id).await?;
-    Ok(proto::ListPlatformAccessRequestsResponse { requests })
+    Ok(proto::ListPlatformAccessRequestsResponse { requests, cursor })
 }

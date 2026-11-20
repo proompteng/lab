@@ -197,7 +197,7 @@ describe('delivery transaction stages', () => {
       release: {
         mode: 'kargo_auto',
         promotionAuthority: 'kargo',
-        kargoProject: 'lab-delivery',
+        kargoProject: 'symphony-release',
         kargoWarehouse: 'symphony',
         kargoBranch: 'kargo/symphony',
         kargoStages: ['symphony'],
@@ -384,7 +384,7 @@ describe('delivery transaction stages', () => {
                 ...createEmptyDeliveryTransaction('argo_rollout_pending'),
                 mergedCommitSha: sourceSha,
                 kargo: {
-                  project: 'lab-delivery',
+                  project: 'symphony-release',
                   warehouse: 'symphony',
                   stages: ['symphony'],
                   branch: 'kargo/symphony',
@@ -412,7 +412,7 @@ describe('delivery transaction stages', () => {
           reason: 'kargo_freight',
         },
         kargo: {
-          project: 'lab-delivery',
+          project: 'symphony-release',
           warehouse: 'symphony',
           stages: ['symphony'],
           branch: 'kargo/symphony',

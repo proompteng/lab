@@ -5,19 +5,23 @@ import type { PgClient } from '@effect/sql-pg'
 import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
 import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
 import { TestClock } from 'effect/testing'
+import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
 
 import { canonicalHashV1Result } from '../../hash'
+import { brokerPollFailureAnnotations } from '../../composition/broker-observation-runtime'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
 import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
+import { decodeFeeActivityWitness } from './activity-fees'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import {
   AccountStatus,
   OrderCollection,
   OrderStatus,
+  SortDirection,
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
   type Account,
@@ -28,9 +32,9 @@ import {
   type Position,
   type ReadResult,
 } from './model'
-import { brokerSnapshotCacheConfig, captureBrokerObservation, makeProjectedBrokerRead } from './snapshot-cache'
+import { brokerSnapshotCacheConfig, makeBrokerObservationCapture, makeProjectedBrokerRead } from './snapshot-cache'
 
-const config = { pollIntervalMs: 30_000, maxAgeMs: 60_000 }
+const config = { maxAgeMs: 60_000 }
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 
 const fixture = (
@@ -167,10 +171,65 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
+  test('requires a new poll cut after history changes instead of retrying the original ticket', async () => {
+    const source = fixture()
+    let scans = 0
+    const changing: BrokerReadShape = {
+      ...source.read,
+      feeActivities: (query) =>
+        source.read.feeActivities(query).pipe(
+          Effect.map((result) => ({
+            ...result,
+            value: {
+              items:
+                ++scans === 1 ? [] : [{ accountId, activityId: 'fee-1', date: '1970-01-01', netAmountMicros: '-1' }],
+            },
+          })),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const pending = yield* captureBrokerObservation(
+          changing,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(1_000)
+        const result = yield* Fiber.join(pending)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure.cause).toMatchObject({ failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } })
+          expect(result.failure).toMatchObject({ pollFailureReason: 'SNAPSHOT_REJECTED' })
+          expect(brokerPollFailureAnnotations(result.failure)).toEqual({
+            'broker.poll_failure_reason': 'SNAPSHOT_REJECTED',
+            'broker.snapshot_failure_reason': 'HistoryChanged',
+          })
+        }
+        expect(scans).toBe(2)
+        const fresh = yield* captureBrokerObservation(
+          changing,
+          { generation: 2, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
+        expect(fresh.startedAt).toBe('1970-01-01T00:00:01.000Z')
+        expect(fresh.snapshot.history.fees).toHaveLength(1)
+        expect(scans).toBe(4)
+        scans = 0
+        const direct = yield* readStableBrokerSnapshot(changing, currentUtcInstant).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(1_000)
+        expect((yield* Fiber.join(direct)).history.fees).toHaveLength(1)
+        expect(scans).toBe(4)
+      }),
+    )
+  })
   test('cancels broker acquisition at the polling deadline without producing a partial cut', async () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
         const started = yield* Deferred.make<void>()
         let cancelled = 0
         source.blockAccount(
@@ -183,15 +242,17 @@ describe('durable broker observations', () => {
             ),
           ),
         )
-        const pending = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 1000).pipe(
-          Effect.result,
-          Effect.forkChild({ startImmediately: true }),
-        )
+        const pending = yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          1000,
+        ).pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(started)
         yield* TestClock.adjust(1000)
         const result = yield* Fiber.join(pending)
         expect(Result.isFailure(result)).toBe(true)
         expect(cancelled).toBe(1)
+        if (Result.isFailure(result)) expect(result.failure).toMatchObject({ pollFailureReason: 'POLL_DEADLINE' })
       }),
     )
   })
@@ -225,7 +286,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     const value = await run(
       Effect.gen(function* () {
-        return yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        return yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
       }),
     )
     expect(Result.isSuccess(decodeObservedBrokerSnapshot(value))).toBe(true)
@@ -237,7 +303,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const value = yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
         const directCalls = source.calls.length
         let reads = 0
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
@@ -267,7 +338,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const value = yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
         let payload: unknown = {
           snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)),
           state: observedBrokerState(value),
@@ -277,7 +353,13 @@ describe('durable broker observations', () => {
         const sql = (() =>
           Effect.sync(() => {
             queries += 1
-            return [{ state_hash: snapshotHash, snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)) }]
+            return [
+              {
+                state_hash: snapshotHash,
+                snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)),
+                observedAt: value.observedAt,
+              },
+            ]
           })) as unknown as PgClient.PgClient
         const store = makeBrokerObservationStore(
           sql,
@@ -290,6 +372,7 @@ describe('durable broker observations', () => {
               return Effect.succeed(Option.some(JSON.stringify(payload)))
             },
             put: () => Effect.die('read-only probe'),
+            putAll: () => Effect.die('read-only probe'),
             remove: () => Effect.die('read-only probe'),
           }),
         )
@@ -326,7 +409,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const value = yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
         let unavailable = true
         let reads = 0
         let current = value
@@ -486,7 +574,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const value = yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
         const initial = source.calls.length
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
@@ -511,7 +604,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        const value = yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
         let invalidations = 0
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
@@ -542,7 +640,12 @@ describe('durable broker observations', () => {
     const source = fixture()
     const value = await run(
       Effect.gen(function* () {
-        return yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const captureBrokerObservation = yield* makeBrokerObservationCapture
+        return yield* captureBrokerObservation(
+          source.read,
+          { generation: 1, startedAt: yield* currentUtcInstant },
+          15_000,
+        )
       }),
     )
     for (const [candidate, identity, now] of [
@@ -588,16 +691,617 @@ describe('durable broker observations', () => {
       }),
     )
   })
-  test('requires a poll interval shorter than maximum cache age', async () => {
+  test.each([0, 999, 60_001])('rejects an invalid maximum cache age %s', async (maxAgeMs) => {
     const result = await Effect.runPromise(
       brokerSnapshotCacheConfig.pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown({ BAYN_BROKER_POLL_INTERVAL_MS: 30_000, BAYN_BROKER_CACHE_MAX_AGE_MS: 30_000 }),
+          ConfigProvider.fromUnknown({ BAYN_BROKER_CACHE_MAX_AGE_MS: maxAgeMs }),
         ),
         Effect.result,
       ),
     )
     expect(Result.isFailure(result)).toBe(true)
   })
+})
+
+describe('complete history reuse between broker captures', () => {
+  test('projects recent history from the verified cut without redundant requests at production page counts', async () => {
+    const at = '2026-11-13T18:00:00.000Z'
+    const template = observedBrokerSnapshotFixture(accountId, at, '2026-11-12T18:00:00.000Z')
+    const order = template.snapshot.history.orders.rows[0]?.value
+    const fill = template.snapshot.history.fills[0]?.value
+    if (order === undefined || fill === undefined) throw new Error('missing history fixture')
+    // Match the traced capture: four order pages, twenty-two fill pages and five fee pages.
+    const orders = Array.from({ length: 1500 }, (_, i) => ({
+      ...order,
+      brokerOrderId: `order-${i}`,
+      clientOrderId: `client-${i}`,
+      submittedAt: new Date(Date.parse('2026-11-12T18:00:00.000Z') - i * 1000).toISOString(),
+      filledQuantityAtoms: i === 0 ? '2168000000000' : '0',
+      quantityAtoms: i === 0 ? '2168000000000' : '1000000000',
+      status: i === 0 ? OrderStatus.Filled : OrderStatus.Canceled,
+    }))
+    const fills = Array.from({ length: 2168 }, (_, i) => ({
+      ...fill,
+      activityId: `fill::${i}`,
+      brokerOrderId: 'order-0',
+      transactionTime: new Date(Date.parse(at) - (2200 - i) * 1000).toISOString(),
+    }))
+    const fees = Array.from({ length: 401 }, (_, i) => ({
+      accountId,
+      activityId: `fee-${i}`,
+      date: '2026-11-12',
+      netAmountMicros: '-1',
+    }))
+    const source = fixture({ orders, fills, fees })
+    const pageEvidence = <A>(result: ReadResult<unknown>, value: A): ReadResult<A> => ({
+      value,
+      evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(value)) },
+    })
+    const read: BrokerReadShape = {
+      ...source.read,
+      orders: (query) =>
+        source.read.orders(query).pipe(
+          Effect.map((result) =>
+            pageEvidence(
+              result,
+              result.value
+                .filter((row) => query?.until === undefined || (row.submittedAt ?? '') < query.until)
+                .slice(0, query?.limit)
+                .map((row) => ({ ...row, observedAt: result.evidence.observedAt })),
+            ),
+          ),
+        ),
+      fillActivities: (query) =>
+        source.read.fillActivities(query).pipe(
+          Effect.map((result) => {
+            const ordered = query?.direction === SortDirection.Descending ? [...fills].reverse() : fills
+            const start =
+              query?.pageToken === undefined ? 0 : ordered.findIndex((row) => row.activityId === query.pageToken) + 1
+            const items = ordered.slice(start, start + (query?.pageSize ?? 100))
+            const last = items.at(-1)
+            return pageEvidence(result, {
+              items,
+              ...(items.length === query?.pageSize && last !== undefined ? { nextPageToken: last.activityId } : {}),
+            })
+          }),
+        ),
+      feeActivities: (query) =>
+        source.read.feeActivities(query).pipe(
+          Effect.map((result) => {
+            const start =
+              query?.pageToken === undefined ? 0 : fees.findIndex((row) => row.activityId === query.pageToken) + 1
+            const items = fees.slice(start, start + (query?.pageSize ?? 100))
+            const last = items.at(-1)
+            return pageEvidence(result, {
+              items,
+              ...(items.length === query?.pageSize && last !== undefined ? { nextPageToken: last.activityId } : {}),
+            })
+          }),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        const first = yield* capture(read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls).toHaveLength(66)
+        expect(first.snapshot.history.orders.rows).toHaveLength(1500)
+        expect(first.snapshot.history.fills).toHaveLength(2168)
+        expect(first.snapshot.history.fees).toHaveLength(401)
+        const recentOrder = first.snapshot.history.orders.rows[0]
+        const recentFill = first.snapshot.history.fills.at(-1)
+        if (recentOrder === undefined || recentFill === undefined) throw new Error('missing captured history')
+        expect(first.recentOrders.value).toEqual([recentOrder.value])
+        expect(first.recentOrders.evidence).toEqual(recentOrder.evidence)
+        expect(first.recentFills.value).toEqual({ items: [recentFill.value], nextPageToken: 'fill::2167' })
+        expect(first.recentFills.evidence).toEqual(recentFill.evidence)
+        yield* TestClock.adjust(40_000)
+        source.calls.length = 0
+        const second = yield* capture(read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls).toHaveLength(36)
+        expect(second.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        expect(second.recentOrders.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
+        expect(second.recentFills.evidence.observedAt).toBe('2026-11-13T18:00:40.000Z')
+        const replayRead: BrokerReadShape = {
+          ...read,
+          fillActivities: () => Effect.die('unexpected REST fill read on PAPER stream'),
+          accountActivity: currentUtcInstant.pipe(
+            Effect.map((observedAt) => {
+              source.calls.push('execution-stream-view')
+              const evidence = { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt }
+              return { fills: fills.map((value) => ({ value, evidence })), feeCounts, evidence }
+            }),
+          ),
+        }
+        const feeCounts = new Map([['["FEE","2026-11-12","-1","0"]', 401]])
+        const previousOrder = orders[0]
+        if (previousOrder === undefined) throw new Error('missing filled order')
+        fills.push({
+          ...fill,
+          activityId: 'fill::2168',
+          brokerOrderId: 'order-0',
+          transactionTime: '2026-11-13T18:00:50.000Z',
+        })
+        orders[0] = { ...previousOrder, filledQuantityAtoms: '2169000000000', quantityAtoms: '2169000000000' }
+        yield* TestClock.adjust(20_000)
+        source.calls.length = 0
+        const changed = yield* capture(replayRead, { generation: 4, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls.filter((call) => call === 'execution-stream-view')).toHaveLength(3)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(5)
+        expect(changed.snapshot.history.fills.map((row) => row.value)).toEqual(fills)
+        expect(changed.snapshot.history.fees.map((row) => row.value)).toEqual(fees)
+        const oldFill = fills[0]
+        if (oldFill === undefined) throw new Error('missing retained fill')
+        fills[0] = { ...oldFill, priceAtoms: '199000000000' }
+        const correction = yield* capture(
+          replayRead,
+          { generation: 5, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(correction).toMatchObject({
+          _tag: 'Failure',
+          failure: { cause: { failure: { reason: 'HistoryChanged' } } },
+        })
+        const recovered = yield* capture(replayRead, { generation: 6, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(recovered.snapshot.history.fills[0]?.value).toEqual(fills[0])
+        const unavailableReplay = (kind: BrokerReadErrorKind) => ({
+          ...read,
+          accountActivity: Effect.fail(
+            new BrokerReadError({ operation: 'activity-stream', kind, message: 'fixture', retryable: true }),
+          ),
+        })
+        const timedOut = yield* capture(
+          unavailableReplay(BrokerReadErrorKind.Timeout),
+          { generation: 7, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(timedOut).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.Timeout } })
+        const rateLimited = yield* capture(
+          unavailableReplay(BrokerReadErrorKind.RateLimited),
+          { generation: 8, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(rateLimited).toMatchObject({ _tag: 'Failure', failure: { kind: BrokerReadErrorKind.RateLimited } })
+      }),
+    )
+  })
+
+  test('reads PAPER fee identities and coin prices once per streamed change and rejects a fee gap', async () => {
+    const fees: FeeActivity[] = []
+    let feeCounts: ReadonlyMap<string, number> = new Map()
+    const source = fixture({ fees })
+    const read: BrokerReadShape = {
+      ...source.read,
+      fillActivities: () => Effect.die('unexpected REST fill read'),
+      accountActivity: currentUtcInstant.pipe(
+        Effect.map((observedAt) => ({
+          fills: [],
+          feeCounts,
+          evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
+        })),
+      ),
+    }
+    const publishedFee = Result.getOrThrow(
+      decodeFeeActivityWitness({
+        activity_type: 'CFEE',
+        ref_id: 'streamed-fee',
+        status: 'executed',
+        currency: 'USD',
+        net_amount: '0.0',
+        qty: '-0.000200',
+        price: '260.102',
+        settle_date: '2026-11-14',
+        details: { system_date: '2026-11-13' },
+      }),
+    )
+    const confirmed = {
+      accountId,
+      activityId: 'rest-fee',
+      date: '2026-11-13',
+      netAmountMicros: '0',
+      sourceCreatedAt: '2026-11-13T18:00:01.000Z',
+      coinDebit: { symbol: 'ETH/USD', quantityAtoms: '200000', priceAtoms: '260100000000' },
+    } satisfies FeeActivity
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-11-13T18:00:01.000Z'))
+        const capture = yield* makeBrokerObservationCapture
+        const observe = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => capture(read, { startedAt, generation }, 15_000)))
+        yield* observe(1)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        yield* observe(2)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        feeCounts = new Map([[publishedFee.key, 1]])
+        const missing = yield* observe(3).pipe(Effect.flip)
+        expect(missing.message).toBe('Alpaca Activity SSE and fee authority have not converged')
+        fees.push({ ...confirmed, coinDebit: { ...confirmed.coinDebit, quantityAtoms: '100000' } })
+        const incorrect = yield* observe(4).pipe(Effect.flip)
+        expect(incorrect.message).toBe(missing.message)
+        fees[0] = confirmed
+        const recovered = yield* observe(5)
+        expect(recovered.snapshot.history.fees.map(({ value }) => value)).toEqual([confirmed])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        yield* observe(6)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+      }),
+    )
+  })
+
+  test('keeps witnessed cash fees pending across UTC rollover and restart until REST settles them', async () => {
+    const fees: FeeActivity[] = []
+    const source = fixture({ fees })
+    const key = Result.getOrThrow(
+      decodeFeeActivityWitness({
+        activity_type: 'FEE',
+        ref_id: 'streamed-cash-fee',
+        status: 'executed',
+        currency: 'USD',
+        net_amount: '-0.02',
+        details: { system_date: '2026-11-19' },
+      }),
+    ).key
+    let feeCounts = new Map([[key, 2]])
+    const read: BrokerReadShape = {
+      ...source.read,
+      fillActivities: () => Effect.die('unexpected REST fill read'),
+      accountActivity: currentUtcInstant.pipe(
+        Effect.map((observedAt) => ({
+          fills: [],
+          feeCounts,
+          evidence: { status: 200, requestId: 'stream', contentHash: '0'.repeat(64), observedAt },
+        })),
+      ),
+    }
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-11-20T01:15:00.000Z'))
+        const capture = yield* makeBrokerObservationCapture
+        const observe = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => capture(read, { startedAt, generation }, 15_000)))
+        const pending = yield* observe(1)
+        expect(pending.pendingCashFeeCount).toBe(2)
+        expect(pending.snapshot.history.fees).toEqual([])
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(1)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(pending))).toBe(true)
+        fees.push({ accountId, activityId: 'rest-one', date: '2026-11-19', netAmountMicros: '-20000' })
+        const partial = yield* observe(2)
+        expect(partial.pendingCashFeeCount).toBe(1)
+        expect(partial.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        fees.push({ ...fees[0], accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-30000' })
+        expect(yield* observe(3).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+        fees.pop()
+        yield* TestClock.setTime(Date.parse('2026-11-20T23:59:59.999Z'))
+        expect((yield* observe(4)).pendingCashFeeCount).toBe(1)
+
+        yield* TestClock.setTime(Date.parse('2026-11-21T00:00:00.000Z'))
+        const restarted = yield* makeBrokerObservationCapture
+        const observeAfterRestart = (generation: number) =>
+          currentUtcInstant.pipe(Effect.flatMap((startedAt) => restarted(read, { startedAt, generation }, 15_000)))
+        const lingering = yield* observeAfterRestart(5)
+        expect(lingering.observedAt).toBe('2026-11-21T00:00:00.000Z')
+        expect(lingering.pendingCashFeeCount).toBe(1)
+        expect(lingering.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(lingering))).toBe(true)
+
+        fees.push({ accountId, activityId: 'rest-two', date: '2026-11-19', netAmountMicros: '-20000' })
+        const settled = yield* observeAfterRestart(6)
+        expect(settled.pendingCashFeeCount).toBe(0)
+        expect(settled.snapshot.history.fees.map(({ value }) => value)).toEqual(fees)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(6)
+        yield* observeAfterRestart(7)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(6)
+        feeCounts = new Map([
+          [key, 2],
+          [key.replace('2026-11-19', '2026-11-22'), 1],
+        ])
+        expect(yield* observeAfterRestart(8).pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Alpaca Activity SSE and fee authority have not converged' },
+        })
+      }),
+    )
+  })
+
+  test('empty recent-history projections retain real response evidence without additional probes', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        const value = yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(value.recentOrders.value).toEqual([])
+        expect(value.recentFills.value).toEqual({ items: [] })
+        expect(value.recentOrders.evidence.requestId).toContain('orders:')
+        expect(value.recentFills.evidence.requestId).toContain('fills:')
+        expect(source.calls).toHaveLength(10)
+        expect(Result.isSuccess(decodeObservedBrokerSnapshot(value))).toBe(true)
+      }),
+    )
+  })
+
+  test('a new latest fill rebuilds the bracket, while a correction with the same identity still rejects it', async () => {
+    const at = '2026-11-13T18:00:00.000Z'
+    const template = observedBrokerSnapshotFixture(accountId, at, '2026-11-13T17:59:59.000Z')
+    const order = template.snapshot.history.orders.rows[0]?.value
+    const fill = template.snapshot.history.fills[0]?.value
+    if (order === undefined || fill === undefined) throw new Error('missing history fixture')
+    const orders: Order[] = []
+    const fills: FillActivity[] = []
+    const source = fixture({ orders, fills })
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at))
+        const capture = yield* makeBrokerObservationCapture
+        yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        orders.push(order)
+        fills.push(fill)
+        const fresh = yield* capture(source.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        expect(fresh.recentFills.value.items).toEqual([fill])
+        fills[0] = { ...fill, priceAtoms: '199000000000' }
+        const corrected = yield* capture(
+          source.read,
+          { generation: 3, startedAt: yield* currentUtcInstant },
+          15_000,
+        ).pipe(Effect.result)
+        expect(corrected).toMatchObject({
+          _tag: 'Failure',
+          failure: { cause: { failure: { reason: 'HistoryChanged' } } },
+        })
+        const rebuilt = yield* capture(source.read, { generation: 4, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(rebuilt.recentFills.value.items[0]?.priceAtoms).toBe('199000000000')
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(7)
+      }),
+    )
+  })
+
+  test('stable polls use one fresh full scan after the initial bracket', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        const first = yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(2)
+        yield* TestClock.adjust(1_000)
+        const second = yield* capture(source.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(3)
+        expect(second.snapshot.history).not.toBe(first.snapshot.history)
+        expect(second.snapshot.history.orders.observedAt).toBe('1970-01-01T00:00:01.000Z')
+        expect(second.observedAt).toBe('1970-01-01T00:00:01.000Z')
+      }),
+    )
+  })
+
+  test('an old fee correction rejects the retained bracket and rebuilds on the next capture', async () => {
+    const source = fixture()
+    let amount = '-1'
+    const read: BrokerReadShape = {
+      ...source.read,
+      feeActivities: (query) =>
+        source.read.feeActivities(query).pipe(
+          Effect.map((page) => ({
+            ...page,
+            value: { items: [{ accountId, activityId: 'old-fee', date: '1970-01-01', netAmountMicros: amount }] },
+          })),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        yield* capture(read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        amount = '-2'
+        const changed = yield* capture(read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000).pipe(
+          Effect.result,
+        )
+        expect(changed).toMatchObject({
+          _tag: 'Failure',
+          failure: { cause: { failure: { reason: 'HistoryChanged' } } },
+        })
+        const rebuilt = yield* capture(read, { generation: 3, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(rebuilt.snapshot.history.fees[0]?.value.netAmountMicros).toBe('-2')
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(5)
+      }),
+    )
+  })
+
+  test('a typed account failure discards the retained before-history', async () => {
+    const source = fixture()
+    const error = new BrokerReadError({
+      operation: 'account',
+      kind: BrokerReadErrorKind.Transport,
+      retryable: true,
+      message: 'unavailable',
+    })
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        source.failAccount(error)
+        const failed = yield* capture(source.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000).pipe(
+          Effect.result,
+        )
+        expect(failed).toMatchObject({ _tag: 'Failure', failure: error })
+        source.failAccount(undefined)
+        yield* capture(source.read, { generation: 3, startedAt: yield* currentUtcInstant }, 15_000)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+      }),
+    )
+  })
+
+  test('defects and timeout cancellation discard retained history and release the capture permit', async () => {
+    for (const defect of [true, false]) {
+      const source = fixture()
+      let cancelled = 0
+      await run(
+        Effect.gen(function* () {
+          const capture = yield* makeBrokerObservationCapture
+          yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+          const entered = yield* Deferred.make<void>()
+          source.blockAccount(
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(
+                defect
+                  ? Effect.die('broken broker adapter')
+                  : Effect.never.pipe(
+                      Effect.onInterrupt(() =>
+                        Effect.sync(() => {
+                          cancelled++
+                        }),
+                      ),
+                    ),
+              ),
+            ),
+          )
+          const pending = yield* capture(
+            source.read,
+            { generation: 2, startedAt: yield* currentUtcInstant },
+            1_000,
+          ).pipe(Effect.exit, Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(entered)
+          if (!defect) yield* TestClock.adjust(1_000)
+          const exit = yield* Fiber.join(pending)
+          expect(Exit.isFailure(exit)).toBe(true)
+          expect(cancelled).toBe(defect ? 0 : 1)
+          source.blockAccount(Effect.void)
+          yield* capture(source.read, { generation: 3, startedAt: yield* currentUtcInstant }, 15_000)
+          expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+        }),
+      )
+    }
+  })
+
+  test('concurrent captures serialize around the complete account/history bracket', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        let accounts = 0
+        source.blockAccount(
+          Effect.sync(() => {
+            accounts++
+          }).pipe(Effect.andThen(Deferred.succeed(entered, undefined)), Effect.andThen(Deferred.await(release))),
+        )
+        const first = yield* capture(source.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(entered)
+        const second = yield* capture(source.read, { generation: 3, startedAt: yield* currentUtcInstant }, 15_000).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        expect(accounts).toBe(1)
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(first)
+        yield* Fiber.join(second)
+        expect(accounts).toBe(2)
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+      }),
+    )
+  })
+})
+
+test('a durable invalidation starts a fresh bracket instead of comparing across a known mutation', async () => {
+  const source = fixture()
+  let amount = '-1'
+  const read: BrokerReadShape = {
+    ...source.read,
+    feeActivities: (query) =>
+      source.read.feeActivities(query).pipe(
+        Effect.map((page) => ({
+          ...page,
+          value: { items: [{ accountId, activityId: 'old-fee', date: '1970-01-01', netAmountMicros: amount }] },
+        })),
+      ),
+  }
+  await run(
+    Effect.gen(function* () {
+      const capture = yield* makeBrokerObservationCapture
+      yield* capture(read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+      amount = '-2'
+      const refreshed = yield* capture(read, { generation: 3, startedAt: yield* currentUtcInstant }, 15_000)
+      expect(refreshed.snapshot.history.fees[0]?.value.netAmountMicros).toBe('-2')
+      expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+    }),
+  )
+})
+
+test.each([500, 1_500])(
+  'a clock regression discards future history with a durable ticket at %sms',
+  async (ticketAt) => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        yield* TestClock.setTime(1_000)
+        yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        yield* TestClock.setTime(500)
+        const refreshed = yield* capture(
+          source.read,
+          { generation: 2, startedAt: new Date(ticketAt).toISOString() },
+          15_000,
+        )
+        expect(refreshed.observedAt).toBe('1970-01-01T00:00:00.500Z')
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+      }),
+    )
+  },
+)
+
+test('the unchanged capture deadline cancels an endlessly advancing history cursor', async () => {
+  const source = fixture()
+  let pages = 0
+  let cancellations = 0
+  const read: BrokerReadShape = {
+    ...source.read,
+    feeActivities: () =>
+      Effect.sleep(10).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            cancellations++
+          }),
+        ),
+        Effect.map(() => {
+          const id = `fee-${++pages}`
+          return {
+            value: {
+              items: [{ accountId, activityId: id, date: '1970-01-01', netAmountMicros: '-1' }],
+              nextPageToken: id,
+            },
+            evidence: {
+              requestId: id,
+              status: 200,
+              contentHash: 'a'.repeat(64),
+              observedAt: '1970-01-01T00:00:00.000Z',
+            },
+          }
+        }),
+      ),
+  }
+  await run(
+    Effect.gen(function* () {
+      const capture = yield* makeBrokerObservationCapture
+      const pending = yield* capture(read, { generation: 1, startedAt: yield* currentUtcInstant }, 50).pipe(
+        Effect.result,
+        Effect.forkChild({ startImmediately: true }),
+      )
+      yield* TestClock.adjust(50)
+      const result = yield* Fiber.join(pending)
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { message: 'Broker observation polling exceeded its deadline' },
+      })
+      expect(pages).toBeGreaterThan(0)
+      expect(cancellations).toBe(1)
+      const stoppedAt = pages
+      yield* TestClock.adjust(1_000)
+      expect(pages).toBe(stoppedAt)
+    }),
+  )
 })

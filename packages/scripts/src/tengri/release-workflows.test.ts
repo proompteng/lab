@@ -83,10 +83,16 @@ describe('Tengri image workflow', () => {
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
     for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
-      expect(products.jobs[`build-${service}`].if).toBe(`${releaseOnly} && needs.changes.outputs.${service} == 'true'`)
+      expect(products.jobs[`build-${service}`].if).toBe(
+        service === 'app'
+          ? `!cancelled() && ${releaseOnly} && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && (needs.verify-app-dependency-closure.result == 'success' || (needs.changes.outputs.app_dependencies != 'true' && needs.verify-app-dependency-closure.result == 'skipped'))`
+          : `${releaseOnly} && needs.changes.outputs.${service} == 'true'`,
+      )
       expect(products.jobs[`build-${service}`].with.pr_number).toBeUndefined()
     }
-    expect(products.jobs['verify-app-dependency-closure'].if).toBe("needs.changes.outputs.app == 'true'")
+    expect(products.jobs['verify-app-dependency-closure'].if).toBe(
+      "needs.changes.outputs.app_dependencies == 'true' && (github.event_name == 'pull_request' || needs.changes.outputs.app == 'true')",
+    )
   })
 
   it('publishes signed multi-architecture images for Kargo discovery', () => {

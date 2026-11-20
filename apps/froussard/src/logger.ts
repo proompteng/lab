@@ -1,6 +1,6 @@
 import os from 'node:os'
 
-import { Effect, Layer } from 'effect'
+import { Context, Effect, Layer } from 'effect'
 import pino, { multistream } from 'pino'
 
 const level = process.env.LOG_LEVEL ?? 'info'
@@ -81,7 +81,7 @@ const logWith = (level: 'debug' | 'info' | 'warn' | 'error') => {
     })
 }
 
-export class AppLogger extends Effect.Tag('@froussard/AppLogger')<AppLogger, AppLoggerService>() {}
+export class AppLogger extends Context.Service<AppLogger, AppLoggerService>()('@froussard/AppLogger') {}
 
 export const AppLoggerLayer = Layer.sync(AppLogger, () => ({
   debug: logWith('debug'),

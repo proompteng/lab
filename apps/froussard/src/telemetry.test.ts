@@ -1,233 +1,226 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createServer, type Server } from 'node:http'
 
-const setLoggerMock = vi.fn()
-const diagConsoleLoggerMock = vi.fn(function () {})
-const diagErrorMock = vi.fn()
-const diagWarnMock = vi.fn()
-const traceStartSpanMock = vi.fn().mockReturnValue({ end: vi.fn() })
-const traceGetTracerMock = vi.fn().mockReturnValue({ startSpan: traceStartSpanMock })
+import { Effect, ManagedRuntime } from 'effect'
+import { OtlpExporter } from 'effect/observability'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-vi.mock('@proompteng/otel/api', () => ({
-  diag: { setLogger: setLoggerMock, error: diagErrorMock, warn: diagWarnMock },
-  DiagConsoleLogger: diagConsoleLoggerMock,
-  DiagLogLevel: { ERROR: 'ERROR' },
-  trace: { getTracer: traceGetTracerMock },
-}))
+import { makeTelemetryLayer, traceRequest } from './telemetry'
+import { makeLinearWebhookMetrics } from './webhooks/linear-metrics'
 
-const autoInstrumentationMock = vi.fn().mockReturnValue([{ name: 'http' }])
-vi.mock('@proompteng/otel/auto-instrumentations-node', () => ({
-  getNodeAutoInstrumentations: autoInstrumentationMock,
-}))
+describe('native Effect telemetry', () => {
+  const originalEnv = process.env
+  let server: Server
+  let runtime: ManagedRuntime.ManagedRuntime<OtlpExporter.Flusher, never>
+  let requests: Array<{ path: string; body: string; contentType: string | undefined }>
+  let traceFailures: number
+  let stalledTraceBodies: number
+  let traceStatus: number
+  let hang: boolean
+  let connectionClosed: boolean
 
-const traceExporterMock = vi.fn(function (config: unknown) {
-  return { config }
-})
-vi.mock('@proompteng/otel/exporter-trace-otlp-http', () => ({
-  OTLPTraceExporter: traceExporterMock,
-}))
-
-const metricExporterMock = vi.fn(function (config: unknown) {
-  return { config }
-})
-vi.mock('@proompteng/otel/exporter-metrics-otlp-http', () => ({
-  OTLPMetricExporter: metricExporterMock,
-}))
-
-const metricReaderMock = vi.fn(function (config: unknown) {
-  return { config }
-})
-vi.mock('@proompteng/otel/sdk-metrics', () => ({
-  PeriodicExportingMetricReader: metricReaderMock,
-  MetricReader: class {},
-}))
-
-const nodeSdkStartMock = vi.fn().mockResolvedValue(undefined)
-const nodeSdkShutdownMock = vi.fn().mockResolvedValue(undefined)
-const nodeSdkCtorMock = vi.fn(function (config: unknown) {
-  return {
-    config,
-    start: nodeSdkStartMock,
-    shutdown: nodeSdkShutdownMock,
-  }
-})
-
-vi.mock('@proompteng/otel/sdk-node', () => ({
-  NodeSDK: nodeSdkCtorMock,
-}))
-
-class MockResource {
-  constructor(readonly attributes: Record<string, unknown> = {}) {}
-
-  static default() {
-    return new MockResource({})
-  }
-
-  merge(other: MockResource) {
-    return new MockResource({ ...this.attributes, ...other.attributes })
-  }
-}
-
-vi.mock('@proompteng/otel/resources', () => ({
-  Resource: MockResource,
-}))
-
-vi.mock('@proompteng/otel/semantic-conventions', () => ({
-  SEMRESATTRS_SERVICE_NAME: 'service.name',
-  SEMRESATTRS_SERVICE_NAMESPACE: 'service.namespace',
-  SEMRESATTRS_SERVICE_INSTANCE_ID: 'service.instance.id',
-}))
-
-const originalEnv = { ...process.env }
-
-const resetEnv = () => {
-  for (const key of Object.keys(process.env)) {
-    if (!(key in originalEnv)) {
-      delete process.env[key]
+  beforeEach(async () => {
+    requests = []
+    traceFailures = 0
+    stalledTraceBodies = 0
+    traceStatus = 503
+    hang = false
+    connectionClosed = false
+    server = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      requests.push({
+        path: request.url ?? '',
+        body: Buffer.concat(chunks).toString(),
+        contentType: request.headers['content-type'],
+      })
+      if (hang) {
+        response.once('close', () => {
+          connectionClosed = true
+        })
+        return
+      }
+      if (request.url === '/v1/traces' && stalledTraceBodies-- > 0) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.flushHeaders()
+        return
+      }
+      const fail = request.url === '/v1/traces' && traceFailures-- > 0
+      response.writeHead(fail ? traceStatus : 200, { 'content-type': 'application/json' })
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Receiver has no TCP address')
+    process.env = {
+      ...originalEnv,
+      OTEL_TRACES_EXPORTER: 'otlp',
+      OTEL_METRICS_EXPORTER: 'otlp',
+      OTEL_SERVICE_NAME: 'froussard',
+      OTEL_SERVICE_NAMESPACE: 'froussard-test',
+      FROUSSARD_COMMIT: 'native-effect-test',
+      POD_NAME: 'froussard-test-pod',
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${address.port}/v1/traces`,
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: `http://127.0.0.1:${address.port}/v1/metrics`,
+      OTEL_BSP_SCHEDULE_DELAY: '60000',
+      OTEL_METRIC_EXPORT_INTERVAL: '60000',
+      OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: '5000',
+      OTEL_EXPORTER_OTLP_METRICS_TIMEOUT: '5000',
     }
-  }
-  for (const [key, value] of Object.entries(originalEnv)) {
-    process.env[key] = value
-  }
-}
+    runtime = ManagedRuntime.make(makeTelemetryLayer())
+    await runtime.runPromise(Effect.void)
+  })
 
-let processOnSpy: ReturnType<typeof vi.spyOn>
-let processOnceSpy: ReturnType<typeof vi.spyOn>
+  afterEach(async () => {
+    await runtime.dispose()
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    process.env = originalEnv
+  })
 
-describe('telemetry', () => {
-  const globalContext = globalThis as typeof globalThis & {
-    __froussardTelemetryState?: unknown
-  }
+  const flush = () => runtime.runPromise(Effect.flatMap(OtlpExporter.Flusher, (flusher) => flusher.flush))
+  const traceBodies = () => requests.filter(({ path }) => path === '/v1/traces').map(({ body }) => body)
 
-  beforeEach(() => {
-    vi.resetModules()
-    resetEnv()
-    delete globalContext.__froussardTelemetryState
-    nodeSdkCtorMock.mockClear()
-    nodeSdkStartMock.mockClear()
-    nodeSdkShutdownMock.mockClear()
-    traceExporterMock.mockClear()
-    metricExporterMock.mockClear()
-    metricReaderMock.mockClear()
-    autoInstrumentationMock.mockClear()
-    setLoggerMock.mockClear()
-    diagConsoleLoggerMock.mockClear()
-    diagErrorMock.mockClear()
-    diagWarnMock.mockClear()
-    traceGetTracerMock.mockClear()
-    traceStartSpanMock.mockClear()
-    const processHandle = process as unknown as {
-      on: (...args: unknown[]) => unknown
-      once: (...args: unknown[]) => unknown
+  it('exports the complete handler lifetime, parent context and bounded route without private URL or body data', async () => {
+    const request = new Request('http://localhost/webhooks/linear?secret=private-query', {
+      method: 'POST',
+      headers: { traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01' },
+      body: 'private-body',
+    })
+    const response = await runtime.runPromise(
+      traceRequest(request, '/webhooks/:provider', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return new Response('accepted', { status: 202 })
+      }),
+    )
+    expect(response.status).toBe(202)
+    expect(requests).toHaveLength(0)
+    await runtime.dispose()
+    expect(traceBodies()).toHaveLength(1)
+    const body = traceBodies()[0] ?? ''
+    expect(JSON.parse(body)).toMatchObject({
+      resourceSpans: [
+        {
+          resource: {
+            attributes: expect.arrayContaining([
+              { key: 'service.name', value: { stringValue: 'froussard' } },
+              { key: 'service.version', value: { stringValue: 'native-effect-test' } },
+              { key: 'service.instance.id', value: { stringValue: 'froussard-test-pod' } },
+            ]),
+          },
+          scopeSpans: [
+            {
+              spans: [
+                expect.objectContaining({
+                  name: 'POST /webhooks/:provider',
+                  traceId: '0af7651916cd43dd8448eb211c80319c',
+                  parentSpanId: 'b7ad6b7169203331',
+                  kind: 2,
+                  attributes: expect.arrayContaining([{ key: 'http.response.status_code', value: { intValue: 202 } }]),
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const start = body.match(/"startTimeUnixNano":"(\d+)"/)?.[1]
+    const end = body.match(/"endTimeUnixNano":"(\d+)"/)?.[1]
+    expect(start).toBeDefined()
+    expect(end).toBeDefined()
+    expect(BigInt(end ?? 0) - BigInt(start ?? 0)).toBeGreaterThanOrEqual(20_000_000n)
+    expect(body).not.toContain('private-query')
+    expect(body).not.toContain('private-body')
+    expect(requests.every(({ contentType }) => contentType === 'application/json')).toBe(true)
+  })
+
+  it.each([200, 401, 503])('preserves HTTP %i while exporting response status and request metrics', async (status) => {
+    const response = await runtime.runPromise(
+      traceRequest(new Request('http://localhost/'), '/', () => new Response('', { status })),
+    )
+    expect(response.status).toBe(status)
+    await flush()
+    expect(traceBodies().join('')).toContain(`"intValue":${status}`)
+    expect(traceBodies().join('')).toContain(`"status":{"code":${status >= 500 ? 2 : 0}`)
+    const metrics = requests.find(({ path }) => path === '/v1/metrics')?.body ?? ''
+    expect(metrics).toContain('froussard_http_requests_total')
+    expect(metrics).toContain(`"stringValue":"${status}"`)
+    expect(metrics).toContain('froussard_http_request_duration_ms')
+  })
+
+  it('exports failed handlers as errors and counts the failure', async () => {
+    await expect(
+      runtime.runPromise(
+        traceRequest(new Request('http://localhost/'), '/', () => {
+          throw new Error('handler failed')
+        }),
+      ),
+    ).rejects.toThrow('handler failed')
+    await flush()
+    expect(traceBodies().join('')).toContain('"status":{"code":2')
+    expect(requests.find(({ path }) => path === '/v1/metrics')?.body).toContain('"stringValue":"500"')
+  })
+
+  it('batches requests and exports native Linear counters and histograms on shutdown', async () => {
+    for (let i = 0; i < 10; i++) {
+      await runtime.runPromise(traceRequest(new Request('http://localhost/'), '/', () => new Response('OK')))
     }
-    processOnSpy = vi.spyOn(processHandle, 'on').mockImplementation(() => processHandle)
-    processOnceSpy = vi.spyOn(processHandle, 'once').mockImplementation(() => processHandle)
+    const metrics = makeLinearWebhookMetrics(runtime)
+    metrics.recordVerificationFailure('signature')
+    metrics.recordDownstreamFailure('kafka', 'timeout')
+    metrics.recordDeliveryLatencyMs(25, 'retry')
+    await runtime.dispose()
+    expect(traceBodies()).toHaveLength(1)
+    expect(traceBodies()[0]?.match(/"name":"GET \/"/g)).toHaveLength(10)
+    const body = requests.find(({ path }) => path === '/v1/metrics')?.body ?? ''
+    for (const name of [
+      'froussard_linear_webhook_verification_failures_total',
+      'froussard_linear_webhook_downstream_failures_total',
+      'froussard_linear_webhook_delivery_latency_ms',
+    ])
+      expect(body).toContain(name)
+    expect(body).toContain('"asDouble":10')
+    expect(body).toContain('"isMonotonic":true')
+    expect(body).toContain('"aggregationTemporality":2')
+    expect(body).toContain('"histogram"')
   })
 
-  afterEach(() => {
-    processOnSpy.mockRestore()
-    processOnceSpy.mockRestore()
-    resetEnv()
-    delete globalContext.__froussardTelemetryState
+  it('retries transient receiver failures with identical batches', async () => {
+    traceFailures = 2
+    await runtime.runPromise(traceRequest(new Request('http://localhost/'), '/', () => new Response('OK')))
+    await runtime.dispose()
+    expect(traceBodies()).toHaveLength(3)
+    expect(new Set(traceBodies()).size).toBe(1)
   })
 
-  it('initialises NodeSDK with provided LGTM endpoints and resource metadata', async () => {
-    process.env.LGTM_TEMPO_TRACES_ENDPOINT = 'http://tempo:4318/v1/traces'
-    process.env.LGTM_MIMIR_METRICS_ENDPOINT = 'http://mimir/otlp'
-    process.env.OTEL_METRIC_EXPORT_INTERVAL = '2500'
-    process.env.OTEL_SERVICE_NAME = 'froussard'
-    process.env.OTEL_SERVICE_NAMESPACE = 'froussard'
-    process.env.POD_NAME = 'froussard-123'
+  it('retries a receiver that sends headers but stalls the response body', async () => {
+    stalledTraceBodies = 1
+    await runtime.runPromise(traceRequest(new Request('http://localhost/'), '/', () => new Response('OK')))
+    const started = performance.now()
+    await flush()
+    expect(performance.now() - started).toBeLessThan(14000)
+    expect(traceBodies()).toHaveLength(2)
+    expect(new Set(traceBodies()).size).toBe(1)
+  }, 15000)
 
-    const module = await import('./telemetry')
-
-    expect(nodeSdkCtorMock).toHaveBeenCalledTimes(1)
-    const [call] = nodeSdkCtorMock.mock.calls
-    if (!call) {
-      throw new Error('NodeSDK constructor was not called')
-    }
-    const config = call[0] as { resource: MockResource }
-
-    expect(config.resource.attributes).toMatchObject({
-      'service.name': 'froussard',
-      'service.namespace': 'froussard',
-      'service.instance.id': 'froussard-123',
-    })
-
-    expect(traceExporterMock).toHaveBeenCalledWith({
-      url: 'http://tempo:4318/v1/traces',
-      headers: undefined,
-      protocol: 'http/json',
-    })
-
-    expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://mimir/otlp',
-      headers: undefined,
-      protocol: 'http/json',
-    })
-
-    expect(metricReaderMock).toHaveBeenCalledWith({
-      exporter: expect.any(Object),
-      exportIntervalMillis: 5000,
-    })
-
-    expect(autoInstrumentationMock).toHaveBeenCalledTimes(1)
-    expect(nodeSdkStartMock).toHaveBeenCalledTimes(1)
-    expect(module.telemetrySdk).toMatchObject({ config })
-    expect(processOnceSpy).toHaveBeenCalledWith('SIGTERM', expect.any(Function))
+  it('does not retry a permanent receiver error', async () => {
+    traceFailures = 5
+    traceStatus = 400
+    await runtime.runPromise(traceRequest(new Request('http://localhost/'), '/', () => new Response('OK')))
+    await runtime.dispose()
+    expect(traceBodies()).toHaveLength(1)
   })
 
-  it('falls back to host metadata when POD_NAME is not set', async () => {
-    process.env.OTEL_SERVICE_NAME = 'froussard'
-    process.env.OTEL_SERVICE_NAMESPACE = 'froussard'
-    process.env.HOSTNAME = 'froussard-host'
-
-    await import('./telemetry')
-
-    expect(nodeSdkCtorMock).toHaveBeenCalledTimes(1)
-    const [call] = nodeSdkCtorMock.mock.calls
-    if (!call) {
-      throw new Error('NodeSDK constructor was not called')
-    }
-    const config = call[0] as { resource: MockResource }
-
-    expect(config.resource.attributes).toMatchObject({
-      'service.instance.id': 'froussard-host',
-    })
-  })
-
-  it('falls back to default observability endpoints when environment variables are unset', async () => {
-    await import('./telemetry')
-
-    expect(traceExporterMock).toHaveBeenCalledWith({
-      url: 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces',
-      headers: undefined,
-      protocol: 'http/json',
-    })
-
-    expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
-      headers: undefined,
-      protocol: 'http/json',
-    })
-  })
-
-  it('parses exporter headers from environment variables', async () => {
-    process.env.OTEL_EXPORTER_OTLP_HEADERS = 'global=alpha,shared=bravo'
-    process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS = 'trace=charlie'
-    process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS = 'metric=delta'
-
-    await import('./telemetry')
-
-    expect(traceExporterMock).toHaveBeenCalledWith({
-      url: 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces',
-      headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', trace: 'charlie' }),
-      protocol: 'http/json',
-    })
-
-    expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
-      headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', metric: 'delta' }),
-      protocol: 'http/json',
-    })
+  it('bounds shutdown and cancels a hung receiver', async () => {
+    await runtime.dispose()
+    process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT = '200'
+    process.env.OTEL_EXPORTER_OTLP_METRICS_TIMEOUT = '200'
+    runtime = ManagedRuntime.make(makeTelemetryLayer())
+    await runtime.runPromise(traceRequest(new Request('http://localhost/'), '/', () => new Response('OK')))
+    hang = true
+    const started = performance.now()
+    await runtime.dispose()
+    expect(performance.now() - started).toBeLessThan(1500)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(connectionClosed).toBe(true)
   })
 })

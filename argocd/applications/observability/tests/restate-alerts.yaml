@@ -1,0 +1,66 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: a short single-node replacement stays quiet while quorum remains reachable
+    interval: 1m
+    input_series:
+      - series: up{job="restate-server",namespace="restate",service="restate",instance="0"}
+        values: 1+0x10
+      - series: up{job="restate-server",namespace="restate",service="restate",instance="1"}
+        values: 1+0x10
+      - series: up{job="restate-server",namespace="restate",service="restate",instance="2"}
+        values: 0+0x3 1+0x7
+      - series: restate_failure_detector_nodes_total{job="restate-server",state="dead"}
+        values: 1+0x3 0+0x7
+      - series: restate_metadata_server_replicated_committed_lsn{job="restate-server",instance="0"}
+        values: 100+1x10
+      - series: restate_metadata_server_replicated_committed_lsn{job="restate-server",instance="1"}
+        values: 100+1x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"RestateServerMetricsUnavailable|RestateNodeHealthDegraded|RestateMetadataQuorumUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname=~"RestateServerMetricsUnavailable|RestateNodeHealthDegraded|RestateMetadataQuorumUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: persistent single-node degradation warns without claiming quorum loss
+    interval: 1m
+    input_series:
+      - series: up{job="restate-server",namespace="restate",service="restate",instance="0"}
+        values: 1+0x10
+      - series: up{job="restate-server",namespace="restate",service="restate",instance="1"}
+        values: 1+0x10
+      - series: up{job="restate-server",namespace="restate",service="restate",instance="2"}
+        values: 0+0x10
+      - series: restate_failure_detector_nodes_total{job="restate-server",state="dead"}
+        values: 1+0x10
+      - series: restate_metadata_server_replicated_committed_lsn{job="restate-server",instance="0"}
+        values: 100+1x10
+      - series: restate_metadata_server_replicated_committed_lsn{job="restate-server",instance="1"}
+        values: 100+1x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"RestateServerMetricsUnavailable|RestateNodeHealthDegraded",severity="warning",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 2}]
+      - expr: count(ALERTS{service="restate",severity="critical",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: losing metadata quorum still pages after two minutes
+    interval: 1m
+    input_series:
+      - series: restate_metadata_server_replicated_committed_lsn{job="restate-server",instance="0"}
+        values: 100+1x6
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="RestateMetadataQuorumUnavailable",severity="critical",alertstate="firing"}) or vector(0)
+        eval_time: 1m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="RestateMetadataQuorumUnavailable",severity="critical",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: absent metadata telemetry must not appear healthy
+    interval: 1m
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="RestateMetadataQuorumUnavailable",severity="critical",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 1}]

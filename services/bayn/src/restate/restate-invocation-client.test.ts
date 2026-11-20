@@ -3,9 +3,9 @@ import { Effect, Fiber, Result } from 'effect'
 
 import {
   awaitRestateInvocation,
-  callRestateInvocation,
   decodeRestateAcceptedInvocation,
   restateInvocationCompletionMaximumAttempts,
+  restateInvocationMaximumResponseBytes,
   RestateSendStatus,
   sendRestateInvocation,
   type RestateHttpRequest,
@@ -14,19 +14,6 @@ import {
 const invocationId = 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5'
 
 describe('Restate invocation client', () => {
-  test('calls return bounded JSON and reject unavailable or malformed responses', async () => {
-    const call = (response: () => Response) =>
-      callRestateInvocation('http://restate.example.test:8080/Control/revision', null, { timeoutMs: 5000 }, async () =>
-        response(),
-      )
-    expect(await Effect.runPromise(call(() => Response.json('a'.repeat(40))))).toBe('a'.repeat(40))
-    for (const response of [
-      () => new Response(null, { status: 404 }),
-      () => new Response('not JSON'),
-      () => Response.json('a'.repeat(17 * 1024)),
-    ])
-      expect(await Effect.runPromise(Effect.flip(call(response)))).toMatchObject({ operation: 'call' })
-  })
   test('accepts only closed send receipts', () => {
     expect(Result.isSuccess(decodeRestateAcceptedInvocation({ invocationId, status: 'Accepted' }))).toBe(true)
     expect(
@@ -101,6 +88,136 @@ describe('Restate invocation client', () => {
     expect(restateInvocationCompletionMaximumAttempts(30_000, 3_000)).toBe(11)
   })
 
+  test('stops consuming and cancels a chunked response as soon as its actual size exceeds the limit', async () => {
+    let reads = 0
+    let cancellations = 0
+    const chunk = new Uint8Array(restateInvocationMaximumResponseBytes / 2)
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          reads += 1
+          controller.enqueue(chunk)
+          if (reads === 64) controller.close()
+        },
+        cancel() {
+          cancellations += 1
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        awaitRestateInvocation(
+          'http://restate.example.test:8080',
+          invocationId,
+          { maximumAttempts: 1, pollIntervalMs: 0, requestTimeoutMs: 10_000 },
+          async () =>
+            new Response(body, {
+              headers: { 'content-type': 'application/json', 'content-length': '1', 'x-restate-id': invocationId },
+            }),
+        ),
+      ),
+    )
+    expect(failure).toMatchObject({
+      operation: 'await',
+      cause: new Error('Restate invocation output returned an oversized response'),
+    })
+    expect(reads).toBe(3)
+    expect(cancellations).toBe(1)
+    expect(body.locked).toBe(false)
+  })
+
+  test('cancels rejected response bodies once without reading them', async () => {
+    const cases = [
+      { operation: 'send', status: 503, headers: {} },
+      { operation: 'send', status: 200, headers: { 'content-type': 'text/plain' } },
+      {
+        operation: 'send',
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(restateInvocationMaximumResponseBytes + 1),
+        },
+      },
+      { operation: 'await', status: 503, headers: {} },
+      { operation: 'await', status: 200, headers: { 'content-type': 'application/json', 'x-restate-id': 'inv_other' } },
+      { operation: 'await', status: 470, headers: {} },
+    ] as const
+    for (const candidate of cases) {
+      let reads = 0
+      let cancellations = 0
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            reads += 1
+            controller.enqueue(new Uint8Array([0]))
+          },
+          cancel() {
+            cancellations += 1
+          },
+        },
+        { highWaterMark: 0 },
+      )
+      const request = async () => new Response(body, { status: candidate.status, headers: candidate.headers })
+      const result = await Effect.runPromise(
+        Effect.flip(
+          candidate.operation === 'send'
+            ? sendRestateInvocation('http://restate.example.test:8080/send', {}, { timeoutMs: 5000 }, request)
+            : awaitRestateInvocation(
+                'http://restate.example.test:8080',
+                invocationId,
+                { maximumAttempts: 1, pollIntervalMs: 0, requestTimeoutMs: 5000 },
+                request,
+              ),
+        ),
+      )
+      expect(result.operation).toBe(candidate.operation)
+      expect(reads).toBe(0)
+      expect(cancellations).toBe(1)
+      expect(body.locked).toBe(false)
+    }
+  })
+
+  test('decodes UTF-8 across chunks and accepts a complete response at the byte limit', async () => {
+    for (const value of [{ label: '€λ🙂', active: true }, 'x'.repeat(restateInvocationMaximumResponseBytes - 2)]) {
+      const bytes = new TextEncoder().encode(JSON.stringify(value))
+      let offset = 0
+      let completions = 0
+      let cancellations = 0
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (offset === bytes.byteLength) {
+              completions += 1
+              controller.close()
+              return
+            }
+            const size = typeof value === 'string' ? 1_024 : 1
+            controller.enqueue(bytes.subarray(offset, offset + size))
+            offset = Math.min(offset + size, bytes.byteLength)
+          },
+          cancel() {
+            cancellations += 1
+          },
+        },
+        { highWaterMark: 0 },
+      )
+      const output = await Effect.runPromise(
+        awaitRestateInvocation(
+          'http://restate.example.test:8080',
+          invocationId,
+          { maximumAttempts: 1, pollIntervalMs: 0, requestTimeoutMs: 10_000 },
+          async () =>
+            new Response(body, { headers: { 'content-type': 'application/json', 'x-restate-id': invocationId } }),
+        ),
+      )
+      expect(output).toEqual(value)
+      expect(completions).toBe(1)
+      expect(cancellations).toBe(0)
+      expect(body.locked).toBe(false)
+    }
+  })
+
   test('fails closed on identity mismatch, non-JSON, oversize, and bounded exhaustion', async () => {
     const cases = [
       () =>
@@ -146,10 +263,8 @@ describe('Restate invocation client', () => {
     expect(exhausted.message).toBe('Restate invocation remains incomplete after the bounded completion check')
   })
 
-  test('aborts call, send and completion I/O when interrupted', async () => {
+  test('aborts send and completion I/O when interrupted', async () => {
     const effects = [
-      (request: RestateHttpRequest) =>
-        callRestateInvocation('http://restate.example.test:8080/Control/revision', null, { timeoutMs: 5000 }, request),
       (request: RestateHttpRequest) =>
         sendRestateInvocation(
           'http://restate.example.test:8080/restate/send/BaynExecutionController/account/activateDeployment',
@@ -180,6 +295,58 @@ describe('Restate invocation client', () => {
       expect(signal.aborted).toBe(false)
       await Effect.runPromise(Fiber.interrupt(fiber))
       expect(signal.aborted).toBe(true)
+    }
+  })
+
+  test('releases a streaming body after request timeout or interruption', async () => {
+    for (const interruption of [false, true]) {
+      let beginRead: (() => void) | undefined
+      const reading = new Promise<void>((resolve) => void (beginRead = resolve))
+      let aborts = 0
+      let requestAbortSignal: AbortSignal | undefined
+      let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(controller) {
+            streamController = controller
+          },
+          pull() {
+            beginRead?.()
+          },
+        },
+        { highWaterMark: 0 },
+      )
+      const request = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        if (!(init?.signal instanceof AbortSignal)) throw new Error('request did not receive an abort signal')
+        const signal = init.signal
+        requestAbortSignal = signal
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborts += 1
+            streamController?.error(signal.reason)
+          },
+          { once: true },
+        )
+        return new Response(body, { headers: { 'content-type': 'application/json', 'x-restate-id': invocationId } })
+      }
+      const operation = awaitRestateInvocation(
+        'http://restate.example.test:8080',
+        invocationId,
+        { maximumAttempts: 1, pollIntervalMs: 0, requestTimeoutMs: interruption ? 5_000 : 5 },
+        request,
+      )
+      if (interruption) {
+        const fiber = Effect.runFork(operation)
+        await reading
+        await Effect.runPromise(Fiber.interrupt(fiber))
+      } else {
+        const failure = await Effect.runPromise(Effect.flip(operation))
+        expect(failure).toMatchObject({ operation: 'await' })
+      }
+      expect(requestAbortSignal?.aborted).toBe(true)
+      expect(aborts).toBe(1)
+      expect(body.locked).toBe(false)
     }
   })
 })

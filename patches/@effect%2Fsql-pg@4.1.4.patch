@@ -1,0 +1,98 @@
+diff --git a/src/PgClient.ts b/src/PgClient.ts
+--- a/src/PgClient.ts
++++ b/src/PgClient.ts
+@@ -369,8 +369,16 @@
+     this.streamAcquirer = streamAcquirer
+   }
+ 
++  private traceBackend<A>(effect: Effect.Effect<A, SqlError>, connection = this.connection) {
++    return Effect.withFiber((fiber) =>
++      fiber.cache.tracerEnabled && fiber.getRef(Statement.SpanPropagationEnabled)
++        ? Effect.andThen(Effect.annotateCurrentSpan("postgresql.pid", connection.processId), effect)
++        : effect
++    )
++  }
++
+   private run(query: string, params: ReadonlyArray<unknown>, prepare = true) {
+-    return Effect.map(this.connection.query(query, params, prepare), (result) => result.rows)
++    return this.traceBackend(Effect.map(this.connection.query(query, params, prepare), (result) => result.rows))
+   }
+ 
+   execute(
+@@ -383,16 +391,16 @@
+       : this.run(sql, params)
+   }
+   executeRaw(sql: string, params: ReadonlyArray<unknown>) {
+-    return this.connection.query(sql, params)
++    return this.traceBackend(this.connection.query(sql, params))
+   }
+   executeWithoutTransform(sql: string, params: ReadonlyArray<unknown>) {
+     return this.run(sql, params)
+   }
+   executeValues(sql: string, params: ReadonlyArray<unknown>) {
+-    return this.connection.queryValues(sql, params)
++    return this.traceBackend(this.connection.queryValues(sql, params))
+   }
+   executeValuesUnprepared(sql: string, params: ReadonlyArray<unknown>) {
+-    return this.connection.queryValues(sql, params, false)
++    return this.traceBackend(this.connection.queryValues(sql, params, false))
+   }
+   executeUnprepared(
+     sql: string,
+@@ -409,9 +417,11 @@
+     params: ReadonlyArray<unknown>,
+     transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined
+   ) {
++    const streamFor = (connection: PgConnection.PgConnection) =>
++      Stream.unwrap(this.traceBackend(Effect.succeed(connection.stream(sql, params)), connection))
+     const stream = this.streamAcquirer === undefined
+-      ? this.connection.stream(sql, params)
+-      : Stream.unwrap(Effect.map(this.streamAcquirer, (connection) => connection.stream(sql, params)))
++      ? streamFor(this.connection)
++      : Stream.unwrap(Effect.map(this.streamAcquirer, streamFor))
+     return transformRows
+       ? Stream.mapArray(stream, (rows) => transformRows(rows) as Arr.NonEmptyReadonlyArray<PgConnection.Row>)
+       : stream
+diff --git a/dist/PgClient.js b/dist/PgClient.js
+--- a/dist/PgClient.js
++++ b/dist/PgClient.js
+@@ -134,30 +134,34 @@
+     this.connection = connection;
+     this.streamAcquirer = streamAcquirer;
+   }
++  traceBackend(effect, connection = this.connection) {
++    return Effect.withFiber(fiber => fiber.cache.tracerEnabled && fiber.getRef(Statement.SpanPropagationEnabled) ? Effect.andThen(Effect.annotateCurrentSpan("postgresql.pid", connection.processId), effect) : effect);
++  }
+   run(query, params, prepare = true) {
+-    return Effect.map(this.connection.query(query, params, prepare), result => result.rows);
++    return this.traceBackend(Effect.map(this.connection.query(query, params, prepare), result => result.rows));
+   }
+   execute(sql, params, transformRows) {
+     return transformRows ? Effect.map(this.run(sql, params), transformRows) : this.run(sql, params);
+   }
+   executeRaw(sql, params) {
+-    return this.connection.query(sql, params);
++    return this.traceBackend(this.connection.query(sql, params));
+   }
+   executeWithoutTransform(sql, params) {
+     return this.run(sql, params);
+   }
+   executeValues(sql, params) {
+-    return this.connection.queryValues(sql, params);
++    return this.traceBackend(this.connection.queryValues(sql, params));
+   }
+   executeValuesUnprepared(sql, params) {
+-    return this.connection.queryValues(sql, params, false);
++    return this.traceBackend(this.connection.queryValues(sql, params, false));
+   }
+   executeUnprepared(sql, params, transformRows) {
+     const operation = this.run(sql, params, false);
+     return transformRows ? Effect.map(operation, transformRows) : operation;
+   }
+   executeStream(sql, params, transformRows) {
+-    const stream = this.streamAcquirer === undefined ? this.connection.stream(sql, params) : Stream.unwrap(Effect.map(this.streamAcquirer, connection => connection.stream(sql, params)));
++    const streamFor = connection => Stream.unwrap(this.traceBackend(Effect.succeed(connection.stream(sql, params)), connection));
++    const stream = this.streamAcquirer === undefined ? streamFor(this.connection) : Stream.unwrap(Effect.map(this.streamAcquirer, streamFor));
+     return transformRows ? Stream.mapArray(stream, rows => transformRows(rows)) : stream;
+   }
+ }

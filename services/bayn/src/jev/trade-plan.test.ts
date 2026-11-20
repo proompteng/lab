@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from './protocol'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -41,12 +42,18 @@ test('selected prices, source anchors and funded size reproduce the sealed propo
   if (symbol === undefined) throw new Error('Expected a funded supported entry')
   const plan = target.exitPolicy.plans[symbol]
   const candidate = target.evidence.batchResult.candidates.find((value) => value.symbol === symbol)
-  if (plan === undefined || candidate?.status !== 'RESOLVED' || candidate.receipt?.outcome.status !== 'COMPLETED')
+  if (
+    plan === undefined ||
+    plan.schemaVersion !== 'bayn.jev-funded-exit-plan.v4' ||
+    candidate?.status !== 'RESOLVED' ||
+    candidate.receipt?.outcome.status !== 'COMPLETED'
+  )
     throw new Error('Missing selected evidence')
   const disposition = candidate.receipt.outcome.completion.handoff.disposition
   if (disposition.status !== 'READY') throw new Error('Missing funded proposals')
   const proposal = disposition.evaluation.proposals.find((value) => value.proposalId === plan.levels.proposalId)
-  if (proposal === undefined) throw new Error('Selected plan did not come from its provider handoff')
+  if (proposal === undefined || proposal.schemaVersion !== 'bayn.entry-proposal.v1')
+    throw new Error('Selected long plan did not come from its provider handoff')
   expect(plan.levels.source).toEqual(proposal.source)
   expect(plan.maximumQuantityAtoms).toBe(proposal.funding.maximumQuantityAtoms)
   expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
@@ -65,7 +72,7 @@ test('selected prices, source anchors and funded size reproduce the sealed propo
 
 test('retired protocol geometry and caps cannot become current defaults', () => {
   expect(
-    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v23' })),
+    Result.isFailure(decodeJevProtocol({ ...retainedJevProtocolV39Document, schemaVersion: 'bayn.jev.protocol.v23' })),
   ).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumCapitalRiskBps: 10 }))).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumStopBps: 500 }))).toBe(true)

@@ -12,8 +12,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-PTO4SoB1vaBGTc75X6tkg6j2lBdtJqz8C8Y8QXBDVOw=";
-    aarch64-linux = "sha256-C+6/BVMsoBo6r2Xwoc6w8ZeB7IWMPG3x5ENxCUPIaZQ=";
+    x86_64-linux = "sha256-aQCdeDXGfS368/9jDnIEUp80IlGPN94/jcIMIYT+IxI=";
+    aarch64-linux = "sha256-ii8AToFWItMEnyfV/P+JziCJrzzt9Ywa0MFAHeYNGCs=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -41,6 +41,9 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/landing/public" ]; then
       cp -R "$TMPDIR/work/apps/landing/public/." "$out/app/apps/landing/public/"
     fi
+    # Node resolves the standalone server inside the immutable Nix store. Point its cache at the writable volume.
+    rm -rf "$out/app/apps/landing/.next/cache"
+    ln -s /var/cache/proompteng "$out/app/apps/landing/.next/cache"
     mkdir -p "$out/app/services/tengri/proto"
     cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
     mkdir -p "$out/app/services/tengri/migrations"

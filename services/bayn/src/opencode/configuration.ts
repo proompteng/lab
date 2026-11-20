@@ -4,7 +4,6 @@ export const openCodeVersion = '2.1.3'
 export const openCodeDirectory = '/var/lib/bayn-opencode'
 export const openCodeModel = 'glm-5.3-flash-free'
 export const openCodeRelayOrigin = 'http://127.0.0.1:4098'
-export const openCodeNativeOrigin = 'http://127.0.0.1:4097'
 export const maximumOpenCodeInputBytes = 32768
 export const makeOpenCodeConfiguration = (directory = openCodeDirectory, relayOrigin = openCodeRelayOrigin) => ({
   model: `opencode/${openCodeModel}`,

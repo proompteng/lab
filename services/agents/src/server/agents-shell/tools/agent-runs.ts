@@ -16,7 +16,7 @@ export const createAgentRunTools = (): EffectTool[] =>
         name: tool.name,
         title: tool.name.replaceAll('_', ' '),
         description: tool.description,
-        inputSchema: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+        inputSchema: Schema.Record(Schema.String, Schema.Unknown),
         inputJsonSchema: tool.inputSchema,
         auditResult: false,
         annotations: readOnly

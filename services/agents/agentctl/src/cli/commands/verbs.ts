@@ -1,4 +1,4 @@
-import { Args, Command, Options } from '@effect/cli'
+import { Argument, Command, Flag } from 'effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import YAML from 'yaml'
@@ -27,7 +27,6 @@ import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { promptConfirm } from '../prompt'
 import { resolveResource } from '../resource-registry'
-import { sleep } from '../utils'
 
 type RpcMapping = { list: string; get: string; apply: string; del: string; create?: string }
 
@@ -59,12 +58,12 @@ const transportErrorTag = (error: unknown) => {
   return 'KubeError'
 }
 
-const selectorOption = Options.optional(Options.text('selector').pipe(Options.withAlias('l')))
-const intervalOption = Options.optional(Options.text('interval'))
-const phaseOption = Options.optional(Options.text('phase'))
-const runtimeOption = Options.optional(Options.text('runtime'))
-const fileOption = Options.text('file').pipe(Options.withAlias('f'))
-const dryRunOption = Options.boolean('dry-run')
+const selectorOption = Flag.optional(Flag.String('selector').pipe(Flag.withAlias('l')))
+const intervalOption = Flag.optional(Flag.String('interval'))
+const phaseOption = Flag.optional(Flag.String('phase'))
+const runtimeOption = Flag.optional(Flag.String('runtime'))
+const fileOption = Flag.String('file').pipe(Flag.withAlias('f'))
+const dryRunOption = Flag.Boolean('dry-run').pipe(Flag.withDefault(false))
 
 const confirmOrThrow = (message: string, flags: { yes?: boolean; noInput?: boolean }) =>
   Effect.gen(function* () {
@@ -188,8 +187,8 @@ const getGenericResource = (resourceName: string, name: string, describeOutput?:
   })
 
 export const makeGetCommand = () => {
-  const resourceArg = Args.text({ name: 'resource' })
-  const nameArg = Args.optional(Args.text({ name: 'name' }))
+  const resourceArg = Argument.String('resource')
+  const nameArg = Argument.optional(Argument.String('name'))
   return Command.make(
     'get',
     { resource: resourceArg, name: nameArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption },
@@ -222,8 +221,8 @@ export const makeGetCommand = () => {
 }
 
 export const makeDescribeCommand = () => {
-  const resourceArg = Args.text({ name: 'resource' })
-  const nameArg = Args.text({ name: 'name' })
+  const resourceArg = Argument.String('resource')
+  const nameArg = Argument.String('name')
   return Command.make('describe', { resource: resourceArg, name: nameArg }, ({ resource, name }) =>
     Effect.gen(function* () {
       const { resolved, flags } = yield* AgentctlContext
@@ -234,7 +233,7 @@ export const makeDescribeCommand = () => {
 }
 
 export const makeListCommand = () => {
-  const resourceArg = Args.text({ name: 'resource' })
+  const resourceArg = Argument.String('resource')
   return Command.make(
     'list',
     { resource: resourceArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption },
@@ -257,7 +256,7 @@ export const makeListCommand = () => {
 }
 
 export const makeWatchCommand = () => {
-  const resourceArg = Args.text({ name: 'resource' })
+  const resourceArg = Argument.String('resource')
   return Command.make(
     'watch',
     {
@@ -277,8 +276,6 @@ export const makeWatchCommand = () => {
         const entry = resolveResourceOrThrow(resource)
 
         let iteration = 0
-        const stop = () => process.exit(0)
-        process.on('SIGINT', stop)
         while (true) {
           if (resolved.output === 'table' || resolved.output === 'wide') {
             clearScreen()
@@ -294,15 +291,15 @@ export const makeWatchCommand = () => {
             yield* listGenericResource(resource, resolvedSelector)
           }
           iteration += 1
-          yield* Effect.promise(() => sleep(intervalMs))
+          yield* Effect.sleep(intervalMs)
         }
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 }
 
 export const makeDeleteCommand = () => {
-  const resourceArg = Args.text({ name: 'resource' })
-  const nameArg = Args.text({ name: 'name' })
+  const resourceArg = Argument.String('resource')
+  const nameArg = Argument.String('name')
   return Command.make(
     'delete',
     { resource: resourceArg, name: nameArg, dryRun: dryRunOption },
@@ -312,7 +309,8 @@ export const makeDeleteCommand = () => {
         if (entry.isRun || entry.supportsDelete === false) {
           throw new Error('Deleting runs is not supported. Use `agentctl run cancel <name>`.')
         }
-        if (!entry.rpc) {
+        const rpc = entry.rpc
+        if (!rpc) {
           throw new Error(`No RPC mapping for ${entry.name}`)
         }
         const { resolved, flags } = yield* AgentctlContext
@@ -329,7 +327,7 @@ export const makeDeleteCommand = () => {
           const response = yield* Effect.promise(() =>
             callUnary<{ json: string }>(
               transport.client,
-              entry.rpc.get,
+              rpc.get,
               { name, namespace: resolved.namespace },
               transport.metadata,
             ),
@@ -356,7 +354,7 @@ export const makeDeleteCommand = () => {
         const response = yield* Effect.promise(() =>
           callUnary<{ ok: boolean; message?: string }>(
             transport.client,
-            entry.rpc.del,
+            rpc.del,
             { name, namespace: resolved.namespace },
             transport.metadata,
           ),
@@ -421,7 +419,7 @@ export const makeApplyCommand = () => {
 }
 
 export const makeExplainCommand = () => {
-  const resourceArg = Args.text({ name: 'resource' })
+  const resourceArg = Argument.String('resource')
   return Command.make('explain', { resource: resourceArg }, ({ resource }) =>
     Effect.sync(() => {
       const entry = resolveResourceOrThrow(resource)

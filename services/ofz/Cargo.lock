@@ -3171,13 +3171,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7d0a770f9a8571eb96f9c319b3b55dd7118e3047bd3629b894882506b9e8295"
 dependencies = [
  "arc-swap",
+ "base64ct",
  "fastrand",
  "futures",
  "hyper-util",
  "pkcs8",
  "prost",
  "prost-types",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
+ "time",
  "tokio",
  "tokio-util",
  "tonic",
