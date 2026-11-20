@@ -57,9 +57,9 @@ describe('Tengri image workflow', () => {
     const controllerIndex = steps.findIndex((step) => step.name === 'Build tengri image')
     expect(guestIndex).toBeGreaterThanOrEqual(0)
     expect(controllerIndex).toBeGreaterThan(guestIndex)
-    for (const [name, image, mode] of [
-      ['tengri', 'TENGRI_IMAGE', 'max'],
-      ['nanoagent', 'NANOAGENT_IMAGE', 'min'],
+    for (const [name, image] of [
+      ['tengri', 'TENGRI_IMAGE'],
+      ['nanoagent', 'NANOAGENT_IMAGE'],
     ]) {
       const build = steps.find((step) => step.name === `Build ${name} image`)
       expect(build?.with?.context).toBe(`services/${name}`)
@@ -67,7 +67,7 @@ describe('Tengri image workflow', () => {
       expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
       const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
       expect(build?.with?.['cache-from']).toBe(cache)
-      expect(build?.with?.['cache-to']).toBe(`${cache},mode=${mode},ignore-error=true`)
+      expect(build?.with?.['cache-to']).toBe(`${cache},mode=min,ignore-error=true`)
       expect(build?.['continue-on-error']).not.toBe(true)
     }
     const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
