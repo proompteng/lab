@@ -1,6 +1,6 @@
 # Bayn Valkey
 
-Dedicated Valkey 9.1 primary and replica, managed by chideat/valkey-operator v2.1.0.
+Dedicated Valkey 9.1.4 primary and replica, managed by chideat/valkey-operator v2.1.1.
 The `bayn-valkey` Application tracks reviewed `main` independently of Bayn's Kargo
 release. Valkey is a disposable cache; PostgreSQL, TigerBeetle and Kafka retain
 their existing authority.
@@ -126,7 +126,7 @@ this rollout. Verify the old Cluster and old User are absent and Argo is
 Synced/Healthy at each reviewed revision. Do not persist force/replace options
 or change Application automation.
 
-Upstream v2.1.0 can leave a foreground-deletion cycle: generated operator Users
+The operator can leave a foreground-deletion cycle: generated operator Users
 wait for the Cluster/Failover to disappear while those parents wait for their
 Users. If this occurs, wait for all cache Pods and StatefulSets to disappear
 and for operator cleanup finalizers to clear. A separately authorized metadata

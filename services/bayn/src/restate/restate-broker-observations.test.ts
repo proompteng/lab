@@ -80,6 +80,7 @@ const harness = (
   const deliveries: Delivery[] = []
   const runtime: BrokerObservationRuntime = {
     verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+    probeProtection: async () => undefined,
     recordNotification: async () => ({ covered: false }),
     invalidate: async () => {
       invalidations += 1
@@ -184,6 +185,53 @@ const receipt = { eventId: 'd'.repeat(64) }
 const pollResult = (poll: BrokerObservationPoll) => ({ poll, startedAtMs: initialNow, completedAtMs: initialNow })
 
 describe('event-driven Restate broker observation owner', () => {
+  test('reserves and wakes the exact protective cycle before releasing the ordinary capture', async () => {
+    const proof = {
+      proofId: '1'.repeat(64),
+      cycleId: '2'.repeat(64),
+      checkedAt: new Date(initialNow + 250).toISOString(),
+    }
+    const probes: string[] = []
+    const h = harness({
+      state: active(),
+      runtime: {
+        probeProtection: async (_signal, cycleId) => {
+          probes.push(cycleId)
+          return proof
+        },
+      },
+    })
+    await h.handlers.refresh(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
+    expect(probes).toEqual([])
+    await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
+    expect(h.sleeps).toEqual([200])
+    expect(probes).toEqual([proof.cycleId])
+    expect(h.deliveries).toMatchObject([
+      {
+        service: 'BaynExecutionController',
+        method: 'wake',
+        parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
+      },
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 0 } },
+    ])
+    expect(h.calls().polls).toBe(0)
+  })
+
+  test('a failed protective probe still schedules the account capture', async () => {
+    const h = harness({
+      state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+      runtime: {
+        probeProtection: async () => {
+          throw new Error('injected unavailable read')
+        },
+      },
+    })
+    await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
+    expect(h.deliveries).toMatchObject([
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 29_800 } },
+    ])
+  })
+
   test('activation publishes one canonical cut, wakes the account and arms only its completeness deadline', async () => {
     const h = harness()
     const state = await h.handlers.activate(h.context, { sourceRevision })

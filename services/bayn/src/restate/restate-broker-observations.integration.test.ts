@@ -13,6 +13,7 @@ import {
   verifyBrokerNotification,
 } from '../broker/notifications'
 import { sha256 } from '../hash'
+import { ProtectionReleaseReferenceSchema, type ProtectionReleaseReference } from '../execution/events'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
 
@@ -108,14 +109,14 @@ const localTargets = () => {
       throw new Error('Restate integration targets must be local')
   return { admin, ingress }
 }
-const wakeReceiver = (record: () => void = () => undefined) =>
+const wakeReceiver = (record: (wake: unknown) => void = () => undefined) =>
   alwaysReplay(
     restate.object({
       name: 'BaynExecutionController',
       handlers: {
-        wake: async (ctx: restate.ObjectContext, _candidate: unknown) => {
+        wake: async (ctx: restate.ObjectContext, candidate: unknown) => {
           await ctx.run('record published wake', async () => {
-            record()
+            record(candidate)
           })
         },
       },
@@ -129,11 +130,27 @@ describeRestate('Real always-replay Restate broker ingress', () => {
     let activations = 0
     let captures = 0
     let wakes = 0
+    const captureCountsAtProbe: number[] = []
+    const proofReads = new Map<string, ProtectionReleaseReference>()
+    const protectionWakes: unknown[] = []
+    const protectionCycleId = sha256(`${config.controllerKey}:pending-close`)
     const clock = Clock.Clock.defaultValue()
     const makeObserved = () =>
       alwaysReplay(
         makeBaynBrokerObservations(config, {
           verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+          probeProtection: async (_signal, cycleId, claimId) => {
+            expect(cycleId).toBe(protectionCycleId)
+            captureCountsAtProbe.push(captures)
+            const retained = proofReads.get(claimId)
+            if (retained !== undefined) return retained
+            proofReads.set(claimId, {
+              proofId: sha256(claimId),
+              cycleId,
+              checkedAt: new Date(clock.currentTimeMillisUnsafe()).toISOString(),
+            })
+            throw new Error('Injected lost completion after persisting proof')
+          },
           recordNotification: async () => ({ covered: false }),
           invalidate: async () => undefined,
           activate: async () => {
@@ -147,7 +164,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
                 _tag: 'Published',
                 snapshotHash: captures.toString(16).padStart(64, '0'),
                 observedAt: new Date(now).toISOString(),
-                nextPollNotBeforeMs: now + 2_000,
+                nextPollNotBeforeMs: captures === 2 ? now : now + 3_000,
               },
               startedAtMs: now,
               completedAtMs: now,
@@ -182,14 +199,16 @@ describeRestate('Real always-replay Restate broker ingress', () => {
               service: 'BaynBrokerObservations',
               method: 'refresh',
               key: config.controllerKey,
-              parameter: { sourceRevision: config.sourceRevision },
+              parameter: { sourceRevision: config.sourceRevision, cycleId: protectionCycleId },
               inputSerde: brokerObservationJsonSerde,
             }),
         },
       }),
     )
-    const receiver = wakeReceiver(() => {
-      wakes++
+    const receiver = wakeReceiver((wake) => {
+      if (typeof wake === 'object' && wake !== null && '_tag' in wake && wake._tag === 'ProtectionRelease')
+        protectionWakes.push(wake)
+      else wakes++
     })
     await Effect.runPromise(
       Effect.scoped(
@@ -285,7 +304,21 @@ describeRestate('Real always-replay Restate broker ingress', () => {
           )
           expect(counts).toEqual({ rows: [{ accepted: 1 }] })
           yield* invoke('refresh')
-          expect(captures).toBe(2)
+          yield* waitFor(() => Effect.sync(() => protectionWakes.length === 1))
+          expect(captureCountsAtProbe).toEqual([2, 2])
+          expect(proofReads.size).toBe(1)
+          const [proof] = proofReads.values()
+          if (proof === undefined || !Schema.is(ProtectionReleaseReferenceSchema)(proof))
+            throw new Error('Missing retained release proof')
+          expect(protectionWakes).toEqual([
+            {
+              schemaVersion: 'bayn.execution-wakeup.v1',
+              sourceRevision: config.sourceRevision,
+              _tag: 'ProtectionRelease',
+              eventId: proof.proofId,
+              ...proof,
+            },
+          ])
           yield* waitFor(() =>
             invoke('status').pipe(
               Effect.map(
@@ -316,6 +349,7 @@ describeRestate('Real always-replay Restate broker ingress', () => {
         { ...config, controllerKey: replayKey },
         {
           verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+          probeProtection: async () => undefined,
           recordNotification: async () => ({ covered: false }),
           invalidate: async () => undefined,
           activate: async () => undefined,

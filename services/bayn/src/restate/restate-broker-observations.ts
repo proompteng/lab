@@ -3,7 +3,7 @@ import { Clock, Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import type { BrokerNotification, BrokerNotificationError } from '../broker/notifications'
-import type { ExecutionWakeup } from '../execution/events'
+import type { ExecutionWakeup, ProtectionReleaseReference } from '../execution/events'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const key = 'observation'
@@ -11,6 +11,7 @@ const previousKey = 'polling'
 const budgetKey = 'next-poll-not-before-ms'
 const recoveryDelayMs = 1_000
 const coalescingDelayMs = 100
+const protectionSettlementDelayMs = 200
 // Explicit intervals override the finite handler retry policy. Accepted notifications must survive a database
 // outage without recording a terminal run result; leave attempt and duration limits unset for idempotent writes.
 const persistenceRunOptions = { initialRetryInterval: 50, maxRetryInterval: 1_000 }
@@ -20,6 +21,7 @@ const BudgetDeadlineSchema = Schema.Int.check(
 )
 export const brokerObservationJsonSerde = restate.serde.json.schema<unknown>({})
 const BindingSchema = Schema.Struct({ sourceRevision: GitSourceRevisionSchema })
+const RefreshSchema = Schema.Struct({ ...BindingSchema.fields, cycleId: Schema.optionalKey(Sha256Schema) })
 const TickSchema = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
   epoch: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -62,6 +64,11 @@ export interface BrokerObservationRuntime {
     receipt: Pick<BrokerNotification, 'eventId' | 'receivedAt'>,
   ) => Promise<{ readonly covered: boolean }>
   readonly invalidate: (signal: AbortSignal) => Promise<void>
+  readonly probeProtection: (
+    signal: AbortSignal,
+    cycleId: string,
+    claimId: string,
+  ) => Promise<ProtectionReleaseReference | undefined>
   readonly poll: (
     signal: AbortSignal,
     reservation: { readonly captureId: string },
@@ -251,7 +258,7 @@ export const makeBaynBrokerObservations = (
         { ingressPrivate: true },
         async (ctx: restate.ObjectContext, candidate: unknown) => {
           verifyKey(ctx)
-          const binding = decode(BindingSchema, candidate)
+          const binding = decode(RefreshSchema, candidate)
           if (binding.sourceRevision !== config.sourceRevision) return
           const current = await read(ctx)
           if (current === null || current.sourceRevision !== config.sourceRevision) return
@@ -272,6 +279,38 @@ export const makeBaynBrokerObservations = (
               : { pendingNotificationId: current.pendingNotificationId }),
           }
           ctx.set(key, state)
+          const cycleId = binding.cycleId
+          if (cycleId !== undefined) {
+            const settleInMs = receivedAt + protectionSettlementDelayMs - (await ctx.date.now())
+            if (settleInMs > 0) await ctx.sleep({ milliseconds: settleInMs })
+            let proof: ProtectionReleaseReference | null = null
+            try {
+              proof = await ctx.run(
+                'read and record exact protective release',
+                async () =>
+                  (await runtime.probeProtection(ctx.request().attemptCompletedSignal, cycleId, ctx.request().id)) ??
+                  null,
+                { maxRetryAttempts: 2, initialRetryInterval: 75 },
+              )
+            } catch {
+              ctx.console.warn('Protective release read failed before the next complete broker capture')
+            }
+            if (proof !== null)
+              ctx.genericSend({
+                service: 'BaynExecutionController',
+                method: 'wake',
+                key: ctx.key,
+                parameter: {
+                  schemaVersion: 'bayn.execution-wakeup.v1',
+                  _tag: 'ProtectionRelease',
+                  sourceRevision: state.sourceRevision,
+                  eventId: proof.proofId,
+                  ...proof,
+                } satisfies ExecutionWakeup,
+                inputSerde: brokerObservationJsonSerde,
+                idempotencyKey: `broker-protection-proof:${proof.proofId}`,
+              })
+          }
           schedule(ctx, 'capture', state, Math.max(receivedAt + coalescingDelayMs, state.nextCaptureNotBeforeMs))
         },
       ),

@@ -15,7 +15,7 @@ global:
 
 image:
   repository: docker.io/grafana/mimir
-  tag: 3.2.1
+  tag: 3.2.6@sha256:32d79dc873a804d4dbf2724afcbb7b141553b5ed9118f9295972c4bb2982d6fd
 
 mimir:
   structuredConfig:

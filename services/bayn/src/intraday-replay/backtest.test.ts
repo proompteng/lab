@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -1048,7 +1049,7 @@ test('prepared replay admits a native control batch before any provider dispatch
       const directory = `${yield* fs.makeTempDirectoryScoped()}/journal`
       const journal = yield* makeControlJevJournal(directory, prepared.runId)
       yield* TestClock.setTime(Date.parse(observation.payload.observedAt))
-      const admitted = yield* journal.batches.begin(plan, observation.payload)
+      const admitted = yield* beginRecordedJevBatch(journal.batches, plan, observation.payload)
       if (admitted.dispatches === null) throw new Error('Offline replay must retain in-process dispatch rights')
       expect(admitted.dispatches.length).toBeGreaterThan(0)
       for (const dispatch of admitted.dispatches)

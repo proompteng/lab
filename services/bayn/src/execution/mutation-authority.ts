@@ -983,23 +983,41 @@ export const confirmExecutionBrokerState = (
       return yield* mutationAuthorizationError('broker cash changed since reconciliation', {
         _tag: 'BrokerAccountSnapshotChanged',
       })
-    const instrumentRead = intent.protection?._tag === 'EquityShortBracket' ? brokerRead.projection.fresh : brokerRead
-    const asset = yield* instrumentRead
-      .assetBySymbol(intent.symbol)
-      .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker instrument confirmation failed', cause)))
-    const shortConfiguration =
-      intent.protection?._tag === 'EquityShortBracket'
-        ? yield* brokerRead.projection.fresh.accountConfiguration.pipe(
-            Effect.mapError((cause) => mutationAuthorizationError('short configuration confirmation failed', cause)),
-          )
-        : undefined
+    const openingShort = intent.protection?._tag === 'EquityShortBracket'
+    const fresh = brokerRead.projection.fresh
+    const { asset, confirmedAccount, shortConfiguration } = yield* Effect.all(
+      {
+        asset: (openingShort ? fresh : brokerRead)
+          .assetBySymbol(intent.symbol)
+          .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker instrument confirmation failed', cause))),
+        // The canonical account cut can outlive the shorter borrow eligibility window.
+        confirmedAccount: openingShort
+          ? fresh.account.pipe(
+              Effect.mapError((cause) => mutationAuthorizationError('short account confirmation failed', cause)),
+            )
+          : Effect.succeed(account),
+        shortConfiguration: openingShort
+          ? fresh.accountConfiguration.pipe(
+              Effect.mapError((cause) => mutationAuthorizationError('short configuration confirmation failed', cause)),
+            )
+          : Effect.void,
+      },
+      { concurrency: 3 },
+    )
+    if (
+      confirmedAccount.value.id !== account.value.id ||
+      confirmedAccount.value.cashMicros !== account.value.cashMicros
+    )
+      return yield* mutationAuthorizationError('broker account changed since reconciliation', {
+        _tag: 'BrokerAccountSnapshotChanged',
+      })
     return {
       asset: asset.value,
       ...(shortConfiguration === undefined ? {} : { shortConfiguration: shortConfiguration.value }),
-      account: account.value,
+      account: confirmedAccount.value,
       positions: positions.value,
       openOrders: orders.value,
-      accountObservedAt: account.evidence.observedAt,
+      accountObservedAt: confirmedAccount.evidence.observedAt,
       positionsObservedAt: cached.state.positionsObservedAt,
       ordersObservedAt: cached.state.ordersObservedAt,
       positionsConfirmedAt: positions.evidence.observedAt,

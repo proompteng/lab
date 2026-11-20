@@ -1157,6 +1157,17 @@ const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMateri
   }
 
   const reproducedPlan = planTargets(input)
+  if (
+    input.protectionClose !== undefined &&
+    (document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v5' ||
+      document.bindings.authorityGenerationHash !== input.protectionClose.authorityGenerationHash ||
+      document.orderedIntentIds.length !== 1)
+  ) {
+    issues.push({
+      path: ['plannerInput', 'protectionClose'],
+      issue: 'a protection release must bind one Jev exit intent under the current authority generation',
+    })
+  }
   if (Result.isFailure(reproducedPlan) || reproducedPlan.success.outputHash !== document.targetPlan.outputHash) {
     issues.push({
       path: ['targetPlan'],
@@ -2034,6 +2045,15 @@ const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial):
       issues.push({ path: ['deltaRisk', index], issue: 'must bind the corresponding ordered intent identity' })
     }
     const facts = risk.facts
+    if (
+      (plannerInput?.protectionClose !== undefined || facts?.state.protectionClose !== undefined) &&
+      !canonicalJsonEqualV1(plannerInput?.protectionClose, facts?.state.protectionClose)
+    ) {
+      issues.push({
+        path: ['deltaRisk', index, 'facts', 'state', 'protectionClose'],
+        issue: 'must preserve the same protection release in planning and risk approval',
+      })
+    }
     if (
       facts !== undefined &&
       (isClosePlan

@@ -8,7 +8,7 @@ spec:
   sources:
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.14.2
+      targetRevision: 0.15.1
       helm:
         releaseName: arc-controller
         valuesObject:
@@ -22,7 +22,7 @@ spec:
               effect: NoSchedule
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.2
+      targetRevision: 0.15.1
       helm:
         releaseName: arc-runner-set
         valuesObject:
@@ -255,7 +255,7 @@ spec:
                             storage: 100Gi
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.2
+      targetRevision: 0.15.1
       helm:
         releaseName: arc-runner-set-amd64
         valuesObject:
