@@ -6,7 +6,11 @@ import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
-import { validateSystemRegistration, verifyStoredSystemRegistration, type ScheduledEvaluation } from './policy'
+import {
+  validateProspectiveSystemRegistration,
+  verifyStoredSystemRegistration,
+  type ScheduledEvaluation,
+} from './policy'
 import {
   OperationalRegistrationSchema,
   validateOperationalRegistration,
@@ -80,11 +84,12 @@ export const initializeQualificationHistory = (input: unknown, verifiedSources: 
 
 export const registerSystemQualification = (input: unknown, verifiedSources: ReadonlySet<string>) =>
   Effect.gen(function* () {
-    const { registration, registrationHash } = yield* Effect.fromResult(validateSystemRegistration(input))
-    if (
-      registration.schemaVersion === 'bayn.system-registration.v4' &&
-      registration.statisticalPlan.supports.some((support) => !verifiedSources.has(support.sourceHash))
-    )
+    const { registration, registrationHash } = yield* Effect.fromResult(validateProspectiveSystemRegistration(input))
+    if (!verifiedSources.has(registration.calendar.sourceHash))
+      return yield* new SystemAssessmentError({
+        message: 'Registration requires the verified native calendar artifact',
+      })
+    if (registration.statisticalPlan.supports.some((support) => !verifiedSources.has(support.sourceHash)))
       return yield* new SystemAssessmentError({
         message: 'Registration requires verified statistical support sources before the first open',
       })

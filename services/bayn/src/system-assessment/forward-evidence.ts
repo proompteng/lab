@@ -8,7 +8,7 @@ import type { ForwardPerformanceEvidenceInput } from '../forward-performance/mod
 import { SystemAssessmentError } from './economics'
 
 import { CapturedTradingFactsSchema } from './session'
-import type { ScheduledEvaluation } from './policy'
+import { nativeBrokerRecoveryClose, type ScheduledEvaluation } from './policy'
 import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/configuration'
 import type { SystemSourceCut } from './source-cut'
 import { IsoDateSchema, Sha256Schema } from '../schemas'
@@ -175,16 +175,23 @@ export const captureForwardFinancialEvidence = (
         new SystemAssessmentError({ message: 'Financial capture requires the registered calendar' }),
       )
     const dates = new Set<string>(registration.calendar.sessions.map((s) => s.sessionDate))
+    const recoveryClose = nativeBrokerRecoveryClose(registration)
+    const financialEnd = recoveryClose ?? last.closeAt
+    const recoveryCovered =
+      recoveryClose === undefined ||
+      (forward.reconciliation !== null &&
+        forward.reconciliation !== undefined &&
+        Date.parse(forward.reconciliation.reconciledAt) >= Date.parse(recoveryClose))
     const windowTransactionIds = new Set(
       forward.transactions
-        .filter((t) => t.occurredAt >= first.openAt && t.occurredAt <= last.closeAt)
+        .filter((t) => t.occurredAt >= first.openAt && t.occurredAt <= financialEnd)
         .map((t) => t.transactionId),
     )
     const outsideSession =
       forward.transactions.some(
         (transaction) =>
           transaction.occurredAt >= first.openAt &&
-          transaction.occurredAt <= last.closeAt &&
+          transaction.occurredAt <= financialEnd &&
           !registration.calendar.sessions.some(
             (s) => transaction.occurredAt >= s.openAt && transaction.occurredAt <= s.closeAt,
           ),
@@ -232,6 +239,7 @@ export const captureForwardFinancialEvidence = (
       })
       const complete =
         financialProofComplete &&
+        recoveryCovered &&
         !outsideSession &&
         accruals.every(
           (a) =>

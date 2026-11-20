@@ -31,6 +31,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
   activeEvaluationSessions,
   assessmentFixture,
+  nativeRegistrationFixture,
   registrationFixture,
   testHash,
   withRegistrationCommitments,
@@ -83,7 +84,7 @@ import {
   ReplayExecutionReceiptSchema,
 } from './replay-execution'
 
-import { validateSystemRegistration } from './policy'
+import { validateSystemRegistration, type SystemRegistration } from './policy'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import {
   OperationalSourceCutSchema,
@@ -115,14 +116,13 @@ const databaseNow = Effect.gen(function* () {
   if (row === undefined) throw new Error('Database clock is missing')
   return row.now
 })
-const registerFixture = (value: ReturnType<typeof registrationFixture>) =>
+const registerFixture = (value: SystemRegistration) =>
   registerSystemQualification(
     value,
     new Set([
+      value.calendar.sourceHash,
       ...value.costAllocationPlans.map((plan) => plan.basisSourceHash),
-      ...(value.schemaVersion === 'bayn.system-registration.v4'
-        ? value.statisticalPlan.supports.map((s) => s.sourceHash)
-        : []),
+      ...('statisticalPlan' in value ? value.statisticalPlan.supports.map((s) => s.sourceHash) : []),
     ]),
   )
 
@@ -160,7 +160,7 @@ const makeRuntime = (url: string) =>
 postgres('PostgreSQL prospective system qualification', () => {
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
-  const registration = (
+  const retainedRegistration = (
     sessionCount = 20,
     version = JevAcceptanceVersion.Current,
     protocolDocument: unknown = defaultJevProtocolDocument,
@@ -176,6 +176,23 @@ postgres('PostgreSQL prospective system qualification', () => {
       priorAttemptHash: testHash(history),
     }
   }
+  const registration = (sessionCount = 20) => nativeRegistrationFixture(retainedRegistration(sessionCount))
+  const restorePriorAdmission = (lastMigration: number) =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= lastMigration))),
+          table: 'schema_migrations',
+        })
+        yield* sql`GRANT USAGE ON SCHEMA public TO bayn_assessment_test_app`
+        yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO bayn_assessment_test_app`
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
+      }),
+    )
   beforeAll(() => {
     const url = baynTestPostgresUrl ?? ''
     const parsed = new URL(url)
@@ -723,7 +740,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     const financial = await runtime.runPromise(
-      registerFixture(registration(1, JevAcceptanceVersion.Current, retainedJevProtocolV40Document)),
+      insertPriorRegistration(retainedRegistration(1, JevAcceptanceVersion.Current, retainedJevProtocolV40Document)),
     )
     expect(financial.registration.obligations.configuration.schemaVersion).toBe('bayn.qualification-runtime.v1')
     const base = operationalRegistrationFixture(financial.registration)
@@ -836,6 +853,53 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(accepted.registration.calendar.sessions).toHaveLength(sessionCount)
   })
 
+  test('new economic admission verifies the native calendar artifact and rejects substituted windows at both boundaries', async () => {
+    const input = registration(2)
+    const sources = new Set([
+      ...input.costAllocationPlans.map((plan) => plan.basisSourceHash),
+      ...input.statisticalPlan.supports.map((support) => support.sourceHash),
+    ])
+    const missingCalendar = await runtime.runPromiseExit(asApplication(registerSystemQualification(input, sources)))
+    expect(Exit.isFailure(missingCalendar)).toBe(true)
+    sources.add(input.calendar.sourceHash)
+    const [first, ...following] = input.calendar.sessions
+    if (first === undefined) throw new Error('Missing calendar fixture')
+    const shortClose = new Date(Date.parse(first.closeAt) - 1000).toISOString()
+    const calendar = {
+      ...input.calendar,
+      sessions: [{ ...first, closeAt: shortClose }, ...following],
+      marketCalendar: {
+        ...input.calendar.marketCalendar,
+        sessions: input.calendar.marketCalendar.sessions.map((row, index) =>
+          index === 0 ? { ...row, closeAt: shortClose } : row,
+        ),
+      },
+    }
+    for (const invalid of [{ ...input, calendar }, retainedRegistration(2)]) {
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(registerSystemQualification(invalid, sources)))),
+      ).toBe(true)
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                const payload = yield* Effect.fromResult(canonicalJsonV1Result(invalid))
+                yield* sql`INSERT INTO system_qualification_registrations
+                  (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+                  VALUES (${sha256(payload)}, ${invalid.program}, ${invalid.attemptIndex}, ${invalid.priorAttemptHash},
+                    ${invalid.registeredAt}, ${invalid.calendar.sessions[0]!.openAt}, ${invalid.calendar.sessions.at(-1)!.closeAt}, ${payload})`
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
+    const persisted = await runtime.runPromise(asApplication(registerSystemQualification(input, sources)))
+    expect(await runtime.runPromise(readSystemRegistration(persisted.registrationHash))).toEqual(input)
+  })
+
   test('the window migration preserves existing registration bytes, hashes and attempt order', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -925,58 +989,61 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(await runtime.runPromise(readPersistedSystemAssessment(historical.assessmentHash))).toEqual(historical)
   })
 
-  test('the PostgreSQL qualification predicate accepts the real current report shape and rejects incomplete or substituted claims', async () => {
-    const f = knownPayoffAssessmentFixture()
-    const report = Result.getOrThrow(evaluateSystemAssessment(f.input, f.verifiedSources))
-    expect(report.verdict).toBe(QualificationVerdict.Qualified)
-    const numerical = report.numerical
-    if (
-      numerical === null ||
-      !('confidence' in numerical) ||
-      numerical.confidence === undefined ||
-      !('profit' in numerical.confidence)
-    )
-      throw new Error('Missing conditional report')
-    const confidence = numerical.confidence
-    const cases = [
-      { evidence: report, valid: true },
-      {
-        evidence: {
-          ...report,
-          verdict: QualificationVerdict.Rejected,
-          numerical: {
-            ...numerical,
-            confidence: { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '-1' } },
-          },
-        },
-        valid: true,
-      },
-      ...[
-        { ...confidence, method: 'BOOTSTRAP' },
-        { ...confidence, alpha: { numerator: '1', denominator: '1' } },
-        { ...confidence, attemptIndex: 2 },
-        { ...confidence, meanModel: 'UNSPECIFIED' },
-        { ...confidence, meanModel: undefined },
-        { ...confidence, supports: [] },
-        { ...confidence, profit: { ...confidence.profit, count: '0' } },
-        { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '0' } },
-        { ...confidence, paired: confidence.paired.slice(1) },
-        { ...confidence, paired: confidence.paired.map(() => confidence.paired[0]) },
-        { ...confidence, paired: confidence.paired.map((row) => ({ ...row, control: JevResearchPolicy.Candidate })) },
-      ].map((confidence) => ({ evidence: { ...report, numerical: { ...numerical, confidence } }, valid: false })),
-    ]
-    for (const c of cases) {
-      const rows = await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          return yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ valid: Schema.Boolean })))(
-            yield* sql`SELECT system_conditional_qualification_evidence_valid(${sql.json(f.input.registration)},${sql.json(c.evidence)}) AS valid`,
-          )
-        }),
+  test.each(['REGULAR_SESSION', 'NATIVE'] as const)(
+    'the PostgreSQL qualification predicate checks the %s report and rejects substituted claims',
+    async (hours) => {
+      const f = knownPayoffAssessmentFixture(hours)
+      const report = Result.getOrThrow(evaluateSystemAssessment(f.input, f.verifiedSources))
+      expect(report.verdict).toBe(QualificationVerdict.Qualified)
+      const numerical = report.numerical
+      if (
+        numerical === null ||
+        !('confidence' in numerical) ||
+        numerical.confidence === undefined ||
+        !('profit' in numerical.confidence)
       )
-      expect(rows).toEqual([{ valid: c.valid }])
-    }
-  })
+        throw new Error('Missing conditional report')
+      const confidence = numerical.confidence
+      const cases = [
+        { evidence: report, valid: true },
+        {
+          evidence: {
+            ...report,
+            verdict: QualificationVerdict.Rejected,
+            numerical: {
+              ...numerical,
+              confidence: { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '-1' } },
+            },
+          },
+          valid: true,
+        },
+        ...[
+          { ...confidence, method: 'BOOTSTRAP' },
+          { ...confidence, alpha: { numerator: '1', denominator: '1' } },
+          { ...confidence, attemptIndex: 2 },
+          { ...confidence, meanModel: 'UNSPECIFIED' },
+          { ...confidence, meanModel: undefined },
+          { ...confidence, supports: [] },
+          { ...confidence, profit: { ...confidence.profit, count: '0' } },
+          { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '0' } },
+          { ...confidence, paired: confidence.paired.slice(1) },
+          { ...confidence, paired: confidence.paired.map(() => confidence.paired[0]) },
+          { ...confidence, paired: confidence.paired.map((row) => ({ ...row, control: JevResearchPolicy.Candidate })) },
+        ].map((confidence) => ({ evidence: { ...report, numerical: { ...numerical, confidence } }, valid: false })),
+      ]
+      for (const c of cases) {
+        const rows = await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            return yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ valid: Schema.Boolean })))(
+              yield* sql`SELECT system_conditional_qualification_evidence_valid(${sql.json(f.input.registration)},${sql.json(c.evidence)}) AS valid`,
+            )
+          }),
+        )
+        expect(rows).toEqual([{ valid: c.valid }])
+      }
+    },
+  )
 
   test('conditional migration preserves v5 registration and receipt bytes, then continues the same attempt history', async () => {
     await runtime.runPromise(
@@ -991,7 +1058,7 @@ postgres('PostgreSQL prospective system qualification', () => {
         yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
       }),
     )
-    const retained = registration(4, JevAcceptanceVersion.RetainedV5)
+    const retained = retainedRegistration(4, JevAcceptanceVersion.RetainedV5)
     const hash = testHash(retained)
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -1091,7 +1158,6 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('direct SQL rejects incomplete, substituted and unordered statistical support without accepting a bootstrap substitute', async () => {
     const input = registration(4)
-    if (input.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
     for (const changes of [
       { statisticalPlan: null },
       { statisticalPlan: { ...input.statisticalPlan, supports: [] } },
@@ -1142,7 +1208,6 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('prospective attempt order continues beyond twelve without a bootstrap work quota', async () => {
     const base = registration(4)
-    if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
     let priorAttemptHash = base.priorAttemptHash
     for (let attemptIndex = 1; attemptIndex <= 13; attemptIndex += 1) {
       const proposal = withRegistrationCommitments({
@@ -1239,10 +1304,9 @@ postgres('PostgreSQL prospective system qualification', () => {
   test('cost allocation artifacts are required before admission and stored weights cannot be replaced', async () => {
     const first = registration()
     const sources = new Set([
+      first.calendar.sourceHash,
       ...first.costAllocationPlans.map((plan) => plan.basisSourceHash),
-      ...(first.schemaVersion === 'bayn.system-registration.v4'
-        ? first.statisticalPlan.supports.map((row) => row.sourceHash)
-        : []),
+      ...first.statisticalPlan.supports.map((row) => row.sourceHash),
     ])
     const plan = first.costAllocationPlans[0]
     if (plan === undefined) throw new Error('Missing cost plan')
@@ -1528,7 +1592,8 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('the deferred deadline rejects a transaction that crosses the first market open', async () => {
-    const first = registration()
+    await restorePriorAdmission(205)
+    const first = retainedRegistration()
     const now = Date.parse(await runtime.runPromise(databaseNow))
     const openAt = new Date(now + 2000).toISOString()
     const closeAt = new Date(now + 3000).toISOString()
@@ -1545,7 +1610,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       asApplication(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
-          yield* registerFixture(withRegistrationCommitments(input))
+          yield* insertPriorRegistration(withRegistrationCommitments(input))
           expect(yield* sql`SELECT count(*)::integer AS count FROM system_qualification_registrations`).toEqual([
             { count: 1 },
           ])
@@ -2270,10 +2335,8 @@ postgres('PostgreSQL prospective system qualification', () => {
     ).toBe(true)
   })
 
-  const seedRetainedRegistration = (value: ReturnType<typeof registrationFixture>) =>
+  const insertPriorRegistration = (value: ReturnType<typeof registrationFixture>) =>
     Effect.gen(function* () {
-      if (value.schemaVersion !== 'bayn.system-registration.v2')
-        throw new Error('Historical seed requires original registration material')
       const sql = yield* PgClient.PgClient
       const payload = Result.getOrThrow(canonicalJsonV1Result(value))
       const registrationHash = testHash(value)
@@ -2285,13 +2348,15 @@ postgres('PostgreSQL prospective system qualification', () => {
     })
 
   const activeEvaluation = async (retained = false) => {
-    const base = registration(20, retained ? JevAcceptanceVersion.RetainedV3 : JevAcceptanceVersion.Current)
+    if (!retained) await restorePriorAdmission(205)
+    const base = retainedRegistration(20, retained ? JevAcceptanceVersion.RetainedV3 : JevAcceptanceVersion.Current)
     const { opens, sessions } = activeEvaluationSessions(Date.now())
     const value = withRegistrationCommitments({ ...base, calendar: { ...base.calendar, sessions } })
     const registered = await runtime.runPromise(
       Effect.gen(function* () {
-        if (retained) return yield* seedRetainedRegistration(value)
-        return yield* registerFixture(value)
+        const saved = yield* insertPriorRegistration(value)
+        if (!retained) yield* postgresMigrations
+        return saved
       }),
     )
     const definition = registered.registration.policies.find((p) => p.policy === 'JEV')

@@ -12,6 +12,7 @@ import {
   frozenControlContinuation,
 } from './frozen-control-identity'
 import { prepareInferenceRateCard } from '../inference-costs'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import { Result, Schema } from 'effect'
 import {
   makeRepeatedMomentumPolicy,
@@ -79,6 +80,7 @@ export const activeEvaluationSessions = (now: number, sessionCount = 20) => {
 }
 
 export const calendarFixture = (registration: SystemRegistration) => {
+  if (registration.schemaVersion === 'bayn.system-registration.v5') return registration.calendar.marketCalendar
   const material = withProviderSessions({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -96,10 +98,12 @@ export const calendarFixture = (registration: SystemRegistration) => {
   return { ...material, normalizedResponseHash: testHash(material) }
 }
 
+type RetainedRegistration = Exclude<SystemRegistration, { schemaVersion: 'bayn.system-registration.v5' }>
+
 const baseRegistrationFixture = (
   sessionCount: number,
   protocol: typeof HistoricalJevProtocolSchema.Type,
-): SystemRegistration => {
+): RetainedRegistration => {
   const ablationIdentity = Result.getOrThrow(
     entryAblationStrategyIdentity(
       makeEntryAblationPolicy(protocol, Result.getOrThrow(historicalAblationQuestionPolicyHash(protocol))),
@@ -223,10 +227,10 @@ const baseRegistrationFixture = (
   }
 }
 
-export const withRegistrationCommitments = (registration: SystemRegistration): SystemRegistration => {
+export const withRegistrationCommitments = <R extends SystemRegistration>(registration: R): R => {
   const derived = {
     ...registration,
-    ...(registration.schemaVersion === 'bayn.system-registration.v4'
+    ...('statisticalPlan' in registration
       ? {
           statisticalPlan: {
             ...registration.statisticalPlan,
@@ -288,7 +292,7 @@ export const registrationFixture = (
   sessionCount = 20,
   version = JevAcceptanceVersion.Current,
   protocolDocument: unknown = defaultJevProtocolDocument,
-): SystemRegistration => {
+): RetainedRegistration => {
   const protocol =
     version === JevAcceptanceVersion.Current
       ? Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -370,6 +374,30 @@ export const registrationFixture = (
   })
 }
 
+export const nativeRegistrationFixture = (
+  registration: RetainedRegistration,
+  calendarObservation: unknown = calendarFixture(registration),
+) => {
+  if (registration.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected conditional fixture')
+  const marketCalendar = Schema.decodeUnknownSync(MarketCalendarObservationSchema)(calendarObservation)
+  return withRegistrationCommitments({
+    ...registration,
+    schemaVersion: 'bayn.system-registration.v5',
+    policyHash: Result.getOrThrow(systemQualificationPolicyHash(JevAcceptanceVersion.Current, 'NATIVE')),
+    calendar: {
+      ...registration.calendar,
+      operatingHours: 'NATIVE',
+      sourceHash: testHash(marketCalendar),
+      marketCalendar,
+      sessions: marketCalendar.sessions.map(({ date, openAt, closeAt }) => ({ sessionDate: date, openAt, closeAt })),
+    },
+    obligations: {
+      ...registration.obligations,
+      configuration: { ...registration.obligations.configuration, entryMarkets: [MarketKind.Equity] },
+    },
+  })
+}
+
 export const assessmentFixture = (registration: SystemRegistration = registrationFixture()) => {
   const asOf = new Date(
     Math.max(
@@ -387,7 +415,7 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
   source(registration.latencyStressProtocolHash)
   source(registration.latencyReplayExecutionModelHash)
   for (const plan of registration.costAllocationPlans) source(plan.basisSourceHash)
-  if (registration.schemaVersion === 'bayn.system-registration.v4')
+  if ('statisticalPlan' in registration)
     for (const support of registration.statisticalPlan.supports) source(support.sourceHash)
   for (const hash of [
     registration.obligations.decisionScheduleHash,
@@ -587,7 +615,7 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
 
 export const supportedAssessmentFixture = (
   sessionCount = 20,
-  registration = registrationFixture(undefined, sessionCount),
+  registration: SystemRegistration = registrationFixture(undefined, sessionCount),
 ) => {
   const fixture = assessmentFixture(registration)
   const decisions: (typeof DecisionRealismSchema.Type)[] = []
@@ -663,7 +691,7 @@ export const supportedAssessmentFixture = (
   }
 }
 /** A controlled deterministic process, declared before observations; not a model for market returns. */
-export const knownPayoffAssessmentFixture = () => {
+export const knownPayoffAssessmentFixture = (operatingHours: 'REGULAR_SESSION' | 'NATIVE' = 'REGULAR_SESSION') => {
   const base = registrationFixture(undefined, 1)
   if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
   const registration = withRegistrationCommitments({
@@ -679,7 +707,10 @@ export const knownPayoffAssessmentFixture = () => {
       })),
     },
   })
-  return supportedAssessmentFixture(1, registration)
+  return supportedAssessmentFixture(
+    1,
+    operatingHours === 'NATIVE' ? nativeRegistrationFixture(registration) : registration,
+  )
 }
 
 import { ReplayImagePlatform } from './replay-image-platform'

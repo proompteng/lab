@@ -69,8 +69,8 @@ const sourceMarketScopeSupported = (
     )
   )
     return false
-  if (native) return true
-  const calendar = qualificationCalendar(manifest['calendar'])
+  if (native && registration.schemaVersion !== 'bayn.system-registration.v5') return true
+  const calendar = qualificationCalendar(manifest['calendar'], registration.calendar.operatingHours)
   if (Result.isFailure(calendar)) return false
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
