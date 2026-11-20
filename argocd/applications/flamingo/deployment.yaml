@@ -36,7 +36,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: vllm
-          image: vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2
+          image: vllm/vllm-openai:v0.34.0@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
           imagePullPolicy: IfNotPresent
           args:
             - --host
@@ -78,7 +78,7 @@ spec:
             - name: PYTHONPATH
               value: /opt/flamingo
             - name: FLAMINGO_SERVING_IMAGE
-              value: sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2
+              value: sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
             - name: HF_HOME
               value: /models/huggingface
             - name: VLLM_CACHE_ROOT
