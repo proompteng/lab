@@ -317,7 +317,7 @@ const entryCloseObligationIsUnresolved = (
   )
 }
 
-const readPreparedExecutionIntents = (
+export const readPreparedExecutionIntents = (
   document: ExecutionDecisionDocument,
 ): Effect.Effect<readonly PreparedExecutionIntent[], CycleRunnerError, IntentStore | MutationStore> =>
   Effect.gen(function* () {

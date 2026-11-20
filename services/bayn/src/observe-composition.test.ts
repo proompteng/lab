@@ -253,7 +253,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     Effect.provideService(JevBatchStore, {
       read: () => unexpected,
       pending: () => Effect.succeed([]),
-      begin: (plan) =>
+      begin: ({ plan }) =>
         Clock.currentTimeMillis.pipe(
           Effect.map((now) => ({
             plan,
@@ -1236,6 +1236,7 @@ const sandboxExecutionProgram = (
     invalidateBrokerState: Effect.void,
     dryRunSubmit: () => unused,
     submit: () => unused,
+    submitProtectionClose: () => unused,
     cancel: () => unused,
     cancelProtectionOrder: () => unused,
     recover: () => unused,
@@ -2587,7 +2588,7 @@ describe('OBSERVE runtime composition', () => {
                       ? Effect.die('Unexpected batch recovery')
                       : Effect.succeed({ plan: pendingEvidence.batchPlan, result: null })
                   }),
-                begin: (plan, observation) =>
+                begin: ({ plan, source: { payload: observation } }) =>
                   Clock.currentTimeMillis.pipe(
                     Effect.map((now) => {
                       expect(canonicalHashV1Result(observation)).toEqual(Result.succeed(plan.observationHash))
@@ -5773,7 +5774,7 @@ describe('OBSERVE runtime composition', () => {
             read: () => Effect.die('entry fixture must not reread a batch'),
             complete: () => Effect.die('entry fixture uses a committed batch'),
             finish: () => Effect.die('entry fixture uses a committed batch'),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               Effect.gen(function* () {
                 yield* TestClock.adjust(options.inferenceMs ?? 1_000)
                 events.push('inference-committed')
@@ -8842,7 +8843,7 @@ test.each([
           Effect.provideService(JevBatchStore, {
             read: () => Effect.die('Unexpected batch read'),
             pending: () => Effect.succeed([]),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               Clock.currentTimeMillis.pipe(
                 Effect.map((now) => {
                   batches++

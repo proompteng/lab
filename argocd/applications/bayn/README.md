@@ -151,28 +151,35 @@ change the risk limits, reset financial history or revoke PAPER capital. The dep
 
 ## Execution-worker memory
 
-The execution controller requests 1 GiB and has a 2 GiB container limit shared by its parent, market projection,
-decision worker and native buffers. This provides headroom above the measured November 16 peaks of 960/987 MiB;
-it does not establish a fixed leak or a complete-session upper bound. Both eligible nodes had sufficient allocated
-memory headroom when this mitigation was selected. Reporting remains isolated from execution workers.
+The execution controller requests 1 GiB and has a 3 GiB container limit shared by its parent, market projection,
+decision worker and native buffers. The November 18 capacity check found 634.3 GiB available on Altra and
+855.7 GiB on Turin, with no memory pressure on either node. The existing scheduling request is unchanged.
+Reporting remains isolated from execution workers.
 
-The main process and both workers inherit `--max-old-space-size=384 --max-semi-space-size=16` through
-`NODE_OPTIONS`. Three V8 heaps can reserve 1,296 MiB (384 MiB old generation plus three 16 MiB semi-spaces
-per isolate), leaving 752 MiB of the 2 GiB container budget for native memory and buffers. These allowances
-do not bound process RSS; live isolate and process measurements remain necessary for acceptance.
+The main process and both workers inherit `--max-old-space-size=640 --max-semi-space-size=16` through
+`NODE_OPTIONS`. Each V8 heap has a 688 MiB ceiling (640 MiB old generation plus three 16 MiB semi-spaces).
+Three ceilings total 2,064 MiB, leaving 1,008 MiB of the 3 GiB container budget for native memory and buffers.
+A native Node 24.11.1 probe confirmed that inherited heap flags also govern worker heaps despite smaller
+worker `resourceLimits`, so the budget must include all three isolates. These allowances do not bound process
+RSS; live isolate and process measurements remain necessary for acceptance.
 
 On November 17 at 17:59:33 UTC, the active ARM64 controller exhausted its previous 192 MiB old-generation
 allowance and exited with code 133. The final GC reported allocation failure near 189 MiB. The preceding
 eight-hour telemetry peaked at 190.9 MiB of main-isolate used heap and 708.3 MiB of process RSS, establishing
-isolate heap pressure well below the container limit. The larger bounded heap addresses that mismatch;
-it does not establish a leak-free runtime or a complete-session upper bound.
+isolate heap pressure well below the container limit. The subsequent 384 MiB old-generation allowance also
+exhausted the active ARM64 controller on November 18 at 19:59:31 UTC: V8 reported ineffective mark-compacts
+near its heap limit and JavaScript heap exhaustion, followed by exit code 133. The container was not OOM-killed.
+The preceding 15-minute sampled process RSS peaked at 1,083.75 MiB under the former 2 GiB container limit;
+the main and projection isolates each had a 432 MiB V8 ceiling. The larger finite budget provides allocation
+and GC headroom for this measured workload. It does not establish a resolved retention cause, a leak-free
+runtime or a complete-session upper bound.
 
 The shared process has an eight-core burst limit with its existing 250m request. The November 17 increase from two
 to four cores addressed measured throttling while increasing the bounded heap. During the November 18 session,
 the active ARM64 controller still accumulated 306 throttled seconds and throttled 21.7% of periods in the hour
 ending at 18:39 UTC. The node's four-hour maximum CPU utilization was 25.0%, leaving capacity for the owner,
-projection, decision worker and V8 GC to progress together. The eight-core correction changes only the CPU limit;
-memory requests and limits and V8 allowances remain unchanged. Measure throttling and stage latency after
+projection, decision worker and V8 GC to progress together. That CPU correction preserved the memory budget;
+the later heap correction is described above. Measure throttling and stage latency after
 rollout on a comparable active workload; these observations do not establish an isolated CPU contribution to
 the earlier combined resource correction or a whole-session latency guarantee.
 

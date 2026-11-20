@@ -2,7 +2,7 @@
 
 ARC separates architecture-specific runner pods from architecture-neutral control-plane pods.
 
-- Chart version pinned in `application.yaml` is `0.14.2` for both the controller and the runner scale set.
+- The controller and both runner scale sets use chart `0.15.1`. Upgrade the controller and its CRDs before promoting a runner chart that needs new CRD fields.
 - The custom image pins Actions runner `2.337.0` in `nix/images/arc-runner.nix`, independently of the ARC chart version.
   Update its upstream index digest and both platform archive hashes together. Confirm the repository's accepted
   runner version with `gh api repos/proompteng/lab/actions/runners/downloads`, then verify `Runner.Listener --version`
@@ -66,7 +66,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 Each lab queue keeps five idle runners and grows to ten. At maximum, each host reserves 40 CPUs and 160Gi memory
 for ten workers, with aggregate limits of 200 CPUs and 320Gi memory. Altra and Turin retain their existing node roles,
 networking and application workloads. Ryzen hosts the ARC controller, listeners and CI telemetry, not lab job workers.
-Do not add duplicate ARC scale sets with the same label; ARC 0.14.2 does not update an existing registered set's labels.
+Do not add duplicate ARC scale sets with the same label; Update labels through the documented runner-set change procedure.
 
 Capacity and scratch changes follow the reviewed Git, runner-image, Warehouse/Freight and `arc-runner` Kargo path.
 The Stage updates both native init/runner image pairs together; each init must seed the image its runner executes.

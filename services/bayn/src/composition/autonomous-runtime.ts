@@ -6,6 +6,9 @@ import { operationalError } from '../errors'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations/interpreter'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
+import { readCurrentProtectionClose, readProtectionSubmit } from '../db/protection-release'
+import { WriterFence } from '../execution/writer-fence'
+import { PgClient } from '@effect/sql-pg'
 import { Authority } from '../execution/contracts'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
@@ -15,7 +18,7 @@ import { IntradayMarketData } from '../market-data/intraday/model'
 import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
-import { AutonomousRuntimeResourcesLive } from './resources'
+import { AutonomousRuntimeResourcesLive, type JevRuntimeServices } from './resources'
 import { observeCycleGenerationHash } from '../execution/capital-grant-algebra'
 import { makeObserveAutonomousCycleStartup } from '../observe-composition/startup'
 import { BrokerMutationError } from '../broker/alpaca-mutations/model'
@@ -33,7 +36,11 @@ import {
   refreshResearchCapitalActivationReconciliation,
 } from './capital-activation'
 
-export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeoutMs: number) =>
+export const makeExecutionCycleDriver = (
+  plan: ApplicationPlan,
+  preparationTimeoutMs: number,
+  inferenceContext: Context.Context<JevRuntimeServices>,
+) =>
   Effect.gen(function* () {
     const configured = yield* Effect.fromResult(configuredCapitalActivation(plan)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
@@ -46,7 +53,7 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
         execution: { ...readOnlyExecutionPolicy(plan), brokerIdentity: plan.config.alpaca.identity },
       },
     })
-    const runtimeContext = yield* Layer.build(AutonomousRuntimeResourcesLive(observePlan))
+    const runtimeContext = yield* Layer.build(AutonomousRuntimeResourcesLive(observePlan, inferenceContext))
     const services = yield* autonomousRuntimeServices.pipe(Effect.provideContext(runtimeContext))
     const cycleResources = makeAutonomousCycleResources(services, marketData, plan.config.operationTimeoutMs)
     const context = Context.merge(yield* Layer.build(cycleResources), runtimeContext)
@@ -147,6 +154,11 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
           strategy: plan.strategy,
           intradayMarketData: marketData,
           executionCycleClosureStore: services.executionCycleClosureStore,
+          readProtectionClose: (reference, maximumObservationAgeMs) =>
+            readCurrentProtectionClose(reference, plan.config.alpaca.expectedAccountId, maximumObservationAgeMs).pipe(
+              Effect.provideService(PgClient.PgClient, services.pgClient),
+              Effect.provideService(WriterFence, services.writerFence),
+            ),
           blockedCycleIntentStore: services.blockedCycleIntentStore,
           reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
           reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
@@ -167,6 +179,11 @@ export const makeExecutionCycleDriver = (plan: ApplicationPlan, preparationTimeo
           persistedCapitalGrants: services.persistedCapitalGrants,
           readFinalExecutionRiskContext: (observedAt) =>
             readFinalExecutionRiskContext(services.pgClient, plan.config.alpaca.expectedAccountId, observedAt),
+          readProtectionSubmit: (intentId, proofId) =>
+            readProtectionSubmit(intentId, proofId, 'transmission').pipe(
+              Effect.provideService(PgClient.PgClient, services.pgClient),
+              Effect.provideService(WriterFence, services.writerFence),
+            ),
           intentStore: services.intentStore,
           mutationStore: services.mutationStore,
           writerFence: services.writerFence,

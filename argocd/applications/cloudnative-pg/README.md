@@ -1,9 +1,9 @@
 # CloudNativePG operator
 
 The platform Application renders the upstream `cloudnative-pg` Helm chart, including its CRDs, together with the
-separately pinned Barman Cloud plugin. Chart `0.29.1` supplies operator `1.30.1`, including the PostgreSQL 18 WAL
-collector fix for a null `stats_reset` value (upstream #11207). PostgreSQL operand images and plugin images remain
-owned by their existing manifests; an operator patch upgrade must not change them implicitly.
+separately pinned Barman Cloud plugin. Chart `0.29.2` supplies operator `1.30.2`, which adds Lease deletion to its
+existing cluster role. Barman Cloud 0.16.0 supplies the backup operator and the instance sidecar. Explicit PostgreSQL
+image pins live in each Cluster manifest.
 
 ## Reviewed operator upgrades
 
@@ -28,10 +28,8 @@ Observe operator readiness and the managed rollout until every expected database
 instance manager. Verify unchanged PostgreSQL image and durability configuration, valid primary endpoints, ongoing
 replication and application-level recovery independently of the Argo health summary.
 
-For the WAL collector fix, confirm `cnpg_collector_last_collection_error` is zero on both primary and standby,
-verify newly sampled metrics reach Mimir, and check that the prior null-value error no longer occurs in new logs.
-Do not reset statistics, filter the error away, or treat absent metrics as zero. I/O timing and wait metrics must
-continue to arrive after the instance restart.
+Confirm continuous WAL archiving recovers for each plugin-backed Cluster. Verify that new collector samples reach
+Mimir and `cnpg_collector_last_collection_error` stays zero on both primary and standby after their restart.
 
 ## Recovery boundary
 
@@ -43,5 +41,6 @@ separately from persistent database unavailability.
 
 Upstream references:
 
-- [Release notes for 1.30.1](https://cloudnative-pg.io/docs/1.30/release_notes/v1.30/)
+- [Release notes for 1.30.2](https://github.com/cloudnative-pg/cloudnative-pg/releases/tag/v1.30.2)
+- [Barman Cloud plugin 0.16.0](https://github.com/cloudnative-pg/plugin-barman-cloud/releases/tag/v0.16.0)
 - [Operator and instance-manager upgrades](https://cloudnative-pg.io/docs/1.30/installation_upgrade/)

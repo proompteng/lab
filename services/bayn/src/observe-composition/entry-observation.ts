@@ -6,7 +6,7 @@ import { operationalError, type OperationalError } from '../errors'
 import type { ExecutionSessionBinding } from '../execution-session'
 import { JevBatchPlanVersion } from '../jev/batch'
 import type { JevContractError } from '../jev/contract'
-import { JevDecisionEvidenceSchema } from '../jev/decision'
+import { JevDecisionEvidenceSchema, prepareJevDecisionEvidence } from '../jev/decision'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevAwaitingEvidence, evaluateJevObservationFromSnapshot } from '../jev/runtime'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
@@ -20,6 +20,7 @@ import { readEquityShortEligibility } from '../execution/equity-short'
 import { currentUtcInstant } from '../time'
 import { BrokerRead } from '../broker/alpaca/model'
 import { equityClockSession } from '../equity-hours'
+import { withObservedStage } from '../telemetry'
 
 export interface EntryObservationContext {
   readonly strategy: StrategyRuntime
@@ -78,15 +79,22 @@ export const observeChartEntry = (
       { admissionDeadlineAt: context.admissionExpiresAt },
       loadEligibility,
     )
-    const evidence = yield* Effect.fromResult(
-      Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
+    const { preparation } = evaluated
+    const decision = yield* Effect.gen(function* () {
+      const evidence = yield* Effect.fromResult(
+        preparation === undefined
+          ? Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence)
+          : prepareJevDecisionEvidence(preparation, evaluated.evidence.batchResult, evaluated.evidence.decidedAt),
+      )
+      if (Date.parse(evidence.decidedAt) >= context.admissionExpiresAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission expired before its decision evidence completed',
+          readiness: DecisionReadinessReason.NoEligibleCandidate,
+        })
+      return yield* Effect.fromResult(strategy.definition.decide({ market: evidence }))
+    }).pipe(
+      withObservedStage('bayn.jev.entry-selection', { operation: preparation === undefined ? 'replay' : 'retained' }),
     )
-    if (Date.parse(evidence.decidedAt) >= context.admissionExpiresAt)
-      return yield* new JevAwaitingEvidence({
-        message: 'Entry admission expired before its decision evidence completed',
-        readiness: DecisionReadinessReason.NoEligibleCandidate,
-      })
-    const decision = yield* Effect.fromResult(strategy.definition.decide({ market: evidence }))
     return { snapshot: evaluated.snapshot, decision }
   })
 

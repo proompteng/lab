@@ -134,10 +134,10 @@ const normalizeOptionalText = (value: unknown) => {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-const isAstraModel = (model: string) => model.trim().toLowerCase().startsWith('gpt-6')
+const isGpt6Model = (model: string) => model.trim().toLowerCase().startsWith('gpt-6')
 
-const normalizeAstraReasoningEffort = (model: string, reasoningEffort: string) =>
-  isAstraModel(model) && (reasoningEffort === 'none' || reasoningEffort === 'minimal') ? 'low' : reasoningEffort
+const normalizeGpt6ReasoningEffort = (model: string, reasoningEffort: string) =>
+  isGpt6Model(model) && (reasoningEffort === 'none' || reasoningEffort === 'minimal') ? 'low' : reasoningEffort
 
 const parsePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value ?? '', 10)
@@ -556,11 +556,11 @@ const generateMainMergeMemoryNoteEffect = (
         'http://flamingo.flamingo.svc.cluster.local/v1'
       ).replace(/\/+$/, '')
       const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen38-flamingo'
-      const reasoningEffort = normalizeAstraReasoningEffort(
+      const reasoningEffort = normalizeGpt6ReasoningEffort(
         model,
         normalizeOptionalText(process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT) ?? 'none',
       )
-      const astraModel = isAstraModel(model)
+      const gpt6Model = isGpt6Model(model)
       const timeoutMs = parsePositiveInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS, 300_000)
       const maxOutputTokens = parsePositiveInt(process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS, 1_024)
       const commitMessage = normalizeOptionalText(asRecord(payload.head_commit)?.message)
@@ -643,7 +643,7 @@ const generateMainMergeMemoryNoteEffect = (
           model,
           stream: false,
           max_tokens: maxOutputTokens,
-          ...(astraModel ? {} : { temperature: 0.1, top_p: 0.8 }),
+          ...(gpt6Model ? {} : { temperature: 0.1, top_p: 0.8 }),
           reasoning_effort: reasoningEffort,
           response_format: { type: 'json_object' },
           messages: [

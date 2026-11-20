@@ -49,10 +49,10 @@ describe('Tengri BFF action schema', () => {
         text: 'Read the workspace',
       },
     ]) {
-      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol', reasoningEffort: 'high' }).success).toBe(
+      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.2-sol', reasoningEffort: 'high' }).success).toBe(
         true,
       )
-      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol\n' }).success).toBe(false)
+      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.2-sol\n' }).success).toBe(false)
       expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'unbounded' }).success).toBe(false)
     }
   })
@@ -60,7 +60,7 @@ describe('Tengri BFF action schema', () => {
   test('history reads accept only the conversation identity', () => {
     const action = { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' }
     expect(tengriActionSchema.safeParse(action).success).toBe(true)
-    expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol' }).success).toBe(false)
+    expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.2-sol' }).success).toBe(false)
     expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'high' }).success).toBe(false)
   })
 
