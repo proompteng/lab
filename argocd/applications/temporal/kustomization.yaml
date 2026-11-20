@@ -107,15 +107,15 @@ patches:
       kind: Job
       name: temporal-schema
     patch: |-
+      - op: replace
+        path: /metadata/name
+        value: temporal-schema-1-32-2
       - op: remove
         path: /metadata/annotations/helm.sh~1hook
       - op: remove
         path: /metadata/annotations/helm.sh~1hook-delete-policy
       - op: remove
         path: /metadata/annotations/helm.sh~1hook-weight
-      - op: add
-        path: /metadata/annotations/argocd.argoproj.io~1sync-options
-        value: Force=true,Replace=true
       - op: add
         path: /metadata/annotations/argocd.argoproj.io~1sync-wave
         value: "-1"

@@ -42,12 +42,12 @@ images:
     digest: sha256:d758a82a9c20337e46c2f7356a413faa52cf4d6b02497c3ad81f72f1ba106464
   - name: natsio/nats-box
     newName: mirror.gcr.io/natsio/nats-box
-    newTag: 0.19.7
-    digest: sha256:ffce8bd103383f179f8c7f11cf645726acf5d17280706c530c3b342dbe16334c
+    newTag: 0.20.2
+    digest: sha256:5162fca0f56ebe6f78e612e1ded143ce978e088393476033020e6251358dba6f
   - name: docker.io/natsio/prometheus-nats-exporter
     newName: mirror.gcr.io/natsio/prometheus-nats-exporter
-    newTag: 0.20.2
-    digest: sha256:c623b608e148e31e1c1c878673a197f1828e58ce90de4f01d22f1baa84c8fee9
+    newTag: 0.20.3
+    digest: sha256:4b8ddc1c86fec360b5cd3d5e1fbc6fb52bdafd5805bba3901cc52926538af255
   - name: grafana/alloy
     newName: mirror.gcr.io/grafana/alloy
     newTag: v1.22.0

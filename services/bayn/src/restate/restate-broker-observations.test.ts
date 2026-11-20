@@ -144,7 +144,6 @@ const harness = (
         notify: (ctx: ObjectSharedContext, input: unknown) => Promise<{ accepted: boolean; eventId: string }>
         accept: (ctx: ObjectContext, input: unknown) => Promise<void>
         refresh: (ctx: ObjectContext, input: unknown) => Promise<void>
-        probeProtection: (ctx: ObjectSharedContext, input: unknown) => Promise<void>
         capture: (ctx: ObjectContext, input: unknown) => Promise<void>
         freshness: (ctx: ObjectContext, input: unknown) => Promise<void>
         status: (ctx: ObjectSharedContext, input: unknown) => Promise<State | null>
@@ -186,7 +185,7 @@ const receipt = { eventId: 'd'.repeat(64) }
 const pollResult = (poll: BrokerObservationPoll) => ({ poll, startedAtMs: initialNow, completedAtMs: initialNow })
 
 describe('event-driven Restate broker observation owner', () => {
-  test('a durable protection proof wakes its exact cycle before the ordinary capture budget', async () => {
+  test('reserves and wakes the exact protective cycle before releasing the ordinary capture', async () => {
     const proof = {
       proofId: '1'.repeat(64),
       cycleId: '2'.repeat(64),
@@ -194,7 +193,7 @@ describe('event-driven Restate broker observation owner', () => {
     }
     const probes: string[] = []
     const h = harness({
-      state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+      state: active(),
       runtime: {
         probeProtection: async (_signal, cycleId) => {
           probes.push(cycleId)
@@ -202,22 +201,35 @@ describe('event-driven Restate broker observation owner', () => {
         },
       },
     })
-    await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
-    expect(h.timers().map(({ method, delay }) => [method, delay?.milliseconds])).toEqual([
-      ['probeProtection', 200],
-      ['capture', 30_000],
-    ])
-    h.advance(200)
-    await h.handlers.probeProtection(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
+    await h.handlers.refresh(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
     expect(probes).toEqual([])
-    await h.handlers.probeProtection(h.context, { sourceRevision, cycleId: proof.cycleId })
+    await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
+    expect(h.sleeps).toEqual([200])
     expect(probes).toEqual([proof.cycleId])
-    expect(h.deliveries.at(-1)).toMatchObject({
-      service: 'BaynExecutionController',
-      method: 'wake',
-      parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
-    })
+    expect(h.deliveries).toMatchObject([
+      {
+        service: 'BaynExecutionController',
+        method: 'wake',
+        parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
+      },
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 0 } },
+    ])
     expect(h.calls().polls).toBe(0)
+  })
+
+  test('a failed protective probe still schedules the account capture', async () => {
+    const h = harness({
+      state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+      runtime: {
+        probeProtection: async () => {
+          throw new Error('injected unavailable read')
+        },
+      },
+    })
+    await h.handlers.refresh(h.context, { sourceRevision, cycleId: '2'.repeat(64) })
+    expect(h.deliveries).toMatchObject([
+      { service: 'BaynBrokerObservations', method: 'capture', delay: { milliseconds: 29_800 } },
+    ])
   })
 
   test('activation publishes one canonical cut, wakes the account and arms only its completeness deadline', async () => {

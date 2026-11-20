@@ -21,8 +21,10 @@ import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import type { Order as BrokerOrder } from '../broker/alpaca/model'
+import { decodeFeeActivityWitness, pendingCashFees } from '../broker/alpaca/activity-fees'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
+import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import {
@@ -41,6 +43,7 @@ import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -102,7 +105,7 @@ import {
   arrivalPosition,
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
-import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant, utcDateFromEpochMillis, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayInferenceTiming, type ReplayInferenceCall } from './inference-timing'
@@ -2147,14 +2150,50 @@ durableTest.each(
                 const publishedAtMs = Date.parse(ordinary.ticket.startedAt)
                 const ordinaryDueAtMs = publishedAtMs + 30_000
                 const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+                const allowance = yield* Effect.gen(function* () {
+                  const budget = yield* makeBrokerObservationBudget
+                  const http = HttpClient.make((request) =>
+                    Effect.succeed(
+                      HttpClientResponse.fromWeb(
+                        request,
+                        new Response('{}', {
+                          headers: {
+                            'x-ratelimit-limit': '200',
+                            'x-ratelimit-remaining': '198',
+                            'x-ratelimit-reset': String(Math.floor(publishedAtMs / 1_000)),
+                          },
+                        }),
+                      ),
+                    ),
+                  )
+                  yield* budget.beginCapture
+                  yield* budget.decorate(http).get('https://paper-api.alpaca.markets/v2/account')
+                  return yield* budget.protectionReadAllowance
+                }).pipe(Effect.provideService(Clock.Clock, liveClock))
+                expect(allowance).toBeDefined()
+                const brokerSnapshot = observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt)
+                const bookingDate = utcDateFromEpochMillis(publishedAtMs - 2 * 86_400_000)
+                const cashFeeWitnesses = ['-0.02', '-0.03'].map((netAmount) =>
+                  Result.getOrThrow(
+                    decodeFeeActivityWitness({
+                      activity_type: 'FEE',
+                      ref_id: `cash-fee-${netAmount}`,
+                      status: 'executed',
+                      currency: 'USD',
+                      net_amount: netAmount,
+                      details: { system_date: bookingDate },
+                    }),
+                  ),
+                )
+                const pendingCashFeeCount = pendingCashFees(
+                  new Map(cashFeeWitnesses.map(({ key }) => [key, 1])),
+                  brokerSnapshot.snapshot.history.fees,
+                  ordinary.ticket.startedAt,
+                )
+                if (pendingCashFeeCount !== 2) throw new Error('Expected two unresolved cash fee witnesses')
                 expect(
                   yield* observationStore
-                    .publish(
-                      ordinary.ticket,
-                      observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt),
-                      ordinaryDueAtMs,
-                      { expiresAtMs: publishedAtMs + 60_000, requestCostMs: 600 },
-                    )
+                    .publish(ordinary.ticket, { ...brokerSnapshot, pendingCashFeeCount }, ordinaryDueAtMs, allowance)
                     .pipe(Effect.provideService(Clock.Clock, liveClock)),
                 ).toBe(true)
                 const basis = yield* readProtectionReleaseBasis(accountId, cycleId)
