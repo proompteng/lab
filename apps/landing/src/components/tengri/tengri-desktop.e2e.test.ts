@@ -2113,6 +2113,9 @@ test('opens composer menus above the picker and supports keyboard selection on d
         fontWeight: style.fontWeight,
         lineHeight: style.lineHeight,
         gap: style.columnGap,
+        color: style.color,
+        opacity: style.opacity,
+        iconColor: getComputedStyle(element.querySelector('svg')!).color,
       }
     })
   const modelStyle = await triggerStyle(model)
@@ -2200,6 +2203,19 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
     reasoningEffort: 'high',
   })
   await expect(model).toBeDisabled()
+  await expect(reasoning).toBeDisabled()
+  const approvals = tengri.getByRole('combobox', { name: 'Approvals', exact: true })
+  await expect(approvals).toBeEnabled()
+  const approvalColor = await approvals.evaluate((element) => getComputedStyle(element).color)
+  for (const picker of [approvals, model, reasoning]) {
+    await expect(picker).toHaveCSS('opacity', '1')
+    await expect(picker).toHaveCSS('color', approvalColor)
+    await expect(picker.locator('svg')).toHaveCSS('color', approvalColor)
+  }
+  await tengri.getByRole('form', { name: 'Message composer' }).screenshot({
+    path: test.info().outputPath('composer-running-consistent-selectors.png'),
+    animations: 'disabled',
+  })
   await emitCodexEvent(page, {
     sequence: 1,
     kind: 'thread-state',
@@ -4059,12 +4075,38 @@ test('keeps sending, steering, and stopping in the composer', async ({ page }, t
   await testInfo.attach('conversation-polish', { path: surfacePath, contentType: 'image/png' })
 
   await prompt.fill('Only inspect the current directory.')
-  await expect(composer.getByRole('button')).toHaveCount(2)
-  await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await expect(action).toHaveCount(1)
+  await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+  let steeringPending = false
+  let releaseSteering!: () => void
+  const steeringResponse = new Promise<void>((resolve) => {
+    releaseSteering = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'steer-turn') {
+      steeringPending = true
+      await steeringResponse
+    }
+    return route.fallback()
+  })
   await composer.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  try {
+    await expect.poll(() => steeringPending).toBe(true)
+    await prompt.fill('Keep this next steering draft.')
+    await expect(action).toHaveCount(1)
+    await expect(action).toHaveAccessibleName('Steer turn')
+    await expect(action).toBeDisabled()
+    await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+    await composer.screenshot({ path: testInfo.outputPath('composer-steering-pending.png') })
+  } finally {
+    releaseSteering()
+  }
   await expect
     .poll(() => mock.actions.some((item) => item.action === 'steer-turn' && item.turnId === 'turn-1'))
     .toBe(true)
+  await expect(action).toBeEnabled()
+  await expect(prompt).toHaveValue('Keep this next steering draft.')
+  await prompt.fill('')
   await expect(action).toHaveAccessibleName('Stop response')
   await action.click()
   await expect

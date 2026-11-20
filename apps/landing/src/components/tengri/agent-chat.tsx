@@ -2247,17 +2247,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     onRetry={() => setModelReload((version) => version + 1)}
                     selection={selection}
                   />
-                  {canStopRun && !showStopAction ? (
-                    <button
-                      type="button"
-                      aria-label="Stop response"
-                      disabled={interrupting}
-                      onClick={() => void interruptTurn()}
-                      className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full text-zinc-400 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
-                    >
-                      <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-                    </button>
-                  ) : null}
                   <button
                     type={showStopAction ? 'button' : 'submit'}
                     aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
@@ -2442,7 +2431,7 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
 }
 
 const composerSelectTriggerClass =
-  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 disabled:opacity-100 disabled:hover:bg-transparent disabled:hover:text-zinc-400 [&_svg]:text-current motion-reduce:transition-none'
 const composerSelectMenuClass =
   'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
 const composerSelectItemClass =
