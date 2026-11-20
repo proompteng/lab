@@ -644,10 +644,6 @@ def evaluate (json : Json) : Except String Json := do
   | "expiredInferenceContinuation" =>
     return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
-  | "pendingMarketInputsContinuation" =>
-    return toJson (pendingMarketInputsContinuation (← json.getObjValAs? Bool "pending")
-      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
-      (← json.getObjValAs? Nat "normalDelay"))
   | "sourceWaitReconciliationReusable" =>
     return toJson (sourceWaitReconciliationReusable
       (← json.getObjValAs? Bool "exact") (← json.getObjValAs? Bool "accounting")

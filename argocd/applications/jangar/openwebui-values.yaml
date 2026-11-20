@@ -17,7 +17,7 @@ websocket:
     enabled: false
 
 image:
-  tag: v0.13.3
+  tag: v0.13.4
 
 openaiApiKey: ""
 
@@ -45,14 +45,12 @@ extraEnvVars:
   # Disable TLS when calling the HTTP-only Jangar OpenAI gateway
   - name: AIOHTTP_CLIENT_SESSION_SSL
     value: "false"
-  # Keep Flamingo first so new chats default to the Blackwell vLLM endpoint.
-  # Keep the Jangar gateway second as the separate hosted-model path.
   - name: OPENAI_API_BASE_URLS
     value: "http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1"
   - name: OPENAI_API_KEYS
     value: ";"
   - name: DEFAULT_MODELS
-    value: qwen38-flamingo
+    value: gpt-6.2-sol
   - name: WEBUI_AUTH
     value: "false"
   - name: ENABLE_SIGNUP

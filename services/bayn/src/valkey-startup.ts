@@ -3,13 +3,21 @@ import { Effect, Exit, Fiber, Layer, Schedule, Scope } from 'effect'
 import { RedisError } from 'effect/persistence/Redis'
 import { ConnectionTimeoutError } from 'redis'
 
-const startupConnectionRefused = (error: RedisError) =>
-  isNativeError(error.cause) && Object.getOwnPropertyDescriptor(error.cause, 'code')?.value === 'ECONNREFUSED'
+const startupEndpointAttempts = 60
+const startupHandshakeAttempts = 6
+
+const startupRetryCode = ({ cause }: RedisError) => {
+  if (!isNativeError(cause)) return undefined
+  if (Object.getPrototypeOf(cause) === ConnectionTimeoutError.prototype) return 'CONNECTION_TIMEOUT'
+  if (Object.getOwnPropertyDescriptor(cause, 'code')?.value === 'ECONNREFUSED') return 'ECONNREFUSED'
+  return undefined
+}
 
 export const withValkeyStartupRetry = <A, R>(makeLayer: (signal: AbortSignal) => Layer.Layer<A, RedisError, R>) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const parent = yield* Effect.scope
+      let handshakeTimeouts = 0
       const attempt = Effect.gen(function* () {
         const controller = new AbortController()
         const scope = yield* Scope.fork(parent)
@@ -37,14 +45,27 @@ export const withValkeyStartupRetry = <A, R>(makeLayer: (signal: AbortSignal) =>
         )
       })
       return yield* attempt.pipe(
-        Effect.tapError((error) =>
-          startupConnectionRefused(error)
-            ? Effect.logWarning('Valkey startup connection refused').pipe(
-                Effect.annotateLogs({ dependency: 'valkey', operation: 'connect', code: 'ECONNREFUSED' }),
+        Effect.tapError((error) => {
+          const code = startupRetryCode(error)
+          return code === undefined
+            ? Effect.void
+            : Effect.logWarning('Valkey startup connection failed').pipe(
+                Effect.annotateLogs({ dependency: 'valkey', operation: 'connect', code }),
               )
-            : Effect.void,
-        ),
-        Effect.retry({ while: startupConnectionRefused, times: 2, schedule: Schedule.spaced('1 second') }),
+        }),
+        Effect.retry({
+          while: (error) => {
+            const code = startupRetryCode(error)
+            if (code === 'ECONNREFUSED') return true
+            if (code !== 'CONNECTION_TIMEOUT') return false
+            // A missing Service endpoint during rollout can recover after a long refusal window.
+            // A peer that repeatedly accepts but stalls still exhausts the handshake budget.
+            handshakeTimeouts++
+            return handshakeTimeouts < startupHandshakeAttempts
+          },
+          times: startupEndpointAttempts - 1,
+          schedule: Schedule.spaced('1 second'),
+        }),
       )
     }),
   )

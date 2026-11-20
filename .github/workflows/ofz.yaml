@@ -32,6 +32,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/tengri-images.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'

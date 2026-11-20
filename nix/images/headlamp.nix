@@ -5,30 +5,55 @@
 }:
 
 let
-  version = "0.45.0";
-  headlampSha = "0e9fe810cb618964172f420666727c9a67fd6ebf";
-  headlampNixpkgsRevision = "dc5d91f840324650bac8c379428c7037a416959a";
-
-  headlampNixpkgs = builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/${headlampNixpkgsRevision}.tar.gz";
-    sha256 = "sha256-VaWGJ6+cIYN2erfSecbRV+4ljI185Ty2wUrXyvQbgOw=";
+  version = "0.46.0";
+  headlampSha = "825604fdadbe7ed94b8e61f615d7917c743e9083";
+  goVersion = "1.26.8";
+  goPlatform = {
+    x86_64-linux = {
+      arch = "amd64";
+      hash = "sha256-0PdDsz6NiUXmsfQy7dFXhccFBxIdbipyOyEoXt34tXs=";
+    };
+    aarch64-linux = {
+      arch = "arm64";
+      hash = "sha256-IR/87Z3LljOlXqxjZIFuwN3ZUTiadA6I+oszN5cb3aA=";
+    };
+  }.${pkgs.stdenv.hostPlatform.system};
+  headlampGo = pkgs.stdenvNoCC.mkDerivation {
+    pname = "go";
+    version = goVersion;
+    src = pkgs.fetchurl {
+      url = "https://go.dev/dl/go${goVersion}.linux-${goPlatform.arch}.tar.gz";
+      inherit (goPlatform) hash;
+    };
+    sourceRoot = "go";
+    passthru = {
+      GOOS = "linux";
+      GOARCH = goPlatform.arch;
+      CGO_ENABLED = 0;
+    };
+    dontConfigure = true;
+    dontBuild = true;
+    dontFixup = true;
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out"
+      cp -R . "$out/"
+      runHook postInstall
+    '';
+    doInstallCheck = true;
+    installCheckPhase = ''
+      runHook preInstallCheck
+      test "$("$out/bin/go" env GOVERSION)" = "go${goVersion}"
+      runHook postInstallCheck
+    '';
   };
-  headlampPkgs = import headlampNixpkgs {
-    system = pkgs.stdenv.hostPlatform.system;
-    config.allowUnfree = false;
-  };
-  headlampGo =
-    if headlampPkgs.go.version == "1.26.7" then
-      headlampPkgs.go
-    else
-      throw "expected Headlamp Go 1.26.7, got ${headlampPkgs.go.version}";
-  headlampBuildGoModule = headlampPkgs.buildGoModule.override { go = headlampGo; };
+  headlampBuildGoModule = pkgs.buildGoModule.override { go = headlampGo; };
 
   upstreamSrc = pkgs.fetchFromGitHub {
     owner = "kubernetes-sigs";
     repo = "headlamp";
     rev = headlampSha;
-    hash = "sha256-Q/15vBSO3vjTrYQW6YZ9oMGVr2EjFor+hKGehFTaQNQ=";
+    hash = "sha256-chDlfZvfXXaKrY4k1xQ4EO+J0KY4J/kBoYInytIECmk=";
   };
 
   patchedSrc = pkgs.stdenvNoCC.mkDerivation {
@@ -41,20 +66,23 @@ let
       ../../services/headlamp/patches/0003-oidc-refresh-reauth.patch
       ../../services/headlamp/patches/0004-static-copy-writable.patch
     ];
-    nativeBuildInputs = [
-      pkgs.gnused
-    ];
     dontConfigure = true;
     dontBuild = true;
     dontFixup = true;
+    nativeBuildInputs = [ pkgs.jq ];
     postPatch = ''
-      substituteInPlace frontend/make-env.js \
-        --replace-fail \
-          "const appInfo = JSON.parse(fs.readFileSync('../app/package.json', 'utf8'));" \
-          "const appInfo = { version: '${version}', productName: 'Headlamp' };" \
-        --replace-fail \
-          "const gitVersion = execSync('git rev-parse HEAD').toString().trim();" \
-          "const gitVersion = '${headlampSha}';"
+      # The upstream lock omits registry URLs for some entries with integrity
+      # hashes. Restore the URLs so the Nix cache can fetch the locked tarballs.
+      jq '
+        .packages |= with_entries(
+          if .key != "" and .value.resolved == null and .value.integrity != null then
+            (.value.name // (.key | split("node_modules/") | last)) as $package
+            | ($package | split("/") | last) as $filename
+            | .value.resolved = "https://registry.npmjs.org/\($package)/-/\($filename)-\(.value.version).tgz"
+          else . end
+        )
+      ' frontend/package-lock.json > frontend/package-lock.resolved.json
+      mv frontend/package-lock.resolved.json frontend/package-lock.json
     '';
     installPhase = ''
       runHook preInstall
@@ -69,7 +97,7 @@ let
     inherit version;
     src = patchedSrc;
     modRoot = "backend";
-    vendorHash = "sha256-6hOxJpC9SlR6Oa0mKA8SziTdNS81l27eNYM1v0KOod0=";
+    vendorHash = "sha256-of7baM59Kqm77YpAgK1XM95b/LnctUlKqwXAdMvG8d4=";
     subPackages = [ "cmd" ];
     doCheck = false;
     env.CGO_ENABLED = 0;
@@ -92,16 +120,19 @@ let
     pname = "headlamp-frontend";
     inherit version;
     src = patchedSrc + "/frontend";
-    npmDepsHash = "sha256-khcVcOtzu9oGJigs6N+Za5z4Np3dkbHnylOoQiBa06g=";
+    npmDepsHash = "sha256-dYFEu5KA3dBVqyD3PKjqqnJ1NcUPDNoiIryzGeoEgLI=";
     makeCacheWritable = false;
     env = {
       NODE_OPTIONS = "--max-old-space-size=8096";
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+      HEADLAMP_SOURCE_COMMIT = headlampSha;
       REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER = "true";
     };
     preBuild = ''
       export HOME="$TMPDIR/home"
       mkdir -p "$HOME"
+      mkdir -p ../app
+      cp ${patchedSrc}/app/package.json ${patchedSrc}/app/app-build-manifest.json ../app/
     '';
     installPhase = ''
       runHook preInstall

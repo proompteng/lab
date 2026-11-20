@@ -648,7 +648,13 @@ const reduceShadowDelta = (
     })
   }
   return Result.succeed({
-    reservedBuyingPower: accumulator.reservedBuyingPower + (targetIntent.side === OrderSide.Buy ? orderNotional : 0n),
+    reservedBuyingPower:
+      accumulator.reservedBuyingPower +
+      (protection?._tag === 'EquityShortBracket'
+        ? (orderNotional * 3n + 1n) / 2n
+        : targetIntent.side === OrderSide.Buy
+          ? orderNotional
+          : 0n),
     dailyTradedNotional: accumulator.dailyTradedNotional + orderNotional,
     projectedPositions: projectTargetPosition(
       accumulator.projectedPositions,

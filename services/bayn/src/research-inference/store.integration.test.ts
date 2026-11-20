@@ -80,6 +80,7 @@ integration('research attempt durability with real PostgreSQL', () => {
             yield* migration
             const store = makeResearchStore(sql)
             expect(yield* store.coverage).toEqual({ unpriced: 0, pending: 0, lag: 0, ambiguous: 0 })
+            expect(yield* store.continuation).toEqual({ pending: false, nextWakeAt: null })
             const receipts = [
               { cost: undefined, age: 900, verified: false },
               { cost: null, age: 800, verified: false },
@@ -117,12 +118,14 @@ integration('research attempt durability with real PostgreSQL', () => {
             const after = yield* elapsed
             expect(coverage.unpriced).toBe(2)
             expect(coverage.pending).toBe(2)
+            expect(yield* store.continuation).toEqual({ pending: true, nextWakeAt: null })
             expect(coverage.ambiguous).toBe(1)
             expect(coverage.lag).toBeGreaterThanOrEqual(600 + before)
             expect(coverage.lag).toBeLessThanOrEqual(600 + after)
             yield* store.acknowledge('2'.padStart(64, '0'))
             yield* store.acknowledge('3'.padStart(64, '0'))
             expect(yield* store.coverage).toEqual({ unpriced: 2, pending: 0, lag: 0, ambiguous: 1 })
+            expect(yield* store.continuation).toEqual({ pending: false, nextWakeAt: null })
             yield* sql`DROP SCHEMA ${sql(schema)} CASCADE`
           }),
         )

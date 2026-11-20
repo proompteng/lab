@@ -5,7 +5,9 @@ import type { RuntimeConfig } from '../config/model'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import type { CycleObservabilityShape } from '../cycle/store/observability'
 import type { DatabaseError } from '../db/database-error'
-import type { ExecutionControllerStatus, ExecutionControllerStatusStoreShape } from '../execution/controller-status'
+import type { ExecutionControllerStatus, ExecutionControllerStatusStoreError } from '../execution/controller-status'
+import type { ExecutionControllerHealth } from '../execution/controller-health'
+import type { OperationalError } from '../errors'
 import type { JournalService } from '../ledger'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { BrokerConfiguration, RuntimeHealth, RuntimeState } from '../runtime-state'
@@ -30,12 +32,19 @@ export interface HealthProbeResults {
   readonly tigerBeetle: ProbeResult<void>
   readonly cycle: ProbeResult<CycleOperationsProjection>
   readonly broker: ProbeResult<BrokerHealthObservation> | null
-  readonly executionController?: ProbeResult<ExecutionControllerStatus | null> | null
+  readonly executionController?: ProbeResult<ExecutionControllerHealthObservation> | null
+}
+
+export interface ExecutionControllerHealthObservation {
+  readonly operational: ExecutionControllerHealth | null
+  readonly status: ExecutionControllerStatus | null
 }
 
 export interface ExecutionControllerProbe {
   readonly controllerKey: string
-  readonly read: ExecutionControllerStatusStoreShape['read']
+  readonly read: (
+    controllerKey: string,
+  ) => Effect.Effect<ExecutionControllerHealthObservation, ExecutionControllerStatusStoreError | OperationalError>
 }
 
 export interface HealthDependencies {

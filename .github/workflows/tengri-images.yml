@@ -30,6 +30,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/tengri-images.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'
@@ -211,7 +212,7 @@ jobs:
   build:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     name: Build native (${{ matrix.architecture }})
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -237,7 +238,8 @@ jobs:
           push: true
           tags: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
+          # Exporting intermediate stages can time out after the boot image is already pushed.
+          cache-to: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }},mode=min,ignore-error=true
           provenance: mode=max
           sbom: true
 
@@ -267,7 +269,7 @@ jobs:
           push: true
           tags: ${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
+          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }},mode=min,ignore-error=true
           provenance: mode=max
           sbom: true
 
@@ -277,7 +279,7 @@ jobs:
       - build
       - validate-tengri
       - validate-nanoagent
-    runs-on: arc-amd64-publish
+    runs-on: arc-amd64
     timeout-minutes: 30
     permissions:
       contents: read

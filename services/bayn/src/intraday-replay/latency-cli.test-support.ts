@@ -16,7 +16,7 @@ import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs
 import { IsoDateSchema } from '../schemas'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { registeredTradeReplayFixture } from '../testing/registered-replay-fixture'
-import { retainReplayArrivals, retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { retainReplayArrivals, nativeReplayFixture as retainedReplayFixture } from '../testing/retained-replay-fixture'
 import {
   calibrateNativeLatencyFixture,
   fullBatchLatencyFixture,

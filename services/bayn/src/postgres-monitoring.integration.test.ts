@@ -56,7 +56,9 @@ describePostgres('PostgreSQL 18 monitoring query execution', () => {
             expect(version[0]?.version).toBeGreaterThanOrEqual(180000)
             expect(version[0]?.version).toBeLessThan(190000)
             for (const [name, query] of Object.entries(queries)) {
-              expect(query.target_databases).toEqual(name === 'bayn_generation_index' ? ['bayn'] : undefined)
+              expect(query.target_databases).toEqual(
+                name === 'bayn_generation_index' || name === 'bayn_native_arrivals' ? ['bayn'] : undefined,
+              )
               const rows = yield* sql.unsafe<Record<string, unknown>>(query.query)
               expect(rows.length).toBeGreaterThan(0)
               expect(Object.keys(rows[0] ?? {}).sort()).toEqual(query.metrics.flatMap(Object.keys).sort())

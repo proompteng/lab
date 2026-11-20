@@ -89,9 +89,10 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools \
     XDG_CACHE_HOME=/home/nanoagent/.cache
 
+# The build layer is disposable until this step succeeds. Flush once after package installation.
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \
       bash \
       bubblewrap \
       ca-certificates \
@@ -114,6 +115,7 @@ RUN set -eux; \
       tini \
       util-linux \
       xz-utils; \
+    sync -f /; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
       /usr/share/man/* /usr/share/info/* /usr/share/locale/*; \
@@ -208,13 +210,18 @@ USER 1000:1000
 RUN --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
     bash /tmp/test-guest-admin.sh --filesystem > /tmp/guest-admin-validation.txt
 
-FROM runtime AS c-toolchain-runtime
+FROM runtime AS c-toolchain-packages
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \
+      gcc libc6-dev make && \
+    sync -f /
+
+FROM c-toolchain-packages AS c-toolchain-runtime
 
 ARG TARGETARCH
 
 RUN set -eux; \
-    apt-get update -o Acquire::Retries=3; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev; \
     triplet="$(gcc -dumpmachine)"; \
     compiler_major="$(gcc -dumpversion)"; \
     compiler_version="$(gcc -dumpfullversion)"; \
@@ -363,13 +370,11 @@ RUN set -eux; \
       --directory /bundle \
       .
 
-FROM runtime AS editor-build
+FROM c-toolchain-packages AS editor-build
 ARG TARGETARCH
 COPY --chmod=0555 build-editor.sh /usr/local/bin/build-editor
 COPY --chmod=0444 editor-manifest.lua launch-editor.sh blink-manual-library.patch /usr/share/nanoagent/
-RUN apt-get update -o Acquire::Retries=3 && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev && \
-    build-editor "$TARGETARCH"
+RUN build-editor "$TARGETARCH"
 
 FROM runtime AS runtime-with-toolchain
 

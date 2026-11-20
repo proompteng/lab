@@ -1,6 +1,15 @@
 name: kubeconform
 
 on:
+  pull_request:
+    paths:
+      - 'argocd/**/*.yaml'
+      - 'scripts/kubeconform.sh'
+      - 'schemas/custom/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - '.github/workflows/kubeconform.yml'
   push:
     branches:
       - main
@@ -12,6 +21,9 @@ on:
       - 'flake.lock'
       - 'nix/**'
       - '.github/workflows/kubeconform.yml'
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -72,9 +84,9 @@ jobs:
             fi
             printf 'Validator input changed without manifest changes: %s\n' "${changed_validator_inputs[@]}"
             echo "Validating full Argo CD tree because kubeconform inputs changed."
-            nix develop -c scripts/kubeconform.sh argocd
+            nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh argocd
             exit 0
           fi
 
           printf 'Validating changed manifest: %s\n' "${changed_manifests[@]}"
-          nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+          nix shell .#kubeconform .#yq --command bash scripts/kubeconform.sh "${changed_manifests[@]}"

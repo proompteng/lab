@@ -2192,13 +2192,15 @@ formal('pinned Lean executable conformance', () => {
         [500, 30_000].map((normalDelay) => ({ ...c, inputState, normalDelay })),
       ),
     )
+    expect(pendingInputCases).toHaveLength(6_720)
     expect(
       model(
         pendingInputCases.map((c) => ({
-          operation: 'pendingMarketInputsContinuation',
-          pending: c.inputState === 'INITIAL' || c.inputState === 'LATER',
+          operation: 'sourceWindowContinuation',
+          known: false,
           cycle: encodeCycle(c.cycle),
           now: String(c.now),
+          availableAt: String(c.now + 1),
           normalDelay: c.normalDelay,
         })),
       ),
@@ -3930,7 +3932,8 @@ formal('native protection order conformance', () => {
         for (const evidence of cases) {
           const plan = evidence.plan
           const terms = plan.protection!
-          if (terms._tag === 'Bracket') throw new Error('Expected independent protection')
+          if (terms._tag !== 'Oco' && terms._tag !== 'StopLimit')
+            throw new Error('Expected retained long independent protection')
           const decision = document.strategyDecision
           if (decision === undefined || !('exitPolicy' in decision)) throw new Error('Expected sealed entry')
           const entryPlan = decision.exitPolicy.plans[f.parent.symbol]!
@@ -4057,6 +4060,13 @@ formal('native protection order conformance', () => {
   const leanTarget = (plan: ExecutionOrderPlan) => {
     const { document, target, risk } = plan
     const protection = risk.protection
+    if (
+      protection !== undefined &&
+      protection._tag !== 'Bracket' &&
+      protection._tag !== 'Oco' &&
+      protection._tag !== 'StopLimit'
+    )
+      throw new Error('This conformance fixture covers retained long protection')
     return {
       owner: {
         intent: plan.intentId,
