@@ -4,7 +4,12 @@ import { Effect, Layer, Logger, Queue, Result } from 'effect'
 
 import { decodeInferenceCostRequest, InferenceCostError } from './inference-costs'
 import { verifyInferenceExpenseCoverage } from './inference-expense'
-import { executionEvidenceFromRows, verifyPerformanceDecisions } from './forward-performance/postgres/projection'
+import {
+  intradayPerformanceDecisionRequest,
+  makeIntradayPerformanceVolumeEvidenceBatch,
+} from './forward-performance/intraday-volume'
+import type { IntradaySnapshotFailure } from './market-data/intraday/model'
+import { executionEvidenceFromRows, verifyPerformanceDecisionJson } from './forward-performance/postgres/projection'
 import {
   ReportVerificationTask,
   type ReportDecisionIndex,
@@ -12,15 +17,41 @@ import {
   type ReportVerificationReply,
 } from './forward-performance/verification'
 
+const invalidVolume = (id: number, failure: IntradaySnapshotFailure): ReportVerificationReply => {
+  const { reason, message, facts, ingestionDelayDirection, cause } = failure
+  return {
+    id,
+    outcome: 'INVALID_VOLUME',
+    failure: {
+      reason,
+      message,
+      ...(facts === undefined ? {} : { facts }),
+      ...(ingestionDelayDirection === undefined ? {} : { ingestionDelayDirection }),
+      ...(cause === undefined ? {} : { cause }),
+    },
+  }
+}
+
 export const verifyReportJob = (
   job: ReportVerificationJob,
   retainedIndex?: ReportDecisionIndex,
 ): ReportVerificationReply => {
   const { id, input } = job
+  if (input.task === ReportVerificationTask.VolumeRequest) {
+    const result = intradayPerformanceDecisionRequest(input.request)
+    return Result.isSuccess(result)
+      ? { id, outcome: 'VOLUME_REQUEST', value: result.success }
+      : invalidVolume(id, result.failure)
+  }
+  if (input.task === ReportVerificationTask.Volume) {
+    const result = makeIntradayPerformanceVolumeEvidenceBatch(input.requests, input.archiveRequest, input.rawBars)
+    if (Result.isSuccess(result)) return { id, outcome: 'VOLUME', value: result.success }
+    return invalidVolume(id, result.failure)
+  }
   if (input.task === ReportVerificationTask.Decision) {
     const index = input.index ?? retainedIndex
     if (index === undefined) throw new Error('Report decision index is unavailable')
-    const verified = verifyPerformanceDecisions([input.row])
+    const verified = verifyPerformanceDecisionJson(input.row)
     return {
       id,
       outcome: 'DECISION',

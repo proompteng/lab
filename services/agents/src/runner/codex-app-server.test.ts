@@ -270,7 +270,7 @@ describe('codex app-server runner adapter', () => {
         },
       },
       {
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         effort: 'high',
         sandbox: 'danger-full-access',
         approval: 'never',
@@ -295,7 +295,7 @@ describe('codex app-server runner adapter', () => {
     expect(prompts).toEqual(['implement the feature'])
     expect(createdClients[0]).toMatchObject({
       binaryPath: DEFAULT_CODEX_BINARY_PATH,
-      defaultModel: 'gpt-6-astra',
+      defaultModel: 'gpt-6.2-sol',
       defaultEffort: 'high',
       sandbox: 'danger-full-access',
       approval: 'never',
@@ -303,7 +303,7 @@ describe('codex app-server runner adapter', () => {
       threadConfig: { web_search: 'live', mcp_servers: {} },
     })
     expect(turnOptions[0]).toMatchObject({
-      model: 'gpt-6-astra',
+      model: 'gpt-6.2-sol',
       effort: 'high',
       cwd,
       baseInstructions: 'system instructions',
@@ -375,6 +375,7 @@ describe('codex app-server runner adapter', () => {
                   ? [
                       {
                         type: 'agentMessage',
+                        moderation: null,
                         id: 'final-message',
                         text: 'completed after continuation',
                         phase: 'final_answer',
@@ -392,6 +393,7 @@ describe('codex app-server runner adapter', () => {
           return [
             {
               type: 'agentMessage',
+              moderation: null,
               id: 'final-message',
               text: 'completed after continuation',
               phase: 'final_answer',

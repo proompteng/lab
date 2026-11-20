@@ -6,11 +6,20 @@ resources:
   - app-secret.yaml
   - email-externalsecret.yaml
   - tailscale-ingress.yaml
+  - server-upgrade-backup.yaml
+
+configMapGenerator:
+  - name: glitchtip-scheduler-health
+    namespace: glitchtip
+    options:
+      disableNameSuffixHash: true
+    files:
+      - scheduler-health.py
 
 helmCharts:
   - name: glitchtip
     repo: https://gitlab.com/api/v4/projects/16325141/packages/helm/stable
-    version: 9.0.1
+    version: 9.2.0
     releaseName: glitchtip
     namespace: glitchtip
     valuesFile: glitchtip-values.yaml
@@ -28,6 +37,11 @@ patches:
           argocd.argoproj.io/sync-wave: "-2"
           argocd.argoproj.io/sync-options: Prune=false,Delete=false
       spec:
+        imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie@sha256:13f5dc1b42c5d96233724be976740df031136ca013f98a56a2877a62b362b453
+        backup:
+          volumeSnapshot:
+            className: rook-ceph-block
+            snapshotOwnerReference: backup
         postgresql:
           parameters:
             wal_buffers: 16MB
@@ -58,8 +72,35 @@ patches:
       kind: Deployment
       metadata:
         name: glitchtip-web
+        namespace: glitchtip
         annotations:
           argocd.argoproj.io/sync-wave: "1"
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: scheduler-health
+                configMap:
+                  name: glitchtip-scheduler-health
+            containers:
+              - name: glitchtip
+                env:
+                  - name: GLITCHTIP_EMBED_WORKER
+                    $patch: delete
+                volumeMounts:
+                  - name: scheduler-health
+                    mountPath: /opt/glitchtip-health
+                    readOnly: true
+                livenessProbe:
+                  httpGet: null
+                  exec:
+                    command:
+                      - python
+                      - /opt/glitchtip-health/scheduler-health.py
+                  initialDelaySeconds: 120
+                  periodSeconds: 10
+                  timeoutSeconds: 8
+                  failureThreshold: 5
   - target:
       kind: Pod
       name: glitchtip-test-connection

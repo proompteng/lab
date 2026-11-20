@@ -7,7 +7,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { DateTime, Effect, Redacted, Result } from 'effect'
+import { Cause, DateTime, Deferred, Effect, Exit, Redacted, Result } from 'effect'
 
 import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import { prepareFeeMatchCorrection, type StoredBrokerFee } from '../accounting/broker-fees'
@@ -29,9 +29,11 @@ import {
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformanceReport,
   readForwardPerformanceInput,
+  ForwardPerformanceMarketVolumeError,
   type ForwardPerformanceReaders,
 } from './program'
 import { ForwardPerformanceScopeKind } from './report'
+import { ReportVerificationLive } from './verification'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
@@ -112,7 +114,15 @@ interface SqlFixture {
   readonly brokerFeeTimes?: {
     readonly firstObservedAt: string
     readonly postedAt: string | null
+    readonly lastCorrectionPostedAt?: string
   }
+  readonly brokerFeeScope?: {
+    readonly includesGeneration: boolean
+    readonly includesOtherGeneration: boolean
+    readonly date?: string
+  }
+  readonly brokerFeeCorrections?: StoredBrokerFee['cash_match_corrections']
+  readonly cycleSessionDate?: string
 }
 
 const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}): PgClient.PgClient => {
@@ -120,6 +130,22 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
     if (typeof strings === 'string') return strings
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
+    if (fixture.cycleSessionDate !== undefined && statement.startsWith('SELECT cycle_id, qualification_run_id,')) {
+      return Effect.succeed([
+        {
+          cycle_id: hash('4'),
+          qualification_run_id: hash('5'),
+          strategy_name: 'fixture-strategy',
+          strategy_protocol_hash: hash('6'),
+          account_id: identityResult.success.accountId,
+          execution_policy_hash: hash('7'),
+          strategy_execution_model_hash: hash('8'),
+          state: 'NO_TRADE',
+          submission_open_at: new Date(`${fixture.cycleSessionDate}T13:00:00.000Z`),
+          terminal_at: new Date(`${fixture.cycleSessionDate}T21:00:00.000Z`),
+        },
+      ])
+    }
     if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
@@ -130,11 +156,11 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 data: {
                   accountId: identityResult.success.accountId,
                   activityId: 'synthetic-delayed-fee',
-                  date: '2026-07-20',
+                  date: fixture.brokerFeeScope?.date ?? '2026-07-20',
                   netAmountMicros: '-100',
                   ...(fixture.cryptoCashMatch === undefined ? {} : { cryptoCashFee: true }),
                 },
-                cash_match_corrections: [],
+                cash_match_corrections: fixture.brokerFeeCorrections ?? [],
                 matched_cash_micros: fixture.cryptoCashMatch ?? '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
@@ -149,10 +175,12 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 tigerbeetle_ledger: 7001,
                 posted: times.postedAt !== null,
                 first_observed_at: new Date(times.firstObservedAt),
-                last_correction_posted_at: null,
+                last_correction_posted_at:
+                  times.lastCorrectionPostedAt === undefined ? null : new Date(times.lastCorrectionPostedAt),
                 posted_at: times.postedAt === null ? null : new Date(times.postedAt),
-                includes_generation: true,
-                includes_other_generation: fixture.cryptoCashMatch !== undefined,
+                includes_generation: fixture.brokerFeeScope?.includesGeneration ?? true,
+                includes_other_generation:
+                  fixture.brokerFeeScope?.includesOtherGeneration ?? fixture.cryptoCashMatch !== undefined,
               },
             ],
       )
@@ -423,6 +451,106 @@ const marketReaderConfig = {
 }
 
 describe('forward performance read program', () => {
+  test.each([
+    ['owned', true, false, '2026-07-20', true, 1, 0],
+    ['overlapping', true, true, '2026-07-20', true, 1, 1],
+    ['other generation on selected date', false, true, '2026-07-20', true, 0, 0],
+    ['other generation on later date', false, true, '2026-07-21', true, 0, 0],
+    ['unattributed on selected date', false, false, '2026-07-20', true, 1, 1],
+    ['unattributed on unrelated date', false, false, '2026-07-21', true, 0, 0],
+    ['unscoped other generation', false, true, '2026-07-21', false, 1, 0],
+    ['unscoped unattributed', false, false, '2026-07-21', false, 1, 0],
+  ] as const)(
+    'retains all account fees while counting only relevant late %s fees',
+    async (_name, includesGeneration, includesOtherGeneration, date, scoped, late, ambiguous) => {
+      const sql = makeReadOnlySql(
+        { statements: [] },
+        {
+          brokerFeeScope: { includesGeneration, includesOtherGeneration, date },
+          brokerFeeTimes: {
+            firstObservedAt: '2026-07-21T07:55:00.000Z',
+            postedAt: '2026-07-21T07:55:01.000Z',
+          },
+          cycleSessionDate: '2026-07-20',
+        },
+      )
+      const evidence = await Effect.runPromise(
+        readForwardPerformancePostgres(sql, identityResult.success.accountId, scoped ? hash('9') : undefined),
+      )
+
+      expect(evidence.cycles).toHaveLength(1)
+      expect(evidence.postReconciliationActivityCount).toBe(late)
+      expect(evidence.ambiguousBrokerFeeCount).toBe(ambiguous)
+      expect(evidence.generationBrokerFeeIds).toEqual(
+        includesGeneration && !includesOtherGeneration ? ['synthetic-delayed-fee'] : [],
+      )
+      expect(evidence.brokerFeeRecords).toHaveLength(1)
+      expect(evidence.brokerFeeRecords?.[0]).toMatchObject({
+        data: { activityId: 'synthetic-delayed-fee', date, netAmountMicros: '-100' },
+        ledger_plan_hash: hash('3'),
+        posted: true,
+      })
+    },
+  )
+
+  test.each(['late posting', 'late observation', 'pending'] as const)(
+    'preserves %s correction evidence without reopening unrelated generations',
+    async (mode) => {
+      const correction = success(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: 'bayn.fee-match-correction.v1',
+            accountId: identityResult.success.accountId,
+            activityId: 'synthetic-delayed-fee',
+            accrualId: hash('e'),
+            feeContentHash: hash('2'),
+            activityCashMicros: '100',
+            accrualCashMicros: '100',
+            readEvidence: {
+              requestId: 'synthetic-correction-read',
+              status: 200,
+              contentHash: hash('1'),
+              observedAt: mode === 'late observation' ? '2026-07-20T21:01:00.001Z' : '2026-07-20T21:00:00.000Z',
+            },
+          },
+          config.tigerBeetle.ledger,
+        ),
+      )
+      const corrections = [
+        {
+          correction_id: correction.correctionId,
+          data: correction.data,
+          content_hash: correction.contentHash,
+          ledger_plan_hash: success(hashLedgerPlanResult(correction.plan)),
+          tigerbeetle_cluster_id: config.tigerBeetle.clusterId.toString(),
+          tigerbeetle_ledger: config.tigerBeetle.ledger,
+          posted: mode !== 'pending',
+        },
+      ]
+      for (const includesGeneration of [true, false]) {
+        const sql = makeReadOnlySql(
+          { statements: [] },
+          {
+            brokerFeeScope: { includesGeneration, includesOtherGeneration: !includesGeneration },
+            brokerFeeTimes: {
+              firstObservedAt: '2026-07-20T21:00:00.000Z',
+              postedAt: '2026-07-20T21:00:00.000Z',
+              ...(mode === 'late posting' ? { lastCorrectionPostedAt: '2026-07-20T21:01:00.001Z' } : {}),
+            },
+            brokerFeeCorrections: corrections,
+            cycleSessionDate: '2026-07-20',
+          },
+        )
+        const evidence = await Effect.runPromise(
+          readForwardPerformancePostgres(sql, identityResult.success.accountId, hash('9')),
+        )
+        expect(evidence.postReconciliationActivityCount).toBe(includesGeneration ? 1 : 0)
+        expect(evidence.brokerFeeRecords).toHaveLength(1)
+        expect(evidence.brokerFeeRecords?.[0]?.cash_match_corrections).toEqual(corrections)
+      }
+    },
+  )
+
   test.each([
     ['100', 0],
     ['99', 1],
@@ -1044,76 +1172,135 @@ describe('forward performance read program', () => {
     expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
-  test('captures one cut and releases its transaction before expense verification', async () => {
-    const sql = makeReadOnlySql({ statements: [] })
-    let committedCut = 1
-    let snapshotCut: number | undefined
-    let performanceCut: number | undefined
-    let expenseCut: number | undefined
-    Object.assign(sql, {
-      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        Effect.acquireUseRelease(
-          Effect.sync(() => {
-            const previous = snapshotCut
-            snapshotCut = committedCut
-            return previous
-          }),
-          () => effect,
-          (previous) =>
+  test.each(['success', 'archive failure', 'interruption'] as const)(
+    'captures one cut and closes independent archive and expense scopes on %s',
+    async (outcome) => {
+      const sql = makeReadOnlySql({ statements: [] })
+      const archiveStarted = Deferred.makeUnsafe<void>()
+      const expensesStarted = Deferred.makeUnsafe<void>()
+      const controller = new AbortController()
+      let expenseResources = 0,
+        expenseReleases = 0
+      let committedCut = 1
+      let snapshotCut: number | undefined
+      let performanceCut: number | undefined
+      let expenseCut: number | undefined
+      Object.assign(sql, {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.acquireUseRelease(
             Effect.sync(() => {
-              snapshotCut = previous
+              const previous = snapshotCut
+              snapshotCut = committedCut
+              return previous
             }),
-        ),
-    })
-    const readers: ForwardPerformanceReaders = {
-      postgres: (...args) =>
-        readForwardPerformancePostgres(...args).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              performanceCut = snapshotCut ?? committedCut
-            }),
+            () => effect,
+            (previous) =>
+              Effect.sync(() => {
+                snapshotCut = previous
+              }),
           ),
+      })
+      const readers: ForwardPerformanceReaders = {
+        postgres: (...args) =>
+          readForwardPerformancePostgres(...args).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                performanceCut = snapshotCut ?? committedCut
+              }),
+            ),
+          ),
+        marketVolume: () =>
+          Effect.gen(function* () {
+            expect(snapshotCut).toBeUndefined()
+            yield* Deferred.succeed(archiveStarted, undefined)
+            yield* Deferred.await(expensesStarted)
+            if (outcome === 'archive failure')
+              return yield* new ForwardPerformanceMarketVolumeError({
+                operation: 'read',
+                message: 'synthetic archive failure',
+                cause: 'fixture',
+              })
+            if (outcome === 'interruption') {
+              controller.abort()
+              return yield* Effect.never
+            }
+            committedCut++
+            return []
+          }),
+        inferenceExpenseSnapshots: () =>
+          Effect.sync(() => {
+            expenseCut = snapshotCut ?? committedCut
+            return []
+          }),
+        inferenceExpenses: (_config, _sql, _accountId, snapshots) =>
+          Effect.gen(function* () {
+            yield* Effect.acquireRelease(
+              Effect.sync(() => {
+                expenseResources++
+              }),
+              () =>
+                Effect.sync(() => {
+                  expenseReleases++
+                }),
+            )
+            expect(snapshotCut).toBeUndefined()
+            expect(snapshots).toEqual([])
+            yield* Deferred.succeed(expensesStarted, undefined)
+            yield* Deferred.await(archiveStarted)
+            if (outcome !== 'success') return yield* Effect.never
+            return []
+          }),
+        ledger: () =>
+          Effect.succeed({
+            totals: {
+              realizedGainMicros: '0',
+              cashSettlementRoundingMicros: '0',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '0',
+              otherChargedCostsMicros: null,
+              cashYieldMicros: '0',
+            },
+            ledgerExact: true,
+            missingLedgerAccountCount: 0,
+            openPositionCount: 0,
+            cashYieldEvidenceRequired: false,
+          }),
+      }
+      const exit = await Effect.runPromiseExit(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const result = yield* runForwardPerformanceReport(config, readers).pipe(
+              Effect.provideService(PgClient.PgClient, sql),
+              Effect.timeout(1000),
+              Effect.exit,
+            )
+            expect(expenseReleases).toBe(1)
+            return result
+          }),
         ),
-      marketVolume: () =>
-        Effect.sync(() => {
-          committedCut++
-          return []
-        }),
-      inferenceExpenseSnapshots: () =>
-        Effect.sync(() => {
-          expenseCut = snapshotCut ?? committedCut
-          return []
-        }),
-      inferenceExpenses: (_config, _sql, _accountId, snapshots) =>
-        Effect.sync(() => {
-          expect(snapshotCut).toBeUndefined()
-          expect(snapshots).toEqual([])
-          return []
-        }),
-      ledger: () =>
-        Effect.succeed({
-          totals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: null,
-            cashYieldMicros: '0',
+        { signal: controller.signal },
+      )
+      if (outcome === 'success') expect(exit).toMatchObject({ _tag: 'Success', value: { _tag: 'Success' } })
+      if (outcome === 'archive failure') {
+        expect(
+          Exit.isSuccess(exit) && Exit.isFailure(exit.value) && Cause.findErrorOption(exit.value.cause),
+        ).toMatchObject({
+          value: {
+            _tag: 'ForwardPerformanceProgramError',
+            operation: 'market-volume-read',
+            message: 'synthetic archive failure',
           },
-          ledgerExact: true,
-          missingLedgerAccountCount: 0,
-          openPositionCount: 0,
-          cashYieldEvidenceRequired: false,
-        }),
-    }
-    await Effect.runPromise(
-      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
-    )
-    expect(committedCut).toBe(2)
-    expect(performanceCut).toBe(1)
-    expect(expenseCut).toBe(performanceCut)
-    expect(snapshotCut).toBeUndefined()
-  })
+        })
+      }
+      if (outcome === 'interruption') expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+      expect(expenseResources).toBe(1)
+      expect(expenseReleases).toBe(1)
+      expect(committedCut).toBe(outcome === 'success' ? 2 : 1)
+      expect(performanceCut).toBe(1)
+      expect(expenseCut).toBe(performanceCut)
+      expect(snapshotCut).toBeUndefined()
+    },
+  )
 
   test('scopes forward-performance PostgreSQL evidence to one execution authority generation', async () => {
     const observation: SqlObservation = { statements: [] }
@@ -1481,9 +1668,13 @@ describe('forward performance read program', () => {
   })
 })
 
-test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
-  'routes native completed cycles to the bounded archive and preserves their evidence: %p',
-  async (makeFixture) => {
+test.each(
+  [makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture].flatMap(
+    (makeFixture) => [false, true].map((workers) => ({ makeFixture, workers })),
+  ),
+)(
+  'routes completed cycles through inline or native verification without changing archive evidence: %p',
+  async ({ makeFixture, workers }) => {
     const { request, archive, bars } = makeFixture()
     let volumeReads = 0
     let watermarkReads = 0
@@ -1511,11 +1702,10 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient
     const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
-    const evidence = await Effect.runPromise(
-      readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
-        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
-      ),
+    const read = readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
+      Effect.provideService(ClickhouseClient.ClickhouseClient, client),
     )
+    const evidence = await Effect.runPromise(workers ? read.pipe(Effect.provide(ReportVerificationLive)) : read)
     expect(watermarkReads).toBe(1)
     expect(volumeReads).toBe(1)
     expect(evidence).toHaveLength(1)

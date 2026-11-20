@@ -9,6 +9,7 @@ import {
 } from './shadow-decision-contract'
 import { Authority } from './execution/contracts'
 import { withObservedStage } from './telemetry'
+import { observeWorkerMemory, RuntimeIsolate, type RuntimeMemorySample } from './telemetry-memory'
 
 export type DecisionConstructionRequest =
   | { readonly _tag: 'Observe'; readonly input: ObserveShadowDecisionInput }
@@ -26,7 +27,11 @@ export type DecisionConstructionResponse =
   | { readonly _tag: 'Defect'; readonly cause: unknown }
 
 export type DecisionConstructionJob = { readonly id: number; readonly request: DecisionConstructionRequest }
-export type DecisionConstructionReply = { readonly id: number; readonly response: DecisionConstructionResponse }
+export type DecisionConstructionReply = {
+  readonly id: number
+  readonly response: DecisionConstructionResponse
+  readonly memory: RuntimeMemorySample | undefined
+}
 
 export type DecisionConstructionShape = {
   readonly observe: (
@@ -50,6 +55,7 @@ export const makeDecisionConstruction = (
     ),
 ) =>
   Effect.gen(function* () {
+    const memory = yield* observeWorkerMemory(RuntimeIsolate.DecisionConstruction)
     // Both modes share one permit, including termination of interrupted synchronous work.
     const permit = Semaphore.makeUnsafe(1)
     let worker: Worker | undefined
@@ -58,9 +64,11 @@ export const makeDecisionConstruction = (
     let nextId = 0
     const onError = () => {
       unhealthy = true
+      memory.clear()
     }
     const onExit = () => {
       unhealthy = true
+      memory.clear()
     }
     const dispose = () =>
       Effect.promise(async () => {
@@ -72,6 +80,7 @@ export const makeDecisionConstruction = (
           previous.off('exit', onExit)
         }
         unhealthy = false
+        memory.clear()
       })
     yield* Effect.addFinalizer(() => {
       closed = true
@@ -104,31 +113,38 @@ export const makeDecisionConstruction = (
           (worker) =>
             Effect.callback<DecisionConstructionResponse, ShadowDecisionError>((resume) => {
               const id = nextId++
-              const onMessage = (reply: DecisionConstructionReply) =>
-                resume(
+              const cleanup = () => {
+                worker.off('message', onMessage)
+                worker.off('error', onError)
+                worker.off('exit', onExit)
+              }
+              const settle = (result: Effect.Effect<DecisionConstructionResponse, ShadowDecisionError>) => {
+                cleanup()
+                resume(result)
+              }
+              const onMessage = (reply: DecisionConstructionReply) => {
+                if (reply?.id === id) memory.receive(reply.memory)
+                settle(
                   reply?.id === id
                     ? Effect.succeed(reply.response)
                     : Effect.fail(failed('Decision construction worker returned a different request')),
                 )
+              }
               const onError = (cause: Error) =>
-                resume(Effect.fail(failed('Decision construction worker failed', cause)))
+                settle(Effect.fail(failed('Decision construction worker failed', cause)))
               const onExit = (code: number) =>
-                resume(Effect.fail(failed('Decision construction worker exited without a result', { code })))
+                settle(Effect.fail(failed('Decision construction worker exited without a result', { code })))
               worker.once('message', onMessage)
               worker.once('error', onError)
               worker.once('exit', onExit)
               try {
                 if (unhealthy || worker.threadId === -1)
-                  resume(Effect.fail(failed('Decision construction worker is unavailable')))
+                  settle(Effect.fail(failed('Decision construction worker is unavailable')))
                 else worker.postMessage({ id, request } satisfies DecisionConstructionJob)
               } catch (cause) {
-                resume(Effect.fail(failed('Decision construction worker could not receive the request', cause)))
+                settle(Effect.fail(failed('Decision construction worker could not receive the request', cause)))
               }
-              return Effect.sync(() => {
-                worker.off('message', onMessage)
-                worker.off('error', onError)
-                worker.off('exit', onExit)
-              })
+              return Effect.sync(cleanup)
             }).pipe(
               Effect.flatMap((reply) =>
                 Match.value(reply).pipe(

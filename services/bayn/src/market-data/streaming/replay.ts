@@ -10,7 +10,7 @@ import {
   normalizeTrade,
   type PersistedIntradaySnapshotRows,
 } from '../intraday/verification'
-import { bootstrapKafkaPartitions, canonicalPositions } from './bootstrap'
+import { canonicalPositions } from './bootstrap'
 import {
   SimulatedSnapshotEvidenceSchema,
   SimulatedSnapshotSourceSchema,
@@ -84,25 +84,6 @@ export const reproduceStreamingSnapshot = (
       manifest.streaming,
       strictParseOptions,
     ).pipe(Result.mapError((cause) => fail('Invalid recorded streaming evidence', cause)))
-    const bounds = yield* Result.try({
-      try: () =>
-        bootstrapKafkaPartitions(
-          evidence.bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.logStartOffset })),
-          evidence.bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.endOffset })),
-          evidence.bootstrap.partitions.map((partition) => ({ ...partition, offset: partition.startOffset })),
-        ),
-      catch: (cause) => fail('Invalid recorded Kafka bootstrap bounds', cause),
-    })
-    if (
-      (yield* canonicalHashV1Result(bounds).pipe(
-        Result.mapError((cause) => fail('Invalid bootstrap bounds hash', cause)),
-      )) !==
-        (yield* canonicalHashV1Result(evidence.bootstrap.partitions).pipe(
-          Result.mapError((cause) => fail('Invalid recorded bootstrap hash', cause)),
-        )) ||
-      canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index])
-    )
-      return yield* Result.fail(fail('Recorded Kafka bounds are not canonical'))
     const featureTopics = [...new Set(evidence.features.map((feature) => feature.topic))]
     const rawTopics = new Set(Object.values(manifest.sourceTopics))
     const bootstrapFeatureTopics = [

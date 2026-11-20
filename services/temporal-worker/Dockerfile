@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS source
+FROM golang:1.26.10-alpine@sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696 AS source
 RUN apk add --no-cache curl patch
 WORKDIR /temporal
-RUN curl --fail --location --retry 3 https://codeload.github.com/temporalio/temporal/tar.gz/19a774302c613da9adc4436ab14278ccdca8e0a5 -o /tmp/source.tar.gz \
-    && echo 'e034c4ff9ef8ae7d4a326bddb9f6793bee6255285cc19f9b58874d8ee21eb3e8  /tmp/source.tar.gz' | sha256sum -c - \
+RUN curl --fail --location --retry 3 https://codeload.github.com/temporalio/temporal/tar.gz/6d085822273f4336796e6959c73ab1d14a23eb77 -o /tmp/source.tar.gz \
+    && echo 'bc76a2b75a21bd8c37604f5cd3aed0194d8853ecf894d459a163a6e5e3698764  /tmp/source.tar.gz' | sha256sum -c - \
     && tar -xzf /tmp/source.tar.gz --strip-components=1 \
     && rm /tmp/source.tar.gz
 COPY host-resources.patch /tmp/host-resources.patch
@@ -50,8 +50,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM scratch AS evidence
 COPY --from=test /proof/ /
 
-FROM mirror.gcr.io/temporalio/server:1.31.2@sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da AS runtime
+FROM mirror.gcr.io/temporalio/server:1.32.2@sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670 AS runtime
 COPY --from=builder /tmp/temporal-server /usr/local/bin/temporal-server
-LABEL org.opencontainers.image.base.name="mirror.gcr.io/temporalio/server:1.31.2" \
-      ai.proompteng.temporal.upstream-revision="19a774302c613da9adc4436ab14278ccdca8e0a5" \
+LABEL org.opencontainers.image.base.name="mirror.gcr.io/temporalio/server:1.32.2" \
+      ai.proompteng.temporal.upstream-revision="6d085822273f4336796e6959c73ab1d14a23eb77" \
       ai.proompteng.temporal.patch="host-resources-v1,routing-propagation-v1"

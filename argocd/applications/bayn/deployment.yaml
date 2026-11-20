@@ -202,8 +202,8 @@ spec:
               memory: 256Mi
             limits:
               # Read-only financial reports use a bounded verification pool; requests stay unchanged.
-              cpu: "8"
-              memory: 4Gi
+              cpu: "16"
+              memory: 6Gi
           securityContext:
             # TigerBeetle's native client requires io_uring, which containerd's
             # RuntimeDefault seccomp profile blocks. Keep every other control.
