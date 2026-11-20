@@ -6,12 +6,13 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE FUNCTION system_native_qualification_calendar_valid(payload json) RETURNS boolean
     LANGUAGE plpgsql STABLE AS $calendar$
-    DECLARE registration jsonb := payload::jsonb;
-      calendar jsonb := registration->'calendar'; evidence jsonb := calendar->'marketCalendar'; days integer;
+    DECLARE registration jsonb := payload::jsonb; calendar jsonb := registration->'calendar';
+      evidence_json json := payload #> '{calendar,marketCalendar}'; evidence jsonb := evidence_json::jsonb;
+      normalized_hash text; days integer;
     BEGIN
       IF NOT ((
         calendar->>'referenceMarket'='US_EQUITIES' AND calendar->>'operatingHours'='NATIVE'
-        AND calendar->>'sourceHash'=encode(sha256(convert_to((payload #> '{calendar,marketCalendar}')::text,'UTF8')),'hex')
+        AND calendar->>'sourceHash'=encode(sha256(convert_to(evidence_json::text,'UTF8')),'hex')
         AND registration #> '{obligations,configuration,entryMarkets}'='["EQUITY"]'::jsonb
         AND evidence->>'schemaVersion'='bayn.alpaca-market-calendar-observation.v2'
         AND evidence->>'source'='alpaca-v2-calendar' AND evidence->>'timeZone'='UTC'
@@ -19,6 +20,12 @@ export default Effect.gen(function* () {
         AND jsonb_typeof(calendar->'sessions')='array'
         AND jsonb_typeof(evidence->'sessions')='array' AND jsonb_typeof(evidence->'providerSessions')='array'
       ) IS TRUE) THEN RETURN false; END IF;
+
+      -- Retain the original canonical JSON for nested values. JSONB rewrites object key order and spacing.
+      SELECT encode(sha256(convert_to('{' || string_agg(to_json(key)::text || ':' || value::text, ','
+        ORDER BY key COLLATE "C") || '}', 'UTF8')), 'hex') INTO normalized_hash
+      FROM json_each(evidence_json) WHERE key <> 'normalizedResponseHash';
+      IF evidence->>'normalizedResponseHash' IS DISTINCT FROM normalized_hash THEN RETURN false; END IF;
 
       days := jsonb_array_length(calendar->'sessions');
       IF days=0 OR days<>jsonb_array_length(evidence->'sessions')

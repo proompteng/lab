@@ -891,7 +891,16 @@ postgres('PostgreSQL prospective system qualification', () => {
         },
       },
     }
-    for (const invalid of [{ ...input, calendar }, alteredProvider, retainedRegistration(2)]) {
+    const marketCalendar = {
+      ...input.calendar.marketCalendar,
+      normalizedResponseHash: testHash('incorrect normalized calendar response'),
+    }
+    const alteredResponseHash = {
+      ...input,
+      calendar: { ...input.calendar, marketCalendar, sourceHash: testHash(marketCalendar) },
+    }
+    sources.add(alteredResponseHash.calendar.sourceHash)
+    for (const invalid of [{ ...input, calendar }, alteredProvider, alteredResponseHash, retainedRegistration(2)]) {
       expect(
         Exit.isFailure(await runtime.runPromiseExit(asApplication(registerSystemQualification(invalid, sources)))),
       ).toBe(true)

@@ -138,7 +138,8 @@ allocation, and sourced conditional statistical support and assumptions before t
 have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
 New registrations bind the explicit equity entry scope and the complete canonical Alpaca calendar as a verified
-source artifact. The execution and reporting windows use the same native equity hours derived from this calendar.
+source artifact. Both application and database admission recompute the calendar's source and normalized-response
+hashes. The execution and reporting windows use the same native equity hours derived from this calendar.
 This preserves daylight saving changes, holidays, shortened sessions, and the native controller's deadline
 alignment. The financial market scope can also retain markets for existing-position exits. Historical runtime
 commitments without an entry scope still require every market in their original protocol.
