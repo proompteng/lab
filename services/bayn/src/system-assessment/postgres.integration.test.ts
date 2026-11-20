@@ -1061,82 +1061,79 @@ postgres('PostgreSQL prospective system qualification', () => {
     },
   )
 
-  test('conditional migration preserves v5 registration and receipt bytes, then continues the same attempt history', async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 181))),
-          table: 'schema_migrations',
-        })
-        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
-      }),
-    )
-    const retained = retainedRegistration(4, JevAcceptanceVersion.RetainedV5)
-    const hash = testHash(retained)
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`INSERT INTO system_qualification_registrations
+  test.each([
+    ['conditional confidence', 181, JevAcceptanceVersion.RetainedV5, 'bayn.system-registration.v3'],
+    ['native calendar', 205, JevAcceptanceVersion.Current, 'bayn.system-registration.v4'],
+  ] as const)(
+    '%s migration preserves the previous registration, receipt and attempt chain',
+    async (_, prior, version, schema) => {
+      await restorePriorAdmission(prior)
+      const retained = retainedRegistration(4, version)
+      expect(retained.schemaVersion).toBe(schema)
+      const hash = testHash(retained)
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO system_qualification_registrations
         (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
         VALUES (${hash},${retained.program},1,${retained.priorAttemptHash},${retained.registeredAt},
           ${retained.calendar.sessions[0]?.openAt},${retained.calendar.sessions.at(-1)?.closeAt},${Result.getOrThrow(canonicalJsonV1Result(retained))})`
-      }),
-    )
-    const asOf = await runtime.runPromise(databaseNow)
-    const cut = await runtime.runPromise(
-      persistSystemSourceCut({
-        ...emptySourceCutFixture().cut,
-        registrationHash: hash,
+        }),
+      )
+      const asOf = await runtime.runPromise(databaseNow)
+      const cut = await runtime.runPromise(
+        persistSystemSourceCut({
+          ...emptySourceCutFixture().cut,
+          registrationHash: hash,
+          asOf,
+          runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
+        }),
+      )
+      const f = assessmentFixture(retained)
+      f.verifiedSources.add(cut.sourceCutHash)
+      const input = {
+        ...f.input,
         asOf,
-        runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
-      }),
-    )
-    const f = assessmentFixture(retained)
-    f.verifiedSources.add(cut.sourceCutHash)
-    const input = {
-      ...f.input,
-      asOf,
-      sourceCutHash: cut.sourceCutHash,
-      reliability: { ...f.input.reliability, asOf, completions: [] },
-      safety: { ...f.input.safety, asOf },
-    }
-    const original = Result.getOrThrow(
-      evaluateSystemAssessment(input, f.verifiedSources, JevAcceptanceVersion.RetainedV5),
-    )
-    expect(original.missing).toContain('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
-    expect(original.verdict).not.toBe(QualificationVerdict.Qualified)
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const { assessmentHash, ...material } = original
-        yield* sql`INSERT INTO system_assessment_receipts
+        sourceCutHash: cut.sourceCutHash,
+        reliability: { ...f.input.reliability, asOf, completions: [] },
+        safety: { ...f.input.safety, asOf },
+      }
+      const original = Result.getOrThrow(evaluateSystemAssessment(input, f.verifiedSources, version))
+      if (version === JevAcceptanceVersion.RetainedV5)
+        expect(original.missing).toContain('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
+      expect(original.verdict).not.toBe(QualificationVerdict.Qualified)
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const { assessmentHash, ...material } = original
+          yield* sql`INSERT INTO system_assessment_receipts
         (assessment_hash,registration_hash,source_cut_hash,as_of,verdict,input_text,assessment_text)
         VALUES (${assessmentHash},${hash},${cut.sourceCutHash},${asOf},${original.verdict},
           ${Result.getOrThrow(canonicalJsonV1Result(input))},${Result.getOrThrow(canonicalJsonV1Result(material))})`
-      }),
-    )
-    const snapshot = Effect.gen(function* () {
-      const sql = yield* PgClient.PgClient
-      return {
-        registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY attempt_index`,
-        receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
-        authority: yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`,
-      }
-    })
-    const before = await runtime.runPromise(snapshot)
-    await runtime.runPromise(postgresMigrations)
-    expect(await runtime.runPromise(snapshot)).toEqual(before)
-    expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
-    expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
-    const next = withRegistrationCommitments({ ...registration(1), attemptIndex: 2, priorAttemptHash: hash })
-    const saved = await runtime.runPromise(registerFixture(next))
-    expect(saved.registration.attemptIndex).toBe(2)
-    expect(saved.registration.priorAttemptHash).toBe(hash)
-    expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
-  })
+        }),
+      )
+      const snapshot = Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return {
+          registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY attempt_index`,
+          receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+          authority: yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`,
+        }
+      })
+      const before = await runtime.runPromise(snapshot)
+      await runtime.runPromise(postgresMigrations)
+      expect(await runtime.runPromise(snapshot)).toEqual(before)
+      expect(await runtime.runPromise(readSystemRegistration(hash))).toEqual(retained)
+      expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
+      expect(Result.getOrThrow(evaluateSystemAssessment(input, f.verifiedSources, version))).toEqual(original)
+      expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
+      const next = withRegistrationCommitments({ ...registration(1), attemptIndex: 2, priorAttemptHash: hash })
+      const saved = await runtime.runPromise(registerFixture(next))
+      expect(saved.registration.attemptIndex).toBe(2)
+      expect(saved.registration.priorAttemptHash).toBe(hash)
+      expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
+    },
+  )
 
   test('current registration permits a selected control, approved PAPER limits and contracted discounts without issuing authority', async () => {
     const base = registration(4)
