@@ -169,10 +169,10 @@ export function AgentSessionList({
                   aria-description={busy ? 'Response in progress' : undefined}
                   onClick={() => onSelect(thread.id)}
                   className={cn(
-                    'h-8 min-w-0 flex-1 justify-start gap-2 pl-2.5 pr-8 text-left [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
+                    'h-8 min-w-0 flex-1 justify-start gap-2 rounded-lg pl-2.5 pr-8 text-left transition-none active:bg-white/[0.12] dark:active:bg-white/[0.12] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
                     active
-                      ? 'bg-white/[0.06] text-zinc-100'
-                      : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
+                      ? 'bg-white/10 text-zinc-100 hover:bg-white/10 hover:text-zinc-100 dark:hover:bg-white/10'
+                      : 'text-zinc-300 hover:bg-white/5 hover:text-zinc-100 dark:hover:bg-white/5',
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
