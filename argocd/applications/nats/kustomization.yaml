@@ -47,7 +47,7 @@ images:
   - name: docker.io/natsio/prometheus-nats-exporter
     newName: mirror.gcr.io/natsio/prometheus-nats-exporter
     newTag: 0.20.3
-    digest: sha256:4b8ddc1c86fec360b5cd3e1fbc6fb52bdafd5805bba3901cc52926538af255
+    digest: sha256:4b8ddc1c86fec360b5cd3d5e1fbc6fb52bdafd5805bba3901cc52926538af255
   - name: grafana/alloy
     newName: mirror.gcr.io/grafana/alloy
     newTag: v1.22.0
