@@ -105,15 +105,15 @@ patches:
     kind: Job
     name: temporal-schema
   patch: |-
+    - op: replace
+      path: /metadata/name
+      value: temporal-schema-1-32-2
     - op: remove
       path: /metadata/annotations/helm.sh~1hook
     - op: remove
       path: /metadata/annotations/helm.sh~1hook-delete-policy
     - op: remove
       path: /metadata/annotations/helm.sh~1hook-weight
-    - op: add
-      path: /metadata/annotations/argocd.argoproj.io~1sync-options
-      value: Force=true,Replace=true
     - op: add
       path: /metadata/annotations/argocd.argoproj.io~1sync-wave
       value: "-1"
@@ -261,7 +261,7 @@ images:
   digest: sha256:ac3c13eddb4547d830991bb5eee93a5d97140134522b7297fdb2be1fe25ef925
 - name: temporal-worker-runtime
   newName: registry.ide-newton.ts.net/lab/temporal-worker
-  digest: sha256:5481f3e84d3c1528cebca0b2d1186573811469bb7018cf812fb4cbacf7eb416e
+  digest: sha256:5d0c2ae168489178bc15a3c7fd72eb81b4a6e696c3dc8b9ce590943fcdfc0084
 configMapGenerator:
 - name: temporal-cassandra-upgrade-scripts
   files:

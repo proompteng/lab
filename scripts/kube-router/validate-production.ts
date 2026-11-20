@@ -28,6 +28,15 @@ export const productionPaths = {
   safetyPolicies: 'argocd/applications/kube-router/safety-policies.yaml',
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
   buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
+  devboxPolicies: 'argocd/applications/devbox/network-policy.yaml',
+  froussardPolicies: 'argocd/applications/froussard/approval-networkpolicy.yaml',
+  kargoSmokePolicies: 'argocd/applications/kargo/smoke-access.yaml',
+  keycloakPolicies: 'argocd/applications/keycloak/network-policy.yaml',
+  ofzPolicies: 'argocd/applications/ofz/control-plane/network-policy.yaml',
+  opencodePolicies: 'argocd/applications/opencode/networkpolicy.yaml',
+  opencodeResearchPolicies: 'argocd/applications/opencode/research.yaml',
+  paperlessPolicies: 'argocd/applications/paperless/network.yaml',
+  pelicanPolicies: 'argocd/applications/pelican/networking.yaml',
   grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
   proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
   platformAdminPolicies: 'argocd/applications/proompteng/admin-network-policy.yaml',
@@ -41,6 +50,7 @@ export const productionPaths = {
   elasticRehearsalPolicies: 'argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml',
   hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
   tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
+  tengriReaderPolicies: 'argocd/applications/tengri/run-reader.yaml',
   relayPolicies: 'argocd/applications/relay/network-policy.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
@@ -60,10 +70,17 @@ export const productionPaths = {
 } as const
 
 export const reviewedPolicySources = {
-  buzz: ['buzzPolicies'],
+  buzz: ['buzzPolicies', 'kargoSmokePolicies'],
+  'codex-devbox': ['devboxPolicies', 'kargoSmokePolicies'],
+  froussard: ['froussardPolicies'],
+  keycloak: ['keycloakPolicies'],
   observability: ['grafanaRehearsalPolicies'],
-  proompteng: ['proomptengPolicies', 'platformAdminPolicies'],
-  restate: ['restatePolicies'],
+  ofz: ['ofzPolicies'],
+  opencode: ['opencodePolicies', 'opencodeResearchPolicies', 'kargoSmokePolicies'],
+  paperless: ['paperlessPolicies'],
+  pelican: ['pelicanPolicies'],
+  proompteng: ['proomptengPolicies', 'platformAdminPolicies', 'kargoSmokePolicies'],
+  restate: ['restatePolicies', 'kargoSmokePolicies', 'tengriReaderPolicies'],
   'restate-example': ['restateExamplePolicies'],
   temporal: [
     'cassandra311Policies',
@@ -74,6 +91,12 @@ export const reviewedPolicySources = {
     'elasticRehearsalPolicies',
   ],
 } as const
+
+// These namespaces combine policies rendered by a pinned Helm chart or owned by an external repository.
+const renderedPolicyHashes = {
+  'rook-ceph': '0827941f4c30c003e17a7294e596fb80e9a5dc8502bf2e30fc33ca37301c3149',
+  stash: '8564654c8298dd42db2da5af776b925a6a146bdc05a303e87d26cd1caa89de54',
+}
 
 export type ProductionPath = keyof typeof productionPaths
 export type ProductionFiles = Record<ProductionPath, string>
@@ -125,9 +148,9 @@ function canonicalJson(value: unknown): unknown {
   )
 }
 
-function networkPolicyHash(content: string): string {
+function networkPolicyHash(content: string, namespace: string): string {
   const contract = yamlDocuments(content)
-    .filter((policy) => policy?.kind === 'NetworkPolicy')
+    .filter((policy) => policy?.kind === 'NetworkPolicy' && (policy.metadata?.namespace ?? namespace) === namespace)
     .map((policy) => {
       const spec = { ...policy.spec }
       for (const direction of ['ingress', 'egress']) {
@@ -283,9 +306,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   const hook = resource(yamlDocuments(files.preflightHook), 'Job', 'kube-router-policy-preflight')
   const hookContainer = hook?.spec?.template?.spec?.containers?.[0]
-  const expectedHermesPolicyHash = networkPolicyHash(files.hermesPolicies)
-  const expectedTengriPolicyHash = networkPolicyHash(files.tengriPolicies)
-  const expectedRelayPolicyHash = networkPolicyHash(files.relayPolicies)
+  const expectedHermesPolicyHash = networkPolicyHash(
+    [files.hermesPolicies, files.kargoSmokePolicies].join('\n---\n'),
+    'hermes',
+  )
+  const expectedTengriPolicyHash = networkPolicyHash(
+    [files.tengriPolicies, files.kargoSmokePolicies].join('\n---\n'),
+    'tengri',
+  )
+  const expectedRelayPolicyHash = networkPolicyHash(files.relayPolicies, 'relay')
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -322,7 +351,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '.spec.egress == [{}]',
   ])
 
-  const reviewedNamespaces = Object.keys(reviewedPolicySources).sort()
+  const reviewedNamespaces = [...Object.keys(reviewedPolicySources), ...Object.keys(renderedPolicyHashes)].sort()
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
     `printf '%s\\n' ${reviewedNamespaces.join(' ')}`,
     `${reviewedNamespaces.join('|')})`,
@@ -336,7 +365,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
   for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
     const policyContent = sources.map((key) => files[key]).join('\n---\n')
-    const hash = networkPolicyHash(policyContent)
+    const hash = networkPolicyHash(policyContent, namespace)
     requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
       `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
     ])
@@ -345,6 +374,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
         failures.push(`${productionPaths.impactMap}: root-scripts must cover ${productionPaths[key]}`)
       }
     }
+  }
+
+  for (const [namespace, hash] of Object.entries(renderedPolicyHashes)) {
+    requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
+      `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
+    ])
   }
 
   const roles = yamlDocuments(files.rbac).filter((document) => document.kind === 'ClusterRole')

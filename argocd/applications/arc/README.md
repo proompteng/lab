@@ -2,7 +2,7 @@
 
 ARC separates architecture-specific runner pods from architecture-neutral control-plane pods.
 
-- Chart version pinned in `application.yaml` is `0.15.1` for both the controller and the runner scale set.
+- The controller and both runner scale sets use chart `0.15.1`. Upgrade the controller and its CRDs before promoting a runner chart that needs new CRD fields.
 - The custom image pins Actions runner `2.337.0` in `nix/images/arc-runner.nix`, independently of the ARC chart version.
   Update its upstream index digest and both platform archive hashes together. Confirm the repository's accepted
   runner version with `gh api repos/proompteng/lab/actions/runners/downloads`, then verify `Runner.Listener --version`
