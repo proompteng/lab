@@ -30,4 +30,4 @@ configMapGenerator:
 images:
 - name: code.forgejo.org/forgejo/forgejo
   newName: registry.ide-newton.ts.net/lab/forgejo
-  digest: sha256:768d1045d21243c910107d7342139353b7c45454f9794e38691263a9e408ac1d
+  digest: sha256:8d21d23a031801bd715a493538604b0ba92cdebe6753249d17672c4a2aa15a39

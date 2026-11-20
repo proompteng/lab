@@ -488,8 +488,9 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 ## Serving identity and availability
 
 Model and tokenizer revisions are pinned to `482ca0f3832238542f8f5295dde86b5f22711d80`.
-The ASGI middleware emits `x-model-serving-identity` from loaded vLLM configuration and checks the loaded commit,
-tokenizer revision and chat-template source. Response bodies pass through without buffering. This metadata allows
+The ASGI middleware emits `x-model-serving-identity` after matching the configured commit against the revision
+vLLM passes to its model loader. It also checks the configuration repository, tokenizer revision and chat-template
+source. Response bodies pass through without buffering. This metadata allows
 research clients to verify the shared model before accepting generated instructions.
 
 The central Alloy scrapes the shared `/metrics` endpoint every fifteen seconds. `FlamingoModelUnavailable` warns

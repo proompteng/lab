@@ -18,7 +18,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: forgejo-server-17-0-2-rehearsal-owned-volumes
+  name: forgejo-server-17-0-2-rehearsal-shared-deadline
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '0'
@@ -112,7 +112,7 @@ spec:
           name: forgejo-server-17-0-2-rehearsal
       - name: db-clone
         persistentVolumeClaim:
-          claimName: forgejo-server-17-0-2-restore-db
+          claimName: forgejo-server-17-0-2-restore-db-retry
       - name: data-clone
         persistentVolumeClaim:
           claimName: forgejo-server-17-0-2-restore-data
