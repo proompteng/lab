@@ -65,6 +65,7 @@ spec:
                 path: argocd/applications/autotrader
                 namespace: synthesis
                 renderWithLovely: false
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                 automation: auto
