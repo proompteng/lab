@@ -667,6 +667,14 @@ reset evidence. Snapshot invalidation and quota ownership use separate generatio
 cannot strand the quota reservation or let an older capture shorten a newer reservation. A failed settlement leaves
 the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
 
+When an accepted PAPER protection cancellation carries a cycle, the exclusive broker refresh checks that cycle
+before scheduling the next complete capture. The last successful capture can fund one scoped four-request read.
+Bayn subtracts requests without valid headers from the lowest reported remaining capacity. It reserves the four
+reads only if one-quarter of the account limit remains. The evidence expires one minute after the first confirming response.
+Alpaca's reset timestamp controls backoff when quota runs low. The PostgreSQL owner charges the protected read
+once and carries that debt into the next full capture. A missing proof or read failure still schedules the full
+capture without admitting a close from the scoped path.
+
 Canonical captures issue one journaled worker command. A quota-blocked capture returns its database deadline and
 schedules a successor without holding the exclusive owner. Deployment activation uses a durable timer to wait for
 quota before obtaining its required fresh cut. On the first activation of the new revision, the exclusive owner copies
