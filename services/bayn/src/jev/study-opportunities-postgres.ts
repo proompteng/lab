@@ -1,3 +1,4 @@
+import { isBracketProtection } from '../execution/contracts'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
@@ -56,7 +57,7 @@ export const readJevStudyProtectionIntents = (
     let sourceBytes = 0n
     for (const intent of intents) {
       const protection = intent.protection
-      if (protection === null || protection._tag === 'Bracket') continue
+      if (protection === null || isBracketProtection(protection)) continue
       const source = sql`
         SELECT intent.intent_id AS "intentId", intent.client_order_id AS "clientOrderId",
           intent.authority_generation_hash AS "authorityGenerationHash", intent.risk_decision_id AS "riskDecisionId",

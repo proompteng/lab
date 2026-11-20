@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const files = [
+  'src/db/visual-non-dispatch-migration.integration.test.ts',
+  'src/db/native-equity-short.integration.test.ts',
+  'src/db/equity-short-accounting.integration.test.ts',
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
@@ -41,6 +44,7 @@ const files = [
   'src/db/retired-jev-batch-migration.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',
   'src/db/jev-native-postgres.integration.test.ts',
+  'src/db/jev-position-protection-evidence.integration.test.ts',
   'src/intraday-replay/clock.integration.test.ts',
   'src/inference-costs-postgres.integration.test.ts',
   'src/inference-expense-runtime.integration.test.ts',

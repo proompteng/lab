@@ -6,6 +6,7 @@ import { strictParseOptions } from '../../schemas'
 import { marketHintRecoverySchedule } from './readiness'
 
 import { observeCaptureWorker, type CaptureHealth } from './capture-health'
+import { observeWorkerMemory, RuntimeIsolate, type RuntimeMemorySample } from '../../telemetry-memory'
 import type { NativeArrivalEpoch } from './native-arrival'
 import type { MarketSources } from './raw-events'
 import {
@@ -40,7 +41,7 @@ export type ProjectionWorkerRequest =
 
 export type ProjectionWorkerResponse =
   | { readonly _tag: 'MarketChanged'; readonly event: MarketChangedWakeup }
-  | { readonly _tag: 'CaptureHealth'; readonly health: CaptureHealth }
+  | { readonly _tag: 'CaptureHealth'; readonly health: CaptureHealth; readonly memory: RuntimeMemorySample | undefined }
   | { readonly _tag: 'Ready'; readonly value: ProjectionStatus }
   | {
       readonly _tag: 'Read'
@@ -94,6 +95,7 @@ export const makeThreadedKafkaProjection = (
 ) =>
   Effect.gen(function* () {
     const receiveHealth = yield* observeCaptureWorker
+    const memory = yield* observeWorkerMemory(RuntimeIsolate.MarketProjection)
     const changed = yield* Queue.sliding<{ readonly event: MarketChangedWakeup; readonly worker: Worker }>(1)
     const restart = yield* Queue.dropping<void>(1)
     const pending = new Map<number, (reply: Effect.Effect<Reply, KafkaMarketFailure>) => void>()
@@ -116,6 +118,7 @@ export const makeThreadedKafkaProjection = (
     const fail = (connection: Connection, failure: KafkaMarketFailure) => {
       if (active !== connection || connection.failed) return
       connection.failed = true
+      memory.clear()
       terminal = failure
       Deferred.doneUnsafe(connection.ready, Exit.fail(failure))
       for (const resume of pending.values()) resume(Effect.fail(failure))
@@ -151,6 +154,7 @@ export const makeThreadedKafkaProjection = (
         }
         if (reply._tag === 'CaptureHealth') {
           receiveHealth(reply.health)
+          memory.receive(reply.memory)
           try {
             worker.postMessage({ operation: 'health-ack' } satisfies ProjectionWorkerRequest)
           } catch {}
@@ -200,6 +204,7 @@ export const makeThreadedKafkaProjection = (
       Effect.gen(function* () {
         connection.detach()
         yield* Effect.promise(() => connection.worker.terminate())
+        memory.clear()
       })
     const awaitReady = (connection: Connection) =>
       Deferred.await(connection.ready).pipe(

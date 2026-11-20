@@ -14,6 +14,8 @@ import { brokerPollFailureAnnotations, brokerPublicationFailureAnnotations } fro
 test.each([
   'retryable',
   'timeout',
+  'provider-timeout',
+  'transport',
   'identity',
   'permission',
   'mixed',
@@ -34,7 +36,7 @@ test.each([
   const line = stdout.split('\n').find((value) => value.startsWith('BROKER_RECOVERY_RESULT='))
   if (line === undefined) throw new Error(`Broker recovery worker returned no result: ${stdout}`)
   const result = JSON.parse(line.slice('BROKER_RECOVERY_RESULT='.length))
-  const retained = mode === 'retryable' || mode === 'timeout'
+  const retained = mode === 'retryable'
   expect(result.first).toBe(mode === 'defect' || mode === 'interruption' ? 'Failed' : 'Unavailable')
   expect(result.recovered).toBe('Published')
   expect(result.publications).toBe(1)

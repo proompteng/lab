@@ -1,9 +1,14 @@
 import { ObservedFeeActivitySchema } from '../broker/fee-activity'
-import { NativeProtectionSchema } from '../execution/contracts'
+import {
+  NativeProtectionSchema,
+  isEquityShortProtection,
+  isOcoProtection,
+  isStopProtection,
+} from '../execution/contracts'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { replayFeeActivity } from './broker-fees'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
-import { InstrumentSymbolSchema } from '../instruments'
+import { InstrumentSymbolSchema, instrumentMarket, MarketKind } from '../instruments'
 import { Data, Result, Schema } from 'effect'
 import {
   AssetClass,
@@ -14,7 +19,7 @@ import {
   TimeInForce,
   TradeActivityType,
 } from '../broker/alpaca/model'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../hash'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   OrderSide as DomainSide,
@@ -34,7 +39,8 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { applyReplayFill, createReplayLedger } from './ledger'
-import { ReplayOrderExecutionSchema } from './broker-execution-evidence'
+import { ReplayOrderExecutionSchema, replayArrivalQuote } from './broker-execution-evidence'
+import { equityStopTradeQuote } from './equity-execution-tape'
 import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState, ReplayOrder } from './broker'
 
 const OrderFields = {
@@ -79,6 +85,7 @@ const OrderSchema = Schema.Struct({
   stopPriceMicros: Schema.optionalKey(PositiveMicrosSchema),
 })
 const EconomicFillSchema = Schema.Struct({
+  inventorySide: Schema.optionalKey(Schema.Literal('SHORT')),
   executionIndex: NonNegativeIntegerSchema,
   symbol: InstrumentSymbolSchema,
   side: Schema.Enum(OrderSide),
@@ -107,13 +114,13 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
     accountId: StrictNonEmptyStringSchema,
     ledger: Schema.Struct({
       openingCashMicros: PositiveMicrosSchema,
-      cashMicros: UnsignedMicrosSchema,
+      cashMicros: SignedMicrosSchema,
       executionFeesMicros: UnsignedMicrosSchema,
       positions: Schema.Array(
         Schema.Struct({
           symbol: InstrumentSymbolSchema,
-          quantityAtoms: PositiveMicrosSchema,
-          costBasisMicros: PositiveMicrosSchema,
+          quantityAtoms: SignedMicrosSchema,
+          costBasisMicros: SignedMicrosSchema,
         }),
       ),
       fills: Schema.Array(EconomicFillSchema),
@@ -166,8 +173,10 @@ export type ReplayBrokerEvidenceConfig = Pick<
   | 'sourceManifestHash'
   | 'openingCashMicros'
   | 'protocol'
+  | 'equityExecutionTape'
   | 'assumptions'
   | 'fractionalTrading'
+  | 'shortingEnabled'
   | 'assets'
   | 'calendar'
 >
@@ -178,9 +187,11 @@ export const replayBrokerConfigurationHash = (config: ReplayBrokerEvidenceConfig
     sourceManifestHash: config.sourceManifestHash,
     openingCashMicros: config.openingCashMicros,
     protocol: config.protocol,
+    ...(config.equityExecutionTape === undefined ? {} : { equityExecutionTapeHash: config.equityExecutionTape.hash }),
     assumptions: config.assumptions,
     cryptoFeeSchedule: cryptoTakerFeeSchedule,
     fractionalTrading: config.fractionalTrading,
+    ...(config.shortingEnabled === undefined ? {} : { shortingEnabled: config.shortingEnabled }),
     assets: config.assets,
     calendar: config.calendar,
   })
@@ -188,13 +199,12 @@ export const replayBrokerConfigurationHash = (config: ReplayBrokerEvidenceConfig
 export const replayQuantityAtFill = (state: ReplayBrokerState, order: ReplayOrder, index: number): bigint => {
   const parent = state.orders.find((entry) => entry.order.brokerOrderId === order.parentBrokerOrderId)?.order
   if (parent === undefined || order.orderType !== OrderType.StopLimit) return BigInt(order.quantityAtoms)
-  const profitId =
-    parent.nativeProtection?._tag === 'Oco'
-      ? parent.brokerOrderId
-      : state.orders.find(
-          (entry) =>
-            entry.order.parentBrokerOrderId === parent.brokerOrderId && entry.order.orderType === OrderType.Limit,
-        )?.order.brokerOrderId
+  const profitId = isOcoProtection(parent.nativeProtection)
+    ? parent.brokerOrderId
+    : state.orders.find(
+        (entry) =>
+          entry.order.parentBrokerOrderId === parent.brokerOrderId && entry.order.orderType === OrderType.Limit,
+      )?.order.brokerOrderId
   const disposed = state.ledger.fills
     .slice(0, index)
     .filter((fill) => fill.brokerOrderId === profitId)
@@ -250,7 +260,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
       const terms = root.nativeProtection
       if (
         parent !== undefined &&
-        (terms === undefined || terms._tag === 'StopLimit' || requestHash !== parent.requestHash)
+        (terms === undefined || isStopProtection(terms) || requestHash !== parent.requestHash)
       )
         return yield* fail('Generated protection child has no matching submitted parent')
       if (order.parentBrokerOrderId !== undefined && parent === undefined)
@@ -288,7 +298,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         )
       )
         return yield* fail('Broker checkpoint request or terminal status is inconsistent')
-      if (terms !== undefined && terms._tag !== 'StopLimit' && parent === undefined) {
+      if (terms !== undefined && !isStopProtection(terms) && parent === undefined) {
         const legs = state.orders
           .filter((entry) => entry.order.parentBrokerOrderId === order.brokerOrderId)
           .map((entry) => entry.order)
@@ -302,23 +312,48 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         )
           return yield* fail('Broker checkpoint protection group differs from submitted strategy terms')
       }
+      const record = state.orders.find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
+      const tape = instrumentMarket(order.symbol) === MarketKind.Equity ? config.equityExecutionTape : undefined
+      const elections = record?.executions.filter((execution) => execution.stopTradeIndex !== undefined) ?? []
+      if (
+        elections.length !==
+        (tape !== undefined && order.orderType === OrderType.StopLimit && order.stopTriggeredAt !== undefined ? 1 : 0)
+      )
+        return yield* fail('Broker checkpoint has unexpected stop-election evidence')
       if (
         order.orderType === OrderType.StopLimit &&
         (order.stopPriceMicros === undefined ||
           (order.stopTriggeredAt !== undefined &&
             (order.stopTriggeredAt < order.createdAt ||
               order.stopTriggeredAt > order.updatedAt ||
-              state.orders
-                .find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
-                ?.executions.some(
-                  (execution) =>
-                    execution.arrivedAt === order.stopTriggeredAt &&
-                    execution.quote !== null &&
-                    Math.round(execution.quote.bidPrice * 1_000_000) <= Number(order.stopPriceMicros),
-                ) !== true)))
+              record?.executions.some((execution) => {
+                const quote = execution.quote
+                const stopPrice = order.stopPriceMicros
+                if (execution.arrivedAt !== order.stopTriggeredAt || quote === null || stopPrice === undefined)
+                  return false
+                if (tape === undefined) {
+                  return order.side === OrderSide.Buy
+                    ? Math.round(quote.askPrice * 1_000_000) >= Number(stopPrice)
+                    : Math.round(quote.bidPrice * 1_000_000) <= Number(stopPrice)
+                }
+                if (execution.stopTradeIndex === undefined) return false
+                const pinnedQuote = equityStopTradeQuote({
+                  tape,
+                  index: execution.stopTradeIndex,
+                  symbol: order.symbol,
+                  side: order.side,
+                  stopMicros: stopPrice,
+                  atMs: Date.parse(execution.arrivedAt),
+                  maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+                })
+                return (
+                  pinnedQuote !== undefined &&
+                  execution.maximumQuoteAgeMs === config.protocol.maximumQuoteAgeMs &&
+                  canonicalJsonEqualV1(quote, replayArrivalQuote(pinnedQuote, execution.arrivedAt))
+                )
+              }) !== true)))
       )
         return yield* fail('Broker checkpoint stop trigger lacks its executable quote')
-      const record = state.orders.find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
       if (
         ([OrderStatus.New, OrderStatus.PartiallyFilled, OrderStatus.Filled].includes(order.status) ||
           (record?.executions.length ?? 0) > 0) &&
@@ -368,6 +403,15 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
       )
         return yield* fail('Broker checkpoint fill is not bound to its order and quote evaluation')
       const quantityAtFill = replayQuantityAtFill(state, order, state.ledger.fills.indexOf(fill))
+      const owner =
+        order.parentBrokerOrderId === undefined
+          ? order
+          : state.orders.find((value) => value.order.brokerOrderId === order.parentBrokerOrderId)?.order
+      const short =
+        isEquityShortProtection(owner?.nativeProtection) ||
+        ledger.positions.some((position) => position.symbol === fill.symbol && BigInt(position.quantityAtoms) < 0n)
+      if ((fill.inventorySide === 'SHORT') !== short)
+        return yield* fail('Broker checkpoint inventory direction differs from its native intent and prior liability')
       const totalQuantity = (prior?.quantity ?? 0n) + BigInt(fill.quantityAtoms)
       const totalNotional = (prior?.notional ?? 0n) + BigInt(fill.notionalMicros)
       const next = yield* applyReplayFill(

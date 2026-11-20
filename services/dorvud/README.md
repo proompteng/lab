@@ -45,6 +45,11 @@ once. Stable update IDs deduplicate transport retries; the financial stores reta
 `/readyz` becomes ready only after the verified session notification has been acknowledged by Kafka, and resets on
 disconnect. `/metrics` exposes `dorvud_broker_feed_ready`, publications and session failures without account labels.
 
+Market-data and trade-update sessions allow up to five seconds for a graceful WebSocket close, then cancel that
+session and close both channels. This bounds Ktor's otherwise unbounded close/flush path after a network failure,
+so the existing reconnect loop can authenticate and acknowledge a new session. Application cancellation still
+propagates immediately; readiness, establishment deadlines, publication acknowledgements and deduplication remain required.
+
 Configuration requires `BAYN_ALPACA_ACCOUNT_ID`, `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`,
 `BAYN_ALPACA_BASE_URL=https://paper-api.alpaca.markets`,
 `BAYN_ALPACA_PROXY_URL=http://bayn-egress-proxy:3128`, the 40-character `DORVUD_SOURCE_REVISION`,
@@ -119,6 +124,13 @@ retain their existing revision and duplicate handling. Recovery does not satisfy
 During the regular IEX session, the core forwarder reconnects if no provider market-data event arrives within
 `ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS` of the subscription or the last event. This check also runs when the WebSocket
 keeps sending control frames. REST recovery cannot reset the provider-event clock.
+
+Each market-data connection has one ten-second establishment deadline covering the HTTP upgrade, authentication and
+complete subscription acknowledgement. Expiry cancels that attempt before the feed reconnects. The deadline ends at
+authenticated acknowledgement, so healthy streams can continue indefinitely. Crypto publication also requires its
+acknowledged channel membership; early frames cannot allocate sequences or enter Kafka.
+Startup trade backfill runs alongside acknowledgement processing. Paginated REST recovery cannot consume the
+establishment deadline or delay live publication, and session shutdown cancels its recovery job.
 
 ## Crypto source events
 

@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
 
-import { prepareAccounting } from '../../accounting/domain'
+import { prepareAccounting, AccountingInventorySide } from '../../accounting/domain'
 import { renderAccountingFailure } from '../../accounting/failure'
 import type { PositionCost, PreparedAccounting } from '../../accounting/model'
 import type { AccountingTransaction } from '../../accounting/schema'
@@ -180,16 +180,36 @@ export const makeAccountingInterpreter = (
     input: FillEventInput,
     position: PositionCost,
   ): Effect.Effect<PreparedAccounting, ExecutionStoreError> =>
-    prepareAccounting(eventId, input.fill, position, config.tigerBeetle.ledger).pipe(
-      Effect.fromResult,
-      Effect.mapError((cause) =>
-        executionStoreError({
-          operation: 'account',
-          failure: 'invariant',
-          message: `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
-          cause,
-        }),
-      ),
+    runExecutionOperation(
+      'account',
+      Effect.gen(function* () {
+        const rows = yield* sql`SELECT protection FROM intents WHERE intent_id = ${input.fill.intentId ?? ''}
+        AND account_id = ${input.accountId} AND symbol = ${input.fill.symbol}`
+        const [bound] = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ protection: Schema.NullOr(Schema.Struct({ _tag: Schema.String })) })),
+        )(rows)
+        const tag = bound?.protection?._tag
+        // Signed prior inventory comes from the posted accounting chain, never a raw broker position.
+        const inventorySide =
+          BigInt(position.quantityAtoms) < 0n ||
+          tag === 'EquityShortBracket' ||
+          tag === 'EquityShortOco' ||
+          tag === 'EquityShortStopLimit'
+            ? AccountingInventorySide.Short
+            : AccountingInventorySide.Long
+        return yield* Effect.fromResult(
+          prepareAccounting(eventId, input.fill, position, config.tigerBeetle.ledger, inventorySide),
+        ).pipe(
+          Effect.mapError((cause) =>
+            executionStoreError({
+              operation: 'account',
+              failure: 'invariant',
+              message: `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
+              cause,
+            }),
+          ),
+        )
+      }),
     )
 
   const prepare = (input: FillEventInput): Effect.Effect<PreparedAccounting, ExecutionStoreError> =>

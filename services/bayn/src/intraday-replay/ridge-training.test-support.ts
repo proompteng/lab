@@ -1,7 +1,7 @@
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { gzipSync } from 'node:zlib'
 import { Result } from 'effect'
 
@@ -63,6 +63,8 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
   const captured = sixBarFixture(
     inputs.filter((entry) => entry.availableAtMs <= endMs),
     '10:10',
+    undefined,
+    equityMarketProfile,
   )
   const body = gzipSync(captured.events.map((event) => JSON.stringify(event)).join('\n') + '\n')
   const nativeVisiblePartitions = Object.values(captured.universe.topics)

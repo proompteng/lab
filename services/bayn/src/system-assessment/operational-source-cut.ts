@@ -95,10 +95,11 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
       Schema.Struct({ sessionDate: IsoDateSchema, document: Schema.Unknown }),
       strictParseOptions,
     )(record.payload)
-    const document =
-      registration.obligations.configuration.protocol.schemaVersion !== 'bayn.jev.protocol.v40'
-        ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))
-        : yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
+    const document = !['bayn.jev.protocol.v40', 'bayn.jev.protocol.v41'].includes(
+      registration.obligations.configuration.protocol.schemaVersion,
+    )
+      ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))
+      : yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
     if (document.contentHash !== reference.sourceId)
       return yield* new SystemAssessmentError({ message: 'Decision source identity differs' })
     if (!decisionMarketScopeSupported(document, registration))

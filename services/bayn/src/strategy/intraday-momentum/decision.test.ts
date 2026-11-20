@@ -514,17 +514,23 @@ describe('intraday momentum strategy', () => {
   })
 
   test('rejects alternate raw topics before admitting a strategy snapshot', () => {
-    expect(() =>
-      marketContextAt({
-        rangeEndAt: '2026-08-18T18:00:00.000Z',
-        returnBps: qualifyingReturns,
-        sourceTopics: {
-          bars: 'torghut.bars.1m.experimental.v1',
-          quotes: 'torghut.quotes.experimental.v1',
-          trades: 'torghut.trades.experimental.v1',
-        },
-      }),
-    ).toThrow('Required rolling feature is unavailable')
+    const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
+    expect(
+      Result.isFailure(
+        decideIntradayMomentum(
+          marketContextAt({
+            rangeEndAt: '2026-08-18T18:00:00.000Z',
+            returnBps: qualifyingReturns,
+            sourceTopics: {
+              bars: 'torghut.bars.1m.experimental.v1',
+              quotes: 'torghut.quotes.experimental.v1',
+              trades: 'torghut.trades.experimental.v1',
+            },
+          }),
+          protocol,
+        ),
+      ),
+    ).toBe(true)
   })
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {

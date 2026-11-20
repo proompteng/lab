@@ -173,7 +173,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -211,7 +211,7 @@ describe('chat completions handler', () => {
           'x-jangar-client-kind': 'openwebui',
         },
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'hi' }],
           stream: true,
         }),
@@ -229,7 +229,7 @@ describe('chat completions handler', () => {
           'x-jangar-openwebui-render-mode': 'rich-ui-v1',
         },
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'hi' }],
           stream: true,
         }),
@@ -275,7 +275,7 @@ describe('chat completions handler', () => {
           'x-jangar-client-kind': 'openwebui',
         },
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'hi' }],
           stream: true,
         }),
@@ -340,7 +340,7 @@ describe('chat completions handler', () => {
           'x-jangar-client-kind': 'openwebui',
         },
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'hi' }],
           stream: true,
         }),
@@ -429,7 +429,7 @@ describe('chat completions handler', () => {
           'x-jangar-client-kind': 'openwebui',
         },
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'hi' }],
           stream: true,
         }),
@@ -476,7 +476,7 @@ describe('chat completions handler', () => {
       new Request('http://localhost', {
         method: 'POST',
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'first' }],
           stream: true,
         }),
@@ -488,7 +488,7 @@ describe('chat completions handler', () => {
       new Request('http://localhost', {
         method: 'POST',
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'second' }],
           stream: true,
         }),
@@ -502,7 +502,7 @@ describe('chat completions handler', () => {
   })
 
   it('passes the resolved default model to the Codex factory when the request omits it', async () => {
-    process.env.JANGAR_MODELS = 'qwen38-flamingo,gpt-6-astra'
+    process.env.JANGAR_MODELS = 'qwen38-flamingo,gpt-6.2-sol'
     process.env.JANGAR_DEFAULT_MODEL = 'qwen38-flamingo'
     const mockClient = {
       runTurnStream: vi.fn(async () => ({
@@ -560,7 +560,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: false,
       }),
@@ -603,7 +603,7 @@ describe('chat completions handler', () => {
         'x-jangar-openwebui-render-mode': 'rich-ui-v1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: false,
       }),
@@ -628,7 +628,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
       }),
     })
@@ -672,7 +672,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -725,7 +725,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_plan: false },
@@ -775,7 +775,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -822,7 +822,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -899,7 +899,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [
           {
             role: 'user',
@@ -945,7 +945,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -989,7 +989,7 @@ describe('chat completions handler', () => {
       new Request('http://localhost', {
         method: 'POST',
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'hi' }],
           stream: false,
         }),
@@ -1073,7 +1073,7 @@ describe('chat completions handler', () => {
         'x-jangar-client-kind': 'discord',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1148,7 +1148,7 @@ describe('chat completions handler', () => {
         'x-jangar-client-kind': 'discord',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1222,7 +1222,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages,
         stream: true,
       }),
@@ -1300,7 +1300,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [...initialMessages, { role: 'user', content: 'follow up' }],
         stream: true,
       }),
@@ -1422,7 +1422,7 @@ describe('chat completions handler', () => {
                 'x-openwebui-chat-id': 'chat-1',
               },
               body: JSON.stringify({
-                model: 'gpt-6-astra',
+                model: 'gpt-6.2-sol',
                 messages,
                 stream: true,
                 stream_options: { include_usage: true },
@@ -1528,7 +1528,7 @@ describe('chat completions handler', () => {
               'x-openwebui-chat-id': 'chat-1',
             },
             body: JSON.stringify({
-              model: 'gpt-6-astra',
+              model: 'gpt-6.2-sol',
               messages: requestMessages,
               stream: true,
             }),
@@ -1595,7 +1595,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [...initialMessages, { role: 'user', content: 'follow up' }],
         stream: true,
       }),
@@ -1659,7 +1659,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [
           { role: 'user', content: 'hello' },
           { role: 'assistant', content: 'hi!' },
@@ -1750,7 +1750,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hello' }],
         stream: true,
       }),
@@ -1782,7 +1782,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [
           { role: 'user', content: 'hello' },
           { role: 'assistant', content: 'hi!' },
@@ -1873,7 +1873,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: requestMessages,
         stream: true,
       }),
@@ -1962,7 +1962,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: requestMessages,
         stream: true,
       }),
@@ -2035,7 +2035,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [
           { role: 'system', content: 'You are *very* helpful.' },
           { role: 'user', content: 'hello' },
@@ -2113,7 +2113,7 @@ describe('chat completions handler', () => {
         'x-jangar-client-kind': 'discord',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [
           { role: 'system', content: 'You are *very* helpful.' },
           { role: 'user', content: 'hello' },
@@ -2185,7 +2185,7 @@ describe('chat completions handler', () => {
         'x-jangar-client-kind': 'internal',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'do something' }],
         stream: true,
       }),
@@ -2228,7 +2228,7 @@ describe('chat completions handler', () => {
           'x-openwebui-chat-id': 'chat-1',
         },
         body: JSON.stringify({
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           messages: [{ role: 'user', content: 'x'.repeat(40) }],
           stream: true,
         }),
@@ -2245,7 +2245,7 @@ describe('chat completions handler', () => {
 
   it('runs trade-execution requests statelessly in a dedicated torghut workspace', async () => {
     process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
-    process.env.JANGAR_MODELS = 'gpt-6-astra'
+    process.env.JANGAR_MODELS = 'gpt-6.2-sol'
 
     const threadState: ThreadStateService = {
       getThreadId: vi.fn(() => Effect.succeed('thread-1')),
@@ -2287,7 +2287,7 @@ describe('chat completions handler', () => {
         'x-trade-execution': 'torghut',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'execute trade intent' }],
         stream: true,
       }),
@@ -2313,7 +2313,7 @@ describe('chat completions handler', () => {
       | { threadId?: string; model?: string; cwd?: string }
       | undefined
     expect(opts?.threadId).toBeUndefined()
-    expect(opts?.model).toBe('gpt-6-astra')
+    expect(opts?.model).toBe('gpt-6.2-sol')
     if (!worktreeRoot) throw new Error('expected temporary CODEX_CWD to be set')
     const expectedCwd = join(worktreeRoot, 'torghut')
     expect(opts?.cwd).toBe(expectedCwd)
@@ -2329,7 +2329,7 @@ describe('chat completions handler', () => {
         'x-trade-execution': 'not-torghut',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'execute trade intent' }],
         stream: true,
       }),
@@ -2351,7 +2351,7 @@ describe('chat completions handler', () => {
         'x-jangar-client-kind': 'trade-execution',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'execute trade intent' }],
         stream: true,
       }),
@@ -2428,7 +2428,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [
           { role: 'user', content: 'hello' },
           { role: 'assistant', content: 'hi' },
@@ -2519,7 +2519,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-2',
       },
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -2610,7 +2610,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -2696,7 +2696,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -2744,7 +2744,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -2788,7 +2788,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -2852,7 +2852,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -2904,7 +2904,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -2978,7 +2978,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3035,7 +3035,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -3094,7 +3094,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3158,7 +3158,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3223,7 +3223,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3271,7 +3271,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3323,7 +3323,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3372,7 +3372,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3417,7 +3417,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3479,7 +3479,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3523,7 +3523,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-6.2-sol', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -3559,7 +3559,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-6-astra',
+        model: 'gpt-6.2-sol',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -3605,7 +3605,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-6.2-sol', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -3651,7 +3651,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-6.2-sol', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -3697,7 +3697,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-6.2-sol', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)

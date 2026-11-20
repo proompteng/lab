@@ -99,13 +99,13 @@ export const reproduceRetainedJevRequestFromObservation = (inputRequest: unknown
     return prepared
   })
 
-export const reconstructRetainedJevTradingSignalBatch = (input: {
-  readonly observation: unknown
+const batchFromObservation = (input: {
+  readonly observation: RetainedObservation
   readonly expiresAt: string
   readonly planVersion: JevBatchPlanVersion
 }) =>
   Result.gen(function* () {
-    const observation = yield* reproduceRetainedJevCandidateObservation(input.observation)
+    const observation = input.observation
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
     if (Date.parse(input.expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
@@ -189,20 +189,30 @@ export const reconstructRetainedJevTradingSignalBatch = (input: {
     })
   })
 
+export const reconstructRetainedJevTradingSignalBatch = (input: {
+  readonly observation: unknown
+  readonly expiresAt: string
+  readonly planVersion: JevBatchPlanVersion
+}) =>
+  reproduceRetainedJevCandidateObservation(input.observation).pipe(
+    Result.flatMap((observation) => batchFromObservation({ ...input, observation })),
+  )
+
 export const reproduceRetainedJevTradingSignalBatchEvidence = (inputObservation: unknown, inputPlan: unknown) =>
   Result.gen(function* () {
     const plan = yield* Schema.decodeUnknownResult(RetainedJevBatchPlanSchema, strictParseOptions)(inputPlan)
     const { batchId, ...material } = plan
     if (batchId !== (yield* canonicalHashV1Result(material)))
       return yield* invalid('Retained v38 batch identity differs from its stored material')
-    const reconstructed = yield* reconstructRetainedJevTradingSignalBatch({
-      observation: inputObservation,
+    const observation = yield* reproduceRetainedJevCandidateObservation(inputObservation)
+    const reconstructed = yield* batchFromObservation({
+      observation,
       expiresAt: plan.expiresAt,
       planVersion: plan.schemaVersion,
     })
     if (reconstructed.batchId !== batchId)
       return yield* invalid('Retained v38 batch requests or candidate universe differ from their reproduced source')
-    return reconstructed
+    return { observation, plan: reconstructed }
   })
 
 /** Receipt reconstruction is read-only; the current receipt decoder still requires a v39 source. */

@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'

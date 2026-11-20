@@ -14,6 +14,7 @@ import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { JevBatchExpired, JevBatchStore } from './batch-evaluation'
 import type { JevBatchEvidence } from './batch-evaluation'
 import { JevBatchPlanVersion, JevCandidatePlanStatus, JevCandidateResultStatus, makeJevBatchResult } from './batch'
+import { makeJevTradingSignalBatch } from './trading-signals'
 import { JevFailure } from './contract'
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
@@ -277,6 +278,74 @@ describe('entry-bound native position exits', () => {
 })
 
 describe('entry observation admission', () => {
+  test.each([undefined, 5_000, 30_000])(
+    'pending recovery waits for the earliest original inference or admission deadline (%s)',
+    async (admissionOffset) => {
+      const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
+      const now = Date.parse(fixture.observation.payload.observedAt)
+      const plans = [fixture, nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:31.000Z')].map((source) =>
+        Result.getOrThrow(
+          makeJevTradingSignalBatch({
+            observation: source.observation.payload,
+            expiresAt: utcInstantFromEpochMillis(
+              Date.parse(source.observation.payload.observedAt) + source.protocol.inferenceValidityMs,
+            ),
+            planVersion: JevBatchPlanVersion.V8,
+          }),
+        ),
+      )
+      const result = await Effect.runPromise(
+        TestClock.setTime(now).pipe(
+          Effect.andThen(
+            evaluateJevObservationFromSnapshot(
+              {
+                cycleId: fixture.observation.payload.cycleId,
+                authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+                protocol: fixture.protocol,
+                portfolio: fixture.portfolio,
+              },
+              fixture.snapshot.manifest.rangeEndAt,
+              Effect.die('Pending inference must not load new market data'),
+              JevBatchPlanVersion.V8,
+              admissionOffset === undefined ? {} : { admissionDeadlineAt: now + admissionOffset },
+            ),
+          ),
+          Effect.result,
+          Effect.provideService(JevBatchStore, {
+            pending: () => Effect.succeed(plans.map((plan) => plan.batchId)),
+            finish: (id) => {
+              const plan = plans.find((candidate) => candidate.batchId === id)
+              return plan === undefined ? Effect.die('Unknown batch') : Effect.succeed({ plan, result: null })
+            },
+            read: () => Effect.die('No completed batch'),
+            begin: () => Effect.die('No replacement batch'),
+            complete: () => Effect.die('No new result'),
+          }),
+          Effect.provideService(CandidateObservationStore, {
+            record: () => Effect.die('No replacement observation'),
+            latestJevWindowEnd: () => Effect.die('No source discovery'),
+          }),
+          Effect.provideService(JevEvaluationStore, {
+            read: () => Effect.die('No provider read'),
+            recordAll: () => Effect.die('No paid inference'),
+            abandon: () => Effect.die('No abandonment'),
+          }),
+          Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => Effect.die('No provider call') })),
+          Effect.provide(entryInferenceFixtureLayer),
+          Effect.provide(TestClock.layer()),
+          Effect.provide(Logger.layer([])),
+          Effect.provide(NodeServices.layer),
+        ),
+      )
+      expect(result).toMatchObject({
+        failure: {
+          _tag: 'JevAwaitingEvidence',
+          readiness: 'DECISION_PENDING',
+          availableAt: utcInstantFromEpochMillis(now + Math.min(9_000, admissionOffset ?? 9_000)),
+        },
+      })
+    },
+  )
   test('an expired enclosing admission does not load a snapshot or begin provider work', async () => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     let pendingCalls = 0
@@ -339,12 +408,12 @@ describe('entry observation admission', () => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     const active = new Map<symbol, ActiveExecutionStage>()
     let reads = 0
-    const snapshot = {
-      ...fixture.snapshot,
-      get bars() {
+    const portfolio = {
+      ...fixture.portfolio,
+      get brokerState() {
         reads++
         expect([...active.values()].some(({ stage }) => stage === 'bayn.jev.observation')).toBe(true)
-        return fixture.snapshot.bars
+        return fixture.portfolio.brokerState
       },
     }
     const result = await Effect.runPromise(
@@ -353,10 +422,10 @@ describe('entry observation admission', () => {
           cycleId: fixture.observation.payload.cycleId,
           authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
           protocol: fixture.protocol,
-          portfolio: fixture.portfolio,
+          portfolio,
         },
-        snapshot.manifest.rangeEndAt,
-        Effect.succeed(snapshot),
+        fixture.snapshot.manifest.rangeEndAt,
+        Effect.succeed(fixture.snapshot),
       ).pipe(
         Effect.provideService(ActiveExecutionStages, active),
         Effect.provideService(CandidateObservationStore, {
@@ -403,7 +472,7 @@ describe('entry observation admission', () => {
           read: () => Effect.die('No recovery read'),
           complete: () => Effect.die('No new provider work'),
           finish: () => (pending === null ? Effect.die('No pending batch') : Effect.succeed(pending)),
-          begin: (plan) =>
+          begin: ({ plan }) =>
             Effect.gen(function* () {
               pending = { plan, result: null }
               if (mode === 'pending') return { ...pending, dispatches: [] }
@@ -476,6 +545,13 @@ describe('entry observation admission', () => {
         _tag: 'JevAwaitingEvidence',
         readiness,
         message: `Jev batch unavailable: ${reason}`,
+        ...(mode === 'pending'
+          ? {
+              availableAt: utcInstantFromEpochMillis(
+                Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+              ),
+            }
+          : {}),
       },
     })
   })
@@ -519,7 +595,7 @@ describe('entry observation admission', () => {
             read: () => Effect.die('No batch was recorded'),
             complete: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
-            begin: (plan) =>
+            begin: ({ plan }) =>
               TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(
                 Effect.andThen(Clock.currentTimeMillis),
                 Effect.flatMap((now) =>

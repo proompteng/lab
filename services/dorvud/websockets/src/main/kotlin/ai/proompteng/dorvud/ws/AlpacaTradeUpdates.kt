@@ -1,8 +1,8 @@
 package ai.proompteng.dorvud.ws
 
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.header
+import io.ktor.client.request.url
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.websocket.Frame
@@ -10,7 +10,8 @@ import io.ktor.websocket.readBytes
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -65,9 +66,11 @@ internal suspend fun HttpClient.streamAlpacaTradeUpdates(
     val established = CompletableDeferred<Unit>()
     val streaming =
       async {
-        webSocket(
-          urlString = streamUrl,
-          request = { header(HttpHeaders.ContentType, ContentType.Application.Json.toString()) },
+        webSocketWithBoundedCleanup(
+          request = {
+            url(streamUrl)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+          },
         ) {
           maxFrameSize = ALPACA_TRADE_UPDATE_MAX_FRAME_BYTES
           send(
@@ -80,7 +83,8 @@ internal suspend fun HttpClient.streamAlpacaTradeUpdates(
             ),
           )
           var state: TradeUpdateSessionState = TradeUpdateSessionState.Authenticating
-          while (isActive) {
+          while (true) {
+            currentCoroutineContext().ensureActive()
             val frame = incoming.receive()
             val receivedAt = now()
             require(frame.data.size <= ALPACA_TRADE_UPDATE_MAX_FRAME_BYTES) { "broker frame exceeds the source limit" }

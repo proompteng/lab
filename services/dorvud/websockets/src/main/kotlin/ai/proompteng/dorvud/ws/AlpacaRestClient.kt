@@ -10,9 +10,13 @@ import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -24,14 +28,29 @@ internal class AlpacaRestClient(
   private val nowMs: () -> Long = { System.currentTimeMillis() },
 ) {
   private val requests = Mutex()
+  private val inFlight = Semaphore(3)
   private var nextRequestAtMs = 0L
 
   suspend fun get(
     url: String,
     configure: HttpRequestBuilder.() -> Unit,
   ): String =
-    requests.withLock {
-      while (nowMs() < nextRequestAtMs) delay(nextRequestAtMs - nowMs())
+    inFlight.withPermit {
+      while (true) {
+        val wait =
+          requests.withLock {
+            val now = nowMs()
+            if (now >= nextRequestAtMs) {
+              nextRequestAtMs = now + 500
+              0L
+            } else {
+              nextRequestAtMs - now
+            }
+          }
+        if (wait == 0L) break
+        delay(wait)
+      }
+      // Reserve dispatch capacity before HTTP. A slow quote must not hold a completed bar behind its response.
       try {
         withTimeoutOrNull(10_000) {
           val response =
@@ -42,7 +61,7 @@ internal class AlpacaRestClient(
               header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
             }
           alpacaRestResumeAtMs(response.status.value, response.headers, nowMs())?.let { resumeAt ->
-            nextRequestAtMs = maxOf(nextRequestAtMs, resumeAt)
+            requests.withLock { nextRequestAtMs = maxOf(nextRequestAtMs, resumeAt) }
           }
           val body = response.bodyAsText()
           when (response.status.value) {
@@ -52,8 +71,9 @@ internal class AlpacaRestClient(
           }
         } ?: throw TimeoutException("Alpaca REST request timed out")
       } finally {
-        // Space completed requests so HTTP dispatch latency cannot compress the provider budget.
-        nextRequestAtMs = maxOf(nextRequestAtMs, nowMs() + 500)
+        withContext(NonCancellable) {
+          requests.withLock { nextRequestAtMs = maxOf(nextRequestAtMs, nowMs() + 500) }
+        }
       }
     }
 }

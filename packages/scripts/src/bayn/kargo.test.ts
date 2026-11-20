@@ -212,7 +212,9 @@ test('discovers only immutable main-published Bayn images with matching source a
     kargo_tag_include_run_id: true,
     source_revision: '${{ github.sha }}',
   })
-  expect(build.jobs['broker-feed-image'].needs).toContain('broker-feed-validation')
+  for (const image of ['image', 'research-image', 'broker-feed-image']) {
+    expect(build.jobs[image].needs).toEqual(['validation', 'broker-feed-validation'])
+  }
   expect(warehouse.spec.subscriptions[2].image.repoURL).toBe('registry.ide-newton.ts.net/lab/bayn-broker-feed')
   const native = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
   const research = "imageFrom('registry.ide-newton.ts.net/lab/bayn-research')"

@@ -68,7 +68,7 @@ import { formalModelExecutable, runFormalModel } from './formal-model.test-suppo
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
-import { defaultJevProtocolDocument } from '../jev/protocol'
+import { defaultJevProtocolDocument, retainedJevProtocolV40Document } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
@@ -160,10 +160,19 @@ const makeRuntime = (url: string) =>
 postgres('PostgreSQL prospective system qualification', () => {
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
-  const registration = (sessionCount = 20, version = JevAcceptanceVersion.Current) => {
+  const registration = (
+    sessionCount = 20,
+    version = JevAcceptanceVersion.Current,
+    protocolDocument: unknown = defaultJevProtocolDocument,
+  ) => {
     if (databaseObservedAt === undefined) throw new Error('Database clock must precede fixture construction')
     return {
-      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString(), sessionCount, version),
+      ...registrationFixture(
+        new Date(Date.parse(databaseObservedAt) - 1000).toISOString(),
+        sessionCount,
+        version,
+        protocolDocument,
+      ),
       priorAttemptHash: testHash(history),
     }
   }
@@ -713,9 +722,11 @@ postgres('PostgreSQL prospective system qualification', () => {
         databaseObservedAt = yield* databaseNow
       }),
     )
-    const financial = await runtime.runPromise(registerFixture(registration(1)))
+    const financial = await runtime.runPromise(
+      registerFixture(registration(1, JevAcceptanceVersion.Current, retainedJevProtocolV40Document)),
+    )
     expect(financial.registration.obligations.configuration.schemaVersion).toBe('bayn.qualification-runtime.v1')
-    const base = operationalRegistrationFixture()
+    const base = operationalRegistrationFixture(financial.registration)
     const operationalHistory = {
       ...history,
       program: 'BAYN_OPERATIONAL_RELIABILITY',

@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agents-workspace
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/proompteng/lab.git
+    targetRevision: main
+    path: argocd/applications/agents-workspace
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agents

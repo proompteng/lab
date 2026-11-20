@@ -5,7 +5,7 @@ replicaCount: 1
 # Kargo writes the selected version and immutable image in its generated branch.
 image:
   rootless: true
-  tag: 16.0.3
+  tag: 17.0.2
 
 
 podSecurityContext:
@@ -43,10 +43,10 @@ service:
 
 gitea:
   podAnnotations:
-    delivery.proompteng.ai/source-revision: c49123bc002b3aed231db1bb7b0da0f956be68a4
-    delivery.proompteng.ai/image-digest: sha256:529747c4d6c632061e2b0a7a1079175fbcd5a188c03919e0a94092800ff81d67
-    delivery.proompteng.ai/upstream-digest: sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685
-    delivery.proompteng.ai/created: 2026-11-12T02:30:27-08:00
+    delivery.proompteng.ai/source-revision: 0a72bbe62a3db816832f3ea0499ee54af429262e
+    delivery.proompteng.ai/image-digest: sha256:28a4446050bae69b3fa6b553121bf6aae800bd311872bea742667b17776a8edf
+    delivery.proompteng.ai/upstream-digest: sha256:39362ab93a94c0c9b8b330d2a877ddbb3f02fa8c0cba1b8d686d437b39f36a04
+    delivery.proompteng.ai/created: 2026-11-19T15:56:41-08:00
   admin:
     existingSecret: forgejo-admin
     username: kalmyk

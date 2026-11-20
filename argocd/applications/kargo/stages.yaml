@@ -778,15 +778,13 @@ spec:
           config:
             path: ./out/argocd/applications/arc/application.yaml
             updates:
+              - key: spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.1.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.2.helm.valuesObject.template.spec.containers.0.image
-                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
-              - key: spec.sources.3.helm.valuesObject.template.spec.containers.0.image
-                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
-              - key: spec.sources.4.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
         - uses: git-commit
           as: commit
@@ -1883,7 +1881,7 @@ spec:
     - name: url
       value: http://tengri-gateway.tengri.svc.cluster.local:8080/readyz
     - name: pattern
-      value: ''
+      value: HTTP_STATUS_ONLY
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
@@ -1973,7 +1971,7 @@ spec:
     - name: url
       value: http://buzz.buzz.svc.cluster.local:8080/_readiness
     - name: pattern
-      value: ''
+      value: '"status"'
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
