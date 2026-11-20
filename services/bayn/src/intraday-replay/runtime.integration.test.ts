@@ -848,6 +848,32 @@ durableTest.each(
           })),
         )
         const runtime = yield* createRuntime
+        const expectConsumedEntryWindowWait = (
+          advance: typeof runtime.advance,
+          terminalState: 'COMPLETED' | 'NO_TRADE' | 'BLOCKED',
+        ) =>
+          Effect.gen(function* () {
+            const previous =
+              yield* sql`SELECT * FROM autonomous_cycles WHERE account_id=${accountId} ORDER BY created_at`
+            const waiting = yield* advance
+            const availableAt = utcInstantFromEpochMillis(initialAtMs + 60_000)
+            expect(waiting.observation).toMatchObject({
+              result: 'SUCCESS',
+              outcome: 'ALREADY_TERMINAL',
+              readiness: { reason: DecisionReadinessReason.SignalWindowObserved, availableAt },
+            })
+            expect(waiting.result).toMatchObject({ outcome: 'ALREADY_TERMINAL', cycle: { state: terminalState } })
+            expect(waiting.nextWakeAt).toBe(availableAt)
+            expect(
+              yield* sql`SELECT * FROM autonomous_cycles WHERE account_id=${accountId} ORDER BY created_at`,
+            ).toEqual(previous)
+          })
+        const expectNoUnusedEntryExpiry = Effect.gen(function* () {
+          expect(
+            yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles
+              WHERE account_id=${accountId} AND terminal_reason=${CycleTerminalReason.UnusedEntryExpired}`,
+          ).toEqual([{ count: 0 }])
+        })
         if (latencyStress) {
           const advances = []
           for (let attempt = 0; attempt < 6; attempt++) {
@@ -1180,6 +1206,7 @@ durableTest.each(
           const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.clients.jev ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
+          yield* expectConsumedEntryWindowWait(restarted.advance, 'BLOCKED')
           yield* advanceMarketTo(reentryAtMs)
           for (let attempt = 0; attempt < 8; attempt++) {
             yield* restarted.advance
@@ -1193,21 +1220,23 @@ durableTest.each(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
             { state: 'ACTIVE', count: 1 },
-            { state: 'BLOCKED', count: 2 },
+            { state: 'BLOCKED', count: 1 },
           ])
+          expect(
+            yield* sql`SELECT c.state, c.decision_hash IS NOT NULL AS bound FROM autonomous_cycles c
+              JOIN intents i ON i.cycle_id=c.cycle_id WHERE i.intent_id=${denial.intent_id}`,
+          ).toEqual([{ state: 'BLOCKED', bound: true }])
+          yield* expectNoUnusedEntryExpiry
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
         if (scenario === 'no-trade-finalization') {
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           yield* runtime.advance
           yield* advanceMarketTo(initialMs + 2)
-          yield* runtime.advance
+          yield* expectConsumedEntryWindowWait(runtime.advance, 'NO_TRADE')
           expect(
             yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles ORDER BY created_at`,
-          ).toEqual([
-            { state: 'NO_TRADE', bound: true },
-            { state: 'ACTIVE', bound: false },
-          ])
+          ).toEqual([{ state: 'NO_TRADE', bound: true }])
           yield* advanceMarketTo(finalizationAtMs)
           const schedule = yield* driveReplaySession(
             runtime,
@@ -1231,10 +1260,9 @@ durableTest.each(
             yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2' ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', bound: true },
-            { state: 'BLOCKED', bound: false },
             { state: 'NO_TRADE', bound: true },
-            { state: 'BLOCKED', bound: false },
           ])
+          yield* expectNoUnusedEntryExpiry
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
           expect((yield* runtime.advance).observation).toMatchObject({
@@ -1253,9 +1281,7 @@ durableTest.each(
             yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', ordinal: 1 },
-            { state: 'BLOCKED', ordinal: 2 },
-            { state: 'NO_TRADE', ordinal: 3 },
-            { state: 'BLOCKED', ordinal: 4 },
+            { state: 'NO_TRADE', ordinal: 2 },
           ])
           expect(
             yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles WHERE execution_calendar_schema_version='bayn.continuous-market-hours.v1'`,
@@ -2046,7 +2072,7 @@ durableTest.each(
           expect(first.orders[0]?.order.status).toBe(OrderStatus.Canceled)
           expect(first.fills).toHaveLength(0)
           expect(first.ledger.positions).toHaveLength(0)
-          yield* runtime.advance
+          yield* expectConsumedEntryWindowWait(runtime.advance, 'COMPLETED')
           expect((yield* broker.snapshot).orders).toHaveLength(3)
           yield* advanceMarketTo(reentryAtMs)
           yield* completeCycle
@@ -2057,12 +2083,9 @@ durableTest.each(
           expect(final.ledger.positions).toHaveLength(0)
           expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
             { state: 'COMPLETED' },
-            { state: 'BLOCKED' },
             { state: 'COMPLETED' },
           ])
-          expect(
-            yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE state='BLOCKED'`,
-          ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
+          yield* expectNoUnusedEntryExpiry
           yield* createRuntime
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
@@ -2634,7 +2657,7 @@ durableTest.each(
             expect(restarted.authorityGenerationHash).toBe(
               (yield* runtime.store.authorityGeneration.readAuthorityState).generationHash,
             )
-            yield* restarted.advance
+            yield* expectConsumedEntryWindowWait(restarted.advance, 'COMPLETED')
             expect((yield* broker.snapshot).fills).toHaveLength(state.fills.length)
             yield* advanceMarketTo(reentryAtMs)
             for (let attempt = 0; attempt < 20; attempt++) {
@@ -2657,10 +2680,8 @@ durableTest.each(
             expect(final.brokerState.unknownOrderCount).toBe(0)
             expect(
               yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
-            ).toEqual([{ state: 'COMPLETED' }, { state: 'BLOCKED' }, { state: 'COMPLETED' }])
-            expect(
-              yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE account_id=${accountId} AND state='BLOCKED'`,
-            ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'COMPLETED' }])
+            yield* expectNoUnusedEntryExpiry
             expect(
               yield* sql`
                 SELECT payload #>> '{manifest,rangeEndAt}' AS window_end
