@@ -26,6 +26,11 @@ let
       inherit (goPlatform) hash;
     };
     sourceRoot = "go";
+    passthru = {
+      GOOS = "linux";
+      GOARCH = goPlatform.arch;
+      CGO_ENABLED = 0;
+    };
     dontConfigure = true;
     dontBuild = true;
     dontFixup = true;

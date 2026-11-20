@@ -56,7 +56,7 @@ FROM --platform=${BUILDPLATFORM} ${IMAGE_NODE} AS frontend-build
 WORKDIR /headlamp
 
 COPY --from=source /src/.git /headlamp/.git
-COPY --from=source /src/app/package.json /headlamp/app/package.json
+COPY --from=source /src/app/package.json /src/app/app-build-manifest.json /headlamp/app/
 COPY --from=source /src/frontend/package*.json /headlamp/frontend/
 COPY scripts /tools
 COPY patches /tools/patches
