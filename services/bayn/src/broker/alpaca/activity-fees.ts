@@ -2,7 +2,6 @@ import { Result, Schema } from 'effect'
 
 import { quantityFromDecimal } from '../../quantity'
 import { IsoDateSchema } from '../../schemas'
-import { utcDateFromEpochMillis } from '../../time'
 import { contractFailure } from './failures'
 import type { FeeActivity, Observed } from './model'
 import { decimalToMicrosResult } from './normalizers'
@@ -70,13 +69,12 @@ export const pendingCashFees = (
   }
   if (remaining.size === 0) return 0
   const today = capturedAt.slice(0, 10)
-  const yesterday = utcDateFromEpochMillis(Date.parse(capturedAt) - 86_400_000)
   let pending = 0
   for (const [key, count] of remaining) {
     const decoded = pendingCashFeeKey(key)
     if (Result.isFailure(decoded)) return undefined
     const [, date] = decoded.success
-    if ((date !== today && date !== yesterday) || !Number.isSafeInteger(count) || count <= 0) return undefined
+    if (date > today || !Number.isSafeInteger(count) || count <= 0) return undefined
     pending += count
   }
   return Number.isSafeInteger(pending) ? pending : undefined

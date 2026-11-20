@@ -443,11 +443,11 @@ the same connection. Bayn fetches REST fee records on startup, when the streamed
 ordinary captures while fee settlement is pending. It checks both histories by booking date, fee kind, cash amount
 and coin quantity. REST supplies the existing ledger IDs, crypto symbols and exact prices.
 
-A stable stream that is ahead only by USD fee debits booked on the current or previous UTC date may publish current
-broker observations with a pending cash fee count. Full reconciliation, trading readiness, and ordinary submission
-wait for the matching REST records. Pending fees create no ledger postings. The separate protective close still needs the exact fenced
-cancel, filled inventory and reducing-order proof. Extra REST fees, missing crypto fees and older gaps reject
-publication.
+A stable stream that is ahead only by USD fee debits may publish current broker observations with a pending cash
+fee count. The gap stays pending across UTC rollover and capture restart. Full reconciliation, trading readiness,
+and ordinary submission wait for the matching REST records. Pending fees create no ledger postings. The separate
+protective close still needs the exact fenced cancel, filled inventory and reducing-order proof. Extra REST fees,
+missing crypto fees and unmatched fees with future booking dates reject publication.
 
 The capture uses REST for complete order history, account state, positions and fresh open-order eligibility. It
 compares complete histories around the account read and checks the filled quantity for every order and leg.
