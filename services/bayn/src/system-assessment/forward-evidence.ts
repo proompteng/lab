@@ -19,6 +19,7 @@ import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { calculateSessionFees } from '../strategy/execution-model/fees'
 import { accountTradingDate } from '../time'
+import { confirmEquityFeeCash, FeeAdjustedCashSchema } from './equity-fee-cash'
 
 export const retainedFinancialMarks = (
   marks: SystemSourceCut['accountMarks'],
@@ -50,6 +51,7 @@ export const CapturedFinancialEvidenceSchema = Schema.Struct({
       sessionDate: IsoDateSchema,
       evidenceHash: Sha256Schema,
       facts: Schema.NullOr(CapturedTradingFactsSchema),
+      feeAdjustedCash: Schema.optionalKey(FeeAdjustedCashSchema),
     }),
   ),
 })
@@ -151,6 +153,7 @@ export const captureForwardFinancialEvidence = (
     readonly decisions: readonly DecisionSessionBinding[]
     readonly fills: readonly Pick<SystemSourceCut['fills'][number], 'fillId' | 'occurredAt'>[]
   },
+  settlement?: Parameters<typeof confirmEquityFeeCash>[4],
 ) =>
   Result.gen(function* () {
     const definition = registration.policies.find((p) => p.policy === policy)
@@ -356,7 +359,27 @@ export const captureForwardFinancialEvidence = (
             fillIds: rawFills.map((fill) => fill.fillId),
           }
         : null
-      sessions.push({ sessionDate: session.sessionDate, evidenceHash, facts: financial })
+      const feeAdjustedCash =
+        settlement !== undefined &&
+        recoveryClose !== undefined &&
+        financial !== null &&
+        financial.openingPositionCount === 0 &&
+        financial.closingPositionCount === 0 &&
+        financial.unsettledFillCount === 0
+          ? yield* confirmEquityFeeCash(
+              session,
+              accountHash,
+              registration.obligations.configuration.protocol.executionModel,
+              forward,
+              settlement,
+            )
+          : null
+      sessions.push({
+        sessionDate: session.sessionDate,
+        evidenceHash,
+        facts: financial,
+        ...(feeAdjustedCash === null ? {} : { feeAdjustedCash }),
+      })
     }
     return {
       policy,

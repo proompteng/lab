@@ -1860,6 +1860,14 @@ postgres('PostgreSQL prospective system qualification', () => {
                 observed_hash,content_hash,status,discrepancies,reconciled_at)
               VALUES(${id},${legacyReconciliationSchemaVersion},${accountId},${id},${id},${id},'EXACT','[]'::jsonb,${at(second)})`
             }
+            for (const [second, count] of [
+              [119, 1],
+              [125, 0],
+            ] as const) {
+              const id = testHash({ inventoryObservation: second })
+              yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash)
+              VALUES(${id},'bayn.paper-position-snapshot.v1',${accountId},${id},${at(second)},${count},${id})`
+            }
             return yield* readSystemCashObservations(accountId, scope)
           }),
         )
@@ -1893,6 +1901,10 @@ postgres('PostgreSQL prospective system qualification', () => {
       cutAt: at(152),
       reconciliationHash: testHash({ cashReconciliation: 152 }),
       fees: [],
+    })
+    expect(complete.find((row) => row.phase === 'RECOVERY')?.observation?.positions).toMatchObject({
+      at: at(119),
+      count: 1,
     })
   })
 

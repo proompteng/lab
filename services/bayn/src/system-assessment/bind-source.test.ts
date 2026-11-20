@@ -4,7 +4,12 @@ import { Result, Schema } from 'effect'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { bindSystemSourceCut } from './bind-source'
 import { mutationObligations } from './operational-obligations'
-import { testHash } from './fixtures.test-support'
+import {
+  nativeRegistrationFixture,
+  registrationFixture,
+  supportedAssessmentFixture,
+  testHash,
+} from './fixtures.test-support'
 import { evaluateSystemAssessment, ProfitabilityStatus, QualificationVerdict } from './assessment'
 import { ObligationClass } from './reliability'
 import { assessSession } from './session'
@@ -17,6 +22,7 @@ import { makeJevResolution, JevResolutionStatus } from '../jev/resolution'
 import { InferenceUsageStatus } from '../inference-costs'
 import { costReportFromEvidence } from '../inference-expense.test-support'
 import { SystemSourceCutSchema } from './source-cut'
+import { cashInventoryTradingPnl, markedRisk } from './economics'
 
 const event = (sequence: number, eventType: string, occurredAt: string) =>
   Schema.decodeUnknownSync(MutationEventSchema)({
@@ -33,6 +39,77 @@ const event = (sequence: number, eventType: string, occurredAt: string) =>
   })
 
 describe('immutable source binding', () => {
+  test('native assessment uses one fee-adjusted equity path and withholds a session without that proof', () => {
+    const registration = nativeRegistrationFixture(registrationFixture(undefined, 1))
+    const { input, cut, verifiedSources } = capturedAccountsFixture(supportedAssessmentFixture(1, registration))
+    const calendar = registration.calendar.sessions[0]!
+    const candidate = cut.financial.find((a) => a.policy === 'JEV')!
+    const accountBindingHash = candidate.accountBindingHash
+    const middle = new Date((Date.parse(calendar.openAt) + Date.parse(calendar.closeAt)) / 2).toISOString()
+    const marks = [
+      { at: calendar.openAt, physicalCash: '1000000000' },
+      { at: middle, physicalCash: '996000000' },
+      { at: calendar.closeAt, physicalCash: '1007000000' },
+    ].map(({ at, physicalCash }) => ({
+      at,
+      availableAt: at,
+      cashMicros: physicalCash,
+      accountBindingHash,
+      sourceHash: testHash(at),
+      valuation: { inventorySourceHash: testHash('positions'), positions: [] },
+    }))
+    const proof = {
+      schemaVersion: 'bayn.fee-adjusted-cash.v1' as const,
+      sourceHash: testHash('confirmed cash and fees'),
+      accountBindingHash,
+      sessionDate: calendar.sessionDate,
+      openAt: calendar.openAt,
+      closeAt: calendar.closeAt,
+      openingCashMicros: '1000000000',
+      availableAt: cut.asOf,
+      points: [
+        { at: middle, tradeCashDeltaMicros: '-4000000', incurredFeesMicros: '10000' },
+        { at: calendar.closeAt, tradeCashDeltaMicros: '7000000', incurredFeesMicros: '20000' },
+      ],
+    }
+    const boundSession = (includeProof: boolean) => {
+      const source = {
+        ...cut,
+        accountMarks: marks,
+        financial: [
+          {
+            ...candidate,
+            sessions: candidate.sessions.map((session) => ({
+              ...session,
+              facts: {
+                ...session.facts!,
+                openingPositionCount: 0,
+                closingPositionCount: 0,
+                grossRealizedPnlMicros: '7000000',
+                executionCostMicros: '20000',
+                cashSettlementRoundingMicros: '0',
+              },
+              ...(includeProof ? { feeAdjustedCash: proof } : {}),
+            })),
+          },
+        ],
+      }
+      const bound = Result.getOrThrow(
+        bindSystemSourceCut({ ...input, sourceCutHash: testHash(source) }, source, verifiedSources),
+      )
+      return bound.input.policies.find((p) => p.policy === 'JEV')?.sessions[0]
+    }
+    const unproved = boundSession(false)
+    expect(unproved?.financial).toBeNull()
+    expect(unproved?.marks).toEqual([])
+    const proved = boundSession(true)
+    if (proved?.financial == null) throw new Error('Expected the exact supported native fixture')
+    expect(cashInventoryTradingPnl(proved.financial.cashInventory)).toBe('6980000')
+    expect(
+      markedRisk(proved.marks.map((m) => BigInt(m.cashFlowAdjustedTradingEquityMicros))).maximumDrawdownMicros,
+    ).toBe('4010000')
+  })
+
   test('packet financial claims cannot supply an uncaptured control account', () => {
     const { input, cut, verifiedSources } = fixture()
     const bound = Result.getOrThrow(bindSystemSourceCut(input, cut, verifiedSources))

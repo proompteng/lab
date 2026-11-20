@@ -155,9 +155,22 @@ recovery. The account read verifies the credential identity. The activity read s
 provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The source cut
 retains the requested creation-time interval, page evidence and actual observation time. This statement covers the
 provider's reported activity during that interval. Capture also retains actual before-open, broker recovery, and later
-exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. An exact
-reconciliation can precede a fee, so these observations require a completed liability proof before they can support
-fee-adjusted equity and intraday risk. Other registered accounts require their own authenticated activity source.
+exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. Position witnesses
+must precede or coincide with the cash event's economic timestamp.
+
+Native assessment uses a fee-adjusted cash path for the supported case of flat equity endpoints, zero TAF in the
+fourth-quarter 2026 schedule, exact fills, and later posted fees with no other cash movements in the statement.
+The cash leg starts at observed opening cash, adds receipted trade cash and rounding, and subtracts incurred fee
+prefixes. The recovery bridge checks physical cash before the late fees. The later bridge independently checks the
+full fee debit. Cash or fee contradictions withhold financial evidence. Retained physical observations and the
+assessment's after-the-fact availability remain explicit. Opening liabilities, early debits, accrual matches,
+unsupported activity classes and other schedules require additional evidence before use in qualification. Other
+registered accounts require their own authenticated activity source.
+
+An inventory quote used for financial valuation also retains a later arrival from the same contiguous journal.
+The later arrival must be strictly after the valuation mark. The quote itself must already have arrived by the mark.
+Reaching a journal's end does not establish coverage after its last durable arrival. Financial valuation provenance
+does not substitute for the trading controller's observed market-data inputs.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.

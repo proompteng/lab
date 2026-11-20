@@ -144,7 +144,7 @@ export const readSystemFeeSettlementAnchors = (
       ) cash ON true
       LEFT JOIN LATERAL (
         SELECT p.content_hash,p.observed_at,p.position_count FROM position_snapshots p
-        WHERE p.account_id=${accountId} AND p.observed_at<=cash.observed_at
+        WHERE p.account_id=${accountId} AND p.observed_at<=cash.occurred_at
         ORDER BY p.observed_at DESC,p.ingestion_sequence DESC LIMIT 1
       ) inventory ON true
       ORDER BY calendar."sessionDate",bound.cut_at NULLS LAST,bound.phase

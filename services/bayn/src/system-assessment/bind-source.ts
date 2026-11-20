@@ -23,6 +23,7 @@ import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { bindOperationalObligations } from './operational-obligations'
+import { projectFeeAdjustedCash } from './equity-fee-cash'
 
 export const bindSystemSourceCut = (
   input: unknown,
@@ -98,6 +99,7 @@ export const bindSystemSourceCut = (
       if (definition === undefined) return yield* fail('Unregistered financial policy')
       const account = financialAccounts.get(policy.policy)
       const sessions = []
+      const requiresFeeAdjustedCash = data.registration.schemaVersion === 'bayn.system-registration.v5'
       let openingQualificationEquity: bigint | null = BigInt(registeredAllocationMicros(data.registration))
       for (const session of policy.sessions) {
         const inference = cut.inference.filter(
@@ -107,6 +109,21 @@ export const bindSystemSourceCut = (
         const inferenceEvidence = inference[0] ?? null
         if (inferenceEvidence !== null) sources.add(yield* canonicalHashV1Result(inferenceEvidence))
         const calendar = data.registration.calendar.sessions.find((s) => s.sessionDate === session.sessionDate)
+        const observation = account?.sessions.find((s) => s.sessionDate === session.sessionDate)
+        const proof = observation?.feeAdjustedCash
+        const nativeCash =
+          proof !== undefined &&
+          calendar !== undefined &&
+          observation?.facts != null &&
+          proof.accountBindingHash === definition.accountBindingHash &&
+          proof.sessionDate === session.sessionDate &&
+          proof.openAt === calendar.openAt &&
+          proof.closeAt === calendar.closeAt &&
+          proof.availableAt >= calendar.closeAt &&
+          proof.availableAt <= cut.asOf &&
+          (proof.points.at(-1)?.incurredFeesMicros ?? '0') === observation.facts.executionCostMicros
+            ? proof
+            : null
         const capturedMarks =
           calendar === undefined
             ? []
@@ -115,19 +132,33 @@ export const bindSystemSourceCut = (
                 ...calendar,
                 asOf: cut.asOf,
               })
-        const cashFlows =
-          calendar !== undefined &&
-          session.cashFlows !== null &&
-          cashFlowsMatchSession(session.cashFlows, {
-            ...calendar,
-            accountBindingHash: definition.accountBindingHash,
-            asOf: cut.asOf,
-          }) &&
-          (yield* cashFlowsSupported(session.cashFlows, sources))
+        const cashFlows = requiresFeeAdjustedCash
+          ? nativeCash === null
+            ? null
+            : {
+                schemaVersion: 'bayn.system-cash-flow-evidence.v1' as const,
+                accountBindingHash: definition.accountBindingHash,
+                sessionDate: session.sessionDate,
+                asOf: nativeCash.availableAt,
+                coverage: 'COMPLETE' as const,
+                movements: [],
+              }
+          : calendar !== undefined &&
+              session.cashFlows !== null &&
+              cashFlowsMatchSession(session.cashFlows, {
+                ...calendar,
+                accountBindingHash: definition.accountBindingHash,
+                asOf: cut.asOf,
+              }) &&
+              (yield* cashFlowsSupported(session.cashFlows, sources))
             ? session.cashFlows
             : null
-        const projectedMarks =
-          calendar === undefined
+        if (requiresFeeAdjustedCash && cashFlows !== null) sources.add(yield* canonicalHashV1Result(cashFlows))
+        const projectedMarks = requiresFeeAdjustedCash
+          ? nativeCash === null
+            ? []
+            : yield* projectFeeAdjustedCash(capturedMarks, nativeCash)
+          : calendar === undefined
             ? capturedMarks
             : yield* projectSessionCash(capturedMarks, account?.cashHistory ?? null, cashFlows, calendar.closeAt)
         const valued = projectedMarks.map((mark) => ({ ...mark, value: accountMarkValue(mark) }))
@@ -135,7 +166,6 @@ export const bindSystemSourceCut = (
         const opening = valued.find((mark) => mark.at === calendar?.openAt)
         const closing = valued.findLast((mark) => mark.at === calendar?.closeAt)
         const accountMarks = valued.some((mark) => mark.value === null) ? [] : valued
-        const observation = account?.sessions.find((s) => s.sessionDate === session.sessionDate)
         const flow = cashFlows === null || closing === undefined ? null : cashFlowTotals(cashFlows, closing.at)
         const financial =
           observation?.facts !== undefined &&
