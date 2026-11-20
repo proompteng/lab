@@ -5,7 +5,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-6"
 spec:
-  version: v1.56.2
+  version: v1.57.1
   credentials:
     datastoreURI:
       secretName: ofz-db-app
@@ -16,7 +16,7 @@ spec:
     migrationSecrets:
       skip: true
   config:
-    image: ghcr.io/authzed/spicedb:v1.56.2@sha256:aa96009a0477f8a759149823407d47ad16d1a74390bae3102b3b0b7143502764
+    image: ghcr.io/authzed/spicedb:v1.57.1@sha256:9ea6df2d3cca23ed63aa7205639cf6babaaf1dc9a264ffb1f50c6455658fd6ba
     datastoreEngine: postgres
     datastoreTLSSecretName: ofz-db-ca
     replicas: 3

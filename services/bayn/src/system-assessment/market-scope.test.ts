@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
-import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
+import { cryptoMarketProfile, currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { continuousMarketHours } from '../market-hours'
 import { registrationFixture, calendarFixture, withRegistrationCommitments } from './fixtures.test-support'
 import { sourceFitsRegisteredSession } from './decision-work'

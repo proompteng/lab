@@ -1,5 +1,3 @@
-import { equityMarketProfile } from '../jev/markets'
-
 import { Data, Result } from 'effect'
 
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
@@ -155,7 +153,7 @@ const closes = (bars: readonly IntradayBar[], symbol: string, start: bigint) =>
     ),
   )
 
-export const selectResidualShock = (snapshot: StrategyMarketSnapshot, _protocol: JevProtocol) =>
+export const selectResidualShock = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
   Result.gen(function* () {
     const now = intradayInstantNanos(snapshot.manifest.observedAt)
     const start = intradayInstantNanos(snapshot.manifest.rangeStartAt)
@@ -204,7 +202,12 @@ export const selectResidualShock = (snapshot: StrategyMarketSnapshot, _protocol:
       return yield* Result.fail(new ResidualShockFailure({ message: 'Residual shock benchmark is stale or illiquid' }))
     const benchmark = yield* closes(snapshot.bars, 'SPY', start)
     const candidates = []
-    for (const symbol of equityMarketProfile.candidateSymbols) {
+    const market = protocol.marketProfiles.find((profile) => profile.universeId === snapshot.manifest.universeId)
+    if (market === undefined)
+      return yield* Result.fail(
+        new ResidualShockFailure({ message: 'Residual shock source differs from its recorded protocol' }),
+      )
+    for (const symbol of market.candidateSymbols) {
       const exclusion = snapshot.manifest.candidateExclusions?.find((entry) => entry.symbol === symbol)
       if (exclusion !== undefined) {
         candidates.push({ symbol, status: ResidualShockStatus.SourceExcluded, exclusion })

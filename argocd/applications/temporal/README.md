@@ -1,7 +1,7 @@
 # Temporal
 
 This Application owns Temporal's frontend, history, matching, and system worker, plus its retained persistence upgrade
-resources. Helm chart 1.6.0 provides the server and UI manifests. The reviewed image pins remain in `kustomization.yaml`.
+resources. Helm chart 1.8.0 provides the server and UI manifests. The reviewed image pins remain in `kustomization.yaml`.
 
 The system worker's CPU and memory reporting is built by
 [services/temporal-worker](../../../services/temporal-worker/README.md). The Kustomize worker patch gives only that

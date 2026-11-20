@@ -496,7 +496,7 @@ const runDefaultDecisionExecutor = async (input: DecisionExecutorInput): Promise
   input.emitProgress('executing llm review', { stage: 'llm_review' })
 
   const payload: JsonRecord = {
-    model: input.request.llmReview.model ?? 'gpt-6-astra',
+    model: input.request.llmReview.model ?? 'gpt-6.2-sol',
     messages: input.request.llmReview.messages,
     stream: true,
     stream_options: {

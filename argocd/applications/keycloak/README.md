@@ -26,7 +26,7 @@ The generated tunnel ConfigMap changes its Pod reference whenever configuration 
 The server NetworkPolicy permits HTTP from Traefik and the existing bootstrap jobs. Cache ports are restricted to
 Keycloak servers. Database traffic remains private, and external HTTPS egress excludes private and reserved networks.
 The Tengri bootstrap uses strict sealed credentials in an earlier Argo wave, verifies the realm before enabling it,
-and preserves users, broker links and passkeys on retries. A new protected `keycloak-server-26-7-4` snapshot must
+and preserves users, broker links and passkeys on retries. A new protected `keycloak-server-26-8-2` snapshot must
 complete before the upgrade wave. The existing Argo Backup health check waits for the CNPG completion timestamp;
 older protected backup objects and their snapshots remain retained.
 

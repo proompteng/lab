@@ -1,3 +1,4 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -37,7 +38,7 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const replayAccountId = `replay-${'d'.repeat(64)}`
 const fixture = nativeJevFixture(undefined, undefined, replayAccountId, {
   ...defaultJevProtocolDocument,
-  candidateSymbols: ['AAPL', 'AMZN', 'IWM', 'NVDA'],
+  candidateSymbols: ['AAPL', 'AMZN', 'GOOGL', 'NVDA'],
 })
 const observedAt = fixture.observation.payload.observedAt
 const plan = Result.getOrThrow(
@@ -124,7 +125,7 @@ describePostgres('PostgreSQL cohort receipt persistence', () => {
           VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
         yield* (yield* CandidateObservationStore).record(fixture.observation)
         yield* TestClock.setTime(Date.parse(observedAt))
-        yield* (yield* JevBatchStore).begin(plan, fixture.observation.payload)
+        yield* beginRecordedJevBatch(yield* JevBatchStore, plan, fixture.observation.payload)
         const journal = yield* EntryInferenceJournal
         for (const { request, receipt } of entries) {
           const checkpoint = stagedCheckpointFixture(request)

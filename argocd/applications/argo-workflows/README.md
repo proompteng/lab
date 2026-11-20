@@ -2,6 +2,10 @@
 
 Argo Workflows uses a Rook `ObjectBucketClaim` backed by Ceph RGW for workflow artifacts.
 
+The application pins chart 2.0.18, which installs Workflows 4.1.6, including its controller, server, executor and
+CRD installer. Apply the CRD installation wave before the controller and server. Verify a workflow that produces
+and consumes an artifact through the configured Ceph object store after upgrading.
+
 ## Sources of truth
 
 1. `argocd/applications/argo-workflows/kustomization.yaml`
@@ -36,3 +40,7 @@ MC_CONFIG_DIR="$tmp" mc alias set --api S3v4 argo \
 
 MC_CONFIG_DIR="$tmp" mc ls argo/argo-workflows
 ```
+
+The Application disables server-side diff because the versioned CRD installer image changes an immutable Job
+template. Its existing `Force=true,Replace=true` sync policy recreates that Job before the controller and server
+roll. Server-side apply remains enabled for reconciliation.

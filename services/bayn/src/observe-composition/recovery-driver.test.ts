@@ -20,11 +20,10 @@ test.each([
   [1_250, 30_000, 1_250],
   [60_000, 30_000, 30_000],
   [0, 500, 500],
-] as const)('post-mutation delay %i uses cadence %i without falling back to idle (%i)', (delay, cadence, expected) => {
+] as const)('post-mutation delay %i respects financial freshness bound %i (%i)', (delay, cadence, expected) => {
   expect(
     recoveryFirstCycleNextDelayMs({
-      pollIntervalMs: cadence,
-      reconciliationIntervalMs: 30_000,
+      reconciliationIntervalMs: cadence,
       postMutationDelayMs: delay,
     }),
   ).toBe(expected)

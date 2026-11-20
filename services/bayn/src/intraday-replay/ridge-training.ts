@@ -1,5 +1,5 @@
 import { JevResearchPolicy } from '../jev/acceptance'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'

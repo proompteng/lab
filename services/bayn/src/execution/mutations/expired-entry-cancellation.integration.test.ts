@@ -60,7 +60,8 @@ const seed = (boundAccountId = accountId) =>
   )`
     yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, account_id text, policy_hash text,
-    strategy_name text, side text, state text, updated_at timestamptz, risk_decision_id text, client_order_id text
+    strategy_name text, side text, state text, updated_at timestamptz, risk_decision_id text, client_order_id text,
+    protection jsonb
   )`
     yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
@@ -86,7 +87,7 @@ const seed = (boundAccountId = accountId) =>
   )`
     yield* sql`INSERT INTO intents VALUES (
     ${intentId}, ${generationHash}, ${boundAccountId}, ${policyHash}, 'jev', 'BUY', 'ACKNOWLEDGED',
-    '2026-01-01T00:00:00Z', ${'e'.repeat(64)}, ${clientOrderId}
+    '2026-01-01T00:00:00Z', ${'e'.repeat(64)}, ${clientOrderId}, NULL
   )`
     const material = {
       schemaVersion: legacyMutationEventSchemaVersion,
@@ -209,10 +210,16 @@ describePostgres('PostgreSQL expired-entry cancellation admission', () => {
     await contender?.dispose()
   })
 
-  test.each(['clear', 'restricted'] as const)(
+  test.each(['clear', 'restricted', 'short-clear', 'short-restricted'] as const)(
     'commits one independently visible start for an exact %s owner',
     async (mode) => {
-      if (mode === 'clear')
+      if (mode.startsWith('short'))
+        await owner.runPromise(
+          Effect.gen(function* () {
+            yield* (yield* PgClient.PgClient)`UPDATE intents SET side='SELL', protection='{"_tag":"EquityShortBracket"}'::jsonb`
+          }),
+        )
+      if (mode.endsWith('clear'))
         await owner.runPromise(
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient

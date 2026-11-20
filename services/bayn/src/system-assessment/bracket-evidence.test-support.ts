@@ -3,6 +3,7 @@ import { OrderSchema, OrderSide, OrderStatus, OrderType } from '../execution/con
 import { MutationEventSchema } from '../execution/mutations/model'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { emptySourceCutFixture } from './source-cut.test-support'
+import { isBracketProtection, isEquityShortProtection } from '../execution/contracts'
 import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 
 export const nativeEntryEvidenceFixture = (document: ExecutionDecisionDocument) => {
@@ -23,7 +24,7 @@ export const nativeEntryEvidenceFixture = (document: ExecutionDecisionDocument) 
     brokerOrderId: 'native-parent',
     clientOrderId: 'native-parent-client',
     symbol: target.symbol,
-    side: OrderSide.Buy,
+    side: target.side,
     orderType: OrderType.Limit,
     timeInForce: target.timeInForce,
     quantityAtoms: target.quantityAtoms,
@@ -110,7 +111,8 @@ export const bracketEvidenceFixture = (document: ExecutionDecisionDocument) => {
   const { parent, at } = f
   const intentId = document.orderedIntentIds[0]!
   const terms = document.deltaRisk[0]?.protection
-  if (terms?._tag !== 'Bracket') throw new Error('Expected a sealed bracket entry')
+  if (!isBracketProtection(terms)) throw new Error('Expected a sealed bracket entry')
+  const closingSide = isEquityShortProtection(terms) ? OrderSide.Buy : OrderSide.Sell
   const quantity = BigInt(parent.quantityAtoms!)
   const profitQuantity = 1000000000n
   if (quantity <= profitQuantity) throw new Error('Bracket fixture needs multiple shares')
@@ -119,7 +121,7 @@ export const bracketEvidenceFixture = (document: ExecutionDecisionDocument) => {
     brokerOrderId: 'native-profit',
     clientOrderId: 'native-profit-client',
     parentBrokerOrderId: parent.brokerOrderId,
-    side: OrderSide.Sell,
+    side: closingSide,
     limitPriceMicros: terms.profitLimitPriceMicros,
     filledQuantityAtoms: profitQuantity.toString(),
     status: OrderStatus.Canceled,
@@ -129,7 +131,7 @@ export const bracketEvidenceFixture = (document: ExecutionDecisionDocument) => {
     brokerOrderId: 'native-stop',
     clientOrderId: 'native-stop-client',
     parentBrokerOrderId: parent.brokerOrderId,
-    side: OrderSide.Sell,
+    side: closingSide,
     orderType: OrderType.StopLimit,
     limitPriceMicros: terms.stopLimitPriceMicros,
     stopPriceMicros: terms.stopPriceMicros,

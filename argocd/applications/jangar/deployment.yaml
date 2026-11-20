@@ -123,9 +123,9 @@ spec:
             - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
               value: '5000'
             - name: JANGAR_MODELS
-              value: qwen38-flamingo,gpt-6-astra
+              value: gpt-6.2-sol,qwen38-flamingo
             - name: JANGAR_DEFAULT_MODEL
-              value: qwen38-flamingo
+              value: gpt-6.2-sol
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: '6'
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
