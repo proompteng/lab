@@ -93,7 +93,7 @@ test('rotation rejects mismatched account bindings and exhausted epochs', () => 
   ).toBe(true)
 })
 
-test.each(['before-projection', 'after-projection', 'before-state', 'before-schedule'] as const)(
+test.each(['before-projection', 'after-projection', 'before-watch', 'before-state', 'before-schedule'] as const)(
   'rotation reconciles an uncertain %s failure without persisting inactive state',
   async (failure) => {
     let state = original
@@ -101,7 +101,7 @@ test.each(['before-projection', 'after-projection', 'before-state', 'before-sche
     let failOnce = true
     let stateWrites = 0
     let projectionWrites = 0
-    const deliveries: unknown[] = []
+    const deliveries = new Map<string, string>()
     const injected = () => {
       failOnce = false
       throw new Error('injected handoff interruption')
@@ -146,16 +146,18 @@ test.each(['before-projection', 'after-projection', 'before-state', 'before-sche
       },
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
       request: () => ({ id: 'durable-rotation', attemptCompletedSignal: new AbortController().signal }),
-      genericSend: (delivery: unknown) => {
-        if (failOnce && failure === 'before-schedule') injected()
-        deliveries.push(delivery)
+      genericSend: ({ method, idempotencyKey }: { method: string; idempotencyKey: string }) => {
+        if (failOnce && (method === 'watch' ? failure === 'before-watch' : failure === 'before-schedule')) injected()
+        deliveries.set(idempotencyKey, method)
       },
     } as unknown as ObjectContext
 
     await expect(object.object.rotate(ctx, rotation)).rejects.toThrow('injected handoff interruption')
     expect(state.active).toBe(true)
     if (failure !== 'before-schedule') expect(state).toBe(original)
-    expect(deliveries).toHaveLength(0)
+    expect([...deliveries.values()]).toEqual(
+      failure === 'before-state' || failure === 'before-schedule' ? ['watch'] : [],
+    )
 
     expect(await object.object.rotate(ctx, rotation)).toMatchObject({
       active: true,
@@ -166,6 +168,6 @@ test.each(['before-projection', 'after-projection', 'before-state', 'before-sche
     })
     expect(projectionWrites).toBe(1)
     expect(stateWrites).toBe(1)
-    expect(deliveries).toHaveLength(1)
+    expect([...deliveries.values()]).toEqual(['watch', 'tick'])
   },
 )

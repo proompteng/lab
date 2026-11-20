@@ -212,6 +212,27 @@ downloads and made the retry start them again. Archive uploads have a separate
 30-minute deadline. The shared workflow records upload success or failure for
 every image size.
 
+If Attic interrupts an HTTP 200 NAR download after sending bytes, Nix 2.28 cannot
+resume it because Attic does not support byte-range requests. The native image
+build retries once after five seconds only for that exact partial-file error
+and its dependency failures. Normal builds keep source fallback disabled. The
+single retry adds Nix's native `--fallback`, allowing a failed substitution to
+build from the same reviewed derivation and its declared inputs. This flag
+covers every substitution in that retry, including dependencies; it is not
+restricted to the originally interrupted NAR. Downloaded content retains Nix's
+hash and signature checks. An input-addressed source rebuild does not establish
+byte equality with the cached NAR.
+
+Both attempts share the existing 45-minute build deadline. Hash, signature,
+authentication, compilation, mixed errors, and other download failures on the
+first attempt remain terminal. A failed retry or source rebuild preserves its
+failure, and the wrapper never starts a third attempt. Image verification,
+source identity, and cohort publication gates remain required. The phase log
+retains both attempts and identifies when source fallback was enabled.
+An explicit source revision that predates the retry helper retains the original
+single bounded build, so the reusable workflow can still build older PR heads
+without mixing files from another revision.
+
 Attic chunks NARs of at least 16 MiB at a 16 MiB average, with 4 MiB minimum
 and 32 MiB maximum chunks. A 2 GiB archive therefore needs roughly 128 chunk
 references. The server releases each chunk through a separate database task;

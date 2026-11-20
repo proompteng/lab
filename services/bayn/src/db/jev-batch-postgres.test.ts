@@ -1,7 +1,8 @@
+import { evaluateRecordedJevBatch, verifyJevBatchAdmission } from '../jev/batch-admission.test-support'
 import { makePostgresFixture } from '../testing/postgres-fixture.test-support'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
-import { expect, spyOn, test } from 'bun:test'
+import { expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Exit, Logger, References, Result } from 'effect'
 import { Reactivity } from 'effect/reactivity'
@@ -19,7 +20,7 @@ import {
   makeJevBatchResult,
   usableEntryBatchInferences,
 } from '../jev/batch'
-import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
+import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -30,8 +31,6 @@ import {
   makeJevTerminalBatchSettlementCursor,
   settleExpiredTerminalJevBatches,
 } from './jev-batch-postgres'
-import * as observations from '../jev/observation'
-import * as evaluationPersistence from './jev-evaluation-postgres'
 import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
 
 const databaseInstant = (epochMillis: number) => `${utcInstantFromEpochMillis(epochMillis).slice(0, -1)}000Z`
@@ -48,97 +47,84 @@ test.each(['success', 'validation', 'lock', 'receipts', 'evidence', 'result'])(
         Effect.andThen(TestClock.adjust(1100)),
         Effect.andThen(name === interrupted ? Effect.interrupt : Effect.void),
       )
-    const receipts = spyOn(evaluationPersistence, 'recordJevEvaluationReceipts').mockImplementation(() =>
-      phase('receipts').pipe(
-        Effect.as(
-          new Map(
-            result.candidates.flatMap((candidate) =>
-              candidate.status === 'RESOLVED' ? [[candidate.requestId, candidate.resolution] as const] : [],
-            ),
-          ),
-        ),
-      ),
-    )
     const logger = Logger.make(({ fiber }) => {
       if (fiber.getRef(References.CurrentLogAnnotations)['stage'] === 'bayn.jev.batch-completion.phase')
         throw new Error('phase logger failed')
     })
-    try {
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const client = yield* makePostgresFixture({
-              acquirer: Effect.die('Completion phase test must not connect to PostgreSQL'),
-              compiler: PgClient.makeCompiler(undefined, false),
-              spanAttributes: [],
-            })
-            const sql = new Proxy(client, {
-              apply(target, receiver, args) {
-                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
-                const [query] = statement.compile()
-                if (query.includes('SELECT batch_id FROM jev_batch_plans'))
-                  return phase('lock').pipe(Effect.as([{ batch_id: plan.batchId }]))
-                if (query.includes('SELECT EXISTS')) return phase('evidence').pipe(Effect.as([{ matches: true }]))
-                if (query.includes('INSERT INTO jev_batch_results'))
-                  return phase('result').pipe(Effect.as([{ payload: result }]))
-                throw new Error('Unexpected completion query')
-              },
-              get(target, property, receiver) {
-                if (property === 'withTransaction')
-                  return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-                    Effect.sync(() => order.push('begin')).pipe(
-                      Effect.andThen(effect),
-                      Effect.onExit((exit) =>
-                        Effect.sync(() => order.push(Exit.isSuccess(exit) ? 'commit' : 'rollback')),
-                      ),
-                    )
-                if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
-                return Reflect.get(target, property, receiver)
-              },
-            })
-            const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-            return yield* store.complete(
-              plan,
-              interrupted === 'validation'
-                ? {
-                    ...fixture.observation.payload,
-                    observedAt: utcInstantFromEpochMillis(Date.parse(plan.observedAt) + 1),
-                  }
-                : fixture.observation.payload,
-              result,
-            )
-          }),
-        ).pipe(
-          Effect.provide(TestClock.layer()),
-          Effect.provide(Reactivity.layer),
-          Effect.provide(Logger.layer([logger])),
-          Effect.provideService(ExecutionStageTimings, timings),
-        ),
-      )
-      expect(Exit.isSuccess(exit)).toBe(interrupted === 'success')
-      if (interrupted === 'validation') {
-        expect(order).toEqual([])
-        expect(timings.get('bayn.jev.batch-completion.phase:validation')?.failures).toBe(1)
-        if (Exit.isFailure(exit)) {
-          expect(exit.cause.reasons).toHaveLength(1)
-          expect(exit.cause.reasons[0]?._tag).toBe('Fail')
-        }
-        return
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* makePostgresFixture({
+            acquirer: Effect.die('Completion phase test must not connect to PostgreSQL'),
+            compiler: PgClient.makeCompiler(undefined, false),
+            spanAttributes: [],
+          })
+          const sql = new Proxy(client, {
+            apply(target, receiver, args) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+              const [query] = statement.compile()
+              if (query.includes('WITH locked_plan AS MATERIALIZED'))
+                return phase('lock').pipe(Effect.as([{ matches: true }]))
+              if (query.includes('INSERT INTO jev_evaluation_receipts')) return phase('receipts')
+              if (query.includes('INSERT INTO jev_evaluation_resolutions')) return Effect.succeed([])
+              if (query.includes('SELECT NOT EXISTS')) return phase('evidence').pipe(Effect.as([{ matches: true }]))
+              if (query.includes('INSERT INTO jev_batch_results'))
+                return phase('result').pipe(Effect.as([{ matches: true }]))
+              return statement
+            },
+            get(target, property, receiver) {
+              if (property === 'withTransaction')
+                return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                  Effect.sync(() => order.push('begin')).pipe(
+                    Effect.andThen(effect),
+                    Effect.onExit((exit) =>
+                      Effect.sync(() => order.push(Exit.isSuccess(exit) ? 'commit' : 'rollback')),
+                    ),
+                  )
+              if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
+              return Reflect.get(target, property, receiver)
+            },
+          })
+          const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
+          return yield* store.complete(
+            plan,
+            interrupted === 'validation'
+              ? {
+                  ...fixture.observation.payload,
+                  observedAt: utcInstantFromEpochMillis(Date.parse(plan.observedAt) + 1),
+                }
+              : fixture.observation.payload,
+            result,
+          )
+        }),
+      ).pipe(
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Reactivity.layer),
+        Effect.provide(Logger.layer([logger])),
+        Effect.provideService(ExecutionStageTimings, timings),
+      ),
+    )
+    expect(Exit.isSuccess(exit)).toBe(interrupted === 'success')
+    if (interrupted === 'validation') {
+      expect(order).toEqual([])
+      expect(timings.get('bayn.jev.batch-completion.phase:validation')?.failures).toBe(1)
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons).toHaveLength(1)
+        expect(exit.cause.reasons[0]?._tag).toBe('Fail')
       }
-      expect(order.at(-1)).toBe(interrupted === 'success' ? 'commit' : 'rollback')
-      const phases = ['lock', 'receipts', 'evidence', 'result']
-      const visited = interrupted === 'success' ? phases : phases.slice(0, phases.indexOf(interrupted) + 1)
-      expect(order).toEqual(['begin', ...visited, interrupted === 'success' ? 'commit' : 'rollback'])
-      expect(timings.get('bayn.jev.batch-completion.phase:validation')?.count).toBe(1)
-      for (const name of visited) {
-        const timing = timings.get('bayn.jev.batch-completion.phase:' + name)
-        expect(timing?.count).toBe(1)
-        expect(timing?.interruptions).toBe(name === interrupted ? 1 : 0)
-      }
-      if (Exit.isFailure(exit)) expect(exit.cause.reasons.every((reason) => reason._tag === 'Interrupt')).toBe(true)
-    } finally {
-      receipts.mockRestore()
+      return
     }
+    expect(order.at(-1)).toBe(interrupted === 'success' ? 'commit' : 'rollback')
+    const phases = ['lock', 'receipts', 'evidence', 'result']
+    const visited = interrupted === 'success' ? phases : phases.slice(0, phases.indexOf(interrupted) + 1)
+    expect(order).toEqual(['begin', ...visited, interrupted === 'success' ? 'commit' : 'rollback'])
+    expect(timings.get('bayn.jev.batch-completion.phase:validation')?.count).toBe(1)
+    for (const name of visited) {
+      const timing = timings.get('bayn.jev.batch-completion.phase:' + name)
+      expect(timing?.count).toBe(1)
+      expect(timing?.interruptions).toBe(name === interrupted ? 1 : 0)
+    }
+    if (Exit.isFailure(exit)) expect(exit.cause.reasons.every((reason) => reason._tag === 'Interrupt')).toBe(true)
   },
 )
 
@@ -206,7 +192,7 @@ test.each([
                   Effect.andThen(
                     Effect.sync(() => {
                       persisted = JSON.parse(encoded)
-                      return [{ payload: persisted }]
+                      return [{ matches: true }]
                     }),
                   ),
                 )
@@ -262,6 +248,7 @@ test.each([
   { cycleMatches: true, portfolioMatches: false, admitted: false, checks: 2, source: 'stored', mutate: false },
   { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'supplied', mutate: true },
   { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'stored', mutate: true },
+  { cycleMatches: true, portfolioMatches: true, admitted: false, checks: 0, source: 'copied proof', mutate: false },
 ])('admission $source mutate=$mutate cycle=$cycleMatches portfolio=$portfolioMatches', async (scenario) => {
   const fixture = nativeJevFixture()
   const suppliedObservation = structuredClone(fixture.observation.payload)
@@ -274,108 +261,105 @@ test.each([
       planVersion: JevBatchPlanVersion.V8,
     }),
   )
-  const reproduce = spyOn(observations, 'reproduceJevCandidateObservation')
   const statements: string[] = []
   let admitted = false
   let sourceChecks = 0
   let recordedObservation: unknown
-  try {
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const client = yield* makePostgresFixture({
-            acquirer: Effect.die('Admission contract must not connect to PostgreSQL'),
-            compiler: PgClient.makeCompiler(undefined, false),
-            spanAttributes: [],
-          })
-          const sql = new Proxy(client, {
-            apply(target, receiver, argumentsList) {
-              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
-              const [query, parameters] = statement.compile()
-              statements.push(query)
-              if (query.includes('SELECT payload FROM intraday_candidate_observations'))
-                return Effect.succeed(scenario.source === 'stored' ? [{ payload: storedObservation }] : [])
-              if (query.includes('SELECT plan.payload AS plan')) {
-                if (!admitted && scenario.mutate) {
-                  // The source owner can change its graph while admission awaits this read.
-                  const selected = scenario.source === 'stored' ? storedObservation : suppliedObservation
-                  const quote = selected.rows.quotes[0]
-                  if (typeof quote !== 'object' || quote === null) throw new Error('Expected a fixture quote to mutate')
-                  Object.assign(quote, { ask_price: 999999 })
-                }
-                return Effect.succeed(admitted ? [{ plan, result: null }] : [])
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makePostgresFixture({
+          acquirer: Effect.die('Admission contract must not connect to PostgreSQL'),
+          compiler: PgClient.makeCompiler(undefined, false),
+          spanAttributes: [],
+        })
+        const sql = new Proxy(client, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            const [query, parameters] = statement.compile()
+            statements.push(query)
+            if (query.includes('SELECT payload FROM intraday_candidate_observations'))
+              return Effect.succeed(scenario.source === 'stored' ? [{ payload: storedObservation }] : [])
+            if (query.includes('SELECT plan.payload AS plan')) {
+              if (!admitted && scenario.mutate) {
+                // The source owner can change its graph while admission awaits this read.
+                const selected = scenario.source === 'stored' ? storedObservation : suppliedObservation
+                const quote = selected.rows.quotes[0]
+                if (typeof quote !== 'object' || quote === null) throw new Error('Expected a fixture quote to mutate')
+                Object.assign(quote, { ask_price: 999999 })
               }
-              if (query.includes('AS matches')) {
-                const matches = sourceChecks === 0 ? scenario.cycleMatches : scenario.portfolioMatches
-                sourceChecks += 1
-                return Effect.succeed([{ matches }])
-              }
-              if (query.includes('INSERT INTO intraday_candidate_observations')) {
-                const encoded = parameters.at(-1)
-                if (typeof encoded !== 'string') throw new Error('Expected the parameterized observation JSON')
-                recordedObservation = JSON.parse(encoded)
-                return Effect.succeed([{ content_hash: plan.observationHash }])
-              }
-              if (query.includes('INSERT INTO jev_batch_plans')) {
-                admitted = true
-                return Effect.succeed([{ batch_id: plan.batchId }])
-              }
-              if (query.includes('INSERT INTO jev_evaluation_requests')) return Effect.succeed([])
-              if (query.includes('SELECT payload FROM jev_evaluation_requests')) {
-                const candidate = plan.candidates.find(
-                  (candidate) =>
-                    candidate.status === JevCandidatePlanStatus.Requested &&
-                    candidate.request.requestId === parameters[0],
-                )
-                if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Unknown admission request')
-                return TestClock.adjust('readDelayMs' in scenario ? scenario.readDelayMs : 0).pipe(
-                  Effect.as([{ payload: candidate.request }]),
-                )
-              }
-              if (query.includes('SELECT payload FROM jev_staged_'))
-                return TestClock.adjust('readDelayMs' in scenario ? scenario.readDelayMs : 0).pipe(Effect.as([]))
-              if (query.includes('INSERT INTO jev_staged_dispatch_claims'))
-                return Effect.succeed([{ claim_hash: parameters[2] }])
-              throw new Error(`Unexpected admission query: ${query}`)
-            },
-            get(target, property, receiver) {
-              if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
-              if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
-              return Reflect.get(target, property, receiver)
-            },
-          })
-          yield* TestClock.setTime(observed)
-          const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-          const saved = yield* store.begin(plan, suppliedObservation).pipe(Effect.result)
-          expect(Result.isSuccess(saved)).toBe(scenario.admitted)
-          if (Result.isSuccess(saved)) {
-            expect(saved.success.dispatches).toHaveLength(
-              plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
-            )
-            // Newly inserted request/checkpoint rows must not consume the inference window in reloads.
-            expect(yield* Clock.currentTimeMillis).toBeLessThan(Date.parse(plan.expiresAt))
-          }
-        }),
-      ).pipe(
-        Effect.provide(entryInferenceFixtureLayer),
-        Effect.provide(TestClock.layer()),
-        Effect.provide(Reactivity.layer),
-      ),
-    )
-    expect(reproduce).toHaveBeenCalledTimes(1)
-    expect(admitted).toBe(scenario.admitted)
-    expect(recordedObservation).toEqual(scenario.admitted ? fixture.observation.payload : undefined)
-    if (scenario.admitted) {
-      expect(Result.getOrThrow(canonicalHashV1Result(recordedObservation))).toBe(plan.observationHash)
-      if (scenario.mutate) {
-        const selected = scenario.source === 'stored' ? storedObservation : suppliedObservation
-        expect(Result.getOrThrow(canonicalHashV1Result(selected))).not.toBe(plan.observationHash)
-      }
+              return Effect.succeed(admitted ? [{ plan, result: null }] : [])
+            }
+            if (query.includes('AS matches')) {
+              const matches = sourceChecks === 0 ? scenario.cycleMatches : scenario.portfolioMatches
+              sourceChecks += 1
+              return Effect.succeed([{ matches }])
+            }
+            if (query.includes('INSERT INTO intraday_candidate_observations')) {
+              const encoded = parameters.at(-1)
+              if (typeof encoded !== 'string') throw new Error('Expected the parameterized observation JSON')
+              recordedObservation = JSON.parse(encoded)
+              return Effect.succeed([{ content_hash: plan.observationHash }])
+            }
+            if (query.includes('INSERT INTO jev_batch_plans')) {
+              admitted = true
+              return Effect.succeed([{ batch_id: plan.batchId }])
+            }
+            if (query.includes('INSERT INTO jev_evaluation_requests')) return Effect.succeed([])
+            if (query.includes('SELECT payload FROM jev_evaluation_requests')) {
+              const candidate = plan.candidates.find(
+                (candidate) =>
+                  candidate.status === JevCandidatePlanStatus.Requested &&
+                  candidate.request.requestId === parameters[0],
+              )
+              if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Unknown admission request')
+              return TestClock.adjust('readDelayMs' in scenario ? scenario.readDelayMs : 0).pipe(
+                Effect.as([{ payload: candidate.request }]),
+              )
+            }
+            if (query.includes('SELECT payload FROM jev_staged_'))
+              return TestClock.adjust('readDelayMs' in scenario ? scenario.readDelayMs : 0).pipe(Effect.as([]))
+            if (query.includes('INSERT INTO jev_staged_dispatch_claims'))
+              return Effect.succeed([{ claim_hash: parameters[2] }])
+            throw new Error(`Unexpected admission query: ${query}`)
+          },
+          get(target, property, receiver) {
+            if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
+            if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
+            return Reflect.get(target, property, receiver)
+          },
+        })
+        yield* TestClock.setTime(observed)
+        const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
+        const prepared = Result.getOrThrow(verifyJevBatchAdmission(plan, suppliedObservation))
+        const admission = scenario.source === 'copied proof' ? { ...prepared } : prepared
+        const saved = yield* store.begin(admission).pipe(Effect.result)
+        expect(Result.isSuccess(saved)).toBe(scenario.admitted)
+        if (Result.isSuccess(saved)) {
+          expect(saved.success.dispatches).toHaveLength(
+            plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
+          )
+          // Newly inserted request/checkpoint rows must not consume the inference window in reloads.
+          expect(yield* Clock.currentTimeMillis).toBeLessThan(Date.parse(plan.expiresAt))
+        }
+      }),
+    ).pipe(
+      Effect.provide(entryInferenceFixtureLayer),
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Reactivity.layer),
+    ),
+  )
+  if (scenario.source === 'copied proof') expect(statements).toEqual([])
+  expect(admitted).toBe(scenario.admitted)
+  expect(recordedObservation).toEqual(scenario.admitted ? fixture.observation.payload : undefined)
+  if (scenario.admitted) {
+    expect(Result.getOrThrow(canonicalHashV1Result(recordedObservation))).toBe(plan.observationHash)
+    if (scenario.mutate) {
+      const selected = scenario.source === 'stored' ? storedObservation : suppliedObservation
+      expect(Result.getOrThrow(canonicalHashV1Result(selected))).not.toBe(plan.observationHash)
     }
-    expect(statements.filter((query) => query.includes('AS matches'))).toHaveLength(scenario.checks)
-  } finally {
-    reproduce.mockRestore()
   }
+  expect(statements.filter((query) => query.includes('AS matches'))).toHaveLength(scenario.checks)
 })
 
 test.each([
@@ -423,7 +407,7 @@ test.each([
         })
         yield* TestClock.setTime(observed + scenario.elapsedMs)
         const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-        const result = yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(
+        const result = yield* evaluateRecordedJevBatch(plan, fixture.observation.payload).pipe(
           Effect.provideService(JevBatchStore, store),
           Effect.result,
         )

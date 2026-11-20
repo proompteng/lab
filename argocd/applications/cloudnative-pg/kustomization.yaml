@@ -2,11 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: cloudnative-pg
 resources:
-  - https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.15.0/manifest.yaml
+  - https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.16.0/manifest.yaml
 helmCharts:
   - name: cloudnative-pg
     repo: https://cloudnative-pg.io/charts
-    version: 0.29.1
+    version: 0.29.2
     releaseName: cloudnative-pg
     namespace: cloudnative-pg
     includeCRDs: true
@@ -29,7 +29,7 @@ patches:
           spec:
             containers:
               - name: barman-cloud
-                image: ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.15.0@sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536
+                image: ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.16.0@sha256:6404a416718bd7aad943c67a25a7bb20d0558b43edfeab0bf167f013ca435882
                 args:
                   - operator
                   - --server-cert=/server/tls.crt
@@ -38,12 +38,6 @@ patches:
                   - --server-address=:9090
                   - --leader-elect
                   - --log-level=info
-                env:
-                  - name: SIDECAR_IMAGE
-                    valueFrom:
-                      secretKeyRef:
-                        key: SIDECAR_IMAGE
-                        name: plugin-barman-cloud-m5m67kfh8f
                 resources:
                   requests:
                     cpu: 100m
@@ -53,11 +47,8 @@ patches:
                     memory: 512Mi
   - target:
       kind: Secret
-      name: plugin-barman-cloud-2b4mtt7m69
+      name: plugin-barman-cloud-5kkd8f288d
     patch: |-
       - op: replace
-        path: /metadata/name
-        value: plugin-barman-cloud-m5m67kfh8f
-      - op: replace
         path: /data/SIDECAR_IMAGE
-        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXI6djAuMTUuMEBzaGEyNTY6MDZjNzhkZWNhNjcwNTI1ZGFhMzVmYjFlNTMyMzE1OTA5Mjc4NWQxMWNmODdiODYyMTdiZGQ1YzY3OWE0MWE4NA==
+        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXI6djAuMTYuMEBzaGEyNTY6YzY2OTI1OWUyMGVkMWUxMWZhZDgyMWY3MzVjMzk2YzE5ZDkyOTk4NWFhMDViOTU0NGIxM2VjYzhiNWEzODZkMA==

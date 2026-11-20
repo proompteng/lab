@@ -1,5 +1,6 @@
+import { beginRecordedJevBatch } from '../jev/batch-admission.test-support'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
-import { retainedJevProtocolV39Document } from '../jev/protocol'
+import { retainedJevProtocolV39Document, retainedJevProtocolV40Document } from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
@@ -242,7 +243,9 @@ const retainReplayDispatch = Effect.gen(function* () {
   yield* (yield* CandidateObservationStore).record(replayFixture.observation)
   const admission = yield* TestClock.setTime(Date.parse(current.observedAt)).pipe(
     Effect.andThen(
-      Effect.flatMap(JevBatchStore, (store) => store.begin(replayBatch, replayFixture.observation.payload)),
+      Effect.flatMap(JevBatchStore, (store) =>
+        beginRecordedJevBatch(store, replayBatch, replayFixture.observation.payload),
+      ),
     ),
     Effect.provide(TestClock.layer()),
   )
@@ -298,7 +301,9 @@ integration('committed sequential provider handoff', () => {
         }
         yield* (yield* CandidateObservationStore).record(fixture.observation)
         return yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
-          Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
+          Effect.andThen(
+            Effect.flatMap(JevBatchStore, (store) => beginRecordedJevBatch(store, batch, fixture.observation.payload)),
+          ),
           Effect.provide(TestClock.layer()),
         )
       }),
@@ -871,11 +876,17 @@ integration('committed sequential provider handoff', () => {
             maximum: Authority.Observe,
           })
           expect(initialized).toMatchObject({ maximum: Authority.Observe, effective: Authority.Observe, kill: 'CLEAR' })
-          yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+          const predecessorFixture = nativeJevFixture(
+            JevPurpose.Entry,
+            request.observedAt,
+            replayAccountId,
+            retainedJevProtocolV40Document,
+          )
+          yield* (yield* CycleStore).acquire(predecessorFixture.draft, request.observedAt)
           const originalPlan = Result.getOrThrow(
             reconstructRetainedJevTradingSignalBatch({
               observation: {
-                ...fixture.observation.payload,
+                ...predecessorFixture.observation.payload,
                 protocol: { ...retainedJevProtocolV39Document, schemaVersion: retainedVersion },
               },
               expiresAt: request.expiresAt,
@@ -938,7 +949,7 @@ integration('committed sequential provider handoff', () => {
             JevPurpose.Entry,
             new Date(Date.parse(request.observedAt) + 60_000).toISOString(),
             replayAccountId,
-            undefined,
+            retainedJevProtocolV40Document,
             Result.getOrThrow(canonicalHashV1Result({ cutover: 'v39', previousCycleId: original.cycleId })),
           )
           const successorPlan = Result.getOrThrow(
@@ -1312,6 +1323,72 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
+  const coalescedTransitions = () => {
+    const requested = replayBatch.candidates
+      .flatMap((candidate) => (candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : []))
+      .slice(0, 2)
+    if (requested.length !== 2) throw new Error('Missing coalesced Box chart fixture')
+    return requested.map((request) => {
+      const [terminal] = stagedCheckpointFixture(request).terminals
+      if (terminal === undefined) throw new Error('Missing coalesced Box terminal fixture')
+      return { terminal, successor: { kind: 'HANDOFF' as const, handoff: entryCompletionFixture(request).handoff } }
+    })
+  }
+
+  test('coalesced Box transitions commit exact evidence once under reversed concurrent retries', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const group = coalescedTransitions()
+        const attempts = yield* Effect.all(
+          [journal.recordTransitions(group), journal.recordTransitions(group.toReversed())],
+          { concurrency: 2 },
+        )
+        const newDispatches = attempts.map((rows) => rows.filter((row) => row.dispatchAllowed).length)
+        expect(newDispatches.sort((left, right) => left - right)).toEqual([0, 2])
+        const rows = yield* sql<{ request_id: string; tx: string; payload: unknown; kind: string }>`
+          SELECT request_id, xmin::text AS tx, payload, 'terminal' AS kind FROM jev_staged_terminal_receipts
+          UNION ALL SELECT request_id, xmin::text, payload, 'handoff' AS kind FROM jev_inference_handoffs`
+        expect(rows).toHaveLength(4)
+        expect(new Set(rows.map((row) => row.tx)).size).toBe(1)
+        for (const { terminal, successor } of group) {
+          const evidence = rows.filter((row) => row.request_id === terminal.requestId)
+          expect(evidence.find((row) => row.kind === 'terminal')?.payload).toEqual(terminal)
+          expect(evidence.find((row) => row.kind === 'handoff')?.payload).toEqual(successor.handoff)
+        }
+      }),
+    ))
+
+  test('a rejected handoff in a coalesced group retains all paid terminals without admitting any handoff', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const [valid, rejected] = coalescedTransitions()
+        if (valid === undefined || rejected === undefined) throw new Error('Missing two coalesced transitions')
+        const result = yield* journal
+          .recordTransitions([
+            valid,
+            {
+              ...rejected,
+              successor: {
+                ...rejected.successor,
+                handoff: { ...rejected.successor.handoff, inputHash: 'f'.repeat(64) },
+              },
+            },
+          ])
+          .pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(yield* sql`SELECT payload FROM jev_inference_handoffs`).toEqual([])
+        const rows = yield* sql<{ terminal_hash: string }>`
+          SELECT terminal_hash FROM jev_staged_terminal_receipts ORDER BY terminal_hash`
+        expect(rows.map((row) => row.terminal_hash)).toEqual(
+          [valid.terminal.terminalHash, rejected.terminal.terminalHash].sort(),
+        )
+      }),
+    ))
+
   test('an invalid Box handoff retains the paid terminal without admitting dependent inference', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -1599,7 +1676,9 @@ integration('committed sequential provider handoff', () => {
         yield* (yield* CandidateObservationStore).record(sourceFixture.observation)
         yield* TestClock.setTime(Date.parse(source.observedAt)).pipe(
           Effect.andThen(
-            Effect.flatMap(JevBatchStore, (store) => store.begin(sourceBatch, sourceFixture.observation.payload)),
+            Effect.flatMap(JevBatchStore, (store) =>
+              beginRecordedJevBatch(store, sourceBatch, sourceFixture.observation.payload),
+            ),
           ),
           Effect.provide(TestClock.layer()),
         )

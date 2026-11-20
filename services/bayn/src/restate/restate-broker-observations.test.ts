@@ -80,6 +80,7 @@ const harness = (
   const deliveries: Delivery[] = []
   const runtime: BrokerObservationRuntime = {
     verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, connection, nowMs),
+    probeProtection: async () => undefined,
     recordNotification: async () => ({ covered: false }),
     invalidate: async () => {
       invalidations += 1
@@ -143,6 +144,7 @@ const harness = (
         notify: (ctx: ObjectSharedContext, input: unknown) => Promise<{ accepted: boolean; eventId: string }>
         accept: (ctx: ObjectContext, input: unknown) => Promise<void>
         refresh: (ctx: ObjectContext, input: unknown) => Promise<void>
+        probeProtection: (ctx: ObjectSharedContext, input: unknown) => Promise<void>
         capture: (ctx: ObjectContext, input: unknown) => Promise<void>
         freshness: (ctx: ObjectContext, input: unknown) => Promise<void>
         status: (ctx: ObjectSharedContext, input: unknown) => Promise<State | null>
@@ -184,6 +186,40 @@ const receipt = { eventId: 'd'.repeat(64) }
 const pollResult = (poll: BrokerObservationPoll) => ({ poll, startedAtMs: initialNow, completedAtMs: initialNow })
 
 describe('event-driven Restate broker observation owner', () => {
+  test('a durable protection proof wakes its exact cycle before the ordinary capture budget', async () => {
+    const proof = {
+      proofId: '1'.repeat(64),
+      cycleId: '2'.repeat(64),
+      checkedAt: new Date(initialNow + 250).toISOString(),
+    }
+    const probes: string[] = []
+    const h = harness({
+      state: active({ nextCaptureNotBeforeMs: initialNow + 30_000 }),
+      runtime: {
+        probeProtection: async (_signal, cycleId) => {
+          probes.push(cycleId)
+          return proof
+        },
+      },
+    })
+    await h.handlers.refresh(h.context, { sourceRevision, cycleId: proof.cycleId })
+    expect(h.timers().map(({ method, delay }) => [method, delay?.milliseconds])).toEqual([
+      ['probeProtection', 200],
+      ['capture', 30_000],
+    ])
+    h.advance(200)
+    await h.handlers.probeProtection(h.context, { sourceRevision: 'f'.repeat(40), cycleId: proof.cycleId })
+    expect(probes).toEqual([])
+    await h.handlers.probeProtection(h.context, { sourceRevision, cycleId: proof.cycleId })
+    expect(probes).toEqual([proof.cycleId])
+    expect(h.deliveries.at(-1)).toMatchObject({
+      service: 'BaynExecutionController',
+      method: 'wake',
+      parameter: { _tag: 'ProtectionRelease', sourceRevision, eventId: proof.proofId, ...proof },
+    })
+    expect(h.calls().polls).toBe(0)
+  })
+
   test('activation publishes one canonical cut, wakes the account and arms only its completeness deadline', async () => {
     const h = harness()
     const state = await h.handlers.activate(h.context, { sourceRevision })

@@ -221,9 +221,23 @@ data class ForwarderConfig(
               ?: 10_000
           require(interval in 2_000..60_000) { "ALPACA_LATEST_POLL_INTERVAL_MS must be within [2000, 60000]" }
           require(maximumAge in 1_000..10_000) { "ALPACA_LATEST_MAX_AGE_MS must be within [1000, 10000]" }
-          LatestMarketDataConfig(symbols, interval, maximumAge)
+          val barSymbols = mergedEnv["ALPACA_LATEST_BAR_SYMBOLS"]?.split(",")?.map { it.trim().uppercase() } ?: emptyList()
+          if ("ALPACA_LATEST_BAR_SYMBOLS" in mergedEnv) {
+            require(
+              barSymbols.isNotEmpty() && barSymbols.size <= 100 && barSymbols.distinct() == barSymbols && barSymbols.all { it in symbols },
+            ) {
+              "ALPACA_LATEST_BAR_SYMBOLS must contain unique latest-observation symbols"
+            }
+            val streamedBars = if ("bars" in alpacaMarketDataChannels) configuredSymbolOverrides["bars"] ?: staticSymbolSet else emptySet()
+            require(barSymbols.none { it in streamedBars }) { "ALPACA_LATEST_BAR_SYMBOLS must not overlap WebSocket bars" }
+            require(interval <= maximumAge) { "latest completed-bar polling must fit its end-of-minute freshness bound" }
+          }
+          LatestMarketDataConfig(symbols, interval, maximumAge, barSymbols)
         }
-      require(latestSymbols != null || listOf("ALPACA_LATEST_POLL_INTERVAL_MS", "ALPACA_LATEST_MAX_AGE_MS").none { it in mergedEnv }) {
+      require(
+        latestSymbols != null ||
+          listOf("ALPACA_LATEST_POLL_INTERVAL_MS", "ALPACA_LATEST_MAX_AGE_MS", "ALPACA_LATEST_BAR_SYMBOLS").none { it in mergedEnv },
+      ) {
         "latest observation settings require ALPACA_LATEST_SYMBOLS"
       }
       val qualifyIexSubscriptions =

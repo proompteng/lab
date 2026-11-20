@@ -8,7 +8,7 @@ describe('runner telemetry', () => {
     const lines: string[] = []
     const publish = vi.fn(async () => {})
     const telemetry = createRunnerTelemetry({
-      model: 'gpt-6-astra',
+      model: 'gpt-6.2-sol',
       effort: 'ultra',
       now: () => date,
       publish,

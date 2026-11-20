@@ -1,6 +1,6 @@
 import { ControlPolicy } from './control-portfolio'
 import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { brokerCalendarResponseHash } from '../market-hours'
 

@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { equityMarketProfile, currentEquityMarketProfile } from '../jev/markets'
 import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -80,17 +80,24 @@ export const sixBarFixture = (
   inputs = sixBarFixtureInputs(),
   close = '16:00',
   encode = (value: string) => Buffer.from(value),
+  market: typeof equityMarketProfile | typeof currentEquityMarketProfile = equityMarketProfile,
 ) => {
+  const universe = {
+    ...sixBarUniverse,
+    universeId: market.universeId,
+    universeSymbolHash: market.universeSymbolHash,
+    symbols: market.universe,
+  }
   const offsets = new Map<string, number>()
   let projection = emptyStreamingProjection('synthetic-six-bar-receipts')
   const events: Extract<HistoricalMarketArrival, { schemaVersion: 'bayn.original-market-arrival.v2' }>[] = []
   for (const [index, input] of inputs.toSorted((a, b) => a.availableAtMs - b.availableAtMs).entries()) {
     const topic =
       input.channel === 'quotes'
-        ? sixBarUniverse.topics.quotes
+        ? universe.topics.quotes
         : input.channel === 'trades'
-          ? sixBarUniverse.topics.trades
-          : sixBarUniverse.topics.bars
+          ? universe.topics.trades
+          : universe.topics.bars
     const offset = offsets.get(topic) ?? 0
     offsets.set(topic, offset + 1)
     const at = input.eventAtText ?? iso(input.eventAtMs)
@@ -115,7 +122,7 @@ export const sixBarFixture = (
     })
     const bytes = encode(value)
     const record = { topic, partition: 0, offset: String(offset), value: bytes.toString('utf8') }
-    const next = incorporateSimulatedMarketRecord(projection, record, sixBarUniverse, input.availableAtMs)
+    const next = incorporateSimulatedMarketRecord(projection, record, universe, input.availableAtMs)
     events.push({
       schemaVersion: 'bayn.original-market-arrival.v2',
       availableAtMs: input.availableAtMs,
@@ -140,7 +147,7 @@ export const sixBarFixture = (
   const source = {
     runId: Result.getOrThrow(canonicalHashV1Result({ fixture: 'six-bar-research', eventsHash })),
     sourceManifestHash: eventsHash,
-    marketSources: [sixBarUniverse],
+    marketSources: [universe],
     deliveryModel: {
       schemaVersion: 'bayn.original-capture-arrivals.v1',
       description: 'Synthetic original-format receipts, not a captured market session.',
@@ -167,19 +174,19 @@ export const sixBarFixture = (
     rangeStartAt: iso(sixBarOpenMs),
     rangeEndAt: iso(sixBarEndMs),
     observedAt: iso(sixBarObservedMs),
-    universeId: equityMarketProfile.universeId,
-    universeSymbolHash: equityMarketProfile.universeSymbolHash,
-    universe: equityMarketProfile.universe,
+    universeId: market.universeId,
+    universeSymbolHash: market.universeSymbolHash,
+    universe: market.universe,
     symbols: ['AAPL', 'SPY'],
     candidateSymbols: ['AAPL'],
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
-    feed: equityMarketProfile.feed,
-    delayClass: equityMarketProfile.delayClass,
-    sourceTopics: equityMarketProfile.sourceTopics,
+    feed: market.feed,
+    delayClass: market.delayClass,
+    sourceTopics: market.sourceTopics,
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: 2_000,
   }
-  return { source, query, events, universe: sixBarUniverse }
+  return { source, query, events, universe: universe }
 }
 
 export const replaySixBarFixture = (fixture: ReturnType<typeof sixBarFixture>, observedAtMs = sixBarObservedMs) => {

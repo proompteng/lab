@@ -223,7 +223,7 @@ func (supervisor *codexSupervisor) run() {
 
 func (supervisor *codexSupervisor) runProcess() error {
 	arguments := []string{
-		"--model", "gpt-6.1-sol",
+		"--model", "gpt-6.2-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
 		"-c", "features.apps=false",

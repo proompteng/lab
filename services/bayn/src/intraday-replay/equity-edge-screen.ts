@@ -1,9 +1,12 @@
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { Data, Result } from 'effect'
 
-import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
+import { calculateSessionFees, equityTafRate, type FeeInput } from '../strategy/execution-model/fees'
 import { intradayExecutionModel } from '../strategy/intraday-market'
 import { canonicalHashV1Result } from '../hash'
+import { AccountingInventorySide, prepareAccounting } from '../accounting/domain'
+import type { AccountingTransaction } from '../accounting/schema'
+import { OrderSide } from '../execution/contracts'
 
 export enum EquityScreenSignal {
   Momentum = 'RELATIVE_MOMENTUM',
@@ -11,6 +14,11 @@ export enum EquityScreenSignal {
   Pullback = 'VWAP_PULLBACK',
   Reversal = 'RESIDUAL_REVERSAL',
   EarlyOpeningRange = 'EARLY_OPENING_RANGE_BREAKOUT',
+}
+
+export enum EquityScreenDirection {
+  Long = 'LONG',
+  Short = 'SHORT',
 }
 
 export interface EquityScreenBar {
@@ -31,6 +39,7 @@ export interface EquityScreenDay {
 }
 
 export interface EquityScreenPolicy {
+  readonly direction: EquityScreenDirection
   readonly signal: EquityScreenSignal
   readonly holdingMinutes: 15 | 60
   readonly adverseBpsPerSide: 10 | 20
@@ -38,7 +47,7 @@ export interface EquityScreenPolicy {
 }
 
 export const equityScreenDefinition = Object.freeze({
-  schemaVersion: 'bayn.equity-edge-screen-definition.v6',
+  schemaVersion: 'bayn.equity-edge-screen-definition.v8',
   signalMinutes: 30,
   decisionIntervalMinutes: 5,
   lastEntryMinute: 210,
@@ -74,16 +83,48 @@ export const equityScreenPolicies: readonly EquityScreenPolicy[] = [
   EquityScreenSignal.Momentum,
   EquityScreenSignal.OpeningRange,
   EquityScreenSignal.Pullback,
-].flatMap((signal) => ([15, 60] as const).map((holdingMinutes) => ({ signal, holdingMinutes, adverseBpsPerSide: 10 })))
+].flatMap((signal) =>
+  ([15, 60] as const).map((holdingMinutes) => ({
+    direction: EquityScreenDirection.Long,
+    signal,
+    holdingMinutes,
+    adverseBpsPerSide: 10,
+  })),
+)
+
+export const equityShortScreenPolicies: readonly EquityScreenPolicy[] = [
+  EquityScreenSignal.Momentum,
+  EquityScreenSignal.OpeningRange,
+  EquityScreenSignal.Pullback,
+].map((signal) => ({ direction: EquityScreenDirection.Short, signal, holdingMinutes: 15, adverseBpsPerSide: 10 }))
 
 export const equityRiskScreenPolicies: readonly EquityScreenPolicy[] = [
-  { signal: EquityScreenSignal.Reversal, holdingMinutes: 15, adverseBpsPerSide: 10, volatilityRisk: true },
-  { signal: EquityScreenSignal.Reversal, holdingMinutes: 60, adverseBpsPerSide: 10, volatilityRisk: true },
-  { signal: EquityScreenSignal.OpeningRange, holdingMinutes: 60, adverseBpsPerSide: 10, volatilityRisk: true },
+  {
+    direction: EquityScreenDirection.Long,
+    signal: EquityScreenSignal.Reversal,
+    holdingMinutes: 15,
+    adverseBpsPerSide: 10,
+    volatilityRisk: true,
+  },
+  {
+    direction: EquityScreenDirection.Long,
+    signal: EquityScreenSignal.Reversal,
+    holdingMinutes: 60,
+    adverseBpsPerSide: 10,
+    volatilityRisk: true,
+  },
+  {
+    direction: EquityScreenDirection.Long,
+    signal: EquityScreenSignal.OpeningRange,
+    holdingMinutes: 60,
+    adverseBpsPerSide: 10,
+    volatilityRisk: true,
+  },
 ]
 
 export const equityEarlyScreenPolicies: readonly EquityScreenPolicy[] = ([15, 60] as const).flatMap((holdingMinutes) =>
   [false, true].map((volatilityRisk) => ({
+    direction: EquityScreenDirection.Long,
     signal: EquityScreenSignal.EarlyOpeningRange,
     holdingMinutes,
     adverseBpsPerSide: 10,
@@ -124,6 +165,7 @@ const priceMicros = (price: number, buy: boolean, bps: number) =>
   BigInt(buy ? Math.ceil(price * (1 + bps / 10_000) * 100) : Math.floor(price * (1 - bps / 10_000) * 100)) * 10_000n
 
 export interface EquityScreenTrade {
+  readonly direction: EquityScreenDirection
   readonly symbol: string
   readonly signalAt: number
   readonly entryAt: number
@@ -135,7 +177,59 @@ export interface EquityScreenTrade {
   readonly feesMicros: string
   readonly executionNetPnlMicros: string
   readonly exitReason: 'STOP' | 'HORIZON' | 'CLOSE' | 'DAILY_LOSS'
+  readonly shortAccounting?: {
+    readonly scope: 'SYNTHETIC_UNPOSTED'
+    readonly entry: AccountingTransaction
+    readonly cover: AccountingTransaction
+  }
 }
+
+const shortFillAccounting = (input: {
+  readonly policy: EquityScreenPolicy
+  readonly symbol: string
+  readonly side: OrderSide
+  readonly at: number
+  readonly shares: bigint
+  readonly price: bigint
+  readonly fee: bigint
+  readonly priorCost: bigint
+}) =>
+  Result.gen(function* () {
+    const policyHash = yield* canonicalHashV1Result(input.policy)
+    const eventId = yield* canonicalHashV1Result({
+      policyHash,
+      symbol: input.symbol,
+      side: input.side,
+      at: input.at,
+      shares: input.shares.toString(),
+      price: input.price.toString(),
+      fee: input.fee.toString(),
+    })
+    return yield* prepareAccounting(
+      eventId,
+      {
+        schemaVersion: 'bayn.fill.v2',
+        accountId: `synthetic-equity-short-screen-${policyHash}`,
+        fillId: eventId,
+        brokerOrderId: eventId,
+        clientOrderId: eventId,
+        symbol: input.symbol,
+        side: input.side,
+        quantityAtoms: (input.shares * quantityScale).toString(),
+        priceAtoms: (input.price * 1_000n).toString(),
+        feeMicros: input.fee.toString(),
+        occurredAt: new Date(input.at).toISOString(),
+      },
+      input.side === OrderSide.Sell
+        ? { quantityAtoms: '0', costMicros: '0' }
+        : {
+            quantityAtoms: (-input.shares * quantityScale).toString(),
+            costMicros: (-input.priorCost).toString(),
+          },
+      7001,
+      AccountingInventorySide.Short,
+    )
+  })
 
 type IndexedBars = ReadonlyMap<string, ReadonlyMap<number, EquityScreenBar>>
 
@@ -207,11 +301,13 @@ export const equityScreenCandidates = (
   dayIndex: number,
   at: number,
   signal: EquityScreenSignal,
+  direction: EquityScreenDirection,
 ): {
   readonly candidates: readonly { symbol: string; score: number }[]
   readonly exclusions: readonly EquityScreenExclusion[]
 } => {
   const exclusions: EquityScreenExclusion[] = []
+  const sign = direction === EquityScreenDirection.Short ? -1 : 1
   const day = days[dayIndex]
   if (day === undefined) return { candidates: [], exclusions }
   const early = signal === EquityScreenSignal.EarlyOpeningRange
@@ -240,15 +336,21 @@ export const equityScreenCandidates = (
     }
     const ownReturn = last.close / first.open - 1
     const excess = ownReturn - benchmarkReturn
-    let score = excess
+    let score = sign * excess
     if (signal === EquityScreenSignal.Reversal) {
       const volume = bars.reduce((sum, bar) => sum + bar.volume, 0)
       const fiveAgo = bars.at(-6)
-      if (volume <= 0 || fiveAgo === undefined || ownReturn >= 0 || benchmarkReturn < 0 || last.close <= fiveAgo.close)
+      if (
+        volume <= 0 ||
+        fiveAgo === undefined ||
+        sign * ownReturn >= 0 ||
+        sign * benchmarkReturn < 0 ||
+        sign * (last.close - fiveAgo.close) <= 0
+      )
         continue
       const vwap = bars.reduce((sum, bar) => sum + bar.vwap * bar.volume, 0) / volume
       const deviation = volatilityBps(bars) * Math.sqrt(30)
-      const gap = (vwap / last.close - 1) * 10_000
+      const gap = sign * (vwap / last.close - 1) * 10_000
       if (deviation <= 0 || gap <= 1.5 * deviation) continue
       score = gap / deviation
     }
@@ -288,14 +390,19 @@ export const equityScreenCandidates = (
         })
         continue
       }
-      if (early && (benchmarkReturn < 0 || (opening.at(-1)?.close ?? 0) <= (opening[0]?.open ?? 0))) continue
+      if (early && (sign * benchmarkReturn < 0 || sign * ((opening.at(-1)?.close ?? 0) - (opening[0]?.open ?? 0)) <= 0))
+        continue
       const average =
         priorVolumes.reduce((total, rows) => total + (rows?.reduce((sum, bar) => sum + bar.volume, 0) ?? 0), 0) / 14
       const volume = opening.reduce((sum, bar) => sum + bar.volume, 0)
-      if (average <= 0 || volume <= average || last.close <= Math.max(...opening.map((bar) => bar.high))) continue
+      const boundary =
+        direction === EquityScreenDirection.Short
+          ? Math.min(...opening.map((bar) => bar.low))
+          : Math.max(...opening.map((bar) => bar.high))
+      if (average <= 0 || volume <= average || sign * (last.close - boundary) <= 0) continue
       score = volume / average
     }
-    if (!early && signal !== EquityScreenSignal.Reversal && (ownReturn <= 0 || excess <= 0)) continue
+    if (!early && signal !== EquityScreenSignal.Reversal && (sign * ownReturn <= 0 || sign * excess <= 0)) continue
     if (signal === EquityScreenSignal.Pullback) {
       const prior = bars.slice(0, 25)
       const recent = bars.slice(25)
@@ -305,7 +412,12 @@ export const equityScreenCandidates = (
       if (priorVolume <= 0 || totalVolume <= 0 || priorLast === undefined) continue
       const priorVwap = prior.reduce((sum, bar) => sum + bar.vwap * bar.volume, 0) / priorVolume
       const currentVwap = bars.reduce((sum, bar) => sum + bar.vwap * bar.volume, 0) / totalVolume
-      if (priorLast.close > priorVwap || last.close <= currentVwap || recent.some((bar) => bar.volume <= 0)) continue
+      if (
+        sign * (priorLast.close - priorVwap) > 0 ||
+        sign * (last.close - currentVwap) <= 0 ||
+        recent.some((bar) => bar.volume <= 0)
+      )
+        continue
     }
     result.push({ symbol, score })
   }
@@ -320,6 +432,7 @@ export const runEquityEdgeScreen = (
   from: string,
   through: string,
   policy: EquityScreenPolicy,
+  executionFeeDate: string,
 ) =>
   Result.gen(function* () {
     if (
@@ -329,6 +442,7 @@ export const runEquityEdgeScreen = (
       symbols.some((symbol) => symbol.includes('/'))
     )
       return yield* Result.fail(new EquityScreenError({ message: 'Invalid screen scope' }))
+    yield* equityTafRate(intradayExecutionModel, executionFeeDate)
     for (let i = 0; i < days.length; i++) {
       const day = days[i]
       const previous = days[i - 1]
@@ -344,6 +458,7 @@ export const runEquityEdgeScreen = (
         return yield* Result.fail(new EquityScreenError({ message: 'Invalid ordered session calendar' }))
     }
     let cash = initialCapital
+    const short = policy.direction === EquityScreenDirection.Short
     let peak = cash
     let drawdown = 0n
     let unknownMarkedMinutes = 0
@@ -384,7 +499,7 @@ export const runEquityEdgeScreen = (
           intradayExecutionModel,
           micros,
           cryptoMaximumTakerFeeBps,
-          day.date,
+          executionFeeDate,
         ).pipe(Result.map((value) => value.cashMicros - sessionFees))
       let position: {
         symbol: string
@@ -395,6 +510,7 @@ export const runEquityEdgeScreen = (
         enteredAt: number
         signalAt: number
         stopBps: bigint
+        shortEntry?: AccountingTransaction
       } | null = null
       const closeAt = day.closeAt - 5 * minuteMs
       let notBefore = day.openAt + (early ? 5 : 30) * minuteMs
@@ -407,7 +523,11 @@ export const runEquityEdgeScreen = (
             incomplete = { date: day.date, symbol: position.symbol, reason: 'MISSING_HELD_POSITION_BAR' }
             break
           }
-          const marked = last === undefined ? null : cash + position.shares * priceMicros(last.close, false, 0)
+          const markedPrice = priceMicros(last.close, short, 0)
+          // Short sale proceeds are restricted against the outstanding liability, never reusable entry capital.
+          const marked = short
+            ? cash + position.cost - position.shares * markedPrice
+            : cash + position.shares * markedPrice
           if (marked !== null) {
             peak = marked > peak ? marked : peak
             drawdown = peak - marked > drawdown ? peak - marked : drawdown
@@ -416,7 +536,9 @@ export const runEquityEdgeScreen = (
             at >= closeAt
               ? 'CLOSE'
               : last !== undefined &&
-                  priceMicros(last.low, false, 0) * 10_000n <= position.price * (10_000n - position.stopBps)
+                  (short
+                    ? priceMicros(last.high, true, 0) * 10_000n >= position.price * (10_000n + position.stopBps)
+                    : priceMicros(last.low, false, 0) * 10_000n <= position.price * (10_000n - position.stopBps))
                 ? 'STOP'
                 : marked !== null && dayStart - marked >= 1_000n * micros
                   ? 'DAILY_LOSS'
@@ -435,13 +557,26 @@ export const runEquityEdgeScreen = (
             incomplete = { date: day.date, symbol: position.symbol, reason: 'MISSING_EXIT_BAR' }
             break
           }
-          const price = priceMicros(exit.open, false, policy.adverseBpsPerSide)
-          const exitFees = yield* fee(position.symbol, false, position.shares, price)
-          sessionFills.push(feeInput(position.symbol, false, position.shares, price))
+          const price = priceMicros(exit.open, short, policy.adverseBpsPerSide)
+          const exitFees = yield* fee(position.symbol, short, position.shares, price)
+          sessionFills.push(feeInput(position.symbol, short, position.shares, price))
           sessionFees += exitFees
-          const gross = position.shares * (price - position.price)
+          const gross = position.shares * (short ? position.price - price : price - position.price)
           const fees = position.entryFees + exitFees
+          const cover = short
+            ? yield* shortFillAccounting({
+                policy,
+                symbol: position.symbol,
+                side: OrderSide.Buy,
+                at: exit.at,
+                shares: position.shares,
+                price,
+                fee: exitFees,
+                priorCost: position.cost,
+              })
+            : undefined
           trades.push({
+            direction: policy.direction,
             symbol: position.symbol,
             shares: Number(position.shares),
             signalAt: position.signalAt,
@@ -453,8 +588,17 @@ export const runEquityEdgeScreen = (
             feesMicros: fees.toString(),
             executionNetPnlMicros: (gross - fees).toString(),
             exitReason: reason,
+            ...(position.shortEntry === undefined || cover === undefined
+              ? {}
+              : {
+                  shortAccounting: {
+                    scope: 'SYNTHETIC_UNPOSTED' as const,
+                    entry: position.shortEntry,
+                    cover: cover.transaction,
+                  },
+                }),
           })
-          cash += position.shares * price - exitFees
+          cash += (short ? position.cost - position.shares * price : position.shares * price) - exitFees
           turnover += position.shares * price
           position = null
           notBefore = exit.at + minuteMs
@@ -477,7 +621,15 @@ export const runEquityEdgeScreen = (
           incomplete = { date: day.date, symbol: 'SPY', reason: 'MISSING_BENCHMARK_BAR' }
           break
         }
-        const { candidates, exclusions } = equityScreenCandidates(index, symbols, days, dayIndex, at, policy.signal)
+        const { candidates, exclusions } = equityScreenCandidates(
+          index,
+          symbols,
+          days,
+          dayIndex,
+          at,
+          policy.signal,
+          policy.direction,
+        )
         candidateExclusions.push(...exclusions)
         const candidate = candidates[0]
         if (candidate === undefined) {
@@ -504,7 +656,7 @@ export const runEquityEdgeScreen = (
         let upper = allocation / sizingPrice
         while (shares < upper) {
           const proposed = (shares + upper + 1n) / 2n
-          const proposedFees = yield* fee(candidate.symbol, true, proposed, sizingPrice)
+          const proposedFees = yield* fee(candidate.symbol, !short, proposed, sizingPrice)
           if (proposed * sizingPrice + proposedFees <= allocation) shares = proposed
           else upper = proposed - 1n
         }
@@ -516,15 +668,27 @@ export const runEquityEdgeScreen = (
           break
         }
         if (entry.at >= closeAt) continue
-        const price = priceMicros(entry.open, true, policy.adverseBpsPerSide)
-        const entryFees = yield* fee(candidate.symbol, true, shares, price)
+        const price = priceMicros(entry.open, !short, policy.adverseBpsPerSide)
+        const entryFees = yield* fee(candidate.symbol, !short, shares, price)
         if (shares * price + entryFees > allocation) {
           entryBudgetRejections++
           continue
         }
         if (shares <= 0n || turnover + shares * price * 2n > 1_000_000n * micros) continue
-        sessionFills.push(feeInput(candidate.symbol, true, shares, price))
+        sessionFills.push(feeInput(candidate.symbol, !short, shares, price))
         sessionFees += entryFees
+        const shortEntry = short
+          ? yield* shortFillAccounting({
+              policy,
+              symbol: candidate.symbol,
+              side: OrderSide.Sell,
+              at: entry.at,
+              shares,
+              price,
+              fee: entryFees,
+              priorCost: 0n,
+            })
+          : undefined
         position = {
           symbol: candidate.symbol,
           shares,
@@ -534,8 +698,9 @@ export const runEquityEdgeScreen = (
           enteredAt: entry.at,
           signalAt: at,
           stopBps,
+          ...(shortEntry === undefined ? {} : { shortEntry: shortEntry.transaction }),
         }
-        cash -= position.cost + entryFees
+        cash -= (short ? 0n : position.cost) + entryFees
         turnover += position.cost
       }
       if (position !== null && incomplete === null)
@@ -557,6 +722,7 @@ export const runEquityEdgeScreen = (
       riskDefinition: policy.volatilityRisk === true ? equityRiskScreenDefinition : null,
       earlyDefinition: early ? equityEarlyScreenDefinition : null,
       policy,
+      executionFeeDate,
       status: incomplete === null && expected > 0 ? 'COMPLETED' : 'INCOMPLETE',
       incomplete,
       expectedSessions: expected,

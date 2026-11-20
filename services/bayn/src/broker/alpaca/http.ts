@@ -1,6 +1,6 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Context, Effect, Layer, Redacted, Result, Scope } from 'effect'
+import { Cause, Context, Effect, Layer, Redacted, Result, type Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
@@ -88,7 +88,9 @@ import {
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 // Calendar discovery must leave time for the rest of the bounded recovery pass.
 const marketCalendarTimeoutMs = 5_000
-
+// Retry a stuck read before it consumes the observation's whole freshness lead.
+// The read below still bounds headers, retries, body decoding and validation together.
+const readAttemptTimeoutMs = 5_000
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
   '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
 ) {}
@@ -164,16 +166,19 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const secret = Redacted.value(connection.secret)
     const sensitiveValues = [key, secret]
     const baseClient = yield* HttpClient.HttpClient
-    const client = baseClient.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
     const observeDiagnostic = yield* makeReadDiagnostics(connection.identity)
 
-    const readJson = <A>(
+    const readResponse = <A, E extends Schema.SchemaError | BrokerReadContractFailure>(
       operation: BrokerReadOperation,
       url: URL,
-      decoder: Decoder<A>,
+      decoder: (input: unknown) => Result.Result<A, E>,
       timeoutMs = connection.operationTimeoutMs,
-    ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> =>
-      Effect.gen(function* () {
+    ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> => {
+      // A shorter whole-read deadline owns cancellation; an equal attempt timer can race it into another retry.
+      const bounded =
+        timeoutMs > readAttemptTimeoutMs ? baseClient.pipe(HttpClient.timeout(readAttemptTimeoutMs)) : baseClient
+      const client = bounded.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+      return Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
           acceptJson: true,
           headers: {
@@ -258,7 +263,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
         const value = yield* Effect.fromResult(decoder(raw)).pipe(
           Effect.tapError((cause) => {
-            if (operation !== 'positions') return Effect.void
+            if (operation !== 'positions' || cause instanceof BrokerReadContractFailure) return Effect.void
             const diagnostic = positionDecodeDiagnostic(cause, raw)
             const annotations = {
               'broker.decode_field': diagnostic.field,
@@ -308,8 +313,9 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
+    }
 
-    const account = readJson('account', accountUrl(connection), decodeAccount).pipe(
+    const account = readResponse('account', accountUrl(connection), decodeAccount).pipe(
       Effect.flatMap((result) => {
         const normalized = normalizeAccountResult(
           result.value,
@@ -337,7 +343,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       }),
     )
 
-    const accountConfiguration = readJson(
+    const accountConfiguration = readResponse(
       'account-configuration',
       accountConfigurationUrl(connection),
       decodeAccountConfiguration,
@@ -351,7 +357,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       ),
     )
 
-    const positions = readJson('positions', positionsUrl(connection), decodePositions).pipe(
+    const positions = readResponse('positions', positionsUrl(connection), decodePositions).pipe(
       Effect.flatMap((result) =>
         normalizeRead(
           'positions',
@@ -364,7 +370,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const assetBySymbol = (symbol: string) =>
       decodeInput('asset-by-symbol', decodeAssetSymbol, symbol, 'invalid Alpaca asset symbol').pipe(
         Effect.flatMap((decoded) =>
-          readJson('asset-by-symbol', assetBySymbolUrl(connection, decoded), decodeAsset).pipe(
+          readResponse('asset-by-symbol', assetBySymbolUrl(connection, decoded), decodeAsset).pipe(
             Effect.map((result) => ({ decoded, result })),
           ),
         ),
@@ -380,7 +386,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson(
+          readResponse(
             'market-calendar',
             marketCalendarUrl(connection, decoded),
             decodeMarketCalendar,
@@ -394,7 +400,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const orders = (query: OrdersQuery = {}) =>
       decodeInput('orders', decodeOrdersQuery, query, 'invalid Alpaca orders query').pipe(
-        Effect.flatMap((decoded) => readJson('orders', ordersUrl(connection, decoded), decodeOrders)),
+        Effect.flatMap((decoded) => readResponse('orders', ordersUrl(connection, decoded), decodeOrders)),
         Effect.flatMap((result) =>
           normalizeRead(
             'orders',
@@ -406,7 +412,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const orderById = (orderId: string) =>
       decodeInput('order-by-id', decodeOrderId, orderId, 'invalid Alpaca order ID').pipe(
-        Effect.flatMap((decoded) => readJson('order-by-id', orderByIdUrl(connection, decoded), decodeOrder)),
+        Effect.flatMap((decoded) => readResponse('order-by-id', orderByIdUrl(connection, decoded), decodeOrder)),
         Effect.flatMap((result) =>
           normalizeRead(
             'order-by-id',
@@ -424,7 +430,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         'invalid Alpaca client order ID',
       ).pipe(
         Effect.flatMap((decoded) =>
-          readJson('order-by-client-id', orderByClientIdUrl(connection, decoded), decodeOrder),
+          readResponse('order-by-client-id', orderByClientIdUrl(connection, decoded), decodeOrder),
         ),
         Effect.flatMap((result) =>
           normalizeRead(
@@ -439,7 +445,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       decodeInput('fill-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fill activities query').pipe(
         Effect.flatMap((decoded) => {
           const request = fillActivitiesRequest(connection, decoded)
-          return readJson('fill-activities', request.url, decodeFillActivities).pipe(
+          return readResponse('fill-activities', request.url, decodeFillActivities).pipe(
             Effect.map((result) => ({ result, pageSize: request.pageSize })),
           )
         }),
@@ -473,7 +479,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       decodeInput('fee-activities', decodeFeeActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
         Effect.flatMap((decoded) => {
           const request = feeActivitiesRequest(connection, decoded)
-          return readJson('fee-activities', request.url, decodeFeeActivities).pipe(
+          return readResponse('fee-activities', request.url, decodeFeeActivities).pipe(
             Effect.map((result) => ({ result, pageSize: request.pageSize })),
           )
         }),

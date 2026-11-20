@@ -15,6 +15,8 @@ import {
 } from '../broker/alpaca/observed-snapshot'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
+import { protectionReleaseReadCount, type ProtectionReadAllowance } from '../broker/alpaca/poll-budget'
+import type { NativeProtectionCancelCommand } from '../execution/intents/domain'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1Result } from '../hash'
 import { ValkeyCache } from '../valkey-cache'
@@ -27,6 +29,14 @@ const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes
 })
 
 const StateMaterialization = Schema.Struct({ snapshotHash: Sha256Schema, state: ObservedBrokerStateSchema })
+
+const maximumRetainedSnapshotBytes = 8 * 1024 * 1024
+
+const freezeMaterialization = (value: unknown): void => {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeMaterialization(child)
+  Object.freeze(value)
+}
 
 export enum BrokerObservationClaimStatus {
   Reserved = 'RESERVED',
@@ -106,25 +116,42 @@ export const makeBrokerObservationStore = (
       canonicalHashV1Result({ accountId, sourceRevision, hash }),
       (keyHash) => `bayn:broker:${kind}:${keyHash}`,
     )
-  const readPayload = <A>(kind: 'snapshot' | 'state', hash: string, schema: Schema.Codec<A, unknown>) =>
-    Effect.gen(function* () {
-      const key = yield* Effect.fromResult(payloadKey(kind, hash))
-      const encoded = yield* cache.get(key)
-      if (Option.isNone(encoded))
-        return yield* observationUnavailable('Required Valkey broker materialization is absent')
-      const value = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
-      if ((yield* Effect.fromResult(canonicalHashV1Result(value))) !== hash)
-        return yield* observationUnavailable('Valkey broker materialization content hash changed')
-      yield* Metric.update(
-        materializationBytes.pipe(Metric.withAttributes({ namespace: 'bayn', kind })),
-        Buffer.byteLength(encoded.value),
-      )
-      yield* Effect.annotateCurrentSpan({
-        'bayn.broker.payload_kind': kind,
-        'bayn.broker.payload_bytes': Buffer.byteLength(encoded.value),
-      })
-      return value
-    }).pipe(withObservedStage('bayn.broker.observation.materialization', { dependency: 'valkey', operation: kind }))
+  const makePayloadReader = <A>(kind: 'snapshot' | 'state', schema: Schema.Codec<A, unknown>) => {
+    let retained: { readonly hash: string; readonly encoded: string; readonly value: A } | undefined
+    return (hash: string) =>
+      Effect.gen(function* () {
+        const key = yield* Effect.fromResult(payloadKey(kind, hash))
+        const encoded = yield* cache.get(key)
+        if (Option.isNone(encoded))
+          return yield* observationUnavailable('Required Valkey broker materialization is absent')
+        const bytes = Buffer.byteLength(encoded.value)
+        const previous = retained
+        const reused = previous !== undefined && previous.hash === hash && previous.encoded === encoded.value
+        const value = reused
+          ? structuredClone(previous.value)
+          : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
+        if (!reused) {
+          if ((yield* Effect.fromResult(canonicalHashV1Result(value))) !== hash)
+            return yield* observationUnavailable('Valkey broker materialization content hash changed')
+          // Retain only one private, verified snapshot. Every read still fetches current bytes; neither
+          // PostgreSQL admission nor account/chronology/age checks can be satisfied by this pure reuse.
+          if (kind === 'snapshot' && bytes <= maximumRetainedSnapshotBytes) {
+            const owned = structuredClone(value)
+            freezeMaterialization(owned)
+            retained = { hash, encoded: encoded.value, value: owned }
+          } else retained = undefined
+        }
+        yield* Metric.update(materializationBytes.pipe(Metric.withAttributes({ namespace: 'bayn', kind })), bytes)
+        yield* Effect.annotateCurrentSpan({
+          'bayn.broker.payload_kind': kind,
+          'bayn.broker.payload_bytes': bytes,
+          'bayn.broker.payload_decode_reused': reused,
+        })
+        return value
+      }).pipe(withObservedStage('bayn.broker.observation.materialization', { dependency: 'valkey', operation: kind }))
+  }
+  const readSnapshotPayload = makePayloadReader('snapshot', ObservedBrokerSnapshotSchema)
+  const readStatePayload = makePayloadReader('state', StateMaterialization)
 
   const activate = (nextPollNotBeforeMs: number) =>
     run(
@@ -134,6 +161,7 @@ export const makeBrokerObservationStore = (
     ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
       generation = broker_observations.generation + 1, available = false,
       poll_started_at = NULL, notification_fence_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
+      protection_read_expires_at = NULL, protection_read_cost_ms = NULL, protection_read_claim_id = NULL,
       next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
           to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
   `.pipe(Effect.asVoid),
@@ -207,6 +235,7 @@ export const makeBrokerObservationStore = (
       RETURNING account_id, generation
     ), reserved AS (
     UPDATE broker_observations SET generation = claimed.generation, quota_generation = claimed.generation,
+      protection_read_expires_at = NULL, protection_read_cost_ms = NULL, protection_read_claim_id = NULL,
       next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
         to_timestamp(${interruptedNotBeforeMs}::double precision / 1000.0))
     FROM claimed WHERE broker_observations.account_id = claimed.account_id
@@ -241,7 +270,12 @@ export const makeBrokerObservationStore = (
         ),
       ),
     )
-  const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot, nextPollNotBeforeMs: number) =>
+  const publish = (
+    ticket: BrokerObservationTicket,
+    value: ObservedBrokerSnapshot,
+    nextPollNotBeforeMs: number,
+    protectionAllowance?: ProtectionReadAllowance,
+  ) =>
     run(
       Effect.gen(function* () {
         const decoded = decodeObservedBrokerSnapshot(value)
@@ -277,6 +311,8 @@ export const makeBrokerObservationStore = (
         snapshot_hash = ${snapshotHash}, state_hash = ${stateHash},
         notification_fence_at = (SELECT claimed_at FROM broker_observation_captures
           WHERE account_id = ${accountId} AND generation = ${ticket.generation}),
+        protection_read_expires_at = to_timestamp(${protectionAllowance?.expiresAtMs ?? null}::double precision / 1000.0),
+        protection_read_cost_ms = ${protectionAllowance?.requestCostMs ?? null}::integer,
         next_poll_not_before = to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0)
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND generation = ${ticket.generation}
         AND (poll_started_at IS NULL OR poll_started_at <= ${ticket.startedAt}::timestamptz)
@@ -318,6 +354,50 @@ export const makeBrokerObservationStore = (
     UPDATE broker_observation_captures SET settled = true
     WHERE account_id = ${accountId} AND generation = ${ticket.generation}
   `.pipe(Effect.asVoid),
+    )
+  const reserveProtectionRead = (
+    command: NativeProtectionCancelCommand,
+    claimId: string,
+    maximumReadMs: number,
+  ): Effect.Effect<number | undefined, BrokerReadError> =>
+    run(
+      sql`
+        WITH eligible AS MATERIALIZED (
+          SELECT account_id,
+            GREATEST(next_poll_not_before, clock_timestamp())
+              + protection_read_cost_ms * ${protectionReleaseReadCount}::integer * interval '1 millisecond' AS paid_at
+          FROM broker_observations
+          WHERE account_id = ${accountId} AND account_id = ${command.accountId} AND source_revision = ${sourceRevision}
+            AND protection_read_expires_at > clock_timestamp() + ${maximumReadMs}::integer * interval '1 millisecond'
+          FOR UPDATE
+        ), claimed AS (
+          INSERT INTO protection_release_read_claims (claim_id, intent_id, broker_order_id, requested_at)
+          SELECT ${claimId}, ${command.intentId}, ${command.brokerOrderId}, ${command.requestedAt}::timestamptz
+          FROM eligible
+          ON CONFLICT DO NOTHING
+          RETURNING claim_id
+        )
+        UPDATE broker_observations AS owner SET
+          protection_read_expires_at = NULL, protection_read_cost_ms = NULL, protection_read_claim_id = claimed.claim_id,
+          next_poll_not_before = eligible.paid_at
+        FROM eligible, claimed WHERE owner.account_id = eligible.account_id
+        RETURNING ceil(EXTRACT(EPOCH FROM eligible.paid_at) * 1000)::double precision AS "paidAtMs"
+      `.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ paidAtMs: quotaDeadline })), strictParseOptions),
+        ),
+        Effect.map(([row]) => row?.paidAtMs),
+      ),
+    )
+  const settleProtectionRead = (claimId: string, nextPollNotBeforeMs: number) =>
+    run(
+      sql`UPDATE broker_observations
+        SET protection_read_claim_id = NULL,
+          next_poll_not_before = GREATEST(next_poll_not_before,
+            to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
+        WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND protection_read_claim_id = ${claimId}`.pipe(
+        Effect.asVoid,
+      ),
     )
   const readProjection = (intentId: string | null) =>
     run(
@@ -445,7 +525,7 @@ export const makeBrokerObservationStore = (
   const read = run(
     Effect.gen(function* () {
       const row = yield* readProjection(null)
-      const value = yield* readPayload('snapshot', row.snapshot_hash, ObservedBrokerSnapshotSchema)
+      const value = yield* readSnapshotPayload(row.snapshot_hash)
       const validated = yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
       yield* requireSettled(row.pending)
       return validated
@@ -455,7 +535,7 @@ export const makeBrokerObservationStore = (
     run(
       Effect.gen(function* () {
         const row = yield* readProjection(intentId)
-        const value = yield* readPayload('state', row.state_hash, StateMaterialization)
+        const value = yield* readStatePayload(row.state_hash)
         if (value.snapshotHash !== row.snapshot_hash)
           return yield* observationUnavailable('Broker state does not belong to the fenced snapshot')
         const validated = yield* validateObservedBrokerState(
@@ -473,6 +553,8 @@ export const makeBrokerObservationStore = (
     begin,
     publish,
     failed,
+    reserveProtectionRead,
+    settleProtectionRead,
     interrupt: recoverUnfinished,
     invalidate,
     recordNotification,
