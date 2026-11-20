@@ -9,6 +9,7 @@ import {
   validateObservedBrokerState,
   decodeObservedBrokerSnapshot,
   observationUnavailable,
+  requireSettledCashFees,
   validateObservedBrokerSnapshot,
   type BrokerObservationTicket,
   type ObservedBrokerSnapshot,
@@ -528,6 +529,7 @@ export const makeBrokerObservationStore = (
       const value = yield* readSnapshotPayload(row.snapshot_hash)
       const validated = yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
       yield* requireSettled(row.pending)
+      yield* requireSettledCashFees(validated)
       return validated
     }),
   )
@@ -545,6 +547,7 @@ export const makeBrokerObservationStore = (
           maximumAgeMs,
         )
         yield* requireSettled(row.pending)
+        if (intentId !== null) yield* requireSettledCashFees(validated)
         return validated
       }),
     )
