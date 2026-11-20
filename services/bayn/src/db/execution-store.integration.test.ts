@@ -2647,6 +2647,49 @@ describePostgres('PostgreSQL execution persistence', () => {
     }
   })
 
+  test('rejects reconciliations carrying a different retained account or position body before posting', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ReconciliationStore
+        const events = yield* BrokerEventStore
+        const sql = yield* PgClient.PgClient
+        const flat = yield* ingestReconciliationCut(false, false)
+        const unrelated = hash('unrelated same-account inventory')
+        const different = yield* events.ingestPositions(
+          positionSnapshot(unrelated, [positionEvent(unrelated, 'NVDA', '1000000000', '100000000')]),
+        )
+        const inventoryError = yield* Effect.flip(
+          reconcileSnapshot(store, { ...flat, positionSnapshotId: different.snapshotId }),
+        )
+        expect(inventoryError).toMatchObject({
+          failure: 'invariant',
+          message: expect.stringContaining('Positions differ from their retained broker snapshot'),
+        })
+        const position = positionEvent(unrelated, 'NVDA', '2000000000', '200000000').position
+        expect(
+          yield* Effect.flip(
+            reconcileSnapshot(store, {
+              ...flat,
+              positions: [position],
+              positionSnapshotId: different.snapshotId,
+            }),
+          ),
+        ).toMatchObject({ failure: 'invariant' })
+        const cashError = yield* Effect.flip(
+          reconcileSnapshot(store, {
+            ...flat,
+            account: { ...flat.account, buyingPowerMicros: '1' },
+          }),
+        )
+        expect(cashError).toMatchObject({ failure: 'invariant' })
+        expect(yield* sql`SELECT count(*)::int AS count FROM reconciliations`).toEqual([{ count: 0 }])
+        expect(journalControl.postCount).toBe(0)
+        const authentic = yield* reconcileSnapshot(store, flat)
+        expect(authentic.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      }),
+    )
+  })
+
   test('binds the submit cache to the latest exact reconciliation, broker observations and authority version', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {

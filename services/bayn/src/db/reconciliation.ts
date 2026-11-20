@@ -85,7 +85,7 @@ import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } fr
 import { cashAccrualReportingOffsetMicros, prepareObservedCoinFees, prepareObservedCashFees } from './fee-accruals'
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { FeeActivity } from '../broker/alpaca/model'
-import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
+import { compareText, type Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import type { BrokerStateVersion } from '../execution/broker-state-cache'
 import { withObservedStage } from '../telemetry'
 
@@ -211,6 +211,7 @@ const PreviousReconciliationRows = Schema.Array(
   Schema.Struct({ discrepancies: Schema.Array(DiscrepancySchema) }),
 ).check(Schema.isMaxLength(1))
 const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256, same_source: Schema.Boolean })])
+const PositionSourceRow = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
 const FinalExecutionRiskContextRow = Schema.Tuple([
   Schema.Struct({
     daily_traded_notional_micros: UnsignedMicrosSchema,
@@ -639,6 +640,34 @@ export const readReconciliationRiskContext = (
     }),
   )
 
+const verifyPositionSource = (sql: PgClient.PgClient, snapshot: BrokerSnapshot) =>
+  Effect.gen(function* () {
+    const positions = snapshot.positions.toSorted((left, right) => compareText(left.symbol, right.symbol))
+    const [source] = yield* Schema.decodeUnknownEffect(
+      PositionSourceRow,
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT EXISTS (
+        SELECT 1 FROM position_snapshots s
+        WHERE s.snapshot_id=${snapshot.positionSnapshotId} AND s.account_id=${snapshot.account.accountId}
+          AND s.observed_at=${snapshot.positionsObservedAt}::timestamptz AND s.position_count=${positions.length}::integer
+          AND ${sql.json(positions)}::jsonb = coalesce((
+            SELECT jsonb_agg(jsonb_build_object(
+              'schemaVersion',p.schema_version,'accountId',p.account_id,'symbol',p.symbol,
+              'quantityAtoms',p.quantity_atoms::text,'averageEntryPriceMicros',p.average_entry_price_micros::text,
+              'costBasisMicros',p.cost_basis_micros::text,'marketPriceMicros',p.market_price_micros::text,
+              'marketValueMicros',p.market_value_micros::text,'unrealizedPnlMicros',p.unrealized_pnl_micros::text,
+              'observedAt',to_char(e.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            ) ORDER BY p.symbol COLLATE "C")
+            FROM positions p JOIN broker_events e USING(event_id,account_id) WHERE p.snapshot_id=s.snapshot_id
+          ),'[]'::jsonb)
+      ) AS matches`,
+    )
+    if (!source.matches)
+      return yield* storeError('reconcile', 'invariant', 'Positions differ from their retained broker snapshot')
+  })
+
 export const makeReconciliation = (
   sql: PgClient.PgClient,
   journal: JournalService,
@@ -1049,6 +1078,7 @@ export const makeReconciliation = (
           'reconcile',
           Effect.gen(function* () {
             yield* retainAccountCashReporting(sql, snapshot)
+            yield* verifyPositionSource(sql, snapshot)
             yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
             yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
             yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
