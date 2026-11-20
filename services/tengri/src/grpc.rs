@@ -1101,15 +1101,30 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<CodexRuns>, Status> {
         let principal = self.authorize(&request, "GetActiveCodexRuns").await?;
         let request = request.into_inner();
+        if let Some(excluded) = &request.exclude_thread_id {
+            validate_codex_id(excluded)?;
+            if !request.thread_id.is_empty() {
+                return Err(Status::invalid_argument("conflicting run discovery scopes"));
+            }
+        }
         self.agent_access(&principal, &request.id, "").await?;
-        let mut runs = Vec::new();
-        for snapshot in crate::runs::active(&principal, &request.thread_id).await? {
+        let discovered = crate::runs::active(
+            &principal,
+            &request.thread_id,
+            request.exclude_thread_id.as_deref(),
+        )
+        .await?;
+        let mut runs = Vec::with_capacity(discovered.runs.len());
+        for snapshot in discovered.runs {
             if snapshot.agent_id != request.id {
                 return Err(Status::permission_denied("run unavailable"));
             }
             runs.push(codex_run(snapshot)?);
         }
-        Ok(Response::new(CodexRuns { runs }))
+        Ok(Response::new(CodexRuns {
+            runs,
+            incomplete: discovered.incomplete,
+        }))
     }
 
     async fn get_codex_run(
@@ -2484,6 +2499,7 @@ fn codex_run(snapshot: crate::runs::Snapshot) -> Result<CodexRun, Status> {
         thread_id: snapshot.thread_id,
         state_json: serde_json::to_string(&snapshot.state)
             .map_err(|_| Status::internal("encode run state"))?,
+        approval_deadline_ms: snapshot.approval_deadline_ms,
     })
 }
 

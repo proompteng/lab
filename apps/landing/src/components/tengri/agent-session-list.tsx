@@ -19,6 +19,7 @@ export function AgentSessionList({
   enabled,
   selected,
   threadPhases,
+  pendingApprovals,
   canSelect,
   revision,
   onSelect,
@@ -28,9 +29,10 @@ export function AgentSessionList({
   enabled: boolean
   selected: { id: string; unavailable: boolean } | null
   threadPhases: ReadonlyMap<string, TengriCodexRun['state']['phase']>
+  pendingApprovals: ReadonlyMap<string, string>
   canSelect: boolean
   revision: number
-  onSelect: (threadId: string) => void
+  onSelect: (threadId: string, approvalId?: string) => void
   onArchived: (threadId: string) => void
 }) {
   const [index, setIndex] = useState<SessionIndex>({ archived: false, phase: 'loading', threads: [], nextCursor: null })
@@ -160,10 +162,19 @@ export function AgentSessionList({
             const active = thread.id === selected?.id && !index.archived
             const phase = threadPhases.get(thread.id)
             const busy = phase !== undefined
+            const approvalId = pendingApprovals.get(thread.id)
             const waiting =
-              phase === 'authorization_required' || phase === 'needs_reconciliation' || phase === 'waiting_for_approval'
-            const status =
-              phase === 'needs_reconciliation' ? 'Response unconfirmed' : waiting ? 'Needs you' : 'Response in progress'
+              approvalId !== undefined ||
+              phase === 'authorization_required' ||
+              phase === 'needs_reconciliation' ||
+              phase === 'waiting_for_approval'
+            const status = approvalId
+              ? 'Approval needed'
+              : phase === 'needs_reconciliation'
+                ? 'Response unconfirmed'
+                : waiting
+                  ? 'Needs you'
+                  : 'Response in progress'
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
                 <Button
@@ -172,8 +183,8 @@ export function AgentSessionList({
                   data-conversation-id={thread.id}
                   disabled={!canSelect || index.archived}
                   aria-current={active ? 'true' : undefined}
-                  aria-description={busy ? status : undefined}
-                  onClick={() => onSelect(thread.id)}
+                  aria-description={busy || approvalId ? status : undefined}
+                  onClick={() => onSelect(thread.id, approvalId)}
                   className={cn(
                     'h-8 min-w-0 flex-1 justify-start gap-2 rounded-lg pl-2.5 pr-8 text-left transition-none active:bg-white/[0.12] dark:active:bg-white/[0.12] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
                     active
@@ -182,16 +193,21 @@ export function AgentSessionList({
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
+                  {approvalId ? (
+                    <span aria-hidden="true" className="shrink-0 text-label-12 text-zinc-300">
+                      Needs you
+                    </span>
+                  ) : null}
                   {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
                 </Button>
-                {waiting ? (
+                {waiting && !approvalId ? (
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-400 [@media(pointer:coarse)]:size-11"
                   >
                     <span className="size-1.5 rounded-full bg-current" />
                   </span>
-                ) : busy ? (
+                ) : !waiting && busy ? (
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute right-1 inline-flex size-6 items-center justify-center text-zinc-500 group-hover:opacity-0 group-focus-within:opacity-0 [@media(pointer:coarse)]:hidden"

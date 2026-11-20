@@ -186,7 +186,8 @@ export type TengriAction =
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
   | { action: 'codex-models'; agentId: string; cursor?: string }
-  | { action: 'active-codex-runs'; agentId: string }
+  | { action: 'active-codex-runs'; agentId: string; threadId?: string }
+  | { action: 'background-codex-runs'; agentId: string; excludeThreadId: string }
   | { action: 'codex-run'; agentId: string; runId: string }
   | { action: 'recover-run'; agentId: string; runId: string; operationId: string }
   | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }

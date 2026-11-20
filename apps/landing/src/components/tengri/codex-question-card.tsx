@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -14,6 +14,7 @@ export function CodexQuestionCard({
   agentId,
   runId,
   approvalId,
+  deadline,
   request,
   onAnswered,
   onRespond,
@@ -22,6 +23,7 @@ export function CodexQuestionCard({
   agentId: string
   runId: string
   approvalId: string
+  deadline?: ReactNode
   request: QuestionRequest
   onAnswered: () => void
   onRespond?: (response: TengriCodexInputResponse) => Promise<void>
@@ -108,6 +110,7 @@ export function CodexQuestionCard({
           className="space-y-3"
         >
           <p className="text-label-12 text-zinc-400">{request.message}</p>
+          {deadline}
           {request.fields.map((field, index) => {
             const key = `q${index}`
             const value = watch(key)
