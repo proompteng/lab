@@ -18,7 +18,7 @@ stop_database() {
 trap stop_database EXIT
 trap 'exit 143' TERM INT
 
-[[ $(cat "$data/PG_VERSION") == 17 ]] || exit 1
+[[ $(cat "$data/PG_VERSION") == 18 ]] || exit 1
 control=$(pg_controldata "$data")
 [[ $(awk -F ': *' '/Database system identifier:/ {print $2}' <<<"$control") == "$EXPECTED_SYSTEM_IDENTIFIER" ]] || exit 1
 [[ $(awk -F ': *' '/Database cluster state:/ {print $2}' <<<"$control") == 'shut down' ]] || exit 1
@@ -85,4 +85,4 @@ stop_database
 postgres_pid=
 [[ $(pg_controldata "$data" | awk -F ': *' '/Database cluster state:/ {print $2}') == 'shut down' ]] || exit 1
 touch "$proof/database-accepted"
-printf 'PASS: all 39 Forgejo release migrations applied; base schema %s and identity counts preserved; PostgreSQL shut down cleanly.\n' "$version"
+printf 'PASS: all 45 Forgejo release migrations applied; base schema %s and identity counts preserved; PostgreSQL shut down cleanly.\n' "$version"
