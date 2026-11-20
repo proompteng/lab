@@ -484,17 +484,17 @@ describe('enabled app inventory', () => {
       /              - name: knative\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
 
-    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
+    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.10.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
     expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
-    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.1/operator.yaml')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.24.1/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
-    expect(knativeServingManifest).toContain('version: 1.23.0')
-    expect(knativeEventingManifest).toContain('version: 1.23.0')
+    expect(knativeServingManifest).toContain('version: 1.24.0')
+    expect(knativeEventingManifest).toContain('version: 1.24.0')
     expect(knativeEventingKustomization).toContain('eventing-kafka-controller.yaml')
     expect(knativeEventingKustomization).toContain('eventing-kafka-source.yaml')
-    expect(knativeEventingKustomization).toContain('knative-v1.23.0')
+    expect(knativeEventingKustomization).toContain('knative-v1.24.0')
     expect(knativeEventingKustomization).not.toContain('patchesStrategicMerge')
     expect(knativeEntry).toContain('app.kubernetes.io/managed-by: argocd')
     expect(knativeEntry).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
@@ -503,12 +503,12 @@ describe('enabled app inventory', () => {
 
   it('pins the enabled observability collector upgrade wave', () => {
     for (const deploymentPath of enabledAlloyDeploymentPaths) {
-      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.19.2')
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.22.0')
     }
     expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
-      'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
+      'sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189',
     )
-    expect(natsKustomization).toContain('newTag: v1.19.2')
+    expect(natsKustomization).toContain('newTag: v1.22.0')
     expect(observabilityKustomization).toContain('version: 8.4.2')
   })
 
@@ -550,14 +550,14 @@ describe('enabled app inventory', () => {
 
   it('pins the Temporal upgrade wave to immutable multi-architecture images', () => {
     expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
-      version: '1.6.0',
+      version: '1.8.0',
     })
     expect(temporalKustomization.images).toEqual([
       {
         name: 'temporal-worker-runtime',
         newName: 'mirror.gcr.io/temporalio/server',
-        newTag: '1.31.2',
-        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+        newTag: '1.32.2',
+        digest: 'sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670',
       },
       {
         name: 'docker.elastic.co/elasticsearch/elasticsearch',
@@ -567,20 +567,20 @@ describe('enabled app inventory', () => {
       {
         name: 'mirror.gcr.io/temporalio/server',
         newName: 'mirror.gcr.io/temporalio/server',
-        newTag: '1.31.2',
-        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+        newTag: '1.32.2',
+        digest: 'sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670',
       },
       {
         name: 'mirror.gcr.io/temporalio/admin-tools',
         newName: 'mirror.gcr.io/temporalio/admin-tools',
-        newTag: '1.31.2',
-        digest: 'sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107',
+        newTag: '1.32.2',
+        digest: 'sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754',
       },
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.54.0',
-        digest: 'sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932',
+        newTag: '2.58.1',
+        digest: 'sha256:ac3c13eddb4547d830991bb5eee93a5d97140134522b7297fdb2be1fe25ef925',
       },
     ])
   })
