@@ -37,6 +37,7 @@ const targets = {
   bayn: { workspaces: ['', 'services/bayn'], paths: ['services/bayn/**', 'bun.lock', '**/package.json'] },
   landing: { workspaces: ['', 'apps/landing'], paths: ['apps/landing/**', 'bun.lock', '**/package.json'] },
 }
+const tengriPublisherPath = '.github/workflows/tengri-images.yml'
 
 const publicationWorkflows = readdirSync('.github/workflows').filter((filename) => {
   if (!/\.ya?ml$/.test(filename)) return false
@@ -69,7 +70,8 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
     ])
       expect(matchesPaths(file, patterns)).toBe(
-        filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml',
+        (filename === 'restate-images.yml' && file === '.github/workflows/restate-images.yml') ||
+          (event === 'push' && filename === 'tengri-images.yml' && file === tengriPublisherPath),
       )
     for (const file of [
       'nix/cache-push.sh',
@@ -491,7 +493,7 @@ test.each(['orbit-salvage', 'ricochet-rush'])('%s does not rebuild for unrelated
   }
 })
 
-test('runtime-only PRs skip desktop builds while main publishes coordinated images', () => {
+test('Tengri runtime and publisher changes schedule desktop images on main only', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
@@ -511,7 +513,7 @@ test('runtime-only PRs skip desktop builds while main publishes coordinated imag
       .map((path) => [path, { name: path || 'root' }]),
   )
   const lock = { ...before, workspaces: { ...workspaces, ...before.workspaces } }
-  for (const source of ['services/tengri/src/slot/vmm.rs', 'services/tengri/network.sh']) {
+  for (const source of ['services/tengri/src/slot/vmm.rs', 'services/tengri/network.sh', tengriPublisherPath]) {
     for (const event of ['pull_request', 'push']) {
       const paths = property(property(property(workflow, 'on'), event), 'paths')
       if (!Array.isArray(paths)) throw new Error('Missing image trigger paths')
@@ -528,21 +530,20 @@ test('runtime-only PRs skip desktop builds while main publishes coordinated imag
 })
 
 test('Tengri frontend PRs skip native images while main publishes coordinated releases', () => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  const workflow: unknown = Bun.YAML.parse(readFileSync(tengriPublisherPath, 'utf8'))
+  const ofz: unknown = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
   const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
   for (const event of ['pull_request', 'push']) {
     const paths = property(property(property(workflow, 'on'), event), 'paths')
     if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
     expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(event === 'push')
-    for (const runtimeSource of [
-      'services/tengri/src/slot/vmm.rs',
-      'services/nanoagent/internal/service/service.go',
-      '.github/workflows/tengri-images.yml',
-    ]) {
-      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(
-        !runtimeSource.startsWith('.github/'),
-      )
+    for (const runtimeSource of ['services/tengri/src/slot/vmm.rs', 'services/nanoagent/internal/service/service.go']) {
+      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(true)
     }
+    expect(matchesPaths(tengriPublisherPath, paths.map(text))).toBe(event === 'push')
+    const ofzPaths = property(property(property(ofz, 'on'), event), 'paths')
+    if (!Array.isArray(ofzPaths)) throw new Error('Missing Ofz trigger paths')
+    expect(matchesPaths(tengriPublisherPath, ofzPaths.map(text))).toBe(event === 'push')
   }
 })
 
