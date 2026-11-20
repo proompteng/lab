@@ -18,6 +18,7 @@ const logger = Logger.make(({ message, fiber }) => {
   logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) })
 })
 let now = 1_800_000_000_000
+const consistencyDeadline = now + 1_000
 const liveClock = Clock.Clock.defaultValue()
 const clock: Clock.Clock = {
   currentTimeMillis: Effect.sync(() => now),
@@ -32,19 +33,23 @@ const claims = new Map<unknown, number>()
 const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
   Effect.suspend<readonly unknown[], Error, never>(() => {
     if (strings.join('').includes('RETURNING broker_observations.generation')) {
-      if (claims.has(values[2]))
+      if (values[3] === 'consistency-wait')
         return Effect.succeed([
-          { status: 'ALREADY_CLAIMED', generation: null, startedAt: null, nextPollNotBeforeMs: claims.get(values[2]) },
+          { status: 'QUOTA_WAIT', generation: null, startedAt: null, nextPollNotBeforeMs: consistencyDeadline },
         ])
-      claims.set(values[2], Number(values[3]))
-      now += values[2] === 'clock-regression' ? -1 : 47_000
+      if (claims.has(values[3]))
+        return Effect.succeed([
+          { status: 'ALREADY_CLAIMED', generation: null, startedAt: null, nextPollNotBeforeMs: claims.get(values[3]) },
+        ])
+      claims.set(values[3], Number(values[4]))
+      now += values[3] === 'clock-regression' ? -1 : 47_000
       return Clock.currentTimeMillis.pipe(
         Effect.map((now) => [
           {
             status: 'RESERVED',
             generation: 1,
             startedAt: new Date(now).toISOString(),
-            nextPollNotBeforeMs: Number(values[3]),
+            nextPollNotBeforeMs: Number(values[4]),
           },
         ]),
       )
@@ -95,6 +100,7 @@ const result = await Effect.runPromise(
       const reservation = {
         captureId: 'test-capture',
       }
+      const consistencyWait = yield* Effect.promise(() => runtime.poll(signal, { captureId: 'consistency-wait' }))
       const expired = yield* Effect.promise(() => runtime.poll(signal, reservation))
       const duplicate = yield* Effect.promise(() => runtime.poll(signal, reservation))
       const { runtime: replacement } = yield* acquireBrokerObservationRuntime(plan)
@@ -117,6 +123,8 @@ const result = await Effect.runPromise(
       }).pipe(Effect.result)
       const regressionRetry = yield* Effect.promise(() => runtime.poll(signal, { captureId: 'clock-regression' }))
       return {
+        consistencyWait: consistencyWait.poll,
+        consistencyDeadline,
         regression: regression._tag,
         regressionRetry: regressionRetry.poll,
         regressionDeadline: claims.get('clock-regression'),

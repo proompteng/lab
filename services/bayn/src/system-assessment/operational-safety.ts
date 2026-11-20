@@ -27,7 +27,7 @@ import { cashSettlementMatches } from './cash-settlements'
 import { SystemAssessmentError } from './economics'
 import { captureExecutionFills, captureExecutionOrders } from './execution-evidence'
 import { resolveExecutionOrderTerms, nativeOrderEvidenceAssumptions } from './execution-order-terms'
-import type { ExecutionOrderPlan } from './execution-plans'
+import { executionPositionDirections, type ExecutionOrderPlan } from './execution-plans'
 import type { OperationalRegistration } from './operational-period'
 import type { OperationalSourceCut } from './operational-source-cut'
 import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
@@ -115,6 +115,7 @@ export const makeOperationalSafetyScan = (
     const ownedFills = new Set<string>()
     const coveredMutations = new Set<string>()
     const ownerByFill = new Map<string, string>()
+    const positionDirections = new Map<string, bigint>()
     const admitted = new Map(source?.admissions.map((row) => [row.eventId, row]) ?? [])
     const inPeriod = (time: string) => time >= first.openAt && time <= cut.asOf
     assert(SafetyViolationKind.Identity, 'COMPLETE_REGISTERED_PERIOD', cut.asOf >= last.closeAt, true)
@@ -282,6 +283,8 @@ export const makeOperationalSafetyScan = (
     const consume = (plans: ReadonlyMap<string, ExecutionOrderPlan>) =>
       Result.gen(function* () {
         if (source === undefined) return
+        for (const [owner, direction] of executionPositionDirections(plans))
+          if (direction < 0n || !positionDirections.has(owner)) positionDirections.set(owner, direction)
         for (const [intentId, plan] of plans) {
           const index = plan.document.orderedIntentIds.indexOf(intentId)
           const target = plan.document.targetPlan.intentTargets[index]
@@ -416,7 +419,8 @@ export const makeOperationalSafetyScan = (
                   generationMaximum: Authority.Execution,
                   generationAccountId: accountId,
                 },
-                plan.target.side === OrderSide.Sell,
+                plan.target.side ===
+                  ((positionDirections.get(plan.positionOwnerDecisionId) ?? 1n) < 0n ? OrderSide.Buy : OrderSide.Sell),
               )
               assert(
                 SafetyViolationKind.Unauthorized,
@@ -543,7 +547,9 @@ export const makeOperationalSafetyScan = (
             if (owner === undefined) continue
             const balance =
               (balances.get(owner) ?? 0n) +
-              (row.fill.side === OrderSide.Buy ? 1n : -1n) * BigInt(row.fill.quantityAtoms)
+              (positionDirections.get(owner) ?? 1n) *
+                (row.fill.side === OrderSide.Buy ? 1n : -1n) *
+                BigInt(row.fill.quantityAtoms)
             assert(
               SafetyViolationKind.Ownership,
               'CHRONOLOGICAL_OWNED_INVENTORY',

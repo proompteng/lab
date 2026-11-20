@@ -82,6 +82,7 @@ export interface ExpiredEntryCancellationFacts {
   readonly intentAuthorityGenerationHash: string
   readonly clientOrderId: string
   readonly side: OrderSide
+  readonly protectionTag?: string | null
   readonly brokerOrderId: string
   readonly admittedAt: string
 }
@@ -93,6 +94,7 @@ export const StartInputSchema = Schema.Struct({
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
   closeOnly: Schema.optionalKey(Schema.Literal(true)),
+  protectionProofId: Schema.optionalKey(Sha256),
   expiredEntryCancellation: Schema.optionalKey(ExpiredEntryCancellationAdmissionSchema),
 })
 export const OutcomeInputSchema = Schema.Struct({
@@ -144,6 +146,12 @@ export interface StartReceipt {
   readonly started: boolean
 }
 
+export interface ProtectionCloseCommit {
+  readonly proofId: string
+  readonly submitExpiresAt: string
+  readonly bind: Effect.Effect<void, MutationStoreError>
+}
+
 export interface MutationStoreShape {
   readonly authorizeSubmit: (
     intentId: string,
@@ -155,6 +163,7 @@ export interface MutationStoreShape {
     consistencyDelayMs: number,
     occurredAt: string,
     closeOnly?: boolean,
+    protectionClose?: ProtectionCloseCommit,
   ) => Effect.Effect<StartReceipt, MutationStoreError | WriterFenceError>
   readonly submitAccepted: (
     intentId: string,

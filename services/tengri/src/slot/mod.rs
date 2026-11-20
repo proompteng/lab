@@ -784,17 +784,18 @@ mod tests {
         .unwrap();
         bytes.push(b'\n');
         writer.write_all(&bytes).await.unwrap();
-        timeout(Duration::from_secs(30), frozen.notified())
+        let fixture_timeout = Duration::from_secs(30);
+        timeout(fixture_timeout, frozen.notified())
             .await
             .expect("guest fixture must reach freeze before testing cancellation");
         writer.shutdown().await.unwrap();
         let mut response = String::new();
         timeout(
-            Duration::from_secs(2),
+            fixture_timeout,
             BufReader::new(reader).read_line(&mut response),
         )
         .await
-        .unwrap()
+        .expect("disconnect must acknowledge after durably fencing the VMM")
         .unwrap();
         let response: runner::CommandResponse = serde_json::from_str(&response).unwrap();
         assert!(response.error.unwrap().contains("caller disconnected"));

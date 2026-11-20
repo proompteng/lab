@@ -1,6 +1,12 @@
 import { fileURLToPath } from 'node:url'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const files = [
+  'src/db/visual-non-dispatch-migration.integration.test.ts',
+  'src/db/native-equity-short.integration.test.ts',
+  'src/db/equity-short-accounting.integration.test.ts',
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
@@ -38,9 +44,11 @@ const files = [
   'src/db/retired-jev-batch-migration.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',
   'src/db/jev-native-postgres.integration.test.ts',
+  'src/db/jev-position-protection-evidence.integration.test.ts',
   'src/intraday-replay/clock.integration.test.ts',
   'src/inference-costs-postgres.integration.test.ts',
   'src/inference-expense-runtime.integration.test.ts',
+  'src/inference-expense-listener.integration.test.ts',
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',
   'src/system-assessment/postgres.integration.test.ts',
@@ -54,12 +62,27 @@ if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
   )
 
 const run = (args: readonly string[]) => {
-  const result = Bun.spawnSync([process.execPath, 'test', '--no-orphans', ...args], {
-    cwd: fileURLToPath(new URL('..', import.meta.url)),
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
-  if (result.exitCode !== 0) process.exit(result.exitCode)
+  const directory = mkdtempSync(join(tmpdir(), 'bayn-postgres-results-'))
+  const cwd = fileURLToPath(new URL('..', import.meta.url))
+  try {
+    const report = join(directory, 'results.xml')
+    const result = Bun.spawnSync(
+      [process.execPath, 'test', '--no-orphans', '--reporter=junit', `--reporter-outfile=${report}`, ...args],
+      { cwd, stdout: 'inherit', stderr: 'inherit' },
+    )
+    if (result.exitCode !== 0) process.exitCode = result.exitCode
+    else {
+      const checked = Bun.spawnSync(['python3', 'scripts/verify-integration-results.py', report], {
+        cwd,
+        stdout: 'inherit',
+        stderr: 'inherit',
+      })
+      process.exitCode = checked.exitCode
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+  if (process.exitCode !== 0) process.exit(process.exitCode)
 }
 
 run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])

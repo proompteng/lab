@@ -116,7 +116,7 @@ target:
 release:
   mode: kargo_auto
   promotion_authority: kargo
-  kargo_project: lab-delivery
+  kargo_project: jangar-release
   kargo_warehouse: jangar
   kargo_branch: kargo/jangar
   kargo_stages:

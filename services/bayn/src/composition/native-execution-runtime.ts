@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
   Clock,
@@ -16,7 +17,7 @@ import {
 } from 'effect'
 
 import type { ApplicationPlan } from '../app'
-import type { OperationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 import type { CycleRunnerError } from '../cycle/runner/model'
 import type { ExecutionBuild } from '../build'
 import {
@@ -25,6 +26,9 @@ import {
 } from '../cycle/runner/pass-observation'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevInferenceWorkStore, executeJevInferenceWork } from '../jev/inference-work'
+import type { JevInferenceController } from '../jev/inference-work'
+import type { EntryInferenceRuntime } from '../restate/restate-entry-inference'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -36,24 +40,29 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  executionControllerPlanHash,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { type RecoveryFirstCycleAdvance, type RecoveryFirstRuntime } from '../observe-composition/model'
 import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
-import { currentUtcInstant } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeExecutionCycleDriver } from './autonomous-runtime'
 import { nativeActivationPreflight } from './native-activation-preflight'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
+  JevRuntimeResourcesLive,
   WorkerMarketProjectionLive,
+  type JevRuntimeServices,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
+import { AuthorityGenerationStore } from '../db/execution-store/contract'
+import { awaitJevInferenceDispatch } from '../db/jev-inference-work-postgres'
+import { IntradayMarketData } from '../market-data/intraday/model'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -64,7 +73,9 @@ export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecuti
 export interface NativeExecutionRuntimeResource {
   readonly config: ExecutionControllerConfig
   readonly runtime: NativeExecutionRuntime
+  readonly inferenceRuntime: EntryInferenceRuntime
   readonly readMarketReadiness: () => Promise<boolean>
+  readonly startMarketWakeups: typeof KafkaMarketProjection.Service.startWakeups
 }
 
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
@@ -98,6 +109,66 @@ export const executionControllerConfig = (
     planHash: executionControllerPlanHash,
     sourceRevision: plan.config.build.sourceRevision,
   })
+
+const pendingInferenceForAuthority = (context: Context.Context<RecoveryFirstRuntime>) =>
+  Effect.gen(function* () {
+    const work = Context.getOption(context, JevInferenceWorkStore)
+    if (Option.isNone(work)) return []
+    const authority = yield* Context.get(context, AuthorityGenerationStore).readAuthorityState.pipe(
+      Effect.mapError((cause) =>
+        operationalError({
+          component: 'database',
+          operation: 'jev-batch',
+          message: 'inference authority read failed',
+          cause,
+        }),
+      ),
+    )
+    return yield* work.value.pending(authority.generationHash)
+  })
+
+const executeNativeJevInference = (jobId: string, controller: JevInferenceController) =>
+  executeJevInferenceWork(jobId, controller).pipe(
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'jev-batch',
+        message: 'admitted inference failed',
+        cause,
+      }),
+    ),
+  )
+
+export const makeNativeEntryInferenceRuntime = (
+  runtime: Pick<
+    ManagedRuntime.ManagedRuntime<
+      Effect.Services<ReturnType<typeof executeNativeJevInference>> | PgClient.PgClient,
+      unknown
+    >,
+    'runPromise'
+  >,
+  account: Pick<JevInferenceController, 'accountId' | 'planHash'>,
+): EntryInferenceRuntime => {
+  const controller = ({ controllerKey, epoch }: Pick<JevInferenceController, 'controllerKey' | 'epoch'>) => ({
+    ...account,
+    controllerKey,
+    epoch,
+  })
+  const run = <A, E, R extends Effect.Services<ReturnType<typeof executeNativeJevInference>> | PgClient.PgClient>(
+    effect: Effect.Effect<A, E, R>,
+    signal: AbortSignal,
+  ) => {
+    const parent = currentOpenTelemetryParentSpan()
+    return runtime.runPromise(parent === undefined ? effect : effect.pipe(Effect.withParentSpan(parent)), { signal })
+  }
+  return {
+    executeInference: (command, signal) => run(executeNativeJevInference(command.jobId, controller(command)), signal),
+    awaitDispatch: (scope, pending, signal) => run(awaitJevInferenceDispatch(controller(scope), pending), signal),
+  }
+}
+
+export const executionReceiptDelayMs = (completedAt: string, nextWakeAt?: string): number =>
+  nextWakeAt === undefined ? 1 : Math.min(86_400_000, Math.max(1, Date.parse(nextWakeAt) - Date.parse(completedAt)))
 
 export const bindRecoveryFirstCycleDriver = (
   driver: {
@@ -162,16 +233,45 @@ export const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan, observation) =>
-              observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
+            begin: (batch, options) =>
+              observe(
+                Effect.gen(function* () {
+                  const marketData = Context.getOption(context, IntradayMarketData)
+                  if (Option.isNone(marketData))
+                    return yield* operationalError({
+                      component: 'market-data',
+                      operation: 'jev-batch',
+                      message: 'deferred inference requires the current market source verifier',
+                    })
+                  const sourceReference = yield* marketData.value.verifyReference(batch.source.verified.snapshot)
+                  return yield* store.begin(batch, {
+                    ...options,
+                    deferProviderDispatch: true,
+                    sourceReference,
+                  })
+                }),
+                (batch) => batch.plan.observationHash,
+              ),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
             complete: (plan, observation, result) =>
               observe(store.complete(plan, observation, result), (batch) => batch.plan.observationHash),
           })
         } else complete = false
         const advanced = yield* Effect.provideContext(driver.advance, observedContext)
+        const pending = yield* pendingInferenceForAuthority(context)
+        const expiry = pending.reduce<number | undefined>((earliest, job) => {
+          const at = Date.parse(job.expiresAt)
+          return earliest === undefined ? at : Math.min(earliest, at)
+        }, undefined)
+        const nextWakeAt =
+          expiry === undefined
+            ? advanced.nextWakeAt
+            : utcInstantFromEpochMillis(
+                Math.min(expiry, advanced.nextWakeAt === undefined ? expiry : Date.parse(advanced.nextWakeAt)),
+              )
         return {
           ...advanced,
+          ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
           observation: {
             ...advanced.observation,
             executionBuild,
@@ -289,9 +389,6 @@ const replayProjectedAdvance = (
   ) {
     return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
   }
-  if (status.nextDueAt === undefined) {
-    return Result.fail(projectionFailure('replayed controller status does not retain its next due time'))
-  }
   return Result.mapError(
     decodeExecutionAdvanceStepResult({
       completedAt: status.completedAt,
@@ -299,10 +396,8 @@ const replayProjectedAdvance = (
       outcome: {
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
-        nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
-        ...(status.lastPass?.result === 'SUCCESS' && status.lastPass.nextWakeAt !== undefined
-          ? { nextWakeAt: status.lastPass.nextWakeAt }
-          : {}),
+        nextDelayMs: executionReceiptDelayMs(status.completedAt, status.nextDueAt),
+        ...(status.nextDueAt !== undefined ? { nextWakeAt: status.nextDueAt } : {}),
       },
     }),
     projectionFailure,
@@ -363,10 +458,7 @@ const advanceAndProject = (
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
-          nextDelayMs:
-            outcome.nextWakeAt === undefined
-              ? outcome.nextDelayMs
-              : Math.min(outcome.nextDelayMs, Math.max(1, Date.parse(outcome.nextWakeAt) - Date.parse(completedAt))),
+          nextDelayMs: executionReceiptDelayMs(completedAt, outcome.nextWakeAt),
           ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
         },
       }),
@@ -384,7 +476,7 @@ const advanceAndProject = (
           lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,
           completedAt,
-          nextDueAt: new Date(Date.parse(completedAt) + step.outcome.nextDelayMs).toISOString(),
+          ...(step.outcome.nextWakeAt === undefined ? {} : { nextDueAt: step.outcome.nextWakeAt }),
           lastPass: outcome.observation,
         })
         .pipe(
@@ -442,10 +534,14 @@ export const makeExecutionCycleDriverLive = <E, R>(
     ),
   )
 
-export const ExecutionCycleDriverLive = (plan: ApplicationPlan) =>
+const executionCycleDriverLive = (plan: ApplicationPlan, inferenceContext: Context.Context<JevRuntimeServices>) =>
   makeExecutionCycleDriverLive(
     plan.config.operationTimeoutMs,
-    makeExecutionCycleDriver(plan, nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs)).pipe(
+    makeExecutionCycleDriver(
+      plan,
+      nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs),
+      inferenceContext,
+    ).pipe(
       Effect.flatMap(({ driver, context }) =>
         bindRecoveryFirstCycleDriver(driver, {
           sourceRevision: plan.config.build.sourceRevision,
@@ -600,6 +696,22 @@ export const acquireNativeExecutionRuntime = (
     const { layer: prewarmedProjection, market } = yield* prewarmNativeMarketProjection(
       WorkerMarketProjectionLive(plan),
     )
+    const projectionManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
+    )
+    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
+
+    const inferenceContext = yield* Layer.build(JevRuntimeResourcesLive(plan)).pipe(
+      Effect.mapError((cause) => runtimeError('initialize', 'native inference resource preparation failed', cause)),
+    )
+    const inferenceManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(
+        Layer.succeedContext(inferenceContext).pipe(
+          Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+          Layer.provideMerge(metricIdentity),
+        ),
+      ),
+    )
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -609,25 +721,18 @@ export const acquireNativeExecutionRuntime = (
     )
     const executionResources = Layer.merge(
       sharedResources,
-      ExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
+      executionCycleDriverLive(plan, inferenceContext).pipe(Layer.provide(sharedResources)),
     )
     // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
     // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
     // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
 
-    const projectionManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
-    )
-    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
-    const logManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
-    )
     const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
       managed,
       executionResources,
       projectionManaged,
-      logManaged,
+      inferenceManaged,
       config.planHash,
       (signal) =>
         projectionManaged.runPromise(
@@ -638,6 +743,11 @@ export const acquireNativeExecutionRuntime = (
     return {
       config,
       runtime,
+      inferenceRuntime: makeNativeEntryInferenceRuntime(inferenceManaged, {
+        accountId: plan.config.alpaca.expectedAccountId,
+        planHash: config.planHash,
+      }),
       readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
+      startMarketWakeups: market.startWakeups,
     }
   })

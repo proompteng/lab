@@ -32,3 +32,18 @@ spec:
   monitoring:
     enablePodMonitor: true
 # CNPG will emit application credentials in the secret `app-db-app`
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: app-db-pre-18-7
+  namespace: app
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: app-db
+  method: volumeSnapshot
+  online: true
+  target: prefer-standby

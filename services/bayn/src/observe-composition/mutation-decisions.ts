@@ -598,6 +598,7 @@ export interface MutationIntentExecutionResult {
   readonly consistencyDelayMs: number
   readonly operation: MutationOperation
   readonly mutationAdvanced: boolean
+  readonly denialReason?: import('../execution/submission-denial').SubmissionDenialReason
 }
 
 export const mutationIntentReconciliationDelayMs = (result: MutationIntentExecutionResult): number =>

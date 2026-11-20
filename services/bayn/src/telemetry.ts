@@ -6,6 +6,7 @@ import { operationCurrentTimeMillis } from './operation-timeout'
 import { embeddedBuildMetadata } from './build'
 import { currentUtcInstant, nativeWallClock } from './time'
 import { observeSchedulerDelay } from './telemetry-scheduler'
+import { recordProcessMemory } from './telemetry-memory'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -132,6 +133,9 @@ const exporterHttpClient = (options: TelemetryRuntimeOptions, signal: 'traces' |
     HttpClient.HttpClient,
     Effect.map(HttpClient.HttpClient, (client) =>
       client.pipe(
+        // Consume the cached response inside the deadline so a stalled body cannot retain an export fiber.
+        HttpClient.tap((response) => response.arrayBuffer),
+        HttpClient.timeout('3 seconds'),
         HttpClient.tap((response) =>
           response.status >= 200 && response.status < 300
             ? Effect.gen(function* () {
@@ -211,6 +215,12 @@ const metricsLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
               now / 1000,
             ),
           ),
+          Effect.andThen(recordProcessMemory),
+          Effect.provideService(Metric.CurrentMetricAttributes, {
+            namespace: options.namespace ?? 'bayn',
+            service: options.serviceName,
+            source_revision: options.serviceVersion ?? 'development',
+          }),
         )
         yield* record
         yield* Effect.sleep('15 seconds').pipe(Effect.andThen(record), Effect.forever, Effect.forkScoped)

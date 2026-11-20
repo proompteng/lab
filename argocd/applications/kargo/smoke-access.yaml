@@ -1,0 +1,332 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kargo-smoke-bumba
+  namespace: jangar
+spec:
+  selector:
+    app.kubernetes.io/name: bumba
+  ports:
+  - name: health
+    port: 3001
+    targetPort: 3001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kargo-smoke-devbox
+  namespace: codex-devbox
+spec:
+  selector:
+    app.kubernetes.io/name: codex-devbox
+  ports:
+  - name: health
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-proompteng
+  namespace: proompteng
+spec:
+  podSelector:
+    matchLabels:
+      app: proompteng
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ofz-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-synthesis
+  namespace: synthesis
+spec:
+  podSelector:
+    matchLabels:
+      app: synthesis
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: synthesis-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-hermes-toolchain
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: gateway
+      app.kubernetes.io/name: hermes
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: hermes-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: dashboard
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-torghut
+  namespace: torghut
+spec:
+  podSelector:
+    matchLabels:
+      app: torghut-ta
+      component: jobmanager
+      type: flink-native-kubernetes
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: torghut-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-bilig
+  namespace: bilig
+spec:
+  podSelector:
+    matchLabels:
+      app: bilig-app
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: bilig-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: 4321
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-agents
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: agents
+      app.kubernetes.io/name: agents
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: agents-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-tengri
+  namespace: tengri
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: control-plane
+      app.kubernetes.io/name: tengri
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ofz-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: gateway
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-buzz
+  namespace: buzz
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: relay
+      app.kubernetes.io/instance: buzz
+      app.kubernetes.io/name: buzz
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: buzz-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: health
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-bayn
+  namespace: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: bayn-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-restate
+  namespace: restate
+spec:
+  podSelector:
+    matchLabels:
+      app: restate
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: restate-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: admin
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-devbox
+  namespace: codex-devbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codex-devbox
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: devbox-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-opencode
+  namespace: opencode
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opencode
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: opencode-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kargo-smoke-torghut-webull-feed
+  namespace: torghut
+spec:
+  podSelector:
+    matchLabels:
+      app: torghut-webull-feed
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: torghut-release
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kargo-smoke
+    ports:
+    - protocol: TCP
+      port: http

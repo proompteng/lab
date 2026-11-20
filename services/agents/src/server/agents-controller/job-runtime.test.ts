@@ -252,7 +252,7 @@ describe('agents controller job-runtime module', () => {
       adapter: {
         type: 'codex-app-server',
         codex: {
-          model: 'gpt-6-astra',
+          model: 'gpt-6.2-sol',
           effort: 'high',
           sandbox: 'danger-full-access',
           approval: 'never',

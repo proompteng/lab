@@ -2,7 +2,7 @@ import { Effect, Layer, Result } from 'effect'
 import { PgClient } from '@effect/sql-pg'
 
 import { operationalError } from '../../errors'
-import { canonicalHashV1Result } from '../../hash'
+import { canonicalJsonEqualV1 } from '../../hash'
 import { marketDataOperationError } from '../errors'
 import { IntradayMarketData, type IntradayMarketDataService, type IntradaySnapshotQuery } from '../intraday/model'
 import { persistIntradayRecordRows } from '../intraday/verification'
@@ -13,17 +13,8 @@ import {
   type StreamingVerifiedSnapshotReference,
 } from './reference'
 import { reproduceStreamingSnapshot } from './replay'
-import { constructStreamingSnapshot } from './snapshot'
+import { constructStreamingSnapshot, isOwnedMarketSnapshot } from './snapshot'
 import { snapshotCutMeasurement, snapshotFailureMeasurement } from './telemetry'
-
-const snapshotHash = (snapshot: Parameters<IntradayMarketDataService['verifyReference']>[0]) =>
-  canonicalHashV1Result({
-    manifest: snapshot.manifest,
-    bars: snapshot.bars,
-    quotes: snapshot.quotes,
-    trades: snapshot.trades,
-    latestQuotes: snapshot.latestQuotes,
-  }).pipe(Result.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot is not canonical', cause)))
 
 const copyReference = (reference: StreamingVerifiedSnapshotReference): StreamingVerifiedSnapshotReference =>
   Object.freeze({ ...reference, manifest: structuredClone(reference.manifest) })
@@ -33,10 +24,7 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
   Effect.gen(function* () {
     const kafka = yield* KafkaMarketProjection
     const postgres = yield* PgClient.PgClient
-    const observed = new Map<
-      string,
-      { readonly reference: StreamingVerifiedSnapshotReference; readonly snapshotHash: string }
-    >()
+    const observed = new Map<string, StreamingVerifiedSnapshotReference>()
     const loadSnapshot = (query: IntradaySnapshotQuery) =>
       Effect.gen(function* () {
         const cut = yield* kafka
@@ -61,11 +49,7 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
           ),
           Effect.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot verification failed', cause)),
         )
-        const capturedHash = yield* Effect.fromResult(snapshotHash(snapshot))
-        observed.set(snapshot.manifest.snapshotId, {
-          reference: copyReference(streamingSnapshotReference(snapshot)),
-          snapshotHash: capturedHash,
-        })
+        observed.set(snapshot.manifest.snapshotId, streamingSnapshotReference(snapshot))
         if (observed.size > 32) {
           const oldest = observed.keys().next()
           if (oldest.done !== true) observed.delete(oldest.value)
@@ -82,10 +66,8 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
             message: 'Live market data requires a captured Kafka snapshot',
           })
         const cached = observed.get(manifest.snapshotId)
-        if (cached !== undefined) {
-          const suppliedHash = yield* Effect.fromResult(snapshotHash(snapshot))
-          if (cached.snapshotHash === suppliedHash) return copyReference(cached.reference)
-        }
+        const captured = cached?.manifest.contentHash === manifest.contentHash ? cached : undefined
+        if (captured !== undefined && isOwnedMarketSnapshot(snapshot)) return copyReference(captured)
         const replay = persistIntradayRecordRows(snapshot).pipe(
           Result.flatMap((rows) => reproduceStreamingSnapshot(manifest, rows)),
         )
@@ -96,8 +78,13 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
             message: 'Streaming snapshot evidence does not reproduce its recorded cut',
             cause: replay.failure,
           })
-        if (cached !== undefined && cached.reference.manifest.contentHash === snapshot.manifest.contentHash)
-          return copyReference(cached.reference)
+        if (!canonicalJsonEqualV1(snapshot.latestQuotes, replay.success.latestQuotes))
+          return yield* operationalError({
+            component: 'market-data',
+            operation: 'load',
+            message: 'Streaming snapshot pricing differs from its recorded cut',
+          })
+        if (captured !== undefined) return copyReference(captured)
         return yield* recoverStreamingSnapshotReference(manifest).pipe(
           Effect.provideService(PgClient.PgClient, postgres),
         )

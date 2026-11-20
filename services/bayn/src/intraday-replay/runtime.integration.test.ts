@@ -1,3 +1,5 @@
+import { DecisionConstruction } from '../decision-construction'
+import { constructExecutionDecision, constructObserveShadowDecision } from '../shadow-decision'
 import { buildResearchMutationCycleDecision } from './decision-builder'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
@@ -10,7 +12,7 @@ import { EntryInferenceJournal } from '../jev/entry-inference'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
-import { equityMarketProfile } from '../jev/markets'
+import { currentEquityMarketProfile as equityMarketProfile } from '../jev/markets'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
 import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
 
@@ -18,7 +20,21 @@ import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
+import type { Order as BrokerOrder } from '../broker/alpaca/model'
+import { decodeFeeActivityWitness, pendingCashFees } from '../broker/alpaca/activity-fees'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
+import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
+import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
+import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
+import { valkeyFixture } from '../testing/valkey-fixture'
+import {
+  readCurrentProtectionClose,
+  readProtectionReleaseBasis,
+  readProtectionReleaseReference,
+  recordProtectionReleaseProof,
+  withCurrentProtectionReleaseProof,
+} from '../db/protection-release'
+import { readProtectionRelease } from '../execution/protection-release'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config/model'
@@ -27,6 +43,7 @@ import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -54,8 +71,8 @@ import {
   executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
 } from '../execution/controller-status'
-import type { AdvanceExecutionCommand } from '../execution/advance'
-import { executionControllerPlanHash } from '../execution/controller'
+import { advanceExecutionOnce, type AdvanceExecutionCommand } from '../execution/advance'
+import { executionControllerPlanHash } from '../execution/controller-plan'
 import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
@@ -70,11 +87,13 @@ import { nativeJevInference } from '../jev/native.test-support'
 import { JevFailure, prepareJevRequest } from '../jev/contract'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
-import { JevPositionStore } from '../jev/portfolio'
+import { JevPositionStore, JevPurpose } from '../jev/portfolio'
+import { JevExitReason, JevExitTargetSchema } from '../jev/exit'
+import { strictParseOptions } from '../schemas'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
-import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { nativeSimulationFixture as simulationFixture } from '../testing/simulated-streaming-fixture'
 import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
@@ -86,7 +105,7 @@ import {
   arrivalPosition,
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
-import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant, utcDateFromEpochMillis, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayInferenceTiming, type ReplayInferenceCall } from './inference-timing'
@@ -107,7 +126,7 @@ import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
-import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { Authority, KillState, OrderStatus as ExecutionOrderStatus, ReconciliationStatus } from '../execution/contracts'
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { makeTradingEngine } from '../composition/trading-engine'
@@ -147,6 +166,9 @@ durableTest.each(
       'accepted-cancel-lookup-failed',
       'early-exit',
       'partial-exit-reentry',
+      'partial-exit-reentry-protection-proof',
+      'partial-exit-reentry-protection-admission-race',
+      'partial-exit-reentry-protection-transmission-race',
       'measured-exit',
       'measured-bootstrap-delay',
       'measured-partial-entry-reentry',
@@ -170,6 +192,10 @@ durableTest.each(
 )(
   '$label: $scenario',
   async ({ scenario: mode }) => {
+    const useProtectionProof = mode === 'partial-exit-reentry-protection-proof'
+    const protectionAdmissionRace = mode === 'partial-exit-reentry-protection-admission-race'
+    const protectionTransmissionRace = mode === 'partial-exit-reentry-protection-transmission-race'
+    const protectionProofScenario = useProtectionProof || protectionAdmissionRace || protectionTransmissionRace
     const ablation = mode === 'ablation-fill'
     const momentum = mode.startsWith('momentum-')
     const chartProvider: JevClient['Service'] =
@@ -181,7 +207,7 @@ durableTest.each(
         ? 'latency-stress-valid'
         : mode === 'momentum-latency-expired'
           ? 'latency-stress-expired'
-          : mode === 'momentum-partial-exit-reentry'
+          : mode === 'momentum-partial-exit-reentry' || protectionProofScenario
             ? 'partial-exit-reentry'
             : ablation || momentum
               ? 'fill'
@@ -654,6 +680,21 @@ durableTest.each(
         const passes = yield* Ref.make<Array<Parameters<import('../app').RecordAutonomousCyclePass>[0]>>([])
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
+        const injectProtectionTransmissionRace = yield* Ref.make(false)
+        let protectedCloseRollbackVerified = false
+        const notificationConnection =
+          protectionAdmissionRace || protectionTransmissionRace ? yield* sql.reserve : undefined
+        const recordRacingNotification = Effect.gen(function* () {
+          if (notificationConnection === undefined) throw new Error('Missing independent notification connection')
+          const now = yield* currentUtcInstant
+          yield* notificationConnection
+            .executeUnprepared(
+              'INSERT INTO broker_notification_receipts (account_id, event_id, source_revision, received_at) VALUES ($1, $2, $3, $4::timestamptz)',
+              [accountId, 'c'.repeat(64), 'a'.repeat(40), now],
+              undefined,
+            )
+            .pipe(Effect.orDie)
+        })
         const runtimeInput = {
           decisionLatencyStress: latencyStress
             ? {
@@ -673,6 +714,11 @@ durableTest.each(
             ...broker,
             read: {
               ...broker.read,
+              assetBySymbol: (symbol: string) =>
+                Ref.getAndSet(injectProtectionTransmissionRace, false).pipe(
+                  Effect.flatMap((inject) => (inject ? recordRacingNotification : Effect.void)),
+                  Effect.andThen(broker.read.assetBySymbol(symbol)),
+                ),
               projection: {
                 ...broker.read.projection,
                 snapshot: Ref.get(stallReconciliation).pipe(
@@ -738,6 +784,34 @@ durableTest.each(
             scenario === 'no-trade-finalization' ? 30_000 : sessionCloseLifecycle ? 1000 : config.operationTimeoutMs,
         }
         const mutations = yield* MutationStore
+        const protectedRaceMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (intentId, requestHash, delayMs, observedAt, closeOnly, protection) =>
+            protection === undefined
+              ? mutations.beginSubmit(intentId, requestHash, delayMs, observedAt, closeOnly)
+              : mutations
+                  .beginSubmit(intentId, requestHash, delayMs, observedAt, closeOnly, {
+                    ...protection,
+                    bind: protection.bind.pipe(Effect.andThen(recordRacingNotification)),
+                  })
+                  .pipe(
+                    Effect.tapError(() =>
+                      sql`SELECT
+                      EXISTS(SELECT 1 FROM intents WHERE intent_id = ${intentId}) AS intent,
+                      EXISTS(SELECT 1 FROM autonomous_cycle_paper_closures
+                        WHERE document #>> '{document,orderedIntentIds,0}' = ${intentId}) AS closure,
+                      EXISTS(SELECT 1 FROM mutation_events WHERE intent_id = ${intentId}) AS start`.pipe(
+                        Effect.orDie,
+                        Effect.tap((rows) =>
+                          Effect.sync(() => {
+                            expect(rows).toEqual([{ intent: false, closure: false, start: false }])
+                            protectedCloseRollbackVerified = true
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+        }
         const expiryMutations: typeof mutations = {
           ...mutations,
           beginSubmit: (...args) =>
@@ -754,7 +828,10 @@ durableTest.each(
             }),
         }
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
-          Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
+          Effect.provideService(
+            MutationStore,
+            untouchedExpiry ? expiryMutations : protectionAdmissionRace ? protectedRaceMutations : mutations,
+          ),
           Effect.provideService(JevClient, timing?.clients.jev ?? provider),
 
           (operation) => (timing === undefined ? operation : timing.run(operation)),
@@ -771,6 +848,32 @@ durableTest.each(
           })),
         )
         const runtime = yield* createRuntime
+        const expectConsumedEntryWindowWait = (
+          advance: typeof runtime.advance,
+          terminalState: 'COMPLETED' | 'NO_TRADE' | 'BLOCKED',
+        ) =>
+          Effect.gen(function* () {
+            const previous =
+              yield* sql`SELECT * FROM autonomous_cycles WHERE account_id=${accountId} ORDER BY created_at`
+            const waiting = yield* advance
+            const availableAt = utcInstantFromEpochMillis(initialAtMs + 60_000)
+            expect(waiting.observation).toMatchObject({
+              result: 'SUCCESS',
+              outcome: 'ALREADY_TERMINAL',
+              readiness: { reason: DecisionReadinessReason.SignalWindowObserved, availableAt },
+            })
+            expect(waiting.result).toMatchObject({ outcome: 'ALREADY_TERMINAL', cycle: { state: terminalState } })
+            expect(waiting.nextWakeAt).toBe(availableAt)
+            expect(
+              yield* sql`SELECT * FROM autonomous_cycles WHERE account_id=${accountId} ORDER BY created_at`,
+            ).toEqual(previous)
+          })
+        const expectNoUnusedEntryExpiry = Effect.gen(function* () {
+          expect(
+            yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles
+              WHERE account_id=${accountId} AND terminal_reason=${CycleTerminalReason.UnusedEntryExpired}`,
+          ).toEqual([{ count: 0 }])
+        })
         if (latencyStress) {
           const advances = []
           for (let attempt = 0; attempt < 6; attempt++) {
@@ -1103,6 +1206,7 @@ durableTest.each(
           const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.clients.jev ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
+          yield* expectConsumedEntryWindowWait(restarted.advance, 'BLOCKED')
           yield* advanceMarketTo(reentryAtMs)
           for (let attempt = 0; attempt < 8; attempt++) {
             yield* restarted.advance
@@ -1116,21 +1220,23 @@ durableTest.each(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
             { state: 'ACTIVE', count: 1 },
-            { state: 'BLOCKED', count: 2 },
+            { state: 'BLOCKED', count: 1 },
           ])
+          expect(
+            yield* sql`SELECT c.state, c.decision_hash IS NOT NULL AS bound FROM autonomous_cycles c
+              JOIN intents i ON i.cycle_id=c.cycle_id WHERE i.intent_id=${denial.intent_id}`,
+          ).toEqual([{ state: 'BLOCKED', bound: true }])
+          yield* expectNoUnusedEntryExpiry
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
         if (scenario === 'no-trade-finalization') {
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           yield* runtime.advance
           yield* advanceMarketTo(initialMs + 2)
-          yield* runtime.advance
+          yield* expectConsumedEntryWindowWait(runtime.advance, 'NO_TRADE')
           expect(
             yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles ORDER BY created_at`,
-          ).toEqual([
-            { state: 'NO_TRADE', bound: true },
-            { state: 'ACTIVE', bound: false },
-          ])
+          ).toEqual([{ state: 'NO_TRADE', bound: true }])
           yield* advanceMarketTo(finalizationAtMs)
           const schedule = yield* driveReplaySession(
             runtime,
@@ -1154,10 +1260,9 @@ durableTest.each(
             yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2' ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', bound: true },
-            { state: 'BLOCKED', bound: false },
             { state: 'NO_TRADE', bound: true },
-            { state: 'BLOCKED', bound: false },
           ])
+          yield* expectNoUnusedEntryExpiry
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
           expect((yield* runtime.advance).observation).toMatchObject({
@@ -1176,9 +1281,7 @@ durableTest.each(
             yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', ordinal: 1 },
-            { state: 'BLOCKED', ordinal: 2 },
-            { state: 'NO_TRADE', ordinal: 3 },
-            { state: 'BLOCKED', ordinal: 4 },
+            { state: 'NO_TRADE', ordinal: 2 },
           ])
           expect(
             yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles WHERE execution_calendar_schema_version='bayn.continuous-market-hours.v1'`,
@@ -1231,6 +1334,7 @@ durableTest.each(
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           if (scenario === 'missing-candidate') {
+            expect(schedule.passCount).toBeGreaterThanOrEqual(5)
             expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
             expect(
               yield* sql`SELECT
@@ -1300,6 +1404,10 @@ durableTest.each(
           const readAuthority = store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
           const resources = Context.make(BrokerRead, broker.read).pipe(
+            Context.add(DecisionConstruction, {
+              observe: constructObserveShadowDecision,
+              execution: constructExecutionDecision,
+            }),
             Context.add(CycleStore, runtime.cycleStore),
             Context.add(BrokerEventStore, store.events),
             Context.add(FillAccountingStore, store.accounting),
@@ -1443,7 +1551,6 @@ durableTest.each(
                   intradayMarketData: runtime.marketData,
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
-                  pollIntervalMs: 1000,
                   reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
                   reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
                 },
@@ -1965,7 +2072,7 @@ durableTest.each(
           expect(first.orders[0]?.order.status).toBe(OrderStatus.Canceled)
           expect(first.fills).toHaveLength(0)
           expect(first.ledger.positions).toHaveLength(0)
-          yield* runtime.advance
+          yield* expectConsumedEntryWindowWait(runtime.advance, 'COMPLETED')
           expect((yield* broker.snapshot).orders).toHaveLength(3)
           yield* advanceMarketTo(reentryAtMs)
           yield* completeCycle
@@ -1976,12 +2083,9 @@ durableTest.each(
           expect(final.ledger.positions).toHaveLength(0)
           expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
             { state: 'COMPLETED' },
-            { state: 'BLOCKED' },
             { state: 'COMPLETED' },
           ])
-          expect(
-            yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE state='BLOCKED'`,
-          ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
+          yield* expectNoUnusedEntryExpiry
           yield* createRuntime
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
@@ -2024,41 +2128,415 @@ durableTest.each(
           partialEntryReentry
         ) {
           const initialState = yield* broker.snapshot
-          expect(
-            initialState.fills.map((fill) => fill.side),
-            JSON.stringify(
-              initialState.orders.map(({ order, executions }) => ({
-                symbol: order.symbol,
-                submittedAt: order.submittedAt,
-                lastExecution: executions.at(-1),
-              })),
-            ),
-          ).toEqual([OrderSide.Buy])
+          if (partialEntryReentry) {
+            expect(initialState.fills.length).toBeGreaterThan(0)
+            expect(initialState.fills.every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+            expect(new Set(initialState.fills.map((fill) => fill.brokerOrderId)).size).toBe(1)
+            const parent = initialState.orders[0]?.order
+            if (parent === undefined) throw new Error('Missing partial entry parent')
+            const filled = initialState.fills.reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(filled).toBe(BigInt(parent.filledQuantityAtoms))
+            expect(filled).toBeLessThan(BigInt(parent.quantityAtoms!))
+          } else
+            expect(
+              initialState.fills.map((fill) => fill.side),
+              JSON.stringify(
+                initialState.orders.map(({ order, executions }) => ({
+                  symbol: order.symbol,
+                  submittedAt: order.submittedAt,
+                  lastExecution: executions.at(-1),
+                })),
+              ),
+            ).toEqual([OrderSide.Buy])
+          let exactProtectionReadback = false
           for (let attempt = 0; attempt < 40; attempt++) {
             const advanced = yield* runtime.advance
+            if (
+              scenario === 'partial-exit-reentry' &&
+              !exactProtectionReadback &&
+              advanced.result?.outcome === 'RECOVERED'
+            ) {
+              const cycleId = advanced.result.cycle.identity.cycleId
+              const pending = yield* readProtectionReleaseBasis(accountId, cycleId)
+              if (pending !== undefined) {
+                const observationStore = makeBrokerObservationStore(
+                  sql,
+                  accountId,
+                  'a'.repeat(40),
+                  60_000,
+                  valkeyFixture().cache,
+                )
+                yield* observationStore.activate(0)
+                const ordinary = yield* observationStore.begin('original-poll', 0)
+                if (ordinary.status !== BrokerObservationClaimStatus.Reserved)
+                  throw new Error('Expected initial capture')
+                const publishedAtMs = Date.parse(ordinary.ticket.startedAt)
+                const ordinaryDueAtMs = publishedAtMs + 30_000
+                const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+                const allowance = yield* Effect.gen(function* () {
+                  const budget = yield* makeBrokerObservationBudget
+                  const http = HttpClient.make((request) =>
+                    Effect.succeed(
+                      HttpClientResponse.fromWeb(
+                        request,
+                        new Response('{}', {
+                          headers: {
+                            'x-ratelimit-limit': '200',
+                            'x-ratelimit-remaining': '198',
+                            'x-ratelimit-reset': String(Math.floor(publishedAtMs / 1_000)),
+                          },
+                        }),
+                      ),
+                    ),
+                  )
+                  yield* budget.beginCapture
+                  yield* budget.decorate(http).get('https://paper-api.alpaca.markets/v2/account')
+                  return yield* budget.protectionReadAllowance
+                }).pipe(Effect.provideService(Clock.Clock, liveClock))
+                expect(allowance).toBeDefined()
+                const brokerSnapshot = observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt)
+                const bookingDate = utcDateFromEpochMillis(publishedAtMs - 2 * 86_400_000)
+                const cashFeeWitnesses = ['-0.02', '-0.03'].map((netAmount) =>
+                  Result.getOrThrow(
+                    decodeFeeActivityWitness({
+                      activity_type: 'FEE',
+                      ref_id: `cash-fee-${netAmount}`,
+                      status: 'executed',
+                      currency: 'USD',
+                      net_amount: netAmount,
+                      details: { system_date: bookingDate },
+                    }),
+                  ),
+                )
+                const pendingCashFeeCount = pendingCashFees(
+                  new Map(cashFeeWitnesses.map(({ key }) => [key, 1])),
+                  brokerSnapshot.snapshot.history.fees,
+                  ordinary.ticket.startedAt,
+                )
+                if (pendingCashFeeCount !== 2) throw new Error('Expected two unresolved cash fee witnesses')
+                expect(
+                  yield* observationStore
+                    .publish(ordinary.ticket, { ...brokerSnapshot, pendingCashFeeCount }, ordinaryDueAtMs, allowance)
+                    .pipe(Effect.provideService(Clock.Clock, liveClock)),
+                ).toBe(true)
+                const basis = yield* readProtectionReleaseBasis(accountId, cycleId)
+                if (basis === undefined) throw new Error('Expected an exact cancellation basis')
+                const claims = yield* Effect.all(
+                  ['first-proof', 'duplicate-proof'].map((id) =>
+                    observationStore.reserveProtectionRead(basis.command, id, 1_800),
+                  ),
+                  { concurrency: 2 },
+                )
+                const winner = claims.findIndex((value) => value !== undefined)
+                expect(claims.filter((value) => value !== undefined)).toEqual([ordinaryDueAtMs + 2_400])
+                const blocked = yield* observationStore.begin('too-early', 0)
+                expect(blocked.status).toBe(BrokerObservationClaimStatus.QuotaWait)
+                expect(blocked.nextPollNotBeforeMs).toBe(ordinaryDueAtMs + 2_400)
+                if (protectionProofScenario) yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 474)
+                const proof = yield* readProtectionRelease(broker.read, basis, 5_000)
+                expect(proof._tag).toBe('VerifiedProtectionRelease')
+                if (proof._tag !== 'VerifiedProtectionRelease') throw new Error(proof.reason)
+                const winnerId = winner === 0 ? 'first-proof' : 'duplicate-proof'
+                const providerBackoffAtMs = ordinaryDueAtMs + 5_000
+                yield* observationStore.settleProtectionRead(winnerId, providerBackoffAtMs)
+                expect(yield* observationStore.begin('still-too-early', 0)).toEqual({
+                  status: BrokerObservationClaimStatus.QuotaWait,
+                  nextPollNotBeforeMs: providerBackoffAtMs,
+                })
+                expect(yield* readProtectionReleaseReference(accountId, cycleId, winnerId)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, 'unknown-claim')).toBeUndefined()
+                const proofId = yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)
+                expect(proofId).toMatch(/^[a-f0-9]{64}$/)
+                if (proofId === undefined) throw new Error('Expected a durable release proof')
+                const scope = { proofId, accountId, cycleId: basis.trigger.cycleId }
+                const readProof = withCurrentProtectionReleaseProof(scope, 5_000, (stored) =>
+                  Effect.succeed(stored.readback),
+                )
+                expect(yield* readProof).toEqual(proof)
+                expect(yield* readProtectionReleaseReference(accountId, cycleId, winnerId)).toEqual({
+                  proofId,
+                  cycleId,
+                  checkedAt: proof.checkedAt,
+                })
+                expect(yield* readProtectionReleaseReference(accountId, 'f'.repeat(64), winnerId)).toBeUndefined()
+                expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBe(proofId)
+                expect(
+                  yield* sql`SELECT count(*)::int AS count FROM protection_release_proofs WHERE proof_id = ${proofId}`,
+                ).toEqual([{ count: 1 }])
+                if (protectionProofScenario) {
+                  const release = { proofId, cycleId, checkedAt: proof.checkedAt }
+                  expect((yield* readCurrentProtectionClose(release, accountId, 5_000))?.protectionClose.proofId).toBe(
+                    proofId,
+                  )
+                  if (protectionTransmissionRace) yield* Ref.set(injectProtectionTransmissionRace, true)
+                  const accelerated = yield* advanceExecutionOnce(
+                    {
+                      controllerKey: Result.getOrThrow(canonicalHashV1Result({ accountId })),
+                      epoch: 1,
+                      sequence: attempt,
+                      issuedAt: yield* currentUtcInstant,
+                      sourceRevision: config.build.sourceRevision,
+                      protectionRelease: release,
+                    },
+                    { advance: runtime.advance, nextDelayMs: 1000 },
+                  )
+                  const [admitted] = yield* sql<{
+                    proof_id: string
+                    start_count: number
+                    latency_ms: number
+                    latest_reconciliation: string
+                    physical_identity_count: number
+                    denied_count: number
+                    qualification_count: number
+                  }>`
+                    SELECT c.document#>>'{document,plannerInput,protectionClose,proofId}' AS proof_id,
+                      count(*) FILTER (WHERE m.event_type = 'SUBMIT_STARTED')::int AS start_count,
+                      max(EXTRACT(EPOCH FROM m.occurred_at - ${basis.trigger.observedAt}::timestamptz) * 1000)
+                        FILTER (WHERE m.event_type = 'SUBMIT_STARTED')::float8 AS latency_ms,
+                      (SELECT reconciliation_id FROM reconciliations WHERE account_id = ${accountId}
+                        ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1) AS latest_reconciliation,
+                      count(distinct m.broker_order_id) FILTER (WHERE m.event_type = 'SUBMIT_ACCEPTED')::int AS physical_identity_count,
+                      count(*) FILTER (WHERE m.event_type = 'SUBMIT_DENIED')::int AS denied_count,
+                      count(a.event_id)::int AS qualification_count
+                    FROM autonomous_cycle_paper_closures c
+                    JOIN mutation_events m ON m.intent_id = c.document #>> '{document,orderedIntentIds,0}'
+                    LEFT JOIN execution_decision_admissions a ON a.event_id = m.event_id
+                      AND a.decision_id = c.document #>> '{document,contentHash}'
+                    WHERE c.cycle_id = ${cycleId} GROUP BY c.document
+                  `
+                  if (protectionAdmissionRace) {
+                    expect(protectedCloseRollbackVerified).toBe(true)
+                    expect(admitted?.proof_id ?? null).toBeNull()
+                    expect(
+                      yield* sql`SELECT system_evidence_source_committed(xmin) AS committed
+                      FROM protection_release_close_plans WHERE proof_id = ${proofId}`,
+                    ).toEqual([{ committed: true }])
+                  } else {
+                    expect(admitted, JSON.stringify(accelerated.observation)).toMatchObject({
+                      proof_id: proofId,
+                      start_count: 1,
+                      physical_identity_count: protectionTransmissionRace ? 0 : 1,
+                      denied_count: protectionTransmissionRace ? 1 : 0,
+                      qualification_count: 1,
+                      latest_reconciliation:
+                        basis.trigger.evidence.portfolio.brokerState.reconciliation.reconciliationId,
+                    })
+                    expect(admitted?.latency_ms).toBeLessThanOrEqual(5_311)
+                    if (useProtectionProof) {
+                      expect(admitted?.latency_ms).toBeGreaterThanOrEqual(474)
+                      yield* Effect.logInfo('Native protection timing with modeled broker wait').pipe(
+                        Effect.annotateLogs({ triggerToDurableAdmissionMs: admitted?.latency_ms ?? -1 }),
+                      )
+                    }
+                  }
+                  expect(yield* readProof).toBeUndefined()
+                  if (protectionTransmissionRace) {
+                    expect((yield* runtime.store.authorityGeneration.readAuthorityState).kill).toBe(KillState.Clear)
+                  }
+                } else {
+                  yield* sql`INSERT INTO broker_notification_receipts (account_id,event_id,source_revision,received_at)
+                    VALUES (${accountId}, ${'c'.repeat(64)}, ${'a'.repeat(40)}, ${proof.checkedAt}::timestamptz)`
+                  expect(yield* readProof).toBeUndefined()
+                  expect(yield* recordProtectionReleaseProof(basis, proof, 5_000, winnerId)).toBeUndefined()
+                }
+
+                const readGroup = broker.read.orderByClientId(basis.protectionIntent.clientOrderId)
+                const changedGroup = (change: (order: BrokerOrder) => BrokerOrder) => ({
+                  ...broker.read,
+                  orderByClientId: () =>
+                    readGroup.pipe(Effect.map(({ evidence, value }) => ({ evidence, value: change(value) }))),
+                })
+                for (const alternative of [
+                  changedGroup((value) => ({ ...value, status: OrderStatus.PendingCancel })),
+                  changedGroup((value) => ({ ...value, filledQuantityAtoms: '1' })),
+                  changedGroup((value) => ({ ...value, replacedBy: value.brokerOrderId })),
+                ]) {
+                  expect(yield* readProtectionRelease(alternative, basis, 5_000)).toMatchObject({ _tag: 'Unproven' })
+                }
+                expect(
+                  yield* readProtectionRelease(
+                    {
+                      ...broker.read,
+                      positions: Effect.succeed({ ...proof.positions, value: [] }),
+                    },
+                    basis,
+                    5_000,
+                  ),
+                ).toEqual({ _tag: 'Unproven', reason: 'changed-account' })
+                expect(
+                  yield* readProtectionRelease(
+                    {
+                      ...broker.read,
+                      account: Effect.succeed({ ...proof.account, value: { ...proof.account.value, cashMicros: '0' } }),
+                    },
+                    basis,
+                    5_000,
+                  ),
+                ).toEqual({ _tag: 'Unproven', reason: 'changed-account' })
+
+                const reconciled = basis.trigger.evidence.portfolio.brokerState.reconciliation
+                const [authority] = yield* sql<{
+                  version: number
+                }>`SELECT version::integer AS version FROM authority_state WHERE singleton`
+                if (authority === undefined) throw new Error('Expected an active authority')
+                const version = {
+                  reconciliationId: reconciled.reconciliationId,
+                  reconciledAt: reconciled.reconciledAt,
+                  authorityGenerationHash: runtime.authorityGenerationHash,
+                  authorityVersion: authority.version,
+                }
+                expect(
+                  Result.isFailure(
+                    yield* verifyBrokerStateVersion(sql, accountId, version, basis.command.intentId, false).pipe(
+                      Effect.result,
+                    ),
+                  ),
+                ).toBe(true)
+                exactProtectionReadback = true
+              }
+            }
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
             const next = (yield* Clock.currentTimeMillis) + 1000
             yield* advanceMarketTo(next)
           }
+          if (scenario === 'partial-exit-reentry') expect(exactProtectionReadback).toBe(true)
           const state = yield* broker.snapshot
           expect(managementCalls).toBe(0)
           expect(state.fills[0]?.side).toBe(OrderSide.Buy)
-          expect(state.fills.slice(1).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
+          const firstCover = state.fills.findIndex((fill) => fill.side === OrderSide.Sell)
+          expect(firstCover).toBeGreaterThan(0)
+          expect(state.fills.slice(0, firstCover).every((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          expect(state.fills.slice(firstCover).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
           expect(state.fills.length).toBeGreaterThanOrEqual(scenario === 'partial-exit-reentry' ? 3 : 2)
           expect(state.ledger.positions).toHaveLength(0)
-          expect(
-            yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason,
-                (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz = (
-                  SELECT min(t.occurred_at) FROM accounting_transactions t
+          const closures = yield* sql<{ target: unknown; boundToProtectiveFill: boolean }>`SELECT
+                closure.document #> '{document,strategyDecision}' AS target,
+                EXISTS (
+                  SELECT 1 FROM accounting_transactions t
                   JOIN accounting_receipts r ON r.broker_event_id = t.broker_event_id AND r.intent_id = t.intent_id
                   JOIN intents i ON i.intent_id = t.intent_id
                   WHERE i.cycle_id = cycle.cycle_id AND i.protection IS NOT NULL AND t.side = 'SELL'
+                    AND t.account_id = cycle.account_id
+                    AND t.occurred_at = (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz
                 ) AS "boundToProtectiveFill"
               FROM autonomous_cycle_paper_closures AS closure
-              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`,
-          ).toEqual(
-            scenario === 'partial-exit-reentry' ? [{ reason: 'PROTECTION_RELEASED', boundToProtectiveFill: true }] : [],
-          )
+              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`
+          if (partialEntryReentry) {
+            // Processing time determines whether cancellation/re-protection needs a durable close decision.
+            expect(closures.length).toBeLessThanOrEqual(1)
+          } else expect(closures).toHaveLength(scenario === 'partial-exit-reentry' ? 1 : 0)
+          for (const closure of closures) {
+            const target = yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(closure.target)
+            if (useProtectionProof || protectionTransmissionRace) {
+              const [command] = yield* sql<{ exit_target: unknown }>`SELECT exit_target
+                FROM native_protection_cancel_commands WHERE account_id = ${accountId}`
+              expect(target).toEqual(
+                yield* Schema.decodeUnknownEffect(JevExitTargetSchema, strictParseOptions)(command?.exit_target),
+              )
+              continue
+            }
+            expect(target.reason).toBe(JevExitReason.ProtectionReleased)
+            const portfolio = target.evidence.portfolio
+            if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Missing held closure evidence')
+            const exitRequestedAt = portfolio.exitRequestedAt
+            if (exitRequestedAt === null) throw new Error('Missing causal exit request')
+            if (!portfolio.profitExitRequested) {
+              // Stop and unclassified native disposals still bind the actual causal accounting fill.
+              expect(closure.boundToProtectiveFill).toBe(true)
+              continue
+            }
+            // A verified partial TP reduces inventory while its sibling stop remains armed. A later
+            // quote-backed profit exit must bind its exact durable command, not reuse the TP fill time.
+            expect(closure.boundToProtectiveFill).toBe(false)
+            const commands = yield* sql<{ intentId: string; brokerOrderId: string; exitTarget: unknown }>`SELECT
+                c.intent_id AS "intentId", c.broker_order_id AS "brokerOrderId", c.exit_target AS "exitTarget"
+              FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
+              WHERE i.account_id = ${accountId} AND i.cycle_id = ${target.cycleId}
+                AND c.requested_at = ${exitRequestedAt}::timestamptz`
+            expect(commands).toHaveLength(1)
+            const command = commands[0]
+            if (command === undefined) throw new Error('Missing exact protection cancellation')
+            const trigger = yield* Schema.decodeUnknownEffect(
+              JevExitTargetSchema,
+              strictParseOptions,
+            )(command.exitTarget)
+            expect(trigger.reason).toBe(JevExitReason.ProfitTarget)
+            expect(trigger.cycleId).toBe(target.cycleId)
+            expect(trigger.entryDecisionHash).toBe(target.entryDecisionHash)
+            const beforeCancel = trigger.evidence.portfolio
+            if (beforeCancel.purpose !== JevPurpose.Manage) throw new Error('Missing pre-cancel held evidence')
+            expect(beforeCancel.brokerState.account.accountId).toBe(accountId)
+            expect(beforeCancel.exitRequestedAt).toBeNull()
+            expect(beforeCancel.profitExitRequested).toBe(false)
+            expect(beforeCancel.exitPolicy).toEqual(portfolio.exitPolicy)
+            expect(beforeCancel.entryFills).toEqual(portfolio.entryFills)
+            expect(beforeCancel.protectionDisposals).toEqual(portfolio.protectionDisposals)
+            expect(BigInt(beforeCancel.protectionDisposals.quantityAtoms)).toBeGreaterThan(0n)
+            expect(Date.parse(trigger.observedAt)).toBeLessThanOrEqual(Date.parse(exitRequestedAt))
+            expect(Date.parse(exitRequestedAt)).toBeLessThan(Date.parse(trigger.commitDeadlineAt))
+            const protectedIntent = Option.getOrThrow(yield* (yield* IntentStore).read(command.intentId)).intent
+            if (protectedIntent.protection?._tag !== 'Oco') throw new Error('Missing partial-entry Oco protection')
+            expect(protectedIntent.protection.entryDecisionHash).toBe(target.entryDecisionHash)
+            expect(beforeCancel.protectionIntentIds).toContain(command.intentId)
+            const cancelled = state.orders.find(({ order }) => order.brokerOrderId === command.brokerOrderId)?.order
+            const parent =
+              cancelled?.parentBrokerOrderId === undefined
+                ? cancelled
+                : state.orders.find(({ order }) => order.brokerOrderId === cancelled.parentBrokerOrderId)?.order
+            if (parent === undefined) throw new Error('Missing native TP parent')
+            const children = state.orders
+              .filter(({ order }) => order.parentBrokerOrderId === parent.brokerOrderId)
+              .map(({ order }) => order)
+            Result.getOrThrow(
+              verifyProtectionGroup(
+                { ...parent, legs: children },
+                {
+                  symbol: protectedIntent.symbol,
+                  quantityAtoms: protectedIntent.quantityAtoms,
+                  protection: protectedIntent.protection,
+                },
+              ),
+            )
+            const working = beforeCancel.brokerState.orders.filter((order) => order.intentId === command.intentId)
+            expect(working).toHaveLength(2)
+            const profit = working.find((order) => order.orderType === 'LIMIT')
+            const stop = working.find((order) => order.orderType === 'STOP_LIMIT')
+            const position = beforeCancel.brokerState.positions.find(
+              (position) => position.symbol === protectedIntent.symbol,
+            )
+            if (
+              profit === undefined ||
+              profit.quantityAtoms === undefined ||
+              stop === undefined ||
+              position === undefined
+            )
+              throw new Error('Missing native TP residual coverage')
+            expect([profit.brokerOrderId, stop.brokerOrderId]).toContain(command.brokerOrderId)
+            expect(profit.status).toBe(ExecutionOrderStatus.PartiallyFilled)
+            expect(profit.limitPriceMicros).toBe(protectedIntent.protection.profitLimitPriceMicros)
+            expect(BigInt(profit.quantityAtoms) - BigInt(profit.filledQuantityAtoms)).toBe(
+              BigInt(position.quantityAtoms),
+            )
+            expect(stop.status).toBe(ExecutionOrderStatus.New)
+            expect(stop.parentBrokerOrderId).toBe(profit.brokerOrderId)
+            expect(stop.stopPriceMicros).toBe(protectedIntent.protection.stopPriceMicros)
+            expect(stop.limitPriceMicros).toBe(protectedIntent.protection.stopLimitPriceMicros)
+            expect(stop.quantityAtoms).toBe(position.quantityAtoms)
+            expect(stop.filledQuantityAtoms).toBe('0')
+            const nativeProfitFills = state.fills.filter((fill) => fill.brokerOrderId === profit.brokerOrderId)
+            expect(nativeProfitFills).toHaveLength(1)
+            const nativeProfitFill = nativeProfitFills[0]
+            if (nativeProfitFill === undefined) throw new Error('Missing actual partial TP fill')
+            expect(nativeProfitFill.accountId).toBe(accountId)
+            expect(nativeProfitFill.symbol).toBe(protectedIntent.symbol)
+            expect(nativeProfitFill.side).toBe(OrderSide.Sell)
+            expect(nativeProfitFill.quantityAtoms).toBe(beforeCancel.protectionDisposals.quantityAtoms)
+            expect(nativeProfitFill.leavesQuantityAtoms).toBe(position.quantityAtoms)
+            expect(BigInt(nativeProfitFill.priceAtoms)).toBeGreaterThanOrEqual(
+              BigInt(protectedIntent.protection.profitLimitPriceMicros) * 1000n,
+            )
+            expect(Date.parse(nativeProfitFill.transactionTime)).toBeLessThan(Date.parse(trigger.observedAt))
+          }
           const reconciliation = yield* runtime.reconcile
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
@@ -2086,7 +2564,15 @@ durableTest.each(
           ])
           if (partialEntryReentry) {
             expect(state.orders.some(({ order }) => order.nativeProtection?._tag === 'Oco')).toBe(true)
-            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['10000000000', '10000000000'])
+            const entryQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Buy)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            const exitQuantity = state.fills
+              .filter((fill) => fill.side === OrderSide.Sell)
+              .reduce((total, fill) => total + BigInt(fill.quantityAtoms), 0n)
+            expect(entryQuantity).toBeGreaterThan(0n)
+            expect(entryQuantity).toBeLessThan(BigInt(entryRoot.quantityAtoms!))
+            expect(exitQuantity).toBe(entryQuantity)
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
             yield* advanceMarketTo(reentryAtMs)
@@ -2096,12 +2582,11 @@ durableTest.each(
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
             }
             const repeated = yield* broker.snapshot
-            expect(repeated.fills.map((fill) => fill.side)).toEqual([
-              OrderSide.Buy,
-              OrderSide.Sell,
-              OrderSide.Buy,
-              OrderSide.Sell,
-            ])
+            expect(
+              repeated.fills
+                .filter((fill, index, fills) => index === 0 || fills[index - 1]?.side !== fill.side)
+                .map((fill) => fill.side),
+            ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
             expect(repeated.ledger.positions).toHaveLength(0)
             expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
             expect(
@@ -2172,7 +2657,7 @@ durableTest.each(
             expect(restarted.authorityGenerationHash).toBe(
               (yield* runtime.store.authorityGeneration.readAuthorityState).generationHash,
             )
-            yield* restarted.advance
+            yield* expectConsumedEntryWindowWait(restarted.advance, 'COMPLETED')
             expect((yield* broker.snapshot).fills).toHaveLength(state.fills.length)
             yield* advanceMarketTo(reentryAtMs)
             for (let attempt = 0; attempt < 20; attempt++) {
@@ -2195,10 +2680,8 @@ durableTest.each(
             expect(final.brokerState.unknownOrderCount).toBe(0)
             expect(
               yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
-            ).toEqual([{ state: 'COMPLETED' }, { state: 'BLOCKED' }, { state: 'COMPLETED' }])
-            expect(
-              yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE account_id=${accountId} AND state='BLOCKED'`,
-            ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'COMPLETED' }])
+            yield* expectNoUnusedEntryExpiry
             expect(
               yield* sql`
                 SELECT payload #>> '{manifest,rangeEndAt}' AS window_end
@@ -2215,7 +2698,11 @@ durableTest.each(
                 FROM autonomous_cycle_paper_close_replans AS replan
                 JOIN autonomous_cycle_paper_closures AS original USING (cycle_id)
               `,
-            ).toEqual([{ plans: 0, same_exit_evidence: null }])
+            ).toEqual(
+              protectionTransmissionRace
+                ? [{ plans: 1, same_exit_evidence: true }]
+                : [{ plans: 0, same_exit_evidence: null }],
+            )
           }
           return { _tag: 'Lifecycle' as const }
         }
@@ -2319,7 +2806,7 @@ durableTest.each(
           const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
             count(*)::int AS count,
             bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
-            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v40') AS current_protocol
+            bool_and(payload #>> '{protocol,schemaVersion}' = ${fixture.protocol.schemaVersion}) AS current_protocol
             FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
           expect(source?.count).toBeGreaterThan(0)
           expect(source?.candidate_only).toBe(true)
@@ -2437,6 +2924,10 @@ durableTest.each(
           ),
         ),
         Effect.provide(stores),
+        Effect.provideService(DecisionConstruction, {
+          observe: constructObserveShadowDecision,
+          execution: constructExecutionDecision,
+        }),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
         Effect.timeout('60 seconds'),
