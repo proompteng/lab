@@ -143,7 +143,7 @@ SQL
         grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/promotion-test.log"
       fi
     else
-      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.4 distribution}"
+      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.8.2 distribution}"
       cargo build --locked
       cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri --no-run
       cd ../../apps/landing

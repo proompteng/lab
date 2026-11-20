@@ -648,7 +648,7 @@ def validate(targets):
         == {"method": "any", "number": 1, "dataDurability": "required"},
         "keycloak: synchronous durability required",
     )
-    checkpoint = resource(targets, "keycloak", "Backup", "keycloak-server-26-7-4")
+    checkpoint = resource(targets, "keycloak", "Backup", "keycloak-server-26-8-2")
     require(
         checkpoint["metadata"]["annotations"]
         == {
@@ -984,7 +984,7 @@ def main():
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "affinity"
         ].update(tolerations=[]),
-        lambda data: resource(data, "keycloak", "Backup", "keycloak-server-26-7-4")[
+        lambda data: resource(data, "keycloak", "Backup", "keycloak-server-26-8-2")[
             "metadata"
         ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
         lambda data: resource(

@@ -324,7 +324,7 @@ describe('native Restate execution server', () => {
       },
       {
         name: 'BaynBrokerObservations',
-        handlers: ['notify', 'accept', 'refresh', 'probeProtection', 'activate', 'capture', 'freshness', 'status'],
+        handlers: ['notify', 'accept', 'refresh', 'activate', 'capture', 'freshness', 'status'],
       },
       { name: 'BaynEntryInference', handlers: ['watch', 'evaluate'] },
     ])
@@ -345,8 +345,8 @@ describe('native Restate execution server', () => {
       journalRetention: 0,
     })
     expect(services[2]?.handlers?.find(({ name }) => name === 'watch')).toMatchObject({ ingressPrivate: true })
-    expect(services[1]?.handlers?.find(({ name }) => name === 'probeProtection')).toMatchObject({
-      ty: 'SHARED',
+    expect(services[1]?.handlers?.find(({ name }) => name === 'refresh')).toMatchObject({
+      ty: 'EXCLUSIVE',
       ingressPrivate: true,
     })
     expect(
