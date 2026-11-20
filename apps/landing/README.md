@@ -186,10 +186,12 @@ thin, with status as muted micro text (Ready / Working / Approval needed / Recon
 no horizontal divider. Sidebar rows share one trailing position for response progress and the archive button;
 hover or keyboard focus reveals the archive action, which remains disabled during a response. Consecutive tool and
 command activity appears under a collapsed **Ran commands** disclosure, including a single command. Expanding it
-shows an indented list whose individual rows can disclose their full output. Messages and approvals stay outside it.
+shows an indented list whose individual rows can disclose their full output. Messages, approvals, images, and AgentRun
+cards stay visible in the transcript.
 The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. The composer has one action button: a draft uses Send/Steer, and an empty input uses Stop during a
-response. Typing the next draft while a steering request is pending does not add a second Stop button.
+response. During run recovery or cancellation, a draft keeps the composer action in place and Stop appears beside the
+run status.
 Approval, model, and reasoning selectors share the same trigger and menu styles, label contrast and
 inherited chevron color. Model and reasoning controls retain that contrast while disabled during a response; native
 disabled semantics, their cursor and explanatory tooltips still communicate availability.

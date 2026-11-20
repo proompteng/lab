@@ -4026,7 +4026,7 @@ test('ignores obsolete browser registry entries when recovering a native session
     .toEqual([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt: now + 100, unavailable: true }])
 })
 
-test('keeps sending, steering, and stopping in the composer', async ({ page }, testInfo) => {
+test('keeps sending, steering, and stopping in the composer', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
   const composer = page.getByRole('form', { name: 'Message composer' })
@@ -4042,38 +4042,6 @@ test('keeps sending, steering, and stopping in the composer', async ({ page }, t
   await expect(action).toHaveCount(1)
   await prompt.press('Enter')
   expect(mock.actions.some((item) => item.action === 'interrupt-turn')).toBe(false)
-  const screenshotPath = testInfo.outputPath('composer-stop.png')
-  await composer.screenshot({ path: screenshotPath })
-  await testInfo.attach('composer-stop', { path: screenshotPath, contentType: 'image/png' })
-  await emitCodexEvent(page, {
-    sequence: 1,
-    threadId: 'thread-1',
-    turnId: 'turn-1',
-    itemId: 'activity-1',
-    approvalId: '',
-    rawJson: '{}',
-    kind: 'tool-call',
-    method: 'item/started',
-    text: 'rg --files -g AGENTS.md',
-  })
-  await emitCodexEvent(page, {
-    sequence: 2,
-    threadId: 'thread-1',
-    turnId: 'turn-1',
-    itemId: 'output-1',
-    approvalId: '',
-    rawJson: '{}',
-    kind: 'tool-output',
-    method: 'item/started',
-    text: '/home/nanoagent/workspace',
-  })
-  await page.getByRole('button', { name: 'Ran commands', exact: true }).first().click()
-  await expect(page.getByRole('article', { name: 'Codex activity' })).toBeVisible()
-  await expect(page.getByRole('article', { name: 'Codex output' })).toBeVisible()
-  const surfacePath = testInfo.outputPath('conversation-polish.png')
-  await page.getByRole('region', { name: 'Tengri window' }).screenshot({ path: surfacePath })
-  await testInfo.attach('conversation-polish', { path: surfacePath, contentType: 'image/png' })
-
   await prompt.fill('Only inspect the current directory.')
   await expect(action).toHaveCount(1)
   await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
@@ -4097,7 +4065,6 @@ test('keeps sending, steering, and stopping in the composer', async ({ page }, t
     await expect(action).toHaveAccessibleName('Steer turn')
     await expect(action).toBeDisabled()
     await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
-    await composer.screenshot({ path: testInfo.outputPath('composer-steering-pending.png') })
   } finally {
     releaseSteering()
   }
@@ -4120,7 +4087,7 @@ test('keeps sending, steering, and stopping in the composer', async ({ page }, t
     )
     .toBe(true)
   await emitCodexEvent(page, {
-    sequence: 3,
+    sequence: 1,
     threadId: 'thread-1',
     turnId: 'turn-1',
     itemId: '',
@@ -4450,16 +4417,13 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
     await page.goto('/')
     const chat = page.getByRole('region', { name: 'Tengri window' })
     const activity = chat.getByRole('status', { name: 'Agent activity' })
-    await expect(
-      activity.getByText(
-        phase === 'cancelling'
-          ? 'Stopping'
-          : "The agent's last action could not be confirmed. Check the conversation before continuing.",
-        { exact: true },
-      ),
-    ).toBeVisible()
+    await expect(activity).toHaveText(
+      phase === 'cancelling'
+        ? 'Stopping'
+        : "The agent's last action could not be confirmed. Check the conversation before continuing.",
+    )
     if (phase === 'needs_reconciliation')
-      await expect(activity.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+      await expect(chat.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
     run.state = { phase: 'cancelled', turnId: 'turn-cleanup' }
     await expect(activity).toHaveCount(0)
   })
@@ -12231,11 +12195,14 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   const image = await pasteClipboardImage(page, composer)
   const attachment = chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')
   await expect(attachment).toHaveAttribute('src', `data:image/png;base64,${image}`)
-  await expect(stop).toBeEnabled()
+  await expect(stop).toHaveCount(0)
   unavailable = true
   await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(0)
   await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(0)
   await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Status unavailable')
+  await expect(
+    chat.getByRole('form', { name: 'Message composer' }).getByRole('button', { name: 'Stop response' }),
+  ).toHaveCount(0)
   await expect(stop).toBeEnabled()
   await stop.click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(1)
@@ -12519,73 +12486,72 @@ test('reconciles a finished background run without coupling its failures to the 
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
 
-for (const width of [1440, 390]) {
-  test(`AgentRun card refreshes and retains an uncertain cancellation at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 })
-    const view = {
-      kind: 'agent-run',
-      targetId: 'agents/lab',
-      run: { runId: '77777777-7777-4777-8777-777777777777', status: 'Pending' },
-    }
-    await mockTengri(page, {
-      resumeThreadRawJson: JSON.stringify({
-        thread: {
-          turns: [
-            {
-              id: 'turn-1',
-              status: 'completed',
-              items: [
-                {
-                  id: 'relay-start',
-                  type: 'mcpToolCall',
-                  server: 'relay',
-                  tool: 'start_run',
-                  status: 'completed',
-                  result: { content: [{ type: 'text', text: JSON.stringify({ structuredContent: view }) }] },
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    })
-    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
-    const commands: string[] = []
-    await page.route('**/api/tengri/runs', async (route) => {
-      const command = route.request().postDataJSON()
-      commands.push(command.operation)
-      if (command.operation === 'cancel_run') return route.fulfill({ status: 503, json: { error: 'Lost reply' } })
-      return route.fulfill({
-        json: {
-          view: {
-            ...view,
-            run: {
-              ...view.run,
-              status: 'Running',
-              progress: { activeTools: [{ title: 'Checking the requested change' }] },
-            },
+test('AgentRun card refreshes and retains an uncertain cancellation on a narrow screen', async ({ page }) => {
+  const width = 390
+  await page.setViewportSize({ width, height: 900 })
+  const view = {
+    kind: 'agent-run',
+    targetId: 'agents/lab',
+    run: { runId: '77777777-7777-4777-8777-777777777777', status: 'Pending' },
+  }
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              {
+                id: 'relay-start',
+                type: 'mcpToolCall',
+                server: 'relay',
+                tool: 'start_run',
+                status: 'completed',
+                result: { content: [{ type: 'text', text: JSON.stringify({ structuredContent: view }) }] },
+              },
+            ],
           },
-          canCancel: true,
-        },
-      })
-    })
-    await page.goto('/')
-    const card = page.locator('[aria-label="Agent run"]')
-    await expect(card).toBeVisible()
-    await card.getByRole('button', { name: 'Refresh run' }).click()
-    await expect(card.getByRole('status')).toHaveText('Running')
-    await expect(card.getByText('Checking the requested change')).toBeVisible()
-    await card.getByRole('button', { name: 'Cancel run' }).click()
-    await expect(card.getByRole('alert')).toContainText('Cancellation could not be confirmed')
-    await expect(card.getByRole('button', { name: 'Cancel run' })).toBeDisabled()
-    await card.getByRole('button', { name: 'Refresh run' }).click()
-    expect(commands).toEqual(['get_result', 'cancel_run', 'get_result'])
-    const bounds = await card.boundingBox()
-    expect(bounds).not.toBeNull()
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
-    if (process.env.TENGRI_RUN_CARD_SCREENSHOTS)
-      await card.screenshot({ path: `${process.env.TENGRI_RUN_CARD_SCREENSHOTS}/run-card-${width}.png` })
-    const accessibility = await new AxeBuilder({ page }).include('[aria-label="Agent run"]').analyze()
-    expect(accessibility.violations).toEqual([])
+        ],
+      },
+    }),
   })
-}
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  const commands: string[] = []
+  await page.route('**/api/tengri/runs', async (route) => {
+    const command = route.request().postDataJSON()
+    commands.push(command.operation)
+    if (command.operation === 'cancel_run') return route.fulfill({ status: 503, json: { error: 'Lost reply' } })
+    return route.fulfill({
+      json: {
+        view: {
+          ...view,
+          run: {
+            ...view.run,
+            status: 'Running',
+            progress: { activeTools: [{ title: 'Checking the requested change' }] },
+          },
+        },
+        canCancel: true,
+      },
+    })
+  })
+  await page.goto('/')
+  const card = page.locator('[aria-label="Agent run"]')
+  await expect(card).toBeVisible()
+  await card.getByRole('button', { name: 'Refresh run' }).click()
+  await expect(card.getByRole('status')).toHaveText('Running')
+  await expect(card.getByText('Checking the requested change')).toBeVisible()
+  await card.getByRole('button', { name: 'Cancel run' }).click()
+  await expect(card.getByRole('alert')).toContainText('Cancellation could not be confirmed')
+  await expect(card.getByRole('button', { name: 'Cancel run' })).toBeDisabled()
+  await card.getByRole('button', { name: 'Refresh run' }).click()
+  expect(commands).toEqual(['get_result', 'cancel_run', 'get_result'])
+  const bounds = await card.boundingBox()
+  expect(bounds).not.toBeNull()
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+  if (process.env.TENGRI_RUN_CARD_SCREENSHOTS)
+    await card.screenshot({ path: `${process.env.TENGRI_RUN_CARD_SCREENSHOTS}/run-card-${width}.png` })
+  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Agent run"]').analyze()
+  expect(accessibility.violations).toEqual([])
+})

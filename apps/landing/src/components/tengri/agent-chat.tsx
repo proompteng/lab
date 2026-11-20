@@ -1847,6 +1847,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
   const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
+  const showRecoveryStop = canStopRun && !showStopAction && Boolean(runActivity || runObservationUnavailable)
   const agentStatus = runObservationUnavailable
     ? 'Status unavailable'
     : connectionNotice
@@ -2029,13 +2030,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     group.items[0].card
                   ),
                 )}
-                {runActivity ? (
-                  <div
-                    role="status"
-                    aria-label="Agent activity"
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400"
-                  >
-                    <span>{runActivity}</span>
+                {runActivity || showRecoveryStop ? (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400">
+                    <span role="status" aria-label="Agent activity">
+                      {runActivity ?? 'Status unavailable'}
+                    </span>
                     {run?.state.phase === 'authorization_required' || run?.state.phase === 'needs_reconciliation' ? (
                       <Button
                         type="button"
@@ -2047,9 +2046,20 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                         {run.state.phase === 'authorization_required' ? 'Resume recovery' : 'Check again'}
                       </Button>
                     ) : null}
+                    {showRecoveryStop ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={interrupting}
+                        onClick={() => void interruptTurn()}
+                      >
+                        Stop response
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
-                {responsePending && !approvalPending && !runActivity ? (
+                {responsePending && !approvalPending && !runActivity && !showRecoveryStop ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>
