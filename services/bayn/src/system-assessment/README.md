@@ -150,6 +150,14 @@ and registered dated fee schedule. Every equity fill must belong to the register
 fee amounts must match distinct posted activities on that date, and each activity must belong to the policy's verified
 financial evidence. The registered rate supplies the comparison amount. Posted receipts supply the actual cost.
 Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
+Native financial capture also retains the configured PAPER account's observed Alpaca non-trade statement after broker
+recovery. The account read verifies the credential identity. The activity read scans all non-trade types, follows
+provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The source cut
+retains the requested creation-time interval, page evidence and actual observation time. This statement covers the
+provider's reported activity during that interval. Capture also retains actual before-open, broker recovery, and later
+exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. An exact
+reconciliation can precede a fee, so these observations require a completed liability proof before they can support
+fee-adjusted equity and intraday risk. Other registered accounts require their own authenticated activity source.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.

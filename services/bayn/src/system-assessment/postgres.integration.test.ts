@@ -48,6 +48,7 @@ import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } fr
 import { EdgeStatus, QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
   readSystemCashObservations,
+  readSystemFeeSettlementAnchors,
   readSystemControllerPasses,
   readSystemDurableObservations,
   readSystemDecisionAdmissions,
@@ -1844,6 +1845,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               { accountId: 'foreign-cash-account', occurred: 90, observed: 90, cash: '9999999999' },
               { accountId, occurred: 120, observed: 130, cash: '1005' },
               { accountId, occurred: 121, observed: 121, cash: '999' },
+              { accountId, occurred: 150, observed: 151, cash: '990' },
             ].entries()) {
               const id = testHash({ cashEvent: i })
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
@@ -1851,6 +1853,12 @@ postgres('PostgreSQL prospective system qualification', () => {
           VALUES(${id},'bayn.paper-broker-event.v1',${id},'ACCOUNT','ALPACA',${row.accountId},${String(i)},${i},${at(row.occurred)},${at(row.observed)})`
               yield* sql`INSERT INTO account_snapshots(event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
           VALUES(${id},${row.accountId},'bayn.paper-account-snapshot.v2','ACTIVE','USD',${row.cash},999999999999,999999999999)`
+            }
+            for (const second of [145, 152]) {
+              const id = testHash({ cashReconciliation: second })
+              yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,
+                observed_hash,content_hash,status,discrepancies,reconciled_at)
+              VALUES(${id},${legacyReconciliationSchemaVersion},${accountId},${id},${id},${id},'EXACT','[]'::jsonb,${at(second)})`
             }
             return yield* readSystemCashObservations(accountId, scope)
           }),
@@ -1868,6 +1876,24 @@ postgres('PostgreSQL prospective system qualification', () => {
     const later = await runtime.runPromise(readSystemCashObservations(accountId, { ...scope, asOf: at(131) }))
     expect(later).toHaveLength(5)
     expect(later[3]?.cashMicros).toBe('1000000000')
+    const settlement = [{ sessionDate: '2026-11-02', openAt: at(0), closeAt: at(120), recoveryCloseAt: at(140) }]
+    const before = await runtime.runPromise(readSystemFeeSettlementAnchors(accountId, settlement, at(149)))
+    expect(before.find((row) => row.phase === 'RECONCILED')).toMatchObject({
+      cutAt: null,
+      observation: null,
+      reconciliationHash: null,
+    })
+    const complete = await runtime.runPromise(readSystemFeeSettlementAnchors(accountId, settlement, at(153)))
+    expect(complete.map((row) => [row.phase, row.observation?.at, row.observation?.cashMicros])).toEqual([
+      ['OPENING', at(-1), '99'],
+      ['RECOVERY', at(120), '1005'],
+      ['RECONCILED', at(150), '990'],
+    ])
+    expect(complete.find((row) => row.phase === 'RECONCILED')).toMatchObject({
+      cutAt: at(152),
+      reconciliationHash: testHash({ cashReconciliation: 152 }),
+      fees: [],
+    })
   })
 
   test('native order capture retains parent and resized protective legs at the exact account, generation and evidence cut', async () => {

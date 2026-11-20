@@ -3,7 +3,7 @@ import * as Undici from '@effect/platform-node/Undici'
 import { Cause, Context, Effect, Layer, Redacted, Result, type Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
-import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
+import { canonicalHashV1Result, canonicalJsonEqualV1, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { type BrokerConnection } from '../connection'
@@ -32,6 +32,8 @@ import {
   decodeFillActivities,
   decodeFeeActivities,
   decodeFeeActivitiesQuery,
+  decodeNonTradeActivities,
+  decodeNonTradeActivityWindow,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
   decodeMarketCalendarQuery,
@@ -42,6 +44,7 @@ import {
   decodePositions,
   redactedHeaders,
   responseParseOptions,
+  SortDirection,
   type BrokerReadShape,
   type Decoder,
   type FillActivitiesQuery,
@@ -160,7 +163,7 @@ export const alpacaHttpLayer = (
     ),
   )
 
-export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
+export const make = (connection: BrokerConnection) =>
   Effect.gen(function* () {
     const key = Redacted.value(connection.key)
     const secret = Redacted.value(connection.secret)
@@ -510,6 +513,98 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
+    const nonTradeActivityStatement = Effect.fn('bayn.alpaca.non-trade-activity-statement')(function* (window: {
+      readonly after: string
+      readonly until: string
+    }) {
+      const operation = 'non-trade-activities'
+      const bounds = yield* decodeInput(operation, decodeNonTradeActivityWindow, window, 'Invalid activity window')
+      const now = yield* currentUtcInstant
+      if (connection.environment !== BrokerEnvironment.Sandbox || bounds.until > now) {
+        return yield* invalidRequest(operation, 'Financial activity capture requires a historical PAPER window', null)
+      }
+      const verifiedAccount = yield* account
+      const readDirection = (direction: SortDirection) =>
+        Effect.gen(function* () {
+          const pages = []
+          const items = new Map<
+            string,
+            {
+              readonly activityId: string
+              readonly activityType: string
+              readonly date: string | null
+              readonly createdAt: string | null
+              readonly netAmount: string | null
+            }
+          >()
+          let pageToken: string | undefined
+          for (let index = 0; index < 100; index++) {
+            const request = fillActivitiesRequest(connection, {
+              ...bounds,
+              direction,
+              ...(pageToken === undefined ? {} : { pageToken }),
+            })
+            request.url.pathname = '/v2/account/activities'
+            request.url.searchParams.set('category', 'non_trade_activity')
+            const { value, evidence } = yield* readResponse(operation, request.url, decodeNonTradeActivities)
+            for (const row of value) {
+              if (
+                row.activity_type === 'FILL' ||
+                items.has(row.id) ||
+                (row.account_id !== undefined && row.account_id !== verifiedAccount.value.id) ||
+                (row.created_at !== undefined &&
+                  (Date.parse(row.created_at) < Date.parse(bounds.after) ||
+                    Date.parse(row.created_at) >= Date.parse(bounds.until)))
+              ) {
+                return yield* invalidResponse({
+                  operation,
+                  message: 'Alpaca returned an out-of-scope or repeated activity',
+                  evidence,
+                })
+              }
+              items.set(row.id, {
+                activityId: row.id,
+                activityType: row.activity_type,
+                date: row.date ?? null,
+                createdAt: row.created_at ?? null,
+                netAmount: row.net_amount ?? null,
+              })
+            }
+            pages.push({ pageToken: pageToken ?? null, evidence, activityIds: value.map((row) => row.id) })
+            const lastItem = value.at(-1)
+            if (lastItem === undefined) {
+              return {
+                items: [...items.values()].sort((left, right) => left.activityId.localeCompare(right.activityId)),
+                pages,
+              }
+            }
+            pageToken = lastItem.id
+          }
+          return yield* invalidResponse({
+            operation,
+            message: 'Alpaca non-trade activity pagination exceeded its bound',
+          })
+        })
+      const ascending = yield* readDirection(SortDirection.Ascending)
+      const descending = yield* readDirection(SortDirection.Descending)
+      if (!canonicalJsonEqualV1(ascending.items, descending.items)) {
+        return yield* invalidResponse({
+          operation,
+          message: 'Alpaca activity history changed between pagination passes',
+        })
+      }
+      return {
+        schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v1' as const,
+        accountIdentityHash: connection.identity.identityHash,
+        window: bounds,
+        accountRead: verifiedAccount.evidence,
+        firstPass: ascending.pages,
+        secondPass: descending.pages,
+        activities: ascending.items,
+        observedAt: yield* currentUtcInstant,
+      }
+    })
+
     return {
       account,
       accountConfiguration,
@@ -521,5 +616,6 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       fillActivities,
       feeActivities,
       marketCalendar,
-    }
+      nonTradeActivityStatement,
+    } satisfies BrokerReadShape & { readonly nonTradeActivityStatement: typeof nonTradeActivityStatement }
   })

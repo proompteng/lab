@@ -672,6 +672,28 @@ export const decodeFeeActivities = Schema.decodeUnknownResult(
   responseParseOptions,
 )
 
+// Preserve unfamiliar non-trade activity types so a financial proof can reject unsupported movements.
+export const decodeNonTradeActivities = Schema.decodeUnknownResult(
+  Schema.Array(
+    Schema.Struct({
+      id: ActivityId,
+      account_id: Schema.optionalKey(Uuid),
+      activity_type: Schema.String.check(Schema.isPattern(/^[A-Z][A-Z_0-9]{0,31}$/)),
+      date: Schema.optionalKey(Schema.Union([IsoDate, Timestamp])),
+      created_at: Schema.optionalKey(Timestamp),
+      net_amount: Schema.optionalKey(Schema.NullOr(Decimal)),
+    }),
+  ).check(Schema.isMaxLength(defaultFillActivitiesPageSize)),
+  responseParseOptions,
+)
+
+export const decodeNonTradeActivityWindow = Schema.decodeUnknownResult(
+  Schema.Struct({ after: UtcInstantSchema, until: UtcInstantSchema }).check(
+    Schema.makeFilter((window) => window.after < window.until || 'must be an ordered creation-time window'),
+  ),
+  inputParseOptions,
+)
+
 export const FillActivityResponseSchema = Schema.Struct({
   activity_type: Schema.Literal('FILL'),
   id: ActivityId,

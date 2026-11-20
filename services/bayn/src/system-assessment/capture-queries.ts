@@ -1,10 +1,19 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
 
+import { databaseUtcInstant } from '../db/clock'
 import { executionDecisionRows } from '../db/execution-decision-query'
 import { generationScope } from '../forward-performance/postgres/scope'
 import { canonicalHashV1Result } from '../hash'
-import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  Sha256Schema,
+  SignedMicrosSchema,
+  StrictNonEmptyStringSchema,
+  UtcDatabaseInstantSchema,
+  UtcInstantSchema,
+} from '../schemas'
 import { SystemSourceCutSchema } from './source-cut'
 
 export const readSystemCashObservations = (
@@ -39,6 +48,107 @@ export const readSystemCashObservations = (
       AND event.occurred_at BETWEEN ${scope.openAt}::timestamptz AND ${scope.closeAt}::timestamptz
       AND event.observed_at <= ${scope.asOf}::timestamptz
     ORDER BY event.occurred_at, event.source_sequence`,
+    )
+  })
+
+const settlementCashObservation = Schema.Struct({
+  sourceHash: Sha256Schema,
+  at: UtcDatabaseInstantSchema,
+  availableAt: UtcDatabaseInstantSchema,
+  cashMicros: SignedMicrosSchema,
+  positions: Schema.NullOr(
+    Schema.Struct({ sourceHash: Sha256Schema, at: UtcDatabaseInstantSchema, count: NonNegativeIntegerSchema }),
+  ),
+})
+
+/** Retain observed anchors and posting times, without assigning a physical debit time to a fee. */
+export const readSystemFeeSettlementAnchors = (
+  accountId: string,
+  sessions: readonly { sessionDate: string; openAt: string; closeAt: string; recoveryCloseAt: string }[],
+  asOf: string,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    return yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          sessionDate: IsoDateSchema,
+          phase: Schema.Literals(['OPENING', 'RECOVERY', 'RECONCILED']),
+          cutAt: Schema.NullOr(UtcDatabaseInstantSchema),
+          observation: Schema.NullOr(settlementCashObservation),
+          reconciliationHash: Schema.NullOr(Sha256Schema),
+          fees: Schema.Array(
+            Schema.Struct({
+              activityId: StrictNonEmptyStringSchema,
+              sourceHash: Sha256Schema,
+              postedAt: Schema.NullOr(UtcDatabaseInstantSchema),
+              availableAt: UtcDatabaseInstantSchema,
+            }),
+          ),
+        }),
+      ),
+    )(
+      yield* sql`
+      WITH sessions AS (
+        SELECT * FROM jsonb_to_recordset(${JSON.stringify(sessions)}::jsonb)
+          AS calendar("sessionDate" date, "openAt" timestamptz, "closeAt" timestamptz, "recoveryCloseAt" timestamptz)
+      )
+      SELECT calendar."sessionDate"::text, bound.phase,
+        ${databaseUtcInstant(sql, sql`bound.cut_at`)} AS "cutAt",
+        CASE WHEN bound.phase='RECONCILED' THEN reconciliation.content_hash END AS "reconciliationHash",
+        CASE WHEN bound.phase='RECONCILED' THEN coalesce(fees.items,'[]'::jsonb) ELSE '[]'::jsonb END AS fees,
+        CASE WHEN cash.event_id IS NOT NULL THEN jsonb_build_object(
+          'sourceHash',cash.content_hash,'at',${databaseUtcInstant(sql, sql`cash.occurred_at`)},
+          'availableAt',${databaseUtcInstant(sql, sql`cash.observed_at`)},
+          'cashMicros',cash.cash_micros::text,'positions',CASE WHEN inventory.content_hash IS NOT NULL THEN jsonb_build_object(
+            'sourceHash',inventory.content_hash,'at',${databaseUtcInstant(sql, sql`inventory.observed_at`)},
+            'count',inventory.position_count) END) END AS observation
+      FROM sessions calendar
+      CROSS JOIN LATERAL (
+        SELECT count(*) AS observed_count, count(fee.posted_at) FILTER (WHERE fee.posted_at<=${asOf}::timestamptz) AS posted_count,
+          max(fee.posted_at) AS last_posted,
+          jsonb_agg(jsonb_build_object('activityId',fee.activity_id,'sourceHash',fee.content_hash,
+            'postedAt',CASE WHEN fee.posted_at<=${asOf}::timestamptz THEN
+              ${databaseUtcInstant(sql, sql`fee.posted_at`)} END,
+            'availableAt',${databaseUtcInstant(sql, sql`fee.first_observed_at`)})
+            ORDER BY fee.activity_id COLLATE "C") AS items
+        FROM broker_fee_accounting fee
+        WHERE fee.account_id=${accountId} AND fee.fee_date=calendar."sessionDate"
+          AND fee.first_observed_at<=${asOf}::timestamptz
+      ) fees
+      LEFT JOIN LATERAL (
+        SELECT rec.reconciled_at,rec.content_hash FROM reconciliations rec
+        WHERE rec.account_id=${accountId} AND rec.status='EXACT' AND rec.discrepancies='[]'::jsonb
+          AND rec.reconciled_at>=greatest(calendar."recoveryCloseAt",fees.last_posted)
+          AND rec.reconciled_at<=${asOf}::timestamptz AND fees.observed_count=fees.posted_count
+          AND EXISTS (
+            SELECT 1 FROM broker_events e JOIN account_snapshots s USING(event_id,account_id)
+            WHERE e.account_id=rec.account_id AND e.event_kind='ACCOUNT'
+              AND e.occurred_at BETWEEN greatest(calendar."recoveryCloseAt",fees.last_posted) AND rec.reconciled_at
+              AND e.observed_at<=rec.reconciled_at
+          )
+        ORDER BY rec.reconciled_at,rec.reconciliation_id COLLATE "C" LIMIT 1
+      ) reconciliation ON true
+      CROSS JOIN LATERAL (VALUES
+        ('OPENING',calendar."openAt",calendar."openAt"-interval '24 hours'),
+        ('RECOVERY',calendar."recoveryCloseAt",calendar."closeAt"),
+        ('RECONCILED',reconciliation.reconciled_at,greatest(calendar."recoveryCloseAt",fees.last_posted))
+      ) bound(phase,cut_at,earliest_at)
+      LEFT JOIN LATERAL (
+        SELECT event.event_id,event.content_hash,event.occurred_at,event.observed_at,snapshot.cash_micros
+        FROM broker_events event JOIN account_snapshots snapshot USING(event_id,account_id)
+        WHERE event.account_id=${accountId} AND event.event_kind='ACCOUNT'
+          AND event.occurred_at BETWEEN bound.earliest_at AND bound.cut_at
+          AND event.observed_at<=least(bound.cut_at,${asOf}::timestamptz)
+        ORDER BY event.observed_at DESC,event.source_sequence DESC LIMIT 1
+      ) cash ON true
+      LEFT JOIN LATERAL (
+        SELECT p.content_hash,p.observed_at,p.position_count FROM position_snapshots p
+        WHERE p.account_id=${accountId} AND p.observed_at<=cash.observed_at
+        ORDER BY p.observed_at DESC,p.ingestion_sequence DESC LIMIT 1
+      ) inventory ON true
+      ORDER BY calendar."sessionDate",bound.cut_at NULLS LAST,bound.phase
+    `,
     )
   })
 
