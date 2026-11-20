@@ -27,7 +27,7 @@ import {
   PanelLeft,
   Plus,
   Square,
-  Wrench,
+  TerminalSquare,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type ReactNode } from 'react'
@@ -1847,6 +1847,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
   const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
+  const showRecoveryStop = canStopRun && !showStopAction && Boolean(runActivity || runObservationUnavailable)
   const agentStatus = runObservationUnavailable
     ? 'Status unavailable'
     : connectionNotice
@@ -2022,20 +2023,18 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
               >
                 {groupCodexActivity(transcriptCards).map((group) =>
                   group.activity ? (
-                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`} count={group.items.length}>
+                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`}>
                       {group.items.map((item) => item.card)}
                     </ToolActivityGroup>
                   ) : (
                     group.items[0].card
                   ),
                 )}
-                {runActivity ? (
-                  <div
-                    role="status"
-                    aria-label="Agent activity"
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400"
-                  >
-                    <span>{runActivity}</span>
+                {runActivity || showRecoveryStop ? (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400">
+                    <span role="status" aria-label="Agent activity">
+                      {runActivity ?? 'Status unavailable'}
+                    </span>
                     {run?.state.phase === 'authorization_required' || run?.state.phase === 'needs_reconciliation' ? (
                       <Button
                         type="button"
@@ -2047,9 +2046,20 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                         {run.state.phase === 'authorization_required' ? 'Resume recovery' : 'Check again'}
                       </Button>
                     ) : null}
+                    {showRecoveryStop ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={interrupting}
+                        onClick={() => void interruptTurn()}
+                      >
+                        Stop response
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
-                {responsePending && !approvalPending && !runActivity ? (
+                {responsePending && !approvalPending && !runActivity && !showRecoveryStop ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>
@@ -2247,17 +2257,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     onRetry={() => setModelReload((version) => version + 1)}
                     selection={selection}
                   />
-                  {canStopRun && !showStopAction ? (
-                    <button
-                      type="button"
-                      aria-label="Stop response"
-                      disabled={interrupting}
-                      onClick={() => void interruptTurn()}
-                      className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full text-zinc-400 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
-                    >
-                      <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-                    </button>
-                  ) : null}
                   <button
                     type={showStopAction ? 'button' : 'submit'}
                     aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
@@ -2442,7 +2441,7 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
 }
 
 const composerSelectTriggerClass =
-  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 disabled:opacity-100 disabled:hover:bg-transparent disabled:hover:text-zinc-400 [&_svg]:text-current motion-reduce:transition-none'
 const composerSelectMenuClass =
   'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
 const composerSelectItemClass =
@@ -2730,28 +2729,29 @@ function safeVerificationUrl(value: string) {
   }
 }
 
-function ToolActivityGroup({ count, children }: { count: number; children: ReactNode }) {
-  const [expanded, setExpanded] = useState(true)
+function ToolActivityGroup({ children }: { children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
   const id = useId()
   return (
-    <div className="py-1">
-      {count > 1 ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={id}
-          onClick={() => setExpanded((value) => !value)}
-          className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
-        >
-          <Wrench className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
-          Tools and commands
-          <ChevronDown
-            className={cn('size-3.5 transition-transform motion-reduce:transition-none', !expanded && '-rotate-90')}
-            aria-hidden="true"
-          />
-        </button>
-      ) : null}
-      <div id={id} hidden={count > 1 && !expanded} className="space-y-0">
+    <div className="group/commands py-1">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={id}
+        onClick={() => setExpanded((value) => !value)}
+        className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
+      >
+        <TerminalSquare className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
+        Ran commands
+        <ChevronDown
+          className={cn(
+            'size-3.5 transition-[opacity,transform] group-hover/commands:opacity-100 group-focus-within/commands:opacity-100 motion-reduce:transition-none',
+            !expanded && '-rotate-90 opacity-0',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      <div id={id} hidden={!expanded} className="mt-2 ml-2 space-y-1 border-l border-zinc-800 pl-3">
         {children}
       </div>
     </div>

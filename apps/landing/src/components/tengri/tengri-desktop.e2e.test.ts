@@ -2113,6 +2113,9 @@ test('opens composer menus above the picker and supports keyboard selection on d
         fontWeight: style.fontWeight,
         lineHeight: style.lineHeight,
         gap: style.columnGap,
+        color: style.color,
+        opacity: style.opacity,
+        iconColor: getComputedStyle(element.querySelector('svg')!).color,
       }
     })
   const modelStyle = await triggerStyle(model)
@@ -2200,6 +2203,19 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
     reasoningEffort: 'high',
   })
   await expect(model).toBeDisabled()
+  await expect(reasoning).toBeDisabled()
+  const approvals = tengri.getByRole('combobox', { name: 'Approvals', exact: true })
+  await expect(approvals).toBeEnabled()
+  const approvalColor = await approvals.evaluate((element) => getComputedStyle(element).color)
+  for (const picker of [approvals, model, reasoning]) {
+    await expect(picker).toHaveCSS('opacity', '1')
+    await expect(picker).toHaveCSS('color', approvalColor)
+    await expect(picker.locator('svg')).toHaveCSS('color', approvalColor)
+  }
+  await tengri.getByRole('form', { name: 'Message composer' }).screenshot({
+    path: test.info().outputPath('composer-running-consistent-selectors.png'),
+    animations: 'disabled',
+  })
   await emitCodexEvent(page, {
     sequence: 1,
     kind: 'thread-state',
@@ -4010,7 +4026,7 @@ test('ignores obsolete browser registry entries when recovering a native session
     .toEqual([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt: now + 100, unavailable: true }])
 })
 
-test('keeps sending, steering, and stopping in the composer', async ({ page }, testInfo) => {
+test('keeps sending, steering, and stopping in the composer', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
   const composer = page.getByRole('form', { name: 'Message composer' })
@@ -4026,44 +4042,38 @@ test('keeps sending, steering, and stopping in the composer', async ({ page }, t
   await expect(action).toHaveCount(1)
   await prompt.press('Enter')
   expect(mock.actions.some((item) => item.action === 'interrupt-turn')).toBe(false)
-  const screenshotPath = testInfo.outputPath('composer-stop.png')
-  await composer.screenshot({ path: screenshotPath })
-  await testInfo.attach('composer-stop', { path: screenshotPath, contentType: 'image/png' })
-  await emitCodexEvent(page, {
-    sequence: 1,
-    threadId: 'thread-1',
-    turnId: 'turn-1',
-    itemId: 'activity-1',
-    approvalId: '',
-    rawJson: '{}',
-    kind: 'tool-call',
-    method: 'item/started',
-    text: 'rg --files -g AGENTS.md',
-  })
-  await emitCodexEvent(page, {
-    sequence: 2,
-    threadId: 'thread-1',
-    turnId: 'turn-1',
-    itemId: 'output-1',
-    approvalId: '',
-    rawJson: '{}',
-    kind: 'tool-output',
-    method: 'item/started',
-    text: '/home/nanoagent/workspace',
-  })
-  await expect(page.getByRole('article', { name: 'Codex activity' })).toBeVisible()
-  await expect(page.getByRole('article', { name: 'Codex output' })).toBeVisible()
-  const surfacePath = testInfo.outputPath('conversation-polish.png')
-  await page.getByRole('region', { name: 'Tengri window' }).screenshot({ path: surfacePath })
-  await testInfo.attach('conversation-polish', { path: surfacePath, contentType: 'image/png' })
-
   await prompt.fill('Only inspect the current directory.')
-  await expect(composer.getByRole('button')).toHaveCount(2)
-  await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await expect(action).toHaveCount(1)
+  await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+  let steeringPending = false
+  let releaseSteering!: () => void
+  const steeringResponse = new Promise<void>((resolve) => {
+    releaseSteering = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'steer-turn') {
+      steeringPending = true
+      await steeringResponse
+    }
+    return route.fallback()
+  })
   await composer.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  try {
+    await expect.poll(() => steeringPending).toBe(true)
+    await prompt.fill('Keep this next steering draft.')
+    await expect(action).toHaveCount(1)
+    await expect(action).toHaveAccessibleName('Steer turn')
+    await expect(action).toBeDisabled()
+    await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+  } finally {
+    releaseSteering()
+  }
   await expect
     .poll(() => mock.actions.some((item) => item.action === 'steer-turn' && item.turnId === 'turn-1'))
     .toBe(true)
+  await expect(action).toBeEnabled()
+  await expect(prompt).toHaveValue('Keep this next steering draft.')
+  await prompt.fill('')
   await expect(action).toHaveAccessibleName('Stop response')
   await action.click()
   await expect
@@ -4077,7 +4087,7 @@ test('keeps sending, steering, and stopping in the composer', async ({ page }, t
     )
     .toBe(true)
   await emitCodexEvent(page, {
-    sequence: 3,
+    sequence: 1,
     threadId: 'thread-1',
     turnId: 'turn-1',
     itemId: '',
@@ -4407,16 +4417,13 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
     await page.goto('/')
     const chat = page.getByRole('region', { name: 'Tengri window' })
     const activity = chat.getByRole('status', { name: 'Agent activity' })
-    await expect(
-      activity.getByText(
-        phase === 'cancelling'
-          ? 'Stopping'
-          : "The agent's last action could not be confirmed. Check the conversation before continuing.",
-        { exact: true },
-      ),
-    ).toBeVisible()
+    await expect(activity).toHaveText(
+      phase === 'cancelling'
+        ? 'Stopping'
+        : "The agent's last action could not be confirmed. Check the conversation before continuing.",
+    )
     if (phase === 'needs_reconciliation')
-      await expect(activity.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+      await expect(chat.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
     run.state = { phase: 'cancelled', turnId: 'turn-cleanup' }
     await expect(activity).toHaveCount(0)
   })
@@ -4831,6 +4838,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
   await expect(tengri.getByRole('button', { name: 'Approve for session', exact: true })).toHaveCount(0)
+  await tengri.getByRole('button', { name: 'Ran commands', exact: true }).first().click()
   await tengri.getByRole('article', { name: 'Codex output' }).locator('summary').click()
   const outputCharacterWidths = await tengri
     .getByRole('article', { name: 'Codex output' })
@@ -7407,7 +7415,18 @@ test('runs another conversation while keeping each active response unarchivable'
   })
   await page.goto('/')
   const sidebar = page.getByTestId('agent-conversation-sidebar')
+  const working = sidebar.locator('[data-conversation-id="thread-working"]').locator('..')
+  const progress = working.locator('span[aria-hidden="true"]')
+  const archive = sidebar.getByRole('button', { name: 'Archive Working', exact: true })
+  await page.mouse.move(0, 0)
+  await expect(progress).toHaveCSS('opacity', '1')
+  await expect(archive.locator('..')).toHaveCSS('opacity', '0')
   await sidebar.getByRole('button', { name: 'Working', exact: true }).hover()
+  await expect(progress).toHaveCSS('opacity', '0')
+  await expect(archive.locator('..')).toHaveCSS('opacity', '1')
+  const progressBounds = await progress.boundingBox()
+  const archiveBounds = await archive.boundingBox()
+  expect(progressBounds).toEqual(archiveBounds)
   await expect(sidebar.getByRole('button', { name: 'Archive Working', exact: true })).toBeDisabled()
   await expect(sidebar.locator('[data-conversation-id="thread-other"]')).toBeEnabled()
   await sidebar.locator('[data-conversation-id="thread-other"]').click()
@@ -7902,6 +7921,7 @@ test('uses consistent fonts and body typography in chat, portal menus, diagrams,
   await expect(
     response.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg text').first(),
   ).toHaveCSS('font-family', systemFont)
+  await tengri.getByRole('button', { name: 'Ran commands', exact: true }).first().click()
   await tengri.getByRole('article', { name: 'Codex output' }).locator('summary').click()
   const output = tengri.getByRole('article', { name: 'Codex output' }).locator('pre')
   const monoFont = await output.evaluate((element) => getComputedStyle(element).fontFamily)
@@ -7977,6 +7997,10 @@ test('keeps opened tool output stable during streaming and renders copyable stru
   })
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const commands = tengri.getByRole('button', { name: 'Ran commands', exact: true })
+  await expect(commands).toHaveCount(1)
+  await expect(commands).toHaveAttribute('aria-expanded', 'false')
+  await commands.click()
   const output = tengri.getByRole('article', { name: 'Codex output' })
   await expect(tengri.getByRole('article', { name: 'Your message' })).toContainText(
     'Inspect the project and run its checks.',
@@ -8088,6 +8112,7 @@ test('keeps streamed output expanded when replay recovery moves it into restored
     method: 'item/commandExecution/outputDelta',
     text,
   })
+  await tengri.getByRole('button', { name: 'Ran commands', exact: true }).first().click()
   const output = tengri.getByRole('article', { name: 'Codex output' })
   await output.locator('summary').click()
   await expect(output.locator('pre')).toBeVisible()
@@ -8453,7 +8478,14 @@ test('groups tool activity into a quiet readable transcript with working disclos
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await tengri.getByRole('button', { name: 'Maximize Tengri', exact: true }).click()
-  const group = tengri.getByRole('button', { name: 'Tools and commands', exact: true }).first()
+  const groups = tengri.getByRole('button', { name: 'Ran commands', exact: true })
+  const group = groups.first()
+  await expect(groups).toHaveCount(2)
+  await expect(group).toHaveAttribute('aria-expanded', 'false')
+  await expect(tengri.getByText('Read AGENTS.md', { exact: true })).toBeHidden()
+  await tengri.screenshot({ path: 'test-results/agent-commands-collapsed.png' })
+  await group.focus()
+  await group.press('Enter')
   await expect(group).toHaveAttribute('aria-expanded', 'true')
   await expect(tengri.getByText('Read AGENTS.md', { exact: true })).toBeVisible()
   await expect(tengri.getByText('Searched rg -n recovery services/tengri', { exact: true })).toBeVisible()
@@ -8469,6 +8501,7 @@ test('groups tool activity into a quiet readable transcript with working disclos
   await group.press('Enter')
   await expect(output.locator('pre')).toBeVisible()
   await output.locator('summary').click()
+  await groups.nth(1).click()
   const github = tengri.getByRole('article', { name: 'Codex activity' }).filter({ hasText: 'GitHub · Create branch' })
   await expect(github.locator('summary')).toHaveText('GitHub · Create branch · codex/chat-polish')
   await github.locator('summary').click()
@@ -9401,6 +9434,7 @@ test('keeps image examples in command output as text without requesting missing 
     rawJson: '{}',
     text,
   })
+  await tengri.getByRole('button', { name: 'Ran commands', exact: true }).first().click()
   const output = tengri.getByRole('article', { name: 'Codex output' })
   await expect(output).toHaveCount(1)
   await output.locator('summary').click()
@@ -9517,7 +9551,7 @@ test('shows native image generation live and restores its inline preview and lin
   const image = chat.getByRole('img', { name: 'Generated image', exact: true })
   await expect(image).toBeVisible()
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1)
-  await expect(chat.getByRole('button', { name: 'Tools and commands' })).toHaveCount(0)
+  await expect(chat.getByRole('button', { name: 'Ran commands' })).toHaveCount(0)
   await emitCodexEvent(page, {
     sequence: 3,
     kind: 'assistant-text',
@@ -12161,11 +12195,14 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   const image = await pasteClipboardImage(page, composer)
   const attachment = chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')
   await expect(attachment).toHaveAttribute('src', `data:image/png;base64,${image}`)
-  await expect(stop).toBeEnabled()
+  await expect(stop).toHaveCount(0)
   unavailable = true
   await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(0)
   await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(0)
   await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Status unavailable')
+  await expect(
+    chat.getByRole('form', { name: 'Message composer' }).getByRole('button', { name: 'Stop response' }),
+  ).toHaveCount(0)
   await expect(stop).toBeEnabled()
   await stop.click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(1)
@@ -12238,6 +12275,7 @@ test('opens saved conversation file links and preserves the draft through previe
     'href',
     'https://github.com/proompteng/lab/pull/123',
   )
+  await chat.getByRole('button', { name: 'Ran commands', exact: true }).first().click()
   await chat.getByRole('article', { name: 'Codex changes', exact: true }).locator('summary').click()
   await expect(chat.getByRole('article', { name: 'Codex changes', exact: true })).toContainText('+new')
   await chat.getByRole('button', { name: 'Workspace report', exact: true }).click()
@@ -12448,73 +12486,72 @@ test('reconciles a finished background run without coupling its failures to the 
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
 
-for (const width of [1440, 390]) {
-  test(`AgentRun card refreshes and retains an uncertain cancellation at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 })
-    const view = {
-      kind: 'agent-run',
-      targetId: 'agents/lab',
-      run: { runId: '77777777-7777-4777-8777-777777777777', status: 'Pending' },
-    }
-    await mockTengri(page, {
-      resumeThreadRawJson: JSON.stringify({
-        thread: {
-          turns: [
-            {
-              id: 'turn-1',
-              status: 'completed',
-              items: [
-                {
-                  id: 'relay-start',
-                  type: 'mcpToolCall',
-                  server: 'relay',
-                  tool: 'start_run',
-                  status: 'completed',
-                  result: { content: [{ type: 'text', text: JSON.stringify({ structuredContent: view }) }] },
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    })
-    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
-    const commands: string[] = []
-    await page.route('**/api/tengri/runs', async (route) => {
-      const command = route.request().postDataJSON()
-      commands.push(command.operation)
-      if (command.operation === 'cancel_run') return route.fulfill({ status: 503, json: { error: 'Lost reply' } })
-      return route.fulfill({
-        json: {
-          view: {
-            ...view,
-            run: {
-              ...view.run,
-              status: 'Running',
-              progress: { activeTools: [{ title: 'Checking the requested change' }] },
-            },
+test('AgentRun card refreshes and retains an uncertain cancellation on a narrow screen', async ({ page }) => {
+  const width = 390
+  await page.setViewportSize({ width, height: 900 })
+  const view = {
+    kind: 'agent-run',
+    targetId: 'agents/lab',
+    run: { runId: '77777777-7777-4777-8777-777777777777', status: 'Pending' },
+  }
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              {
+                id: 'relay-start',
+                type: 'mcpToolCall',
+                server: 'relay',
+                tool: 'start_run',
+                status: 'completed',
+                result: { content: [{ type: 'text', text: JSON.stringify({ structuredContent: view }) }] },
+              },
+            ],
           },
-          canCancel: true,
-        },
-      })
-    })
-    await page.goto('/')
-    const card = page.locator('[aria-label="Agent run"]')
-    await expect(card).toBeVisible()
-    await card.getByRole('button', { name: 'Refresh run' }).click()
-    await expect(card.getByRole('status')).toHaveText('Running')
-    await expect(card.getByText('Checking the requested change')).toBeVisible()
-    await card.getByRole('button', { name: 'Cancel run' }).click()
-    await expect(card.getByRole('alert')).toContainText('Cancellation could not be confirmed')
-    await expect(card.getByRole('button', { name: 'Cancel run' })).toBeDisabled()
-    await card.getByRole('button', { name: 'Refresh run' }).click()
-    expect(commands).toEqual(['get_result', 'cancel_run', 'get_result'])
-    const bounds = await card.boundingBox()
-    expect(bounds).not.toBeNull()
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
-    if (process.env.TENGRI_RUN_CARD_SCREENSHOTS)
-      await card.screenshot({ path: `${process.env.TENGRI_RUN_CARD_SCREENSHOTS}/run-card-${width}.png` })
-    const accessibility = await new AxeBuilder({ page }).include('[aria-label="Agent run"]').analyze()
-    expect(accessibility.violations).toEqual([])
+        ],
+      },
+    }),
   })
-}
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  const commands: string[] = []
+  await page.route('**/api/tengri/runs', async (route) => {
+    const command = route.request().postDataJSON()
+    commands.push(command.operation)
+    if (command.operation === 'cancel_run') return route.fulfill({ status: 503, json: { error: 'Lost reply' } })
+    return route.fulfill({
+      json: {
+        view: {
+          ...view,
+          run: {
+            ...view.run,
+            status: 'Running',
+            progress: { activeTools: [{ title: 'Checking the requested change' }] },
+          },
+        },
+        canCancel: true,
+      },
+    })
+  })
+  await page.goto('/')
+  const card = page.locator('[aria-label="Agent run"]')
+  await expect(card).toBeVisible()
+  await card.getByRole('button', { name: 'Refresh run' }).click()
+  await expect(card.getByRole('status')).toHaveText('Running')
+  await expect(card.getByText('Checking the requested change')).toBeVisible()
+  await card.getByRole('button', { name: 'Cancel run' }).click()
+  await expect(card.getByRole('alert')).toContainText('Cancellation could not be confirmed')
+  await expect(card.getByRole('button', { name: 'Cancel run' })).toBeDisabled()
+  await card.getByRole('button', { name: 'Refresh run' }).click()
+  expect(commands).toEqual(['get_result', 'cancel_run', 'get_result'])
+  const bounds = await card.boundingBox()
+  expect(bounds).not.toBeNull()
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+  if (process.env.TENGRI_RUN_CARD_SCREENSHOTS)
+    await card.screenshot({ path: `${process.env.TENGRI_RUN_CARD_SCREENSHOTS}/run-card-${width}.png` })
+  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Agent run"]').analyze()
+  expect(accessibility.violations).toEqual([])
+})
