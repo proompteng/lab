@@ -76,7 +76,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gotenberg
-          image: gotenberg/gotenberg:9.9.0@sha256:2f4945f698c3d02f691a27d56bb8e7ba4585e6ab50bd233329a36eb0423ae587
+          image: gotenberg/gotenberg:8.40.0@sha256:53073e798c8ef39ea2187e44cb67bab77894ea2509100b94c4fe3b461f7b2996
           args:
             - gotenberg
             - --chromium-disable-javascript=true
