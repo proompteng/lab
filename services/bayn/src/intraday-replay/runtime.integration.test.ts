@@ -2174,7 +2174,10 @@ durableTest.each(
                   yield* observationStore
                     .publish(
                       ordinary.ticket,
-                      observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt),
+                      {
+                        ...observedBrokerSnapshotFixture(accountId, ordinary.ticket.startedAt),
+                        pendingCashFeeCount: 2,
+                      },
                       ordinaryDueAtMs,
                       allowance,
                     )
