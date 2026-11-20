@@ -63,7 +63,7 @@ export default Effect.gen(function* () {
   DECLARE shape text; admission text; assessment text; retained text := 'bayn.system-registration.v4';
     current_version text := 'bayn.system-registration.v5';
     retained_hash text := '19024af2ef4b02c8a63e011149e2e2df07e4846e7903ca31baaf34100b88b9b8';
-    current_hash text := '71cba3242fc4841c5970c7778e199663a53bfa050d8fdd560de689a2b17570b9';
+    current_hash text := '995733a0b6754c5edb759dc6d1984c1164bee454a785a1faf96ede947e8b5d46';
   BEGIN
     SELECT pg_get_constraintdef(oid) INTO STRICT shape FROM pg_constraint
       WHERE conrelid='system_qualification_registrations'::regclass AND conname='system_registration_payload_shape';

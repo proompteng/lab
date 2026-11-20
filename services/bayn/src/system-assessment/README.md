@@ -144,7 +144,11 @@ alignment. The financial market scope can also retain markets for existing-posit
 commitments without an entry scope still require every market in their original protocol.
 Capture requires reconciliation through the final broker recovery window. Transactions between registered
 windows or after the final native data close within the broker recovery window leave economics incomplete.
-Terminal inventory, unresolved orders, fees, and operating costs retain their existing evidence requirements.
+For each native qualification date, capture computes the expected equity charges from the full account equity fills
+and registered dated fee schedule. Every equity fill must belong to the registered policy and window. The expected
+fee amounts must match distinct posted activities on that date, and each activity must belong to the policy's verified
+financial evidence. The registered rate supplies the comparison amount. Posted receipts supply the actual cost.
+Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.

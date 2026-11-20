@@ -144,7 +144,12 @@ describe('registered financial capture', () => {
     )
     const native = nativeRegistrationFixture(registration, marketCalendar)
     const recoveryClose = nativeBrokerRecoveryClose(native)!
-    const complete = (day: string, exitTime: string, reconciledAt: string) => {
+    const complete = (
+      day: StoredBrokerFee['data']['date'],
+      exitTime: string,
+      reconciledAt: string,
+      changeFees: (fees: readonly StoredBrokerFee[]) => readonly StoredBrokerFee[] = (fees) => fees,
+    ) => {
       const fills = [
         { side: OrderSide.Buy, priceAtoms: '100000000000', at: '20:56:41' },
         { side: OrderSide.Sell, priceAtoms: '101000000000', at: exitTime },
@@ -174,6 +179,27 @@ describe('registered financial capture', () => {
             ),
           ).transaction,
       )
+      const fees = changeFees(
+        ['REG', 'CAT'].map((kind) => {
+          const base = coinActivity('10000', forward.account.accountId)
+          const data = {
+            accountId: forward.account.accountId,
+            activityId: `native-clock-${kind}`,
+            date: day,
+            netAmountMicros: '-10000',
+          }
+          return {
+            ...base,
+            data,
+            coin_cost_basis_micros: null,
+            content_hash: testHash({ schemaVersion: 'bayn.broker-fee.v1', ...data }),
+            ledger_plan_hash: Result.getOrThrow(
+              hashLedgerPlanResult(brokerFeeLedgerPlan(data.accountId, data.activityId, data.netAmountMicros, 7001)),
+            ),
+            read_evidence: { ...base.read_evidence, observedAt: recoveryClose },
+          }
+        }),
+      )
       return Result.getOrThrow(
         captureFinancial(
           native,
@@ -184,6 +210,8 @@ describe('registered financial capture', () => {
             accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt },
             accountTransactions: fills,
             accountCashSettlements: cashSettlements(fills),
+            accountBrokerFees: fees,
+            brokerFees: fees.map(({ data }) => data),
             transactions: fills.map((fill) => ({ ...fill, cycleId: testHash('native clock cycle') })),
           },
           {
@@ -199,8 +227,22 @@ describe('registered financial capture', () => {
       openingPositionCount: 0,
       closingPositionCount: 0,
       grossRealizedPnlMicros: '1000000',
+      executionCostMicros: '20000',
       completedEpisodes: 1,
     })
+    expect(complete(days[0]!, '21:02:38', recoveryClose, (fees) => fees.slice(0, 1))[0]?.facts).toBeNull()
+    expect(complete(days[0]!, '21:02:38', recoveryClose, ([first]) => [first!, first!])[0]?.facts).toBeNull()
+    expect(
+      complete(days[0]!, '21:02:38', recoveryClose, ([first, second]) => [
+        first!,
+        { ...second!, data: { ...second!.data, date: days[1]! } },
+      ])[0]?.facts,
+    ).toBeNull()
+    expect(
+      complete(days[0]!, '21:02:38', recoveryClose, ([first]) => [
+        { ...first!, data: { ...first!.data, netAmountMicros: '-20000' } },
+      ])[0]?.facts,
+    ).toBeNull()
     expect(complete(days.at(-1)!, '22:02:38', recoveryClose).every(({ facts }) => facts === null)).toBe(true)
     expect(
       complete(days[0]!, '21:02:38', native.calendar.sessions.at(-1)!.closeAt).every(({ facts }) => facts === null),

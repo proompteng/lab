@@ -215,6 +215,7 @@ export const systemQualificationPolicyHash = (
         ? {
             schemaVersion: 'bayn.system-qualification-policy.v6',
             evaluationWindowRule: 'CANONICAL_NATIVE_EQUITY_WINDOWS_WITH_BROKER_RECOVERY_COVERAGE',
+            equityFeeRule: 'DATED_ACCOUNT_EQUITY_FEES_MATCH_POSTED_SCOPED_RECEIPTS',
           }
         : {}),
       acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(version),

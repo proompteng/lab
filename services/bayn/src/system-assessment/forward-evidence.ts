@@ -13,6 +13,12 @@ import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/con
 import type { SystemSourceCut } from './source-cut'
 import { IsoDateSchema, Sha256Schema } from '../schemas'
 import { cashSettlementMatches } from './cash-settlements'
+import { brokerFeeCashDeltaMicros } from '../accounting/broker-fees'
+import type { AccountingTransaction } from '../accounting/schema'
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { calculateSessionFees } from '../strategy/execution-model/fees'
+import { accountTradingDate } from '../time'
 
 export const retainedFinancialMarks = (
   marks: SystemSourceCut['accountMarks'],
@@ -80,6 +86,61 @@ export const registeredFinancialAccounts = (
   })
 
 export type DecisionSessionBinding = { readonly decisionHash: string; readonly sessionDate: string }
+
+const isEquityFee = (fee: { readonly coinDebit?: unknown; readonly cryptoCashFee?: true }) =>
+  fee.coinDebit === undefined && fee.cryptoCashFee !== true
+
+const hasExpectedEquityFeeReceipts = (
+  registration: ScheduledEvaluation,
+  forward: ForwardPerformanceEvidenceInput,
+  fills: readonly AccountingTransaction[],
+  sessionDate: string,
+) => {
+  const recorded = forward.accountBrokerFees?.filter(({ data }) => data.date === sessionDate && isEquityFee(data))
+  const scoped = forward.brokerFees?.filter((fee) => fee.date === sessionDate && isEquityFee(fee))
+  const reconciledAt = forward.accountPositionCounts?.reconciledAt
+  if (recorded === undefined || scoped === undefined || reconciledAt === undefined || recorded.length !== scoped.length)
+    return false
+  const priced = calculateSessionFees(
+    fills.map((fill) => ({
+      symbol: fill.symbol,
+      side: fill.side === 'BUY' ? 'buy' : 'sell',
+      quantityAtoms: BigInt(fill.quantityAtoms),
+      notionalMicros: BigInt(fill.notionalMicros),
+    })),
+    registration.obligations.configuration.protocol.executionModel,
+    1_000_000n,
+    cryptoMaximumTakerFeeBps,
+    sessionDate,
+  )
+  if (Result.isFailure(priced)) return false
+  const { commissionMicros, secMicros, tafMicros, catMicros } = priced.success
+  const expected = [commissionMicros, secMicros, tafMicros, catMicros]
+    .filter((amount) => amount > 0n)
+    .map((amount) => String(-amount))
+    .sort()
+  const actual = recorded.map(({ data }) => data.netAmountMicros).sort()
+  const byId = new Map(scoped.map((fee) => [fee.activityId, fee]))
+  return (
+    expected.length === actual.length &&
+    expected.every((amount, index) => amount === actual[index]) &&
+    byId.size === scoped.length &&
+    new Set(recorded.map(({ data }) => data.activityId)).size === recorded.length &&
+    recorded.every((record) => {
+      const fee = byId.get(record.data.activityId)
+      return (
+        record.posted &&
+        record.read_evidence.observedAt <= reconciledAt &&
+        record.cash_match_corrections.every(
+          (correction) => correction.posted && correction.data.readEvidence.observedAt <= reconciledAt,
+        ) &&
+        record.data.accountId === forward.account.accountId &&
+        fee?.accountId === forward.account.accountId &&
+        fee.netAmountMicros === brokerFeeCashDeltaMicros(record)
+      )
+    })
+  )
+}
 
 /** Only financial facts read and independently checked by the existing PostgreSQL/TigerBeetle reader replace packet amounts. */
 export const captureForwardFinancialEvidence = (
@@ -176,6 +237,16 @@ export const captureForwardFinancialEvidence = (
       )
     const dates = new Set<string>(registration.calendar.sessions.map((s) => s.sessionDate))
     const recoveryClose = nativeBrokerRecoveryClose(registration)
+    const equityFillsByDate = new Map<string, AccountingTransaction[]>()
+    if (recoveryClose !== undefined)
+      for (const fill of history ?? []) {
+        if (instrumentMarket(fill.symbol) !== MarketKind.Equity) continue
+        const day = accountTradingDate(fill.occurredAt)
+        if (!dates.has(day)) continue
+        const entries = equityFillsByDate.get(day)
+        if (entries === undefined) equityFillsByDate.set(day, [fill])
+        else entries.push(fill)
+      }
     const financialEnd = recoveryClose ?? last.closeAt
     const recoveryCovered =
       recoveryClose === undefined ||
@@ -218,6 +289,7 @@ export const captureForwardFinancialEvidence = (
       const remainingAccruals =
         forward.brokerFeeAccruals?.filter((a) => accruals.some((row) => row.accrual_id === a.accrualId)) ?? []
       const rawFills = execution.fills.filter((fill) => inSession(fill.occurredAt))
+      const equityFills = equityFillsByDate.get(session.sessionDate) ?? []
       const openingPositions = inventory.at(calendar.openAt)
       const closingPositions = inventory.at(calendar.closeAt)
       const openingPositionCount = openingPositions?.length
@@ -240,6 +312,9 @@ export const captureForwardFinancialEvidence = (
       const complete =
         financialProofComplete &&
         recoveryCovered &&
+        (recoveryClose === undefined ||
+          (equityFills.every((fill) => inSession(fill.occurredAt) && ids.has(fill.transactionId)) &&
+            hasExpectedEquityFeeReceipts(registration, forward, equityFills, session.sessionDate))) &&
         !outsideSession &&
         accruals.every(
           (a) =>
