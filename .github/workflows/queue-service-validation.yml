@@ -10,6 +10,9 @@ jobs:
   agentctl:
     uses: ./.github/workflows/agentctl-ci.yml
 
+  attic-image:
+    uses: ./.github/workflows/attic-build-push.yaml
+
   bumba:
     uses: ./.github/workflows/bumba-ci.yml
 

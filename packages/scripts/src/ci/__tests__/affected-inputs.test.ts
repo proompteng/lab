@@ -115,6 +115,8 @@ test('native PR validation preserves image publication and cache warming boundar
   for (const [event, ref, publishOnDispatch, publish, warm] of [
     ['pull_request', 'refs/pull/1/merge', false, false, false],
     ['pull_request', 'refs/heads/main', true, false, false],
+    ['merge_group', 'refs/heads/gh-readonly-queue/main/pr-1', false, false, false],
+    ['merge_group', 'refs/heads/main', true, false, false],
     ['push', 'refs/heads/main', false, true, true],
     ['push', 'refs/heads/feature', true, false, false],
     ['workflow_dispatch', 'refs/heads/main', false, true, true],
@@ -133,24 +135,43 @@ test('native PR validation preserves image publication and cache warming boundar
   }
 })
 
-test('Attic PR validation receives no cache credential and pins its reviewed source', () => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/attic-build-push.yaml', 'utf8'))
+test('Attic validates the exact PR or queue commit without cache publication credentials', () => {
+  const path = './.github/workflows/attic-build-push.yaml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
   const jobs = property(workflow, 'jobs')
   const validation = property(jobs, 'validate')
   const publication = property(jobs, 'build-and-push')
+  expect(property(property(queue, 'jobs'), 'attic-image')).toEqual({ uses: path })
   expect(property(validation, 'secrets')).toBeUndefined()
-  expect(property(property(validation, 'with'), 'source_revision')).toBe('${{ github.event.pull_request.head.sha }}')
+  const sourceExpression = text(property(property(validation, 'with'), 'source_revision')).replace(
+    /^\s*\$\{\{|\}\}\s*$/g,
+    '',
+  )
   const credentials = property(publication, 'secrets')
   expect(Object.keys(credentials as Record<string, unknown>)).toEqual(['ATTIC_TOKEN'])
   const tokenExpression = text(property(credentials, 'ATTIC_TOKEN')).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
-  for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
+  for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
     for (const ref of ['refs/pull/1/merge', 'refs/heads/feature', 'refs/heads/main']) {
-      const context = { github: { event_name: event, ref }, secrets: { ATTIC_TOKEN: 'synthetic-upload-token' } }
-      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(event === 'pull_request')
-      const publishes = runInNewContext(text(property(publication, 'if')), context)
-      expect(publishes).toBe(event !== 'pull_request')
-      const forwardedToken = publishes ? runInNewContext(tokenExpression, context) : ''
-      expect(forwardedToken).toBe(event !== 'pull_request' && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
+      const context = {
+        github: {
+          event_name: event,
+          ref,
+          sha: 'queue-revision',
+          event: event === 'pull_request' ? { pull_request: { head: { sha: 'reviewed-head' } } } : {},
+        },
+        secrets: { ATTIC_TOKEN: 'synthetic-upload-token' },
+      }
+      const validates = event === 'pull_request' || event === 'merge_group'
+      expect(runInNewContext(text(property(validation, 'if')), context)).toBe(validates)
+      if (validates)
+        expect(runInNewContext(sourceExpression, context)).toBe(
+          event === 'merge_group' ? 'queue-revision' : 'reviewed-head',
+        )
+      const buildsRelease = runInNewContext(text(property(publication, 'if')), context)
+      expect(buildsRelease).toBe(event === 'workflow_dispatch' || (event === 'push' && ref === 'refs/heads/main'))
+      const forwardedToken = buildsRelease ? runInNewContext(tokenExpression, context) : ''
+      expect(forwardedToken).toBe(!validates && ref === 'refs/heads/main' ? 'synthetic-upload-token' : '')
     }
   }
 })
