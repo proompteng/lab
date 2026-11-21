@@ -10,6 +10,9 @@ jobs:
   agentctl:
     uses: ./.github/workflows/agentctl-ci.yml
 
+  buzz:
+    uses: ./.github/workflows/buzz-relay-build-push.yml
+
   codex:
     uses: ./.github/workflows/codex-ci.yml
 
