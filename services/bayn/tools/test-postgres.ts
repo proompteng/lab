@@ -61,8 +61,9 @@ if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
     'Usage: BAYN_TEST_POSTGRES_URL=<isolated local _test database> bun tools/test-postgres.ts [index/count]',
   )
 
-const timingsPath = process.env['BAYN_CI_POSTGRES_TIMINGS_PATH']
-const recordedTimings = timingsPath ? [`--timings=${timingsPath}`, '--update-timings'] : []
+const timingsPath = process.env['BAYN_CI_POSTGRES_TIMINGS_PATH'] ?? ''
+const recordTimings = timingsPath !== ''
+const recordedTimings = recordTimings ? [`--timings=${timingsPath}`, '--update-timings'] : []
 
 const run = (args: readonly string[]) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-postgres-results-'))
@@ -91,7 +92,7 @@ const run = (args: readonly string[]) => {
 run(['--isolate', `--shard=${shard}`, ...recordedTimings, '--timings=tools/ci-postgres-timings.json', ...files])
 if (shard.startsWith('1/'))
   run([
-    ...(timingsPath ? [`--timings=${timingsPath}.shadow.json`, '--update-timings'] : []),
+    ...(recordTimings ? [`--timings=${timingsPath}.shadow.json`, '--update-timings'] : []),
     'src/shadow-decision.test.ts',
     '--test-name-pattern',
     'migrated cycle guard|PostgreSQL entry binding and nested',
