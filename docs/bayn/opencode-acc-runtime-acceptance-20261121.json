@@ -1,0 +1,500 @@
+{
+  "evidenceFiles": [
+    {
+      "file": "opencode-acc-amd64-publication-receipt.json",
+      "sha256": "28adc9335378c42653e514f178aae8ea49e1f6a75e2c7dbc18ff9cf43f000040"
+    },
+    {
+      "file": "opencode-acc-arm64-publication-receipt.json",
+      "sha256": "de45228300ae24c28424a7ff9c259f980e90b463f7ecd6ce578026d45c664dc8"
+    },
+    {
+      "file": "opencode-acc-index-publication-receipt.json",
+      "sha256": "4d0809f4578feb87ab3ba6e2ea6eb95623c49c641203ff6fab26329bba6fe084"
+    },
+    {
+      "file": "opencode-acc-amd64-native-receipt.json",
+      "sha256": "669032ab344cb11f4a45afa8a3b7bdcd22ee9639eca0a03b5ac475eaa4eb1b11"
+    },
+    {
+      "file": "opencode-acc-arm64-native-receipt.json",
+      "sha256": "1449abed6f1c3c037fe044c482d11731e1090ad6c46bf83f4a963041df7220d7"
+    },
+    {
+      "file": "opencode-acc-main-jobs-receipt.json",
+      "sha256": "c8106a3f679c4c40a11cb99e21c7b1a0a74c948b4de7d58d30369687bf99c504"
+    },
+    {
+      "file": "opencode-acc-rollout-receipt.json",
+      "sha256": "e8812e9c0a36f86b4dd39449f96a91f02eee03117abe4993e84b297475f3c51a"
+    },
+    {
+      "file": "opencode-acc-runtime-probes-receipt.json",
+      "sha256": "e8cbe7da322a3f936a3fd64e99603408a69164baf27623dbfb371c4a909415b4"
+    }
+  ],
+  "imageApplicationSource": "acc115c8082a00881fc3d1daef8af08b62458a85",
+  "limits": [
+    "Both architectures were published and actually passed the native test; both live roles selected amd64. No arm64 production Pod is claimed.",
+    "The runtime container environment identifies the image/application packaging source; upstream native code remains the separately pinned 2.1.3 revision.",
+    "Research readiness uses the authenticated exact-version native info gate in the verified source; the direct native check here was unauthenticated and returned 401.",
+    "Process/container source, readiness and authentication checks were read-only. No inference, study request, pairing, login, repository edit, order or grant was performed.",
+    "Both optional cache-warming steps emitted real upload-failure warnings. Registry publication and native validation succeeded; successful cache warming is not claimed.",
+    "The ARM cache client reported InternalServerError. That class does not establish the database/S3 cause or explain other observed delays.",
+    "Native timings are acceptance observations, not a controlled performance comparison."
+  ],
+  "mainBuild": {
+    "at": "2026-11-21T10:05:49.272220+00:00",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "active": [],
+        "completedAt": "2026-11-21T10:00:24Z",
+        "conclusion": "success",
+        "failed": [],
+        "id": 136803636121,
+        "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+        "runner": "arc-amd64-runner-cl8gg",
+        "startedAt": "2026-11-21T09:32:07Z",
+        "status": "completed"
+      },
+      {
+        "active": [],
+        "completedAt": "2026-11-21T09:59:01Z",
+        "conclusion": "success",
+        "failed": [],
+        "id": 136803636307,
+        "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+        "runner": "arc-arm64-runner-jrgkm",
+        "startedAt": "2026-11-21T09:32:08Z",
+        "status": "completed"
+      },
+      {
+        "active": [],
+        "completedAt": "2026-11-21T10:05:39Z",
+        "conclusion": "success",
+        "failed": [],
+        "id": 136810317809,
+        "name": "image / publish-index",
+        "runner": "arc-amd64-runner-hj9ww",
+        "startedAt": "2026-11-21T10:01:06Z",
+        "status": "completed"
+      }
+    ],
+    "run": 44889463638,
+    "source": "acc115c8082a00881fc3d1daef8af08b62458a85",
+    "status": "completed"
+  },
+  "mergedAt": "2026-11-21T09:24:44Z",
+  "nativeUpstream": {
+    "repository": "https://github.com/anomalyco/opencode",
+    "revision": "bb25a2f4a3f3f04d7c344bec0c0574ea3510b3b1",
+    "version": "2.1.3"
+  },
+  "nativeValidation": [
+    {
+      "architecture": "amd64",
+      "assertionCounts": [30],
+      "cachePushConfigurations": [
+        {
+          "batchSize": 64,
+          "pathCount": 717,
+          "uploadJobs": 1
+        }
+      ],
+      "cacheWarmWarningEmitted": true,
+      "job": 136803636121,
+      "jobCompletedAt": "2026-11-21T10:00:24Z",
+      "jobConclusion": "success",
+      "nativeSuiteResults": [
+        {
+          "at": "2026-11-21T09:35:17.3501875Z",
+          "durationMs": 46384.32,
+          "result": "pass"
+        }
+      ],
+      "operationCount": 24,
+      "partialNarTransferObserved": false,
+      "scopeReleasedElapsedMs": 46383,
+      "startup": [
+        {
+          "nativeRequestCancellations": 8,
+          "phase": "initial",
+          "readiness": "READY",
+          "readinessElapsedMs": 10055
+        },
+        {
+          "nativeRequestCancellations": 0,
+          "phase": "restart",
+          "readiness": "READY",
+          "readinessElapsedMs": 1212
+        }
+      ]
+    },
+    {
+      "architecture": "arm64",
+      "assertionCounts": [30],
+      "cachePushConfigurations": [
+        {
+          "batchSize": 64,
+          "pathCount": 716,
+          "uploadJobs": 1
+        }
+      ],
+      "cacheWarmWarningEmitted": true,
+      "job": 136803636307,
+      "jobCompletedAt": "2026-11-21T09:59:01Z",
+      "jobConclusion": "success",
+      "nativeSuiteResults": [
+        {
+          "at": "2026-11-21T09:36:01.1729044Z",
+          "durationMs": 51335.04,
+          "result": "pass"
+        }
+      ],
+      "operationCount": 24,
+      "partialNarTransferObserved": false,
+      "scopeReleasedElapsedMs": 51333,
+      "startup": [
+        {
+          "nativeRequestCancellations": 15,
+          "phase": "initial",
+          "readiness": "READY",
+          "readinessElapsedMs": 18997
+        },
+        {
+          "nativeRequestCancellations": 0,
+          "phase": "restart",
+          "readiness": "READY",
+          "readinessElapsedMs": 1240
+        }
+      ]
+    }
+  ],
+  "preparedAt": "2026-11-21T10:13:00.863818+00:00",
+  "publication": {
+    "indexDigest": "sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "configDigest": "sha256:319fbc5ed190a3a512c589f1d83080c49c11d18e9da6ba783c54dbd43006d167",
+        "configSource": "acc115c8082a00881fc3d1daef8af08b62458a85",
+        "manifestDigest": "sha256:5d4d27049c8bc0ce537d1a755dc5a5e458d357d1dd1ae550bc29892cbfada4d5",
+        "os": "linux",
+        "runtimeSourceEnvironment": "acc115c8082a00881fc3d1daef8af08b62458a85"
+      },
+      {
+        "architecture": "arm64",
+        "configDigest": "sha256:4920bbe2f5b2e0a1a49bca19993423b53b7ea81760f9a27e396e4351999c5516",
+        "configSource": "acc115c8082a00881fc3d1daef8af08b62458a85",
+        "manifestDigest": "sha256:c5a46667616335d524eea9b37788cd9b72a39ef7f310a0be3f2d5a0f64c8aa3a",
+        "os": "linux",
+        "runtimeSourceEnvironment": "acc115c8082a00881fc3d1daef8af08b62458a85"
+      }
+    ],
+    "platformsMatchVerifiedManifests": true,
+    "sourceAnnotation": "acc115c8082a00881fc3d1daef8af08b62458a85"
+  },
+  "pullRequest": 16111,
+  "rollout": {
+    "application": {
+      "finishedAt": "2026-11-21T10:06:47Z",
+      "health": "Healthy",
+      "operationPhase": "Succeeded",
+      "revision": "5085dfdaf2aceaaa44910fcd0a67f5b249da3eab",
+      "sync": "Synced"
+    },
+    "at": "2026-11-21T10:08:37.752703+00:00",
+    "deployments": [
+      {
+        "generation": 331,
+        "imageDigests": ["sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0"],
+        "name": "opencode",
+        "observedGeneration": 331,
+        "replicas": {
+          "availableReplicas": 1,
+          "readyReplicas": 1,
+          "replicas": 1,
+          "updatedReplicas": 1
+        }
+      },
+      {
+        "generation": 331,
+        "imageDigests": ["sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0"],
+        "name": "opencode-research",
+        "observedGeneration": 331,
+        "replicas": {
+          "availableReplicas": 1,
+          "readyReplicas": 1,
+          "replicas": 1,
+          "updatedReplicas": 1
+        }
+      }
+    ],
+    "endpoints": [
+      {
+        "service": "opencode",
+        "targets": [
+          {
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "pod": "opencode-5df8bc649-ncdhx"
+          }
+        ]
+      },
+      {
+        "service": "opencode-research",
+        "targets": [
+          {
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "pod": "opencode-research-f9f9dfcbc-wp6dt"
+          }
+        ]
+      }
+    ],
+    "pods": [
+      {
+        "containers": [
+          {
+            "configDigest": "sha256:319fbc5ed190a3a512c589f1d83080c49c11d18e9da6ba783c54dbd43006d167",
+            "indexDigest": "sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0",
+            "name": "opencode",
+            "ready": true,
+            "restartCount": 0,
+            "runningSince": "2026-11-21T10:07:41Z",
+            "terminatedReason": null,
+            "waitingReason": null
+          }
+        ],
+        "createdAt": "2026-11-21T10:06:48Z",
+        "deletingAt": null,
+        "init": [
+          {
+            "name": "prepare-workspace",
+            "ready": true,
+            "restartCount": 0,
+            "terminated": {
+              "exitCode": 0,
+              "finishedAt": "2026-11-21T10:07:40Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-21T10:07:37Z"
+            }
+          }
+        ],
+        "name": "opencode-5df8bc649-ncdhx",
+        "node": {
+          "architecture": "amd64",
+          "nodeIdentitySha256": "5cd5d53aaf0921c96cd417427baf52996517da365ebd7385ed3ebae1b59f5f29"
+        },
+        "phase": "Running",
+        "role": "opencode",
+        "volumeClaims": ["opencode-development"]
+      },
+      {
+        "containers": [
+          {
+            "configDigest": "sha256:319fbc5ed190a3a512c589f1d83080c49c11d18e9da6ba783c54dbd43006d167",
+            "indexDigest": "sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0",
+            "name": "research",
+            "ready": true,
+            "restartCount": 0,
+            "runningSince": "2026-11-21T10:07:09Z",
+            "terminatedReason": null,
+            "waitingReason": null
+          }
+        ],
+        "createdAt": "2026-11-21T10:06:48Z",
+        "deletingAt": null,
+        "init": [
+          {
+            "name": "require-migrated-state",
+            "ready": true,
+            "restartCount": 0,
+            "terminated": {
+              "exitCode": 0,
+              "finishedAt": "2026-11-21T10:07:07Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-21T10:07:06Z"
+            }
+          }
+        ],
+        "name": "opencode-research-f9f9dfcbc-wp6dt",
+        "node": {
+          "architecture": "amd64",
+          "nodeIdentitySha256": "5cd5d53aaf0921c96cd417427baf52996517da365ebd7385ed3ebae1b59f5f29"
+        },
+        "phase": "Running",
+        "role": "opencode-research",
+        "volumeClaims": ["opencode-research-state"]
+      }
+    ],
+    "stage": {
+      "conditions": [
+        {
+          "reason": "Verified",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "reason": "Healthy",
+          "status": "True",
+          "type": "Healthy"
+        },
+        {
+          "reason": "Verified",
+          "status": "True",
+          "type": "Verified"
+        }
+      ],
+      "currentPromotion": null,
+      "freight": [
+        {
+          "images": [
+            {
+              "digest": "sha256:d6982c5eac11b1a15a1a311dc5d3c19593ea94e265e122872a47860408e5d7e0",
+              "source": "acc115c8082a00881fc3d1daef8af08b62458a85",
+              "tag": "kargo-sha-acc115c8082a00881fc3d1daef8af08b62458a85"
+            }
+          ],
+          "name": "555ff6bcd91e481bba7b7f60faad3c5e9fedbc87"
+        }
+      ],
+      "freightSummary": "555ff6bcd91e481bba7b7f60faad3c5e9fedbc87",
+      "health": "Healthy",
+      "lastPromotion": {
+        "currentStep": 6,
+        "finishedAt": "2026-11-21T10:06:47Z",
+        "name": "opencode.01m7ys36sjbnhmypd89rha7daw.555ff6b",
+        "phase": "Succeeded",
+        "startedAt": "2026-11-21T10:05:40Z"
+      },
+      "verification": [
+        [
+          {
+            "analysisRun": {
+              "name": "opencode.01m7ys77ehytee3wbt917vh71n.93e047e",
+              "namespace": "opencode-release",
+              "phase": "Successful"
+            },
+            "finishTime": "2026-11-21T10:08:01Z",
+            "id": "9816d76d-85b9-424e-8b37-0ef5e2a31ce9",
+            "phase": "Successful",
+            "startTime": "2026-11-21T10:07:52Z"
+          }
+        ]
+      ]
+    }
+  },
+  "runtimeProbes": [
+    {
+      "authenticatedInfo": {
+        "pinnedVersionMatches": true,
+        "status": 200,
+        "version": "2.1.3"
+      },
+      "nativeProcesses": [
+        {
+          "executable": "/nix/store/px8cbi5gxqzw105z775k3mrv3yjzwzrn-opencode-2.1.3/bin/opencode",
+          "matchesPinnedCommandPackage": true,
+          "pid": 7
+        }
+      ],
+      "observedAt": "2026-11-21T10:10:53.630Z",
+      "pinnedNativeCommandPath": "/nix/store/px8cbi5gxqzw105z775k3mrv3yjzwzrn-opencode-2.1.3/bin/opencode",
+      "processArchitecture": "x64",
+      "processPlatform": "linux",
+      "processTreeWalkCapped": false,
+      "role": "development",
+      "rootExecutable": "/nix/store/62csgzjl1y4j4a90vgqk8gzp57c6m3m9-tini-0.19.0/bin/tini",
+      "sourceMatchesExpected": true,
+      "sourceRevision": "acc115c8082a00881fc3d1daef8af08b62458a85",
+      "unauthenticatedInfoStatus": 401
+    },
+    {
+      "gatewayReadinessStatus": 200,
+      "nativeProcesses": [
+        {
+          "executable": "/nix/store/px8cbi5gxqzw105z775k3mrv3yjzwzrn-opencode-2.1.3/bin/opencode",
+          "matchesPinnedCommandPackage": true,
+          "pid": 18
+        }
+      ],
+      "observedAt": "2026-11-21T10:10:52.297Z",
+      "pinnedNativeCommandPath": "/nix/store/px8cbi5gxqzw105z775k3mrv3yjzwzrn-opencode-2.1.3/bin/opencode",
+      "processArchitecture": "x64",
+      "processPlatform": "linux",
+      "processTreeWalkCapped": false,
+      "role": "research",
+      "rootExecutable": "/nix/store/lgggxsrdzisnbligi7irlh4qmqczs0xk-nodejs-24.11.1/bin/node",
+      "sourceMatchesExpected": true,
+      "sourceRevision": "acc115c8082a00881fc3d1daef8af08b62458a85",
+      "unauthenticatedNativeInfoStatus": 401
+    }
+  ],
+  "schema": "opencode-runtime-acceptance-v1",
+  "sourceFiles": [
+    {
+      "gitBlob": "b7c80ee3394b37e59b47ca5a3558aae04612296f",
+      "path": "services/bayn/src/opencode/server.ts",
+      "sha256": "f9b2cc4b19ec4236144804caea05d45ac842f139c3c660cc450c2fdf45cae8ca"
+    },
+    {
+      "gitBlob": "800fc2882b74b88acc91cd2a1e4529f6689d33f8",
+      "path": "services/bayn/src/opencode/server.integration.test.ts",
+      "sha256": "c5bda5c064f67718b8a9c99805256f468289ae784255af85fc9c49084606d79b"
+    },
+    {
+      "gitBlob": "406ec835ed4e3aed2bbe8232817bb36a688b661c",
+      "path": "services/bayn/src/opencode-command.ts",
+      "sha256": "5ef8d2443470fdfc58fd7ae4bc0b3a199a8444e96e3d939279983fc7f06ce35d"
+    },
+    {
+      "gitBlob": "0c8ef5fad21b581684b8c961233294be44498a6a",
+      "path": "services/bayn/src/opencode/configuration.ts",
+      "sha256": "9ed332d4d966fb4387f1179e7791ef31cb17553dc9ed04bbbfa224a3987ac4f5"
+    },
+    {
+      "gitBlob": "560075557992e1aa3db5a5242f0f755e82f6f2d0",
+      "path": "nix/images/opencode.nix",
+      "sha256": "0e79b9a43eb75627a1f8e09b56d058e05b96ea362c02660494af6386a19c5f62"
+    },
+    {
+      "gitBlob": "f7e5f245a85681c9bc924f69ed8b06556098c730",
+      "path": "nix/images/opencode-cli.nix",
+      "sha256": "2c2cda5a9afadbea2092fca2ac1a838abffea477a291725045fee0211cd043ab"
+    },
+    {
+      "gitBlob": "fdc5ae98b05a55fd5606b2b95c5ef04862d96f7d",
+      "path": "services/opencode/start.sh",
+      "sha256": "ce4e246c782f5c0649e8e1fe4384ca756e969d81d05063c8e0c36044068312d8"
+    },
+    {
+      "gitBlob": "bbdb698ba8cf7e77468cf999117b5188715c2032",
+      "path": "argocd/applications/opencode/server.yaml",
+      "sha256": "3120bf9dcb7a185b1867897e71fd689f7b78c7d574f7383c0b9e3bc19e360025"
+    },
+    {
+      "gitBlob": "9f164109e1c0e57fb4cffb0e999db3a9adeb7968",
+      "path": "argocd/applications/opencode/research.yaml",
+      "sha256": "6ebaa2d215be3dee8b5acc5ea29c6b31ada1d8cdc2e12df3fb268fd0f4762b0f"
+    },
+    {
+      "gitBlob": "4266ffb1aa4431043f88f9927cfe635d26c1dd6f",
+      "path": ".github/workflows/opencode-build-push.yml",
+      "sha256": "b7971f0f9a547b7c71c88be9932d20a7fca284f0120468a6829840e22f435f15"
+    },
+    {
+      "gitBlob": "c38283fa1fd2886b14044abf939075e15fe9b028",
+      "path": ".github/workflows/nix-oci-build-common.yml",
+      "sha256": "0a1f10ae5e73919c2f566e53008022e0662f137d366acf72a700c801210a0111"
+    }
+  ],
+  "sourceRepository": "https://github.com/proompteng/lab"
+}

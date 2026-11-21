@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "kind": "existing-image-metadata-compatibility",
+  "status": "COMPATIBLE",
+  "observedFrom": "2026-11-21T11:37:46.350749+00:00",
+  "reviewedCode": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+  "existingImageSource": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+  "existingWorkflowRunId": "44891137421",
+  "expectedCreatedLabel": "2026-11-21T01:46:08-08:00",
+  "readerSha256": "2687193ac20691e747614a93117cce59c3533b321c32905f3e531f9a8d49664d",
+  "publicationFlowExecuted": false,
+  "registryMutations": 0,
+  "ciOutputsWritten": false,
+  "limits": {
+    "maximumGetRequests": 14,
+    "maximumResponseBytes": 1048576,
+    "overallSeconds": 50,
+    "perRequestSeconds": 8,
+    "tlsVerification": "default",
+    "addedCredentials": false
+  },
+  "requests": [
+    {
+      "method": "GET",
+      "repository": "lab/bayn",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-amd64",
+      "startedAt": "2026-11-21T11:37:46.351082+00:00",
+      "httpStatus": 200,
+      "bytes": 3869,
+      "contentSha256": "sha256:4eda1d4f9b4387cc81edc58d8d1146eaeca2807e542f7a43f226a60aeded0b58",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:37:47.348598+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn",
+      "resource": "blobs",
+      "reference": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+      "startedAt": "2026-11-21T11:37:47.348950+00:00",
+      "httpStatus": 200,
+      "bytes": 6962,
+      "contentSha256": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:37:49.405383+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-arm64",
+      "startedAt": "2026-11-21T11:37:49.406081+00:00",
+      "httpStatus": 200,
+      "bytes": 3869,
+      "contentSha256": "sha256:3109ea8d0d32244ede1d08453d2bc0ae3bb9f38ace026197c3ab8edd0ae05d07",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:37:49.426694+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn",
+      "resource": "blobs",
+      "reference": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+      "startedAt": "2026-11-21T11:37:49.426939+00:00",
+      "httpStatus": 200,
+      "bytes": 6962,
+      "contentSha256": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:37:50.760774+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-research",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-amd64",
+      "startedAt": "2026-11-21T11:37:50.762996+00:00",
+      "httpStatus": 200,
+      "bytes": 3889,
+      "contentSha256": "sha256:4f700adcd5a2044ef3a2a8622d2e25266d42c8b17f4f8db8504a1219b080c9a8",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:37:52.770875+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-research",
+      "resource": "blobs",
+      "reference": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+      "startedAt": "2026-11-21T11:37:52.771260+00:00",
+      "httpStatus": 200,
+      "bytes": 14563,
+      "contentSha256": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:37:53.204163+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-research",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-arm64",
+      "startedAt": "2026-11-21T11:37:53.205839+00:00",
+      "httpStatus": 200,
+      "bytes": 3889,
+      "contentSha256": "sha256:41867d71b9082bf8130b4c3fb35461b9f26425a71ef1dc138ed33c5fca13419e",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:37:55.314093+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-research",
+      "resource": "blobs",
+      "reference": "sha256:f8e4b39d142959d6fab2927925b0b8112a2948a5dafe97bac184b95c2af1c5ae",
+      "startedAt": "2026-11-21T11:37:55.314497+00:00",
+      "httpStatus": 200,
+      "bytes": 14563,
+      "contentSha256": "sha256:f8e4b39d142959d6fab2927925b0b8112a2948a5dafe97bac184b95c2af1c5ae",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:37:56.936218+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-broker-feed",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-amd64",
+      "startedAt": "2026-11-21T11:37:56.936803+00:00",
+      "httpStatus": 200,
+      "bytes": 3880,
+      "contentSha256": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:37:56.968243+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-broker-feed",
+      "resource": "blobs",
+      "reference": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+      "startedAt": "2026-11-21T11:37:56.968731+00:00",
+      "httpStatus": 200,
+      "bytes": 11229,
+      "contentSha256": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:37:59.088449+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-broker-feed",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef-arm64",
+      "startedAt": "2026-11-21T11:37:59.089075+00:00",
+      "httpStatus": 200,
+      "bytes": 4037,
+      "contentSha256": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:37:59.115163+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-broker-feed",
+      "resource": "blobs",
+      "reference": "sha256:f4b5ec75284e85a166b87eb25c85041260ed83f8d8f7d03af98e76279d2d96f6",
+      "startedAt": "2026-11-21T11:37:59.115604+00:00",
+      "httpStatus": 200,
+      "bytes": 11364,
+      "contentSha256": "sha256:f4b5ec75284e85a166b87eb25c85041260ed83f8d8f7d03af98e76279d2d96f6",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:38:05.184681+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-broker-feed",
+      "resource": "manifests",
+      "reference": "sha-6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "startedAt": "2026-11-21T11:38:05.186154+00:00",
+      "httpStatus": 200,
+      "bytes": 768,
+      "contentSha256": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "finishedAt": "2026-11-21T11:38:05.211339+00:00"
+    },
+    {
+      "method": "GET",
+      "repository": "lab/bayn-broker-feed",
+      "resource": "manifests",
+      "reference": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+      "startedAt": "2026-11-21T11:38:05.211712+00:00",
+      "httpStatus": 200,
+      "bytes": 768,
+      "contentSha256": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+      "digestHeaderPresent": true,
+      "digestHeaderMatchesContent": true,
+      "expectedContentDigestMatches": true,
+      "finishedAt": "2026-11-21T11:38:05.237429+00:00"
+    }
+  ],
+  "platforms": [
+    {
+      "member": "bayn",
+      "expectedArchitecture": "amd64",
+      "selectedPlatformDigest": "sha256:4eda1d4f9b4387cc81edc58d8d1146eaeca2807e542f7a43f226a60aeded0b58",
+      "configDigest": "sha256:b97d7873d86f32949a8b75c59b288f6a3f58edce3fe8ac774af0b23a83df2ad8",
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "createdLabel": "2026-11-21T01:46:08-08:00",
+      "os": "linux",
+      "architecture": "amd64",
+      "checks": {
+        "sourceMatches": true,
+        "createdLabelMatchesExactly": true,
+        "linux": true,
+        "architectureMatches": true,
+        "configDigestMatches": true,
+        "singleImageManifest": true
+      }
+    },
+    {
+      "member": "bayn",
+      "expectedArchitecture": "arm64",
+      "selectedPlatformDigest": "sha256:3109ea8d0d32244ede1d08453d2bc0ae3bb9f38ace026197c3ab8edd0ae05d07",
+      "configDigest": "sha256:02a09dff14eeec7c6c87a35c7b97892ed8afe3c6ef5ce22202dda139e616ffcb",
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "createdLabel": "2026-11-21T01:46:08-08:00",
+      "os": "linux",
+      "architecture": "arm64",
+      "checks": {
+        "sourceMatches": true,
+        "createdLabelMatchesExactly": true,
+        "linux": true,
+        "architectureMatches": true,
+        "configDigestMatches": true,
+        "singleImageManifest": true
+      }
+    },
+    {
+      "member": "bayn-research",
+      "expectedArchitecture": "amd64",
+      "selectedPlatformDigest": "sha256:4f700adcd5a2044ef3a2a8622d2e25266d42c8b17f4f8db8504a1219b080c9a8",
+      "configDigest": "sha256:0eaa2a2b25880970bcca31a7e53dc2da019ed8596aeb2497b234091aeb98ce06",
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "createdLabel": "2026-11-21T01:46:08-08:00",
+      "os": "linux",
+      "architecture": "amd64",
+      "checks": {
+        "sourceMatches": true,
+        "createdLabelMatchesExactly": true,
+        "linux": true,
+        "architectureMatches": true,
+        "configDigestMatches": true,
+        "singleImageManifest": true
+      }
+    },
+    {
+      "member": "bayn-research",
+      "expectedArchitecture": "arm64",
+      "selectedPlatformDigest": "sha256:41867d71b9082bf8130b4c3fb35461b9f26425a71ef1dc138ed33c5fca13419e",
+      "configDigest": "sha256:f8e4b39d142959d6fab2927925b0b8112a2948a5dafe97bac184b95c2af1c5ae",
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "createdLabel": "2026-11-21T01:46:08-08:00",
+      "os": "linux",
+      "architecture": "arm64",
+      "checks": {
+        "sourceMatches": true,
+        "createdLabelMatchesExactly": true,
+        "linux": true,
+        "architectureMatches": true,
+        "configDigestMatches": true,
+        "singleImageManifest": true
+      }
+    },
+    {
+      "member": "bayn-broker-feed",
+      "expectedArchitecture": "amd64",
+      "selectedPlatformDigest": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+      "configDigest": "sha256:2e2f38ef214aac79cbc93134a10b0dbfc6793c40f50f3c86e374e8546d7c1b72",
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "createdLabel": "2026-11-21T01:46:08-08:00",
+      "os": "linux",
+      "architecture": "amd64",
+      "checks": {
+        "sourceMatches": true,
+        "createdLabelMatchesExactly": true,
+        "linux": true,
+        "architectureMatches": true,
+        "configDigestMatches": true,
+        "singleImageManifest": true
+      }
+    },
+    {
+      "member": "bayn-broker-feed",
+      "expectedArchitecture": "arm64",
+      "selectedPlatformDigest": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+      "configDigest": "sha256:f4b5ec75284e85a166b87eb25c85041260ed83f8d8f7d03af98e76279d2d96f6",
+      "sourceRevision": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+      "createdLabel": "2026-11-21T01:46:08-08:00",
+      "os": "linux",
+      "architecture": "arm64",
+      "checks": {
+        "sourceMatches": true,
+        "createdLabelMatchesExactly": true,
+        "linux": true,
+        "architectureMatches": true,
+        "configDigestMatches": true,
+        "singleImageManifest": true
+      }
+    }
+  ],
+  "existingBrokerFeedIndex": {
+    "selectedDigest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+    "immutableDigest": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "completeDescriptorCount": 2,
+    "descriptors": [
+      {
+        "digest": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+        "os": "linux",
+        "architecture": "amd64",
+        "variant": null,
+        "variantAllowed": true
+      },
+      {
+        "digest": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+        "os": "linux",
+        "architecture": "arm64",
+        "variant": null,
+        "variantAllowed": true
+      }
+    ],
+    "checks": {
+      "exactTwoDescriptors": true,
+      "exactVerifiedChildSet": true,
+      "sourceMatches": true,
+      "publisherMatches": true,
+      "runMatches": true,
+      "buildSucceeded": true
+    }
+  },
+  "limitations": [
+    "Metadata compatibility only; the new preparation or publication flow was not executed.",
+    "No layer bytes, runtime workloads, jobs or discovery aliases were read or changed.",
+    "Only the already published broker-feed index is compared; the other two indexes were pending in the retained workflow observation."
+  ],
+  "observedTo": "2026-11-21T11:38:05.237911+00:00",
+  "elapsedSeconds": 18.887
+}

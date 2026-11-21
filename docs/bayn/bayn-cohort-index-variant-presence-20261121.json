@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "immutable-index-variant-presence-addendum",
+  "parentReceipt": "bayn-cohort-6d-metadata-compatibility-20261121.json",
+  "parentReceiptSha256": "905a5e8475c5a2dab31ccd038909e9393ad8f0836d2aa1dbdcb496fea83a9b5e",
+  "readerSha256": "454f72a9a583c7db2af5e91e890c7f8051cfdbbadc71e281872147672a9a2fa6",
+  "source": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+  "reviewedCode": "a53de4ffc1ac310118f57d5f722dc8968ca07e4e",
+  "observedFrom": "2026-11-21T11:40:52.882443+00:00",
+  "status": "COMPATIBLE",
+  "originalProjectionLimitation": "The original variantAllowed projection did not distinguish an absent key from present JSON null.",
+  "publicationFlowExecuted": false,
+  "request": {
+    "method": "GET",
+    "repository": "lab/bayn-broker-feed",
+    "resource": "manifests",
+    "reference": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+    "maximumResponseBytes": 1048576,
+    "timeoutSeconds": 8,
+    "tlsVerification": "default",
+    "addedCredentials": false,
+    "httpStatus": 200,
+    "bytes": 768,
+    "contentSha256": "sha256:894ff6fe04cc4aec65c3fea6a6b7613210385b9642fb48533efec6ca73bd502d",
+    "contentDigestMatches": true,
+    "digestHeaderMatches": true
+  },
+  "descriptors": [
+    {
+      "digest": "sha256:8a1c63b3a2da454384814ab5ad534ebb8e64ae9f73decf1bf8145dfc7473e7fa",
+      "os": "linux",
+      "architecture": "amd64",
+      "variantKeyPresent": false,
+      "variantIsExplicitNull": false,
+      "variantIsEmptyString": false,
+      "helperVariantConditionPasses": true
+    },
+    {
+      "digest": "sha256:6ab46b44569e2425aad8963ce3f63f9f8aec8791d1018ca6d79d3bca5d6d4299",
+      "os": "linux",
+      "architecture": "arm64",
+      "variantKeyPresent": false,
+      "variantIsExplicitNull": false,
+      "variantIsEmptyString": false,
+      "helperVariantConditionPasses": true
+    }
+  ],
+  "exactPreviouslyVerifiedChildren": true,
+  "allHelperVariantConditionsPass": true,
+  "observedTo": "2026-11-21T11:40:52.909694+00:00"
+}

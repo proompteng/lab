@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "preparedAt": "2026-11-21T10:48:49.687443+00:00",
+  "scope": "Source-only bounded ARC storage/init audit using already retained Kubernetes metadata; no new runtime observation.",
+  "sourceCommit": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+  "sourceComparison": {
+    "sourceCommit": "6d6600bd98ca3f0a434cd8f104369a6fa552deef",
+    "lastApplicationSourceChange": "5f286299d50770f3415c1aab1b552d8315573663 2026-11-19T15:16:53-08:00 chore(arc): activate both 0.15.1 runner scale sets (#16057)",
+    "localGeneratedRefs": "refs/remotes/origin/kargo/arc-runner c83a1870db5f384ddda297df11b81a9f07ed98d5",
+    "matches": [
+      {
+        "name": "arc-arm64",
+        "comparison": {
+          "minMax": true,
+          "architecture": true,
+          "podSecurityContext": true,
+          "volumes": true,
+          "initCommand": true,
+          "initScript": true,
+          "initSecurityContext": true,
+          "initResources": true,
+          "initMounts": true,
+          "runnerCommand": true,
+          "runnerMounts": true,
+          "runnerResources": true
+        },
+        "initScriptSha256": "347b41fe262a931ffaf2beaf5f3ac20c8789ad36324f51605c19ab87c85432dd",
+        "sourceInitRunnerDigestMatch": true,
+        "liveInitRunnerDigestMatch": true,
+        "sourceDigest": "sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0",
+        "liveDigest": "sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8",
+        "livePVC": {
+          "accessModes": ["ReadWriteOnce"],
+          "resources": {
+            "requests": {
+              "storage": "100Gi"
+            }
+          },
+          "storageClassName": "rook-ceph-block",
+          "volumeMode": "Filesystem"
+        }
+      },
+      {
+        "name": "arc-amd64",
+        "comparison": {
+          "minMax": true,
+          "architecture": true,
+          "podSecurityContext": true,
+          "volumes": true,
+          "initCommand": true,
+          "initScript": true,
+          "initSecurityContext": true,
+          "initResources": true,
+          "initMounts": true,
+          "runnerCommand": true,
+          "runnerMounts": true,
+          "runnerResources": true
+        },
+        "initScriptSha256": "347b41fe262a931ffaf2beaf5f3ac20c8789ad36324f51605c19ab87c85432dd",
+        "sourceInitRunnerDigestMatch": true,
+        "liveInitRunnerDigestMatch": true,
+        "sourceDigest": "sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0",
+        "liveDigest": "sha256:f9780eb6f08991b4821e84e33d30ad15c82e48e1d429fdf87b36bb8d527cd8a8",
+        "livePVC": {
+          "accessModes": ["ReadWriteOnce"],
+          "resources": {
+            "requests": {
+              "storage": "100Gi"
+            }
+          },
+          "storageClassName": "rook-ceph-block",
+          "volumeMode": "Filesystem"
+        }
+      }
+    ],
+    "sourceHashes": {
+      "application.yaml": "e682a752ac7312b3528ea1f6dc8ec0f259d9fe0930bb17a579e8e816fac90a8e",
+      "arc-runner.nix": "88a20e23093c54f158e6f692a82ba86c007d9016dd51f37407186b3ada14c05b"
+    }
+  },
+  "generatedComparison": {
+    "generatedCommit": "c83a1870db5f384ddda297df11b81a9f07ed98d5",
+    "generatedApplicationSha256": "5f141672e067d127127511468027dd203f54cc30434e3db6d891371922090504",
+    "matches": [
+      {
+        "name": "arc-arm64",
+        "generatedImageMatchesRetainedLive": true,
+        "generatedInitRunnerImageMatch": true,
+        "generatedInitScriptMatches": true,
+        "generatedPVCMatches": true
+      },
+      {
+        "name": "arc-amd64",
+        "generatedImageMatchesRetainedLive": true,
+        "generatedInitRunnerImageMatch": true,
+        "generatedInitScriptMatches": true,
+        "generatedPVCMatches": true
+      }
+    ]
+  },
+  "sourceFiles": [
+    {
+      "repositoryPath": "argocd/applications/arc/application.yaml",
+      "sha256": "e682a752ac7312b3528ea1f6dc8ec0f259d9fe0930bb17a579e8e816fac90a8e"
+    },
+    {
+      "repositoryPath": "argocd/applications/rook-ceph/storageclasses.yaml",
+      "sha256": "f5be7152e248070b273e3a2db86017a3a66bfdd27d506398a8071898ec20cf55"
+    },
+    {
+      "repositoryPath": "nix/images/arc-runner.nix",
+      "sha256": "88a20e23093c54f158e6f692a82ba86c007d9016dd51f37407186b3ada14c05b"
+    }
+  ],
+  "finding": "No actionable source-supported PVC, mount configuration, init ordering or avoidable pre-ready reliability defect was established for the observed mount deadlines.",
+  "verifiedContracts": [
+    {
+      "contract": "Independent scratch claims",
+      "evidence": "Both templates define one generic ephemeral 100Gi ReadWriteOnce filesystem PVC using rook-ceph-block, preserving per-Pod isolation.",
+      "sourceLines": "application.yaml:240-255,472-487"
+    },
+    {
+      "contract": "Matching storage class and mount admission",
+      "evidence": "Source rook-ceph-block selects ext4 with noatime and the existing RBD CSI provisioner. Init requires an ext4 /dev/rbd device distinct from the container root. The nondefault NBD canary is not selected.",
+      "sourceLines": "application.yaml:80-92,312-324; storageclasses.yaml:18-40"
+    },
+    {
+      "contract": "Seed visibility and startup ordering",
+      "evidence": "Init mounts scratch only at /scratch and copies the image-visible /nix and cache into staging. Runner mounts the completed five subdirectories only after init succeeds.",
+      "sourceLines": "application.yaml:117-178,182-184,224-239,349-410,414-416,456-471"
+    },
+    {
+      "contract": "Failed-copy and capacity admission",
+      "evidence": "Old attempts are removed, file bytes/counts/symlink counts are compared, the Nix store/var are required, ownership/modes are set, and at least 45Gi remains before publishing the completion marker.",
+      "sourceLines": "application.yaml:94-178,326-410"
+    },
+    {
+      "contract": "Paired image identity",
+      "evidence": "The local generated revision has the same retained live digest in both init and runner for both architectures, and identical init-script bytes. Main source uses its base digest; this is not evidence of a deployed init/runner mismatch."
+    },
+    {
+      "contract": "Preserved capacity and permissions",
+      "evidence": "Retained templates exactly match source minimum 5 / maximum 10, architecture, Pod security context, init resources/mounts and runner resources/mounts. No settings were changed."
+    }
+  ],
+  "phaseInterpretation": "Retained MountDevice DeadlineExceeded events occurred before the affected init-scratch containers started. Copy/verification work cannot explain those initial device-mount deadlines. Two selected Pods later progressed to running init; no permanent deadlock was established.",
+  "remainingEvidenceLimit": "The exact failed CSI/kernel-RBD operation and underlying device/network/backend cause are not established by these manifests or retained event reasons. This source-only audit does not justify changing runner counts, storage, durability, mount timeouts or admission checks.",
+  "limitations": [
+    "Atlas context did not match the owned checkout; stale historical notes were not used as current facts. Exact Git objects and retained live field comparison were used instead.",
+    "The generated revision is a locally retained Git object whose relevant content matches retained live image/template fields; no new claim about current Argo revision was queried.",
+    "No new Kubernetes, metric, log, database, cache or Pod-exec read; no load test, repository edit, runner mutation or policy change was performed."
+  ]
+}

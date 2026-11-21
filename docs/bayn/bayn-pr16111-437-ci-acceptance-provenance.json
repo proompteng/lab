@@ -1,0 +1,33 @@
+{
+  "recordedAt": "2026-11-21T09:27:48.422537+00:00",
+  "source": "437355b8cfdd2ce29578e670079244ddedd58886",
+  "rawApiBodiesRetained": false,
+  "headBinding": "The executed writer compared fetched workflow head_sha and PR headRefOid to the exact source before writing the receipt; both equality assertions passed.",
+  "execution": {
+    "jobId": "9d8b80f5-9701-4b44-a755-45013b28807d",
+    "commandHash": "08772392f94efe0f4b4abec5bc898099b525426d888069371dfe9d6ef23d5424",
+    "startedAt": "2026-11-21T09:24:31.463Z",
+    "exitCode": 0
+  },
+  "writerPath": "/tmp/bayn-pr16111-437-ci-acceptance-writer.py",
+  "files": {
+    "/tmp/bayn-pr16111-437-ci-acceptance.json": {
+      "bytes": 21751,
+      "sha256": "dc70ea1c7960b2b15644b57eb58907f72f776d491441a6b0aa534aa9d1327441"
+    },
+    "/tmp/bayn-pr16111-437-ci-acceptance.md": {
+      "bytes": 3033,
+      "sha256": "8f4094503841ae7ce3b53489702fe7bf4b3fb79bf1513f0c352f416478b1e916"
+    },
+    "/tmp/bayn-pr16111-437-ci-acceptance-writer.py": {
+      "bytes": 2808,
+      "sha256": "59aef1109864a1524370aaebc09d0a032e4eae5161cd0302e4c989bea712b3ef"
+    }
+  },
+  "originalProvenanceSha256": "b247661438e13cfbbcd14ebc481bb0535d5b079ba1854522c7e12dbbaa3dbf6d",
+  "retainedWriter": {
+    "language": "python",
+    "sha256": "59aef1109864a1524370aaebc09d0a032e4eae5161cd0302e4c989bea712b3ef",
+    "source": "import json, subprocess, datetime, pathlib\nhead=\"437355b8cfdd2ce29578e670079244ddedd58886\"\ndef gh(*args):\n return json.loads(subprocess.check_output([\"gh\",*args],text=True,timeout=30))\nrun=gh(\"api\",\"repos/proompteng/lab/actions/runs/44886428311\")\npr=gh(\"pr\",\"view\",\"16111\",\"--repo\",\"proompteng/lab\",\"--json\",\"headRefOid,state,mergeStateStatus,statusCheckRollup\")\nif run[\"head_sha\"]!=head or pr[\"headRefOid\"]!=head:raise RuntimeError(\"Unexpected source\")\njobdoc=gh(\"api\",\"repos/proompteng/lab/actions/runs/44886428311/jobs?per_page=100\")\njobs=jobdoc[\"jobs\"]\nif len(jobs)!=jobdoc[\"total_count\"]:raise RuntimeError(\"Incomplete job page\")\nif run[\"status\"]!=\"completed\" or run[\"conclusion\"]!=\"success\":raise RuntimeError(\"Workflow not successful\")\njobrows=[{\"id\":j[\"id\"],\"name\":j[\"name\"],\"status\":j[\"status\"],\"conclusion\":j[\"conclusion\"],\"startedAt\":j[\"started_at\"],\"completedAt\":j[\"completed_at\"],\"url\":j[\"html_url\"]} for j in jobs]\nfrozen=next(j for j in jobs if j[\"name\"]==\"ledger-integration (frozen-control)\")\nfrozen_steps=[{\"name\":x[\"name\"],\"status\":x[\"status\"],\"conclusion\":x.get(\"conclusion\"),\"startedAt\":x.get(\"started_at\"),\"completedAt\":x.get(\"completed_at\")} for x in frozen.get(\"steps\",[])]\nchecks=[]\nfor c in pr[\"statusCheckRollup\"]:\n if c.get(\"__typename\")==\"StatusContext\":\n  checks.append({\"name\":c.get(\"context\"),\"status\":c.get(\"state\"),\"url\":c.get(\"targetUrl\")})\n else:\n  checks.append({\"name\":c.get(\"name\"),\"workflow\":c.get(\"workflowName\"),\"status\":c.get(\"status\"),\"conclusion\":c.get(\"conclusion\"),\"url\":c.get(\"detailsUrl\")})\ncounts={}\nfor j in jobrows:counts[j[\"conclusion\"] or j[\"status\"]]=counts.get(j[\"conclusion\"] or j[\"status\"],0)+1\npayload={\"observedAt\":datetime.datetime.now(datetime.timezone.utc).isoformat(),\"source\":head,\"pr\":16111,\"prState\":pr[\"state\"],\"mergeStateStatus\":pr[\"mergeStateStatus\"],\"run\":{\"id\":run[\"id\"],\"name\":run[\"name\"],\"status\":run[\"status\"],\"conclusion\":run[\"conclusion\"],\"createdAt\":run[\"created_at\"],\"updatedAt\":run[\"updated_at\"],\"url\":run[\"html_url\"]},\"jobCounts\":counts,\"jobs\":jobrows,\"frozenControl\":{\"id\":frozen[\"id\"],\"startedAt\":frozen[\"started_at\"],\"completedAt\":frozen[\"completed_at\"],\"steps\":frozen_steps},\"checks\":checks,\"limitations\":[\"Per-job completion was verified from GitHub APIs. No bulk successful-log download was made solely for assertion counts.\",\"The intentional GEPA skip is preserved separately from successful jobs.\",\"This CI receipt is not a live deployment receipt.\"]}\npath=pathlib.Path(\"/tmp/bayn-pr16111-437-ci-acceptance.json\")\npath.write_text(json.dumps(payload,indent=2)+\"\\n\")\nprint(json.dumps({\"path\":str(path),\"source\":head,\"run\":payload[\"run\"],\"jobCounts\":counts,\"frozenControl\":payload[\"frozenControl\"],\"jobs\":[{\"name\":j[\"name\"],\"conclusion\":j[\"conclusion\"],\"completedAt\":j[\"completedAt\"]} for j in jobrows],\"checks\":checks}))\n"
+  }
+}

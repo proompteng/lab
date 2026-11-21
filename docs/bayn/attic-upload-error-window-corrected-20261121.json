@@ -1,0 +1,136 @@
+{
+  "readStatus": "success",
+  "observedAt": "2026-11-21T10:20:54.545160+00:00",
+  "liveSourceRevision": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+  "upstreamRevision": "12cbeca141f46e1ade76728bce8adc447f2166c6",
+  "window": {
+    "start": "2026-11-21T09:57:00Z",
+    "endExclusive": "2026-11-21T10:01:00Z"
+  },
+  "bounds": {
+    "correctionRead": true,
+    "sameRequestedWindowAsFirstPass": true,
+    "tailLines": 6000,
+    "limitBytes": 4194304,
+    "commandTimeoutSeconds": 30
+  },
+  "capture": {
+    "bytes": 1806013,
+    "lines": 2370,
+    "selectedLines": 770,
+    "discardedBeforeWindow": 0,
+    "discardedAfterWindow": 1600,
+    "unparsedTimestampLines": 0,
+    "orphanContinuationLines": 0,
+    "byteCapReached": false,
+    "lineCapReached": false,
+    "rawLogSha256": "1ee2aba80fa7962943e35837558c1d5333a9fe60f50208ef5de89c3baf155b79",
+    "firstSelectedAt": "2026-11-21T09:57:00.298831103Z",
+    "lastSelectedAt": "2026-11-21T10:00:56.626837642Z"
+  },
+  "clientObservations": [
+    {
+      "at": "2026-11-21T09:58:19.2240516Z",
+      "platform": "arm64",
+      "jobId": 136803636307,
+      "errorClass": "internal_server_error"
+    },
+    {
+      "at": "2026-11-21T09:58:56.6932798Z",
+      "platform": "arm64",
+      "jobId": 136803636307,
+      "errorClass": "internal_server_error"
+    }
+  ],
+  "serverRecordCounts": {
+    "WARN": 672,
+    "INFO": 85,
+    "ERROR": 6
+  },
+  "errorClassCounts": {
+    "database_error": 3,
+    "unclassified_error": 3
+  },
+  "events": [
+    {
+      "at": "2026-11-21T09:58:19.222918714Z",
+      "level": "ERROR",
+      "errorClass": "database_error",
+      "operations": [],
+      "causes": ["database_pool_timeout", "database_acquire_error", "timeout_unspecified"],
+      "recordLineCount": 2,
+      "typedCauseTokens": ["Database"]
+    },
+    {
+      "at": "2026-11-21T09:58:19.222945534Z",
+      "level": "ERROR",
+      "errorClass": "unclassified_error",
+      "operations": [],
+      "causes": [],
+      "recordLineCount": 1,
+      "typedCauseTokens": []
+    },
+    {
+      "at": "2026-11-21T09:59:21.803505378Z",
+      "level": "ERROR",
+      "errorClass": "database_error",
+      "operations": [],
+      "causes": ["database_pool_timeout", "database_acquire_error", "timeout_unspecified"],
+      "recordLineCount": 2,
+      "typedCauseTokens": ["Database"]
+    },
+    {
+      "at": "2026-11-21T09:59:21.803531068Z",
+      "level": "ERROR",
+      "errorClass": "unclassified_error",
+      "operations": [],
+      "causes": [],
+      "recordLineCount": 1,
+      "typedCauseTokens": []
+    },
+    {
+      "at": "2026-11-21T09:59:51.806707472Z",
+      "level": "ERROR",
+      "errorClass": "database_error",
+      "operations": ["upload_path"],
+      "causes": ["database_pool_timeout", "database_acquire_error", "timeout_unspecified"],
+      "recordLineCount": 6,
+      "typedCauseTokens": ["Database"]
+    },
+    {
+      "at": "2026-11-21T09:59:51.806760262Z",
+      "level": "ERROR",
+      "errorClass": "unclassified_error",
+      "operations": [],
+      "causes": [],
+      "recordLineCount": 1,
+      "typedCauseTokens": []
+    }
+  ],
+  "eventOutputCap": 40,
+  "eventOutputCapReached": false,
+  "filterBeforeEventCap": "ERROR records only",
+  "firstPassLimitation": {
+    "file": "/tmp/attic-upload-error-window-20261121.json",
+    "sha256": "6921d9705512b75734ec3911d597836ce1ab0fb3bb370a51f97e8fb10c730a49",
+    "eventCap": 200,
+    "unclassifiedWarningsConsumedEventCap": true,
+    "errorCountsWereRetained": true
+  },
+  "sourceFileSha256": {
+    "server/src/error.rs": "27e543512f4e6507b417bc046798287fc0616d645bf7934979fa583fe5f1f584",
+    "server/src/api/v1/upload_path.rs": "24ceece13e11623e5faf1def3fa1f37f9b6ecfe75791c3a61fc325db340d2d84",
+    "server/src/storage/s3.rs": "90749d8ff8af55002354060da6fb222f23007b4ee421f84a8d1fcd35a286981e"
+  },
+  "livePatch": {
+    "sha256": "39bfea76278b8e7f035147509bc3c88a1789dedc58ce3810c47374b2cc615abe",
+    "changedPaths": ["server/src/api/binary_cache.rs", "server/src/api/binary_cache/stream_error.rs"],
+    "changesUploadPath": false,
+    "changesErrorConversion": false
+  },
+  "limits": [
+    "No request or NAR identifier was retained from the client errors; timestamps alone do not prove that a server event belongs to either client error.",
+    "Raw server logs, error strings, URLs, headers, bodies and credentials are not retained in this receipt.",
+    "No retry, upload, fault injection, database query or storage query was performed."
+  ]
+}

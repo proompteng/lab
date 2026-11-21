@@ -1,0 +1,309 @@
+{
+  "evidenceFiles": [
+    {
+      "file": "attic-0e9-amd64-publication-receipt.json",
+      "sha256": "48ebe9c505a88564c3ce718ed85e77dcf60bfa0164f7eb4a9f75dc37c54ac3c4"
+    },
+    {
+      "file": "attic-0e9-arm64-publication-receipt.json",
+      "sha256": "fff0eb11863290ca87efdbe5c650eef6aa2c19e21945614e30a4c7daaa9a8359"
+    },
+    {
+      "file": "attic-0e9-index-publication-receipt.json",
+      "sha256": "75407bf4b755957dfeaf865605e9fb9c748e3cf3df87f1daeca5bb7c5930211b"
+    },
+    {
+      "file": "attic-0e9-amd64-rust-receipt.json",
+      "sha256": "9c4caf4ed36ad31c764379c2e89d94e31154a2d7b3ac4e1bb63896fcac722b80"
+    },
+    {
+      "file": "attic-0e9-arm64-rust-receipt.json",
+      "sha256": "4ec3f045479a3b77103b776100932853362c5ae1db0363aaa384ecafcce8b134"
+    },
+    {
+      "file": "attic-0e9-main-jobs-receipt.json",
+      "sha256": "a3c3df9e37b90b2733e369f4ac6d5f1948ed1f7a16ab63a4df2308a5e684b7dd"
+    },
+    {
+      "file": "attic-0e9-rollout-receipt.json",
+      "sha256": "f4313b945c2a283ca71a1b50c95f58cccd1cf494cae40c81a86a4314587c31ed"
+    },
+    {
+      "file": "attic-0e9-executable-receipt.json",
+      "sha256": "79695880adf8da47e3f1beb891ff32c247c6c0f78101805d44a11259b54803c9"
+    },
+    {
+      "file": "attic-0e9-runtime-acceptance-0919.json",
+      "sha256": "4d73b7f39423732b23cfc3f2fd264efc21b53da13a765571d418fda34582aa7a"
+    },
+    {
+      "file": "attic-0e9-natural-stream-observation-final.json",
+      "sha256": "51b6fe3921c31da739ed9e54685df3457e176bd024ae9ab5b68d24831dd4722f"
+    }
+  ],
+  "focusedRustTests": [
+    {
+      "actualExecutionObserved": true,
+      "architecture": "amd64",
+      "completedAt": "2026-11-21T09:00:01.1344742Z",
+      "failed": 0,
+      "job": 136793381472,
+      "passed": 4,
+      "tests": [
+        "bounds_deep_and_cyclic_sources",
+        "classifies_wrapped_io_causes",
+        "emitted_fields_never_contain_raw_causes_or_secrets",
+        "preserves_partial_body_and_original_error_in_both_stream_modes"
+      ]
+    },
+    {
+      "actualExecutionObserved": true,
+      "architecture": "arm64",
+      "completedAt": "2026-11-21T09:02:20.3720058Z",
+      "failed": 0,
+      "job": 136793381317,
+      "passed": 4,
+      "tests": [
+        "classifies_wrapped_io_causes",
+        "bounds_deep_and_cyclic_sources",
+        "emitted_fields_never_contain_raw_causes_or_secrets",
+        "preserves_partial_body_and_original_error_in_both_stream_modes"
+      ]
+    }
+  ],
+  "limits": [
+    "The main source identity differs from the Argo delivery-branch revision; both are recorded.",
+    "Node architecture and matching OCI config digest identify the live amd64 platform; imageID itself is the index.",
+    "HTTP root and cache-info checks prove those endpoints; no synthetic NAR transfer or failure was induced.",
+    "No Stream error occurred in the bounded observation, so no production error class or underlying failure cause is established.",
+    "No throughput or latency improvement is claimed for this diagnostic-only change."
+  ],
+  "mainBuild": {
+    "conclusion": "success",
+    "head": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+    "id": 44886688127,
+    "jobs": [
+      {
+        "completedAt": "2026-11-21T09:10:13Z",
+        "conclusion": "success",
+        "id": 136793381317,
+        "name": "build-and-push / build-platform (linux/arm64, arm64, arc-arm64)",
+        "startedAt": "2026-11-21T08:51:14Z"
+      },
+      {
+        "completedAt": "2026-11-21T09:07:48Z",
+        "conclusion": "success",
+        "id": 136793381472,
+        "name": "build-and-push / build-platform (linux/amd64, amd64, arc-amd64)",
+        "startedAt": "2026-11-21T08:49:57Z"
+      },
+      {
+        "completedAt": "2026-11-21T09:12:56Z",
+        "conclusion": "success",
+        "id": 136798289315,
+        "name": "build-and-push / publish-index",
+        "startedAt": "2026-11-21T09:10:15Z"
+      }
+    ],
+    "url": "https://github.com/proompteng/lab/actions/runs/44886688127"
+  },
+  "mergedAt": "2026-11-21T08:49:37Z",
+  "naturalStreamObservation": {
+    "events": [],
+    "eventsCapped": false,
+    "inducedFailureOrLoad": false,
+    "limits": {
+      "bytes": 2097152,
+      "eventRecords": 20,
+      "lines": 5000
+    },
+    "logByteLimitReached": false,
+    "logLineLimitReached": false,
+    "logLinesExamined": 225,
+    "observedAt": "2026-11-21T09:23:16.074419+00:00",
+    "pod": "attic-555d75c7d6-vb9dp",
+    "rawLogsRetained": false,
+    "since": "2026-11-21T09:17:30Z",
+    "streamErrorCount": 0,
+    "unparsedCount": 0
+  },
+  "preparedAt": "2026-11-21T09:24:08.292269+00:00",
+  "publication": {
+    "indexDigest": "sha256:4af3d83b93c527f1e761f50552b7d66c14ebf5db609813b15067b07130f1c650",
+    "indexSourceAnnotation": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "configDigest": "sha256:7b111b8e7b8ed91c45502ee935970fec660340610db1ca9cced6ec7afbb11869",
+        "configDigestVerified": true,
+        "configSource": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+        "manifestDigest": "sha256:5fa617d1aca69e8347f90e2a3773ef31b3caabc6addcfe44bc901e8b5e1f2ccc",
+        "os": "linux"
+      },
+      {
+        "architecture": "arm64",
+        "configDigest": "sha256:c2bb2ee2d3749ede35c2ee2f531a067ec4c5f499ff3a7980b4845f572ea06ab7",
+        "configDigestVerified": true,
+        "configSource": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+        "manifestDigest": "sha256:e3db44d59e54a3bde7f2b43e75d1179964c368b92ecd9c0ab430f9f57b161121",
+        "os": "linux"
+      }
+    ],
+    "platformsMatchVerifiedManifests": true
+  },
+  "pullRequest": 16102,
+  "rollout": {
+    "argo": {
+      "deliveryRevision": "d76bcb9518ad79a20cb581e50773a22bf26433c3",
+      "health": "Healthy",
+      "operationFinishedAt": "2026-11-21T09:17:25Z",
+      "operationPhase": "Succeeded",
+      "sync": "Synced"
+    },
+    "deployment": {
+      "generation": 25,
+      "observedGeneration": 25,
+      "replicas": {
+        "availableReplicas": 1,
+        "readyReplicas": 1,
+        "replicas": 1,
+        "updatedReplicas": 1
+      }
+    },
+    "freight": "e9f3c02a283efe09d34aa6a18c7624253520ba5d",
+    "observedAt": "2026-11-21T09:19:04.902284+00:00",
+    "pod": {
+      "createdAt": "2026-11-21T09:17:24Z",
+      "migration": {
+        "exitCode": 0,
+        "finishedAt": "2026-11-21T09:17:28Z",
+        "restarts": 0
+      },
+      "name": "attic-555d75c7d6-vb9dp",
+      "node": "turin",
+      "observedImageConfigDigest": "sha256:7b111b8e7b8ed91c45502ee935970fec660340610db1ca9cced6ec7afbb11869",
+      "observedImageIndexDigest": "sha256:4af3d83b93c527f1e761f50552b7d66c14ebf5db609813b15067b07130f1c650",
+      "phase": "Running",
+      "ready": true,
+      "restarts": 0,
+      "startedAt": "2026-11-21T09:17:30Z"
+    },
+    "promotion": {
+      "finishedAt": "2026-11-21T09:17:25Z",
+      "name": "attic.01m7yp8ew3vs6gf4eb1pqn1nkq.e9f3c02",
+      "phase": "Succeeded",
+      "startedAt": "2026-11-21T09:16:06Z"
+    },
+    "smoke": {
+      "finishedAt": "2026-11-21T09:17:47Z",
+      "name": "attic.01m7ypbbm8cysn51wh96357kfg.1c53c70",
+      "phase": "Successful",
+      "startedAt": "2026-11-21T09:17:41Z"
+    },
+    "stage": {
+      "conditions": [
+        {
+          "reason": "Verified",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "reason": "Healthy",
+          "status": "True",
+          "type": "Healthy"
+        },
+        {
+          "reason": "Verified",
+          "status": "True",
+          "type": "Verified"
+        }
+      ],
+      "health": "Healthy",
+      "source": "0e9b29ee77eaa836990a858e785bbcd608b8eb34"
+    }
+  },
+  "runtime": {
+    "containerImageMeaning": "OCI config digest",
+    "endpoints": [
+      {
+        "conditions": {
+          "ready": true,
+          "serving": true,
+          "terminating": false
+        },
+        "pod": "attic-555d75c7d6-vb9dp"
+      }
+    ],
+    "executable": {
+      "container": "attic",
+      "exitCode": 0,
+      "observation": "readlink /proc/1/exe",
+      "path": "/nix/store/jqci907jjpvy329fwnpdh8lafy4bf7sw-attic-0-unstable-2025-09-24/bin/atticd",
+      "pod": "attic-555d75c7d6-vb9dp"
+    },
+    "executableMatchesPublishedAmd64Package": true,
+    "gcTemplateIndexDigestMatches": true,
+    "http": [
+      {
+        "bytesRead": 992,
+        "contentType": "text/html; charset=utf-8",
+        "expectedShapeVerified": true,
+        "route": "/",
+        "status": 200,
+        "withinBound": true
+      },
+      {
+        "bytesRead": 51,
+        "contentType": "text/x-nix-cache-info",
+        "expectedShapeVerified": true,
+        "route": "/lab/nix-cache-info",
+        "status": 200,
+        "withinBound": true
+      }
+    ],
+    "imageIDMeaning": "OCI index digest",
+    "nodeArchitecture": "amd64",
+    "observedAt": "2026-11-21T09:19:52.821190+00:00"
+  },
+  "schema": "attic-runtime-acceptance-v1",
+  "source": "0e9b29ee77eaa836990a858e785bbcd608b8eb34",
+  "sourceFiles": [
+    {
+      "bytes": 1550,
+      "gitBlob": "6bcc32c4a0db5649c6129c06e4096254f269c094",
+      "path": ".github/workflows/attic-build-push.yaml",
+      "sha256": "5c73b413e32f08662dc51659bff4af25c076f77cfb5f0dd71f4f6a32f0fec51f"
+    },
+    {
+      "bytes": 10978,
+      "gitBlob": "b942e8f376977b1f7a8b335690cb73ad0833fa06",
+      "path": "argocd/applications/observability/ci/workflows.json",
+      "sha256": "f003ba6c105bbea71ca7f4b60f86b744a24cfa83aae5571f0ee2c2bac5bb2bc0"
+    },
+    {
+      "bytes": 11371,
+      "gitBlob": "086392d5cf64e1263f7e1cedf25e72f39fc4b33c",
+      "path": "docs/nix-cache.md",
+      "sha256": "6d6dd6ed53794a504656aff809c99d5a963ead62c6326b1182ef917cab6ffe72"
+    },
+    {
+      "bytes": 12571,
+      "gitBlob": "913570ff93d2af106bb8e11dc0e136934fcc3283",
+      "path": "nix/images/attic-stream-nars.patch",
+      "sha256": "39bfea76278b8e7f035147509bc3c88a1789dedc58ce3810c47374b2cc615abe"
+    },
+    {
+      "bytes": 1073,
+      "gitBlob": "e52fe24225041c73b6622e5b7ef4725f91502165",
+      "path": "nix/images/attic.nix",
+      "sha256": "4d2f1e7bea24ed9b9ca68a8f67ef40c71e3b90a325bc8852fd3ad1c120786909"
+    },
+    {
+      "bytes": 38736,
+      "gitBlob": "6dfdf4473d13e2df115764a05183cdf7ddee6795",
+      "path": "packages/scripts/src/ci/__tests__/affected-inputs.test.ts",
+      "sha256": "e623558504020fba71c4bb93a3728581c3f1f0f40d737fd27750b754166e4e2f"
+    }
+  ],
+  "sourceRepository": "https://github.com/proompteng/lab"
+}

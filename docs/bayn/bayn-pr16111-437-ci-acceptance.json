@@ -1,0 +1,650 @@
+{
+  "observedAt": "2026-11-21T09:24:33.381195+00:00",
+  "source": "437355b8cfdd2ce29578e670079244ddedd58886",
+  "pr": 16111,
+  "prState": "OPEN",
+  "mergeStateStatus": "CLEAN",
+  "run": {
+    "id": 44886428311,
+    "name": "bayn",
+    "status": "completed",
+    "conclusion": "success",
+    "createdAt": "2026-11-21T08:46:17Z",
+    "updatedAt": "2026-11-21T09:24:18Z",
+    "url": "https://github.com/proompteng/lab/actions/runs/44886428311"
+  },
+  "jobCounts": {
+    "success": 26,
+    "skipped": 1
+  },
+  "jobs": [
+    {
+      "id": 136793493801,
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:50:57Z",
+      "completedAt": "2026-11-21T08:51:10Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793493801"
+    },
+    {
+      "id": 136793726985,
+      "name": "streaming-integration",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:53:30Z",
+      "completedAt": "2026-11-21T08:56:43Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793726985"
+    },
+    {
+      "id": 136793726988,
+      "name": "unit-tests (2)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:51:23Z",
+      "completedAt": "2026-11-21T08:55:06Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793726988"
+    },
+    {
+      "id": 136793727000,
+      "name": "market-data-replay",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:56:59Z",
+      "completedAt": "2026-11-21T08:59:32Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727000"
+    },
+    {
+      "id": 136793727013,
+      "name": "unit-tests (3)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:54:22Z",
+      "completedAt": "2026-11-21T08:56:58Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727013"
+    },
+    {
+      "id": 136793727041,
+      "name": "unit-tests (1)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:01:00Z",
+      "completedAt": "2026-11-21T09:04:27Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727041"
+    },
+    {
+      "id": 136793727048,
+      "name": "unit-tests (4)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:58:47Z",
+      "completedAt": "2026-11-21T09:02:51Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727048"
+    },
+    {
+      "id": 136793727099,
+      "name": "replay-execution-observer",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:02:48Z",
+      "completedAt": "2026-11-21T09:04:49Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727099"
+    },
+    {
+      "id": 136793727103,
+      "name": "postgres-integration (3)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:58:39Z",
+      "completedAt": "2026-11-21T09:03:32Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727103"
+    },
+    {
+      "id": 136793727107,
+      "name": "postgres-integration (4)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:58:02Z",
+      "completedAt": "2026-11-21T09:08:28Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727107"
+    },
+    {
+      "id": 136793727122,
+      "name": "postgres-integration (2)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:13:48Z",
+      "completedAt": "2026-11-21T09:19:49Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727122"
+    },
+    {
+      "id": 136793727137,
+      "name": "postgres-integration (1)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:10:06Z",
+      "completedAt": "2026-11-21T09:18:56Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727137"
+    },
+    {
+      "id": 136793727208,
+      "name": "archive-integration",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:01:36Z",
+      "completedAt": "2026-11-21T09:04:34Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727208"
+    },
+    {
+      "id": 136793727210,
+      "name": "pr-checks / run",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:02:20Z",
+      "completedAt": "2026-11-21T09:03:42Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727210"
+    },
+    {
+      "id": 136793727217,
+      "name": "ledger-integration (backtest)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:16:41Z",
+      "completedAt": "2026-11-21T09:18:15Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727217"
+    },
+    {
+      "id": 136793727218,
+      "name": "formal-verification / tla",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T08:54:55Z",
+      "completedAt": "2026-11-21T08:55:43Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727218"
+    },
+    {
+      "id": 136793727238,
+      "name": "ledger-integration (latency-ablation)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:13:43Z",
+      "completedAt": "2026-11-21T09:14:43Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727238"
+    },
+    {
+      "id": 136793727245,
+      "name": "ledger-integration (runtime)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:10:39Z",
+      "completedAt": "2026-11-21T09:17:34Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727245"
+    },
+    {
+      "id": 136793727256,
+      "name": "ledger-integration (inference)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:10:39Z",
+      "completedAt": "2026-11-21T09:17:42Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727256"
+    },
+    {
+      "id": 136793727274,
+      "name": "formal-verification / verify",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:04:33Z",
+      "completedAt": "2026-11-21T09:14:32Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727274"
+    },
+    {
+      "id": 136793727279,
+      "name": "ledger-integration (latency-jev)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:16:08Z",
+      "completedAt": "2026-11-21T09:17:19Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727279"
+    },
+    {
+      "id": 136793727293,
+      "name": "ledger-integration (latency-momentum)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:15:48Z",
+      "completedAt": "2026-11-21T09:17:00Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727293"
+    },
+    {
+      "id": 136793727294,
+      "name": "ledger-integration (latency-momentum-trading)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:15:29Z",
+      "completedAt": "2026-11-21T09:19:47Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727294"
+    },
+    {
+      "id": 136793727318,
+      "name": "ledger-integration (frozen-control)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:16:42Z",
+      "completedAt": "2026-11-21T09:23:10Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727318"
+    },
+    {
+      "id": 136793727321,
+      "name": "ledger-integration (restart)",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:11:44Z",
+      "completedAt": "2026-11-21T09:12:37Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727321"
+    },
+    {
+      "id": 136793728168,
+      "name": "gepa",
+      "status": "completed",
+      "conclusion": "skipped",
+      "startedAt": "2026-11-21T08:51:11Z",
+      "completedAt": "2026-11-21T08:51:10Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793728168"
+    },
+    {
+      "id": 136801492765,
+      "name": "Bayn release gate",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-11-21T09:24:15Z",
+      "completedAt": "2026-11-21T09:24:18Z",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136801492765"
+    }
+  ],
+  "frozenControl": {
+    "id": 136793727318,
+    "startedAt": "2026-11-21T09:16:42Z",
+    "completedAt": "2026-11-21T09:23:10Z",
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:16:43Z",
+        "completedAt": "2026-11-21T09:16:44Z"
+      },
+      {
+        "name": "Initialize containers",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:16:44Z",
+        "completedAt": "2026-11-21T09:16:53Z"
+      },
+      {
+        "name": "Run actions/checkout@v5",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:16:53Z",
+        "completedAt": "2026-11-21T09:16:59Z"
+      },
+      {
+        "name": "Run oven-sh/setup-bun@v2",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:16:59Z",
+        "completedAt": "2026-11-21T09:16:59Z"
+      },
+      {
+        "name": "Run actions/setup-node@v5",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:16:59Z",
+        "completedAt": "2026-11-21T09:17:03Z"
+      },
+      {
+        "name": "Install focused dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:17:03Z",
+        "completedAt": "2026-11-21T09:17:06Z"
+      },
+      {
+        "name": "Start isolated TigerBeetle for durable replay acceptance",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:17:06Z",
+        "completedAt": "2026-11-21T09:17:12Z"
+      },
+      {
+        "name": "Verify replay accounting with PostgreSQL and TigerBeetle",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:17:12Z",
+        "completedAt": "2026-11-21T09:23:07Z"
+      },
+      {
+        "name": "Run actions/upload-artifact@v4",
+        "status": "completed",
+        "conclusion": "skipped",
+        "startedAt": "2026-11-21T09:23:07Z",
+        "completedAt": "2026-11-21T09:23:07Z"
+      },
+      {
+        "name": "Stop isolated replay TigerBeetle",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:23:07Z",
+        "completedAt": "2026-11-21T09:23:07Z"
+      },
+      {
+        "name": "Post Run actions/setup-node@v5",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:23:07Z",
+        "completedAt": "2026-11-21T09:23:07Z"
+      },
+      {
+        "name": "Post Run oven-sh/setup-bun@v2",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:23:07Z",
+        "completedAt": "2026-11-21T09:23:07Z"
+      },
+      {
+        "name": "Post Run actions/checkout@v5",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:23:07Z",
+        "completedAt": "2026-11-21T09:23:07Z"
+      },
+      {
+        "name": "Stop containers",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:23:07Z",
+        "completedAt": "2026-11-21T09:23:08Z"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-11-21T09:23:08Z",
+        "completedAt": "2026-11-21T09:23:08Z"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "Validate PR title",
+      "workflow": "Semantic Pull Request",
+      "status": "COMPLETED",
+      "conclusion": "CANCELLED",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428176/job/136792591935"
+    },
+    {
+      "name": "Plan changed-area validation",
+      "workflow": "CI",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428249/job/136792592861"
+    },
+    {
+      "name": "Lint commit messages",
+      "workflow": "Semantic Commits",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428154/job/136792591988"
+    },
+    {
+      "name": "Validate PR title",
+      "workflow": "Semantic Pull Request",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886535044/job/136792917910"
+    },
+    {
+      "name": "changes",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793493801"
+    },
+    {
+      "name": "migration",
+      "workflow": "opencode",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428286/job/136792592508"
+    },
+    {
+      "name": "PR validation (planner)",
+      "workflow": "CI",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428249/job/136795449500"
+    },
+    {
+      "name": "formal-verification / tla",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727218"
+    },
+    {
+      "name": "image / build-platform (linux/amd64, amd64, arc-amd64)",
+      "workflow": "opencode",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428286/job/136792593173"
+    },
+    {
+      "name": "image / build-platform (linux/arm64, arm64, arc-arm64)",
+      "workflow": "opencode",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428286/job/136792592918"
+    },
+    {
+      "name": "Agents CI",
+      "workflow": "CI",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428249/job/136795450698"
+    },
+    {
+      "name": "image / publish-index",
+      "workflow": "opencode",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428286/job/136795379671"
+    },
+    {
+      "name": "formal-verification / verify",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727274"
+    },
+    {
+      "name": "pr-checks / run",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727210"
+    },
+    {
+      "name": "gepa",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793728168"
+    },
+    {
+      "name": "unit-tests (1)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727041"
+    },
+    {
+      "name": "unit-tests (2)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793726988"
+    },
+    {
+      "name": "unit-tests (3)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727013"
+    },
+    {
+      "name": "unit-tests (4)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727048"
+    },
+    {
+      "name": "ci-pr",
+      "workflow": "CI",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428249/job/136795985557"
+    },
+    {
+      "name": "market-data-replay",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727000"
+    },
+    {
+      "name": "streaming-integration",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793726985"
+    },
+    {
+      "name": "postgres-integration (1)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727137"
+    },
+    {
+      "name": "postgres-integration (2)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727122"
+    },
+    {
+      "name": "postgres-integration (3)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727103"
+    },
+    {
+      "name": "postgres-integration (4)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727107"
+    },
+    {
+      "name": "archive-integration",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727208"
+    },
+    {
+      "name": "ledger-integration (runtime)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727245"
+    },
+    {
+      "name": "ledger-integration (backtest)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727217"
+    },
+    {
+      "name": "ledger-integration (latency-jev)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727279"
+    },
+    {
+      "name": "ledger-integration (latency-ablation)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727238"
+    },
+    {
+      "name": "ledger-integration (latency-momentum)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727293"
+    },
+    {
+      "name": "ledger-integration (latency-momentum-trading)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727294"
+    },
+    {
+      "name": "ledger-integration (frozen-control)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727318"
+    },
+    {
+      "name": "ledger-integration (restart)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727321"
+    },
+    {
+      "name": "ledger-integration (inference)",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727256"
+    },
+    {
+      "name": "replay-execution-observer",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136793727099"
+    },
+    {
+      "name": "Bayn release gate",
+      "workflow": "bayn",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/proompteng/lab/actions/runs/44886428311/job/136801492765"
+    }
+  ],
+  "limitations": [
+    "Per-job completion was verified from GitHub APIs. No bulk successful-log download was made solely for assertion counts.",
+    "The intentional GEPA skip is preserved separately from successful jobs.",
+    "This CI receipt is not a live deployment receipt."
+  ]
+}
