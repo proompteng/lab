@@ -47,6 +47,16 @@ class IntegrationResultsTest(unittest.TestCase):
                 '<testcase name="failed"><failure /></testcase></testsuite>'
             )
 
+    def test_unexpected_or_duplicate_files_fail(self) -> None:
+        required = '<testsuite file="required.test.ts"><testcase name="executes" /></testsuite>'
+        with self.assertRaisesRegex(ValueError, "Unexpected integration files"):
+            self.verify(
+                required + '<testsuite file="other.test.ts"><testcase name="extra" /></testsuite>',
+                [Path("required.test.ts")],
+            )
+        with self.assertRaisesRegex(ValueError, "reported multiple times"):
+            self.verify(required + required, [Path("required.test.ts")])
+
 
 if __name__ == "__main__":
     unittest.main()
