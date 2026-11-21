@@ -611,6 +611,10 @@
       "pattern": "^temporal-bun-sdk(?: \\(.*\\))?$"
     },
     {
+      "id": "temporal-bun-sdk-integration",
+      "pattern": "^Temporal Bun SDK integration and load(?: \\(.*\\))?$"
+    },
+    {
       "id": "temporal-worker",
       "pattern": "^Temporal worker build and heartbeat tests \\(.*\\)(?: \\(.*\\))?$"
     }

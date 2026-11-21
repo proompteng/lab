@@ -1,0 +1,21 @@
+name: Test Temporal Bun SDK against Temporal Server
+description: Run the integration and worker load suites and verify workflow cleanup.
+runs:
+  using: composite
+  steps:
+    - name: Run Temporal Bun SDK integration tests
+      shell: bash
+      working-directory: packages/temporal-bun-sdk
+      run: bun test tests/integration --timeout=30000 --max-concurrency=1
+
+    - name: Verify Temporal Bun SDK integration cleanup
+      shell: bash
+      run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
+
+    - name: Run worker load suite
+      shell: bash
+      run: TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
+
+    - name: Verify Temporal Bun SDK load cleanup
+      shell: bash
+      run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
