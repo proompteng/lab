@@ -32,3 +32,7 @@ runners, pins each build to the matching upstream platform-manifest digest, and
 publishes one multi-architecture image. The deployment consumes that image by
 digest. Remove this derivative after upstream ships equivalent Ceph RGW
 compatibility.
+
+The main-branch compiler-cache workflow publishes OCI cache layers for each architecture under the existing
+`cache-amd64` and `cache-arm64` references. The native validation and image publication builds can reuse the
+compiled stage. They execute the `verify` stage on every build, including when the compiled layers are cached.

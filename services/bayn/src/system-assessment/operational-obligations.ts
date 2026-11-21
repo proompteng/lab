@@ -14,6 +14,7 @@ import {
   entryAbstentionWork,
   positionHoldWork,
   type ControllerBuildBindingPolicy,
+  type RecordedControllerPassEvidence,
 } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { JevResearchPolicy } from '../jev/acceptance'
@@ -33,7 +34,7 @@ export const registeredDecisionWork = (
 }
 
 export const registeredControllerWork = (
-  pass: SystemSourceCut['controllerPasses'][number],
+  pass: RecordedControllerPassEvidence,
   registration: ScheduledEvaluation,
   decisions: SystemSourceCut['decisions'],
   witnessedAt: string,

@@ -27,16 +27,19 @@ References:
 - https://forgejo.org/docs/latest/
 - https://artifacthub.io/packages/helm/forgejo-helm/forgejo
 
-## Version 16 rollout
+## Version 17 upgrade
 
 The Application tracks `kargo/forgejo` and authorizes only `forgejo-release:forgejo`.
-The Warehouse requires a main source commit and its matching immutable
-published image. The Stage updates both Helm-rendered containers and the
-isolated rehearsal through a Kustomize image transformation, writes source
-metadata, and syncs the exact generated commit.
+The isolated 17.0.2 rehearsal uses the retained snapshot clones and their
+existing file ownership. It runs alongside Forgejo 16.0.3 with networking
+disabled. The published image must carry the same upstream index digest as
+the mirrored rehearsal image.
 
-The selected-image rehearsal passed against new snapshots and isolated clones.
-The final promotion restores one production replica and retires the maintenance
-Jobs, ConfigMap, read-only RBAC and isolation policy. Both recovery sets and all
-claims remain retained. Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
-for migration acceptance and coordinated recovery.
+The two containers share the Job's 40-minute deadline. Each reports failure to
+its peer when it exits early, and PostgreSQL shuts down before the Job passes.
+
+Require a successful rehearsal before switching the upstream pin. Capture a
+fresh production checkpoint at cutover and retire the rehearsal resources
+after the production migration has passed. Follow the
+[upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) for the
+acceptance checks and coordinated recovery.

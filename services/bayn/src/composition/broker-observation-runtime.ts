@@ -34,6 +34,8 @@ import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { canonicalHashV1Result } from '../hash'
 import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
+import { BrokerProjectionStoreLive } from '../db/execution-store'
+import { BrokerEventStore, ExecutionStoreError, IntentBindingStore } from '../db/execution-store/contract'
 import {
   readProtectionReleaseBasis,
   readProtectionReleaseReference,
@@ -41,11 +43,16 @@ import {
 } from '../db/protection-release'
 import { PostgresClientLive } from '../db/postgres-client'
 import { IntentStoreLive } from '../execution/intents/postgres'
-import { WriterFenceLive } from '../execution/writer-fence'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { readProtectionRelease } from '../execution/protection-release'
 import { BrokerEnvironment } from '../broker/identity'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { verifyBrokerNotification } from '../broker/notifications'
+import {
+  BrokerStreamReconciliationReason,
+  projectBrokerTradeUpdate,
+  type BrokerSourceProjectionReceipt,
+} from '../broker/trade-update-projection'
 import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
@@ -55,6 +62,39 @@ import {
   FillMismatchOrderRole,
   ReconciliationError,
 } from '../simulation-reconciliation/broker-reconciler-model'
+
+const brokerSourceProjectionTotal = Metric.counter('bayn_broker_source_projection_total', { incremental: true })
+const brokerSourceProjectionLag = Metric.histogram('bayn_broker_source_projection_lag_seconds', {
+  boundaries: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+})
+const brokerSourceProjectionPending = Metric.gauge('bayn_broker_source_projection_pending')
+const brokerSourceProjectionOldestPending = Metric.gauge('bayn_broker_source_projection_oldest_pending_seconds')
+const brokerSourceProjectionObservationSuccess = Metric.gauge('bayn_broker_source_projection_observation_success')
+
+const observeBrokerSourceProjection = (receipt: BrokerSourceProjectionReceipt, replayed: boolean) =>
+  Effect.gen(function* () {
+    const outcome =
+      receipt._tag === 'Projected'
+        ? 'projected'
+        : receipt._tag === 'CanonicallyCovered'
+          ? 'canonically_covered'
+          : 'reconcile_required'
+    const reason = receipt._tag === 'ReconcileRequired' ? receipt.reason : 'none'
+    const lagSeconds = Math.max(0, (yield* Clock.currentTimeMillis) - Date.parse(receipt.observedAt)) / 1_000
+    const attributes = { namespace: 'bayn', outcome, reason, replayed: String(replayed) }
+    yield* Metric.update(brokerSourceProjectionTotal.pipe(Metric.withAttributes(attributes)), 1)
+    if (!replayed)
+      yield* Metric.update(
+        brokerSourceProjectionLag.pipe(Metric.withAttributes({ namespace: 'bayn', outcome, reason })),
+        lagSeconds,
+      )
+    yield* Effect.annotateCurrentSpan({
+      'bayn.broker.source_event.outcome': outcome,
+      'bayn.broker.source_event.reason': reason,
+      'bayn.broker.source_event.replayed': replayed,
+      'bayn.broker.source_event.lag_ms': lagSeconds * 1_000,
+    })
+  })
 
 const diagnosticData = (value: unknown, key: string): unknown =>
   typeof value === 'object' && value !== null ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
@@ -182,6 +222,17 @@ export const acquireBrokerObservationRuntime = (
       Effect.sync(() => ManagedRuntime.make(persistenceResources)),
       (value) => value.disposeEffect,
     )
+    const projectionResources = BrokerProjectionStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(plan.config).pipe(Layer.provide(NodeServices.layer))),
+      Layer.provideMerge(telemetry),
+    )
+    // ManagedRuntime builds its layer on the first run. Source projection owns only PostgreSQL evidence and intent
+    // bindings; financial reconciliation and TigerBeetle remain outside this runtime.
+    const projection = yield* Effect.acquireRelease(
+      Effect.sync(() => ManagedRuntime.make(projectionResources)),
+      (value) => value.disposeEffect,
+    )
     const accountActivity =
       plan.config.alpaca.environment === BrokerEnvironment.Sandbox
         ? yield* Effect.gen(function* () {
@@ -226,14 +277,149 @@ export const acquireBrokerObservationRuntime = (
         cache,
       ),
     )
+    const observeProjectionBacklog = Effect.promise((signal) =>
+      managed.runPromise(
+        Effect.flatMap(store, (value) => value.readProjectionBacklog),
+        { signal },
+      ),
+    ).pipe(
+      Effect.flatMap(({ pending, oldestPendingSeconds }) =>
+        Effect.all(
+          [
+            Metric.update(brokerSourceProjectionPending.pipe(Metric.withAttributes({ namespace: 'bayn' })), pending),
+            Metric.update(
+              brokerSourceProjectionOldestPending.pipe(Metric.withAttributes({ namespace: 'bayn' })),
+              oldestPendingSeconds,
+            ),
+            Metric.update(
+              brokerSourceProjectionObservationSuccess.pipe(Metric.withAttributes({ namespace: 'bayn' })),
+              1,
+            ),
+          ],
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Metric.update(
+          brokerSourceProjectionObservationSuccess.pipe(Metric.withAttributes({ namespace: 'bayn' })),
+          0,
+        ).pipe(Effect.andThen(Effect.logWarning('Broker source projection backlog observation failed', cause))),
+      ),
+    )
+    yield* Effect.forever(observeProjectionBacklog.pipe(Effect.andThen(Effect.sleep('15 seconds')))).pipe(
+      Effect.forkScoped,
+    )
     return {
       maxAgeMs: config.maxAgeMs,
       freshnessLeadMs: captureTimeoutMs,
       runtime: {
         verifyNotification: (candidate, nowMs) => verifyBrokerNotification(candidate, plan.config.alpaca, nowMs),
-        recordNotification: (signal, receipt) =>
+        recordNotification: (signal, notification) =>
           managed.runPromise(
-            Effect.flatMap(store, (value) => value.recordNotification(receipt)),
+            Effect.flatMap(store, (value) => value.recordNotification(notification)),
+            { signal },
+          ),
+        isNotificationCovered: (signal, eventId) =>
+          managed.runPromise(
+            Effect.flatMap(store, (value) => value.isNotificationCovered(eventId)),
+            { signal },
+          ),
+        project: (signal, eventId) =>
+          projection.runPromise(
+            Effect.gen(function* () {
+              const source = yield* store
+              const retained = yield* source.readSourceProjection(eventId)
+              if (retained !== undefined) {
+                yield* observeBrokerSourceProjection(retained, true)
+                return retained
+              }
+              const retain = (receipt: BrokerSourceProjectionReceipt) => source.recordProjection(receipt)
+              const record = (receipt: BrokerSourceProjectionReceipt) =>
+                retain(receipt).pipe(Effect.tap((recorded) => observeBrokerSourceProjection(recorded, false)))
+              const notification = yield* source.readNotification(eventId)
+              const writerFence = yield* WriterFence
+              const prepared = yield* writerFence
+                .transaction(
+                  Effect.gen(function* () {
+                    if (yield* source.isNotificationCovered(notification.eventId))
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'CanonicallyCovered',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                        }),
+                      }
+                    if (
+                      notification._tag === 'TradeUpdate' &&
+                      !(yield* source.isSessionBoundaryCovered(notification.session.sessionId))
+                    )
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'ReconcileRequired',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                          reason: BrokerStreamReconciliationReason.SessionBoundary,
+                        }),
+                      }
+                    if (
+                      notification._tag === 'TradeUpdate' &&
+                      (yield* source.hasSessionProjectionGap(notification.session.sessionId))
+                    )
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'ReconcileRequired',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                          reason: BrokerStreamReconciliationReason.UnresolvedGap,
+                        }),
+                      }
+                    const bindings = yield* (yield* IntentBindingStore).bindings(plan.config.alpaca.expectedAccountId)
+                    const decision = projectBrokerTradeUpdate(notification, bindings)
+                    if (decision._tag === 'ReconcileRequired')
+                      return { _tag: 'Receipt' as const, receipt: yield* retain(decision) }
+                    const events = yield* BrokerEventStore
+                    const orderEventId = (yield* events.ingest(decision.order)).eventId
+                    const fill = decision.fill
+                    return {
+                      _tag: 'Receipt' as const,
+                      receipt: yield* retain({
+                        _tag: 'Projected',
+                        eventId: decision.eventId,
+                        observedAt: decision.observedAt,
+                        orderEventId,
+                        ...(fill === undefined ? {} : { fillEventId: (yield* events.ingest(fill)).eventId }),
+                      }),
+                    }
+                  }),
+                )
+                .pipe(Effect.result)
+              if (Result.isFailure(prepared)) {
+                const failure = prepared.failure
+                if (
+                  failure instanceof ExecutionStoreError &&
+                  (failure.failure === 'conflict' || failure.failure === 'decode' || failure.failure === 'invariant')
+                ) {
+                  const receipt = {
+                    _tag: 'ReconcileRequired',
+                    eventId: notification.eventId,
+                    observedAt: notification.receivedAt,
+                    reason: BrokerStreamReconciliationReason.ProjectionConflict,
+                  } satisfies BrokerSourceProjectionReceipt
+                  return yield* record(receipt)
+                }
+                return yield* failure
+              }
+              yield* observeBrokerSourceProjection(prepared.success.receipt, false)
+              return prepared.success.receipt
+            }).pipe(
+              withObservedStage('bayn.broker.source-event.project', {
+                dependency: 'postgresql',
+                operation: 'project',
+              }),
+            ),
             { signal },
           ),
         invalidate: (signal) =>
@@ -455,6 +641,7 @@ export const acquireBrokerObservationRuntime = (
                   Effect.annotateLogs({
                     'broker.snapshot_hash': snapshotHash,
                     'broker.observed_at': result.success.observedAt,
+                    'broker.pending_cash_fee_count': result.success.pendingCashFeeCount,
                     'broker.source_revision': plan.config.build.sourceRevision,
                     'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
                   }),

@@ -479,7 +479,13 @@ export interface BrokerSubmissionSnapshot {
 
 export interface BrokerReadProjection {
   readonly healthSnapshot?: Effect.Effect<ObservedBrokerState, BrokerReadError>
-  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly reconciliationSnapshot: Effect.Effect<
+    {
+      readonly snapshot: StableBrokerSnapshot
+      readonly complete: Effect.Effect<void, BrokerReadError>
+    },
+    BrokerReadError
+  >
   readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
   readonly invalidate: Effect.Effect<void>

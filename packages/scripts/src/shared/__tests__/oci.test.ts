@@ -62,7 +62,6 @@ const headlampStaticCopyPatch = readRepoFile('services/headlamp/patches/0004-sta
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
 const productImageModules = [
-  appImageModule,
   readRepoFile('nix/images/docs.nix'),
   readRepoFile('nix/images/olden.nix'),
   readRepoFile('nix/images/proompteng.nix'),
@@ -863,6 +862,23 @@ describe('native OCI build workflows', () => {
     expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/oci-digest.ts'")
   })
 
+  it('passes only the existing tailnet credentials to Agents CI', () => {
+    const router = Bun.YAML.parse(readRepoFile('.github/workflows/pull-request.yml')) as {
+      jobs: { agents: { secrets: Record<string, string> } }
+    }
+    const agents = Bun.YAML.parse(agentsCiWorkflow) as {
+      on: { workflow_call: { secrets: Record<string, { required: boolean }> } }
+    }
+    expect(router.jobs.agents.secrets).toEqual({
+      TS_OAUTH_CLIENT_ID: '${{ secrets.TS_OAUTH_CLIENT_ID }}',
+      TS_OAUTH_SECRET: '${{ secrets.TS_OAUTH_SECRET }}',
+    })
+    expect(agents.on.workflow_call.secrets).toEqual({
+      TS_OAUTH_CLIENT_ID: { required: false },
+      TS_OAUTH_SECRET: { required: false },
+    })
+  })
+
   it('runs Symphony deployment convergence regressions in service CI', () => {
     expect(symphonyCiWorkflow).toContain('packages/scripts/src/symphony/verify-deployment.test.ts')
   })
@@ -1068,10 +1084,9 @@ describe('native OCI build workflows', () => {
     expect(repoFileExists('nix/images/headlamp.nix')).toBe(true)
     expect(headlampImageModule).toContain('pkgs.fetchFromGitHub')
     expect(headlampImageModule).toContain('rev = headlampSha')
-    expect(headlampImageModule).toContain('builtins.fetchTarball')
-    expect(headlampImageModule).toContain('dc5d91f840324650bac8c379428c7037a416959a')
-    expect(headlampImageModule).toContain('expected Headlamp Go 1.26.7')
-    expect(headlampImageModule).toContain('headlampPkgs.buildGoModule.override')
+    expect(headlampImageModule).toContain('goVersion = "1.26.8"')
+    expect(headlampImageModule).toContain('https://go.dev/dl/go${goVersion}.linux-${goPlatform.arch}.tar.gz')
+    expect(headlampImageModule).toContain('pkgs.buildGoModule.override { go = headlampGo; }')
     expect(headlampImageModule).toContain('headlampBuildGoModule')
     expect(headlampImageModule).toContain('buildNpmPackage')
     expect(headlampImageModule).toContain('pkgs.dockerTools.buildLayeredImage')
@@ -1432,6 +1447,9 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
     expect(productNixWorkflow).toContain("'argocd/applications/synthesis/**'")
     expect(appImageModule).toContain('"@proompteng/source"')
+    expect(appImageModule).toContain('dependencyClosure = "bunCacheArchive";')
+    expect(bunWorkspaceServiceModule).toContain('nix-store --dump "$BUN_INSTALL_CACHE_DIR" > "$out"')
+    expect(bunWorkspaceServiceModule).toContain('nix-store --restore "$BUN_INSTALL_CACHE_DIR" < ${deps}')
     for (const imageModule of productImageModules) {
       expect(imageModule).toContain('dependencyClosure = "bunCache";')
     }
