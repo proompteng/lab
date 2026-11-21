@@ -26,7 +26,7 @@ import { currentEquityMarketProfile as equityMarketProfile } from '../jev/market
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevPurpose } from '../jev/portfolio'
 import { exchangeSessions } from '../market-hours'
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
@@ -296,7 +296,7 @@ const expectIndexedObservationLookup = (
     }
     checkSourceScans(root)
   })
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     Layer.mergeAll(
       CycleStoreLive,
@@ -309,42 +309,98 @@ const makeRuntime = () =>
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
-          postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
     ),
   )
 
+const makeDatabaseAdmin = () => ManagedRuntime.make(PgClient.layer({ url: Redacted.make(testUrl), maxConnections: 1 }))
+
 describePostgres('PostgreSQL complete Jev batches', () => {
+  const databasePrefix = `jev_batch_${crypto.randomUUID().replaceAll('-', '')}`
+  // A cloned database isolates test changes to triggers and constraints as well as fixture rows.
+  const template = `${databasePrefix}_template_test`
+  const database = `${databasePrefix}_test`
+  const fixtureUrl = (name: string) => {
+    const url = new URL(testUrl)
+    url.pathname = `/${name}`
+    return url.toString()
+  }
+  const databaseUrl = fixtureUrl(database)
+  let admin: ReturnType<typeof makeDatabaseAdmin> | undefined
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
+  beforeAll(async () => {
     const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
+    if (
+      !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) ||
+      !parsed.pathname.endsWith('_test') ||
+      parsed.searchParams.has('host') ||
+      parsed.searchParams.has('dbname')
+    )
       throw new Error('Jev batch tests require a local _test database')
-    runtime = makeRuntime()
-  })
-  beforeEach(async () => {
-    await runtime.runPromise(
+    admin = makeDatabaseAdmin()
+    await admin.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-        yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
-          VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
-        yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
-        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
-        VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
-        const r = fixture.portfolio.brokerState.reconciliation
-        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
-          VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
+        yield* sql`CREATE DATABASE ${sql(template)} TEMPLATE template0`
       }),
     )
+    const fixtureRuntime = makeRuntime(fixtureUrl(template))
+    try {
+      await fixtureRuntime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* postgresMigrations
+          yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
+          yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
+          yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+        VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
+          const r = fixture.portfolio.brokerState.reconciliation
+          yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+          VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+          yield* (yield* CandidateObservationStore).record(fixture.observation)
+        }),
+      )
+    } finally {
+      await fixtureRuntime.dispose()
+    }
+  })
+  beforeEach(async () => {
+    if (admin === undefined) throw new Error('Jev batch PostgreSQL fixture was not initialized')
+    await admin.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE DATABASE ${sql(database)} TEMPLATE ${sql(template)}`
+      }),
+    )
+    runtime = makeRuntime(databaseUrl)
+  })
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await admin?.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DROP DATABASE IF EXISTS ${sql(database)} WITH (FORCE)`
+        }),
+      )
+    }
   })
   afterAll(async () => {
-    await runtime?.dispose()
+    try {
+      await admin?.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DROP DATABASE IF EXISTS ${sql(template)} WITH (FORCE)`
+        }),
+      )
+    } finally {
+      await admin?.dispose()
+    }
   })
 
   test('deferred inference survives admission before send and grants exactly one dispatch claim', async () => {
@@ -3265,7 +3321,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                   checkpoint,
                   resultPath,
                 ],
-                { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit', killSignal: 'SIGKILL' },
+                {
+                  stdin: 'ignore',
+                  stdout: 'inherit',
+                  stderr: 'inherit',
+                  killSignal: 'SIGKILL',
+                  env: { BAYN_TEST_POSTGRES_URL: Redacted.make(databaseUrl) },
+                  extendEnv: true,
+                },
               )
             const firstProcess = yield* spawner.spawn(command(mode))
             while (!(yield* fs.exists(checkpoint))) {
