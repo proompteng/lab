@@ -9,6 +9,7 @@ on:
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
       - '.github/workflows/temporal-bun-sdk.yml'
+      - '.github/actions/test-temporal-bun-sdk/**'
       - '.release-please-manifest.json'
       - 'release-please-config.json'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
       - '.github/workflows/temporal-bun-sdk.yml'
+      - '.github/actions/test-temporal-bun-sdk/**'
       - '.release-please-manifest.json'
       - 'release-please-config.json'
   workflow_dispatch:
@@ -75,47 +77,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-      - name: Set up Node.js 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24.11.1'
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
-      - name: Build Temporal Bun SDK
-        run: bun run --filter @proompteng/temporal-bun-sdk build
-      - name: Run Oxfmt check (temporal-bun-sdk)
-        run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs
-      - name: Run Oxlint (temporal-bun-sdk)
-        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint
-      - name: Run Oxlint (temporal-bun-sdk, type-aware)
-        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint:type
-      - name: Run Oxlint (temporal-bun-sdk-example)
-        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint
-      - name: Run Oxlint (temporal-bun-sdk-example, type-aware)
-        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type
-      - name: Run Temporal Bun SDK non-integration tests
-        run: |
-          cd packages/temporal-bun-sdk
-          mapfile -d '' test_files < <(find tests -type f -name '*.test.ts' ! -path 'tests/integration/*' -print0)
-          if [ "${#test_files[@]}" -eq 0 ]; then
-            echo 'No Temporal Bun SDK non-integration tests were discovered.' >&2
-            exit 1
-          fi
-          bun test "${test_files[@]}" --timeout=30000
-      - name: Verify replay corpus
-        run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
-      - name: Upload deterministic readiness evidence
-        uses: actions/upload-artifact@v5
-        with:
-          name: temporal-bun-sdk-determinism-artifacts
-          path: |
-            packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
-            packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
-          if-no-files-found: error
+      - uses: ./.github/actions/test-temporal-bun-sdk
 
   integration:
     if: github.event_name != 'pull_request'

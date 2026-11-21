@@ -607,6 +607,10 @@
       "pattern": "^synthesis(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "temporal-bun-sdk",
+      "pattern": "^temporal-bun-sdk(?: \\(.*\\))?$"
+    },
+    {
       "id": "temporal-worker",
       "pattern": "^Temporal worker build and heartbeat tests \\(.*\\)(?: \\(.*\\))?$"
     }

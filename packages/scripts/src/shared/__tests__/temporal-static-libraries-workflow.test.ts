@@ -44,14 +44,23 @@ test('Temporal release jobs queue without cancelling pending publications or ove
 
 test('Temporal Bun SDK keeps PR validation fast and reserves remote load gates for main and releases', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/temporal-bun-sdk.yml'), 'utf8')
+  const action = './.github/actions/test-temporal-bun-sdk'
+  const testAction = readFileSync(join(repoRoot, action, 'action.yml'), 'utf8')
+  const queue = YAML.parse(readFileSync(join(repoRoot, '.github/workflows/queue-service-validation.yml'), 'utf8'))
   const testJob = workflow.match(/\n  test:\n([\s\S]*?)\n  integration:/)?.[1]
   const integrationJob = workflow.match(/\n  integration:\n([\s\S]*?)\n  prepare-release:/)?.[1]
 
   expect(testJob).toContain('runs-on: ubuntu-latest')
-  expect(testJob).toContain("! -path 'tests/integration/*'")
-  expect(testJob).toContain('No Temporal Bun SDK non-integration tests were discovered.')
-  expect(testJob).not.toContain('Install Temporal CLI')
-  expect(testJob).not.toContain('test:load')
+  expect(testJob).toContain(`uses: ${action}`)
+  expect(queue.jobs['temporal-bun-sdk']).toMatchObject({
+    'runs-on': 'ubuntu-latest',
+    env: { TEMPORAL_TEST_TIMEOUT: '30000', TEMPORAL_INTEGRATION_TESTS: '0' },
+    steps: [{ uses: 'actions/checkout@v5' }, { uses: action }],
+  })
+  expect(testAction).toContain("! -path 'tests/integration/*'")
+  expect(testAction).toContain('No Temporal Bun SDK non-integration tests were discovered.')
+  expect(testAction).not.toContain('Install Temporal CLI')
+  expect(testAction).not.toContain('test:load')
   expect(integrationJob).toContain("if: github.event_name != 'pull_request'")
   expect(integrationJob).toContain('runs-on: arc-arm64')
   expect(integrationJob).toContain('bun test tests/integration')
