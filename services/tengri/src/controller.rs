@@ -221,6 +221,7 @@ pub async fn converge(
         tickets,
         authorization,
         agent_work,
+        runtime_image,
         ..
     } = context;
     ensure!(
@@ -396,7 +397,52 @@ pub async fn converge(
         authorization.stop_runtime(&claimed).await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
+    let cold_recovery = microvm.spec.desired_state == MicroVMDesiredState::Running
+        && status.state.lifecycle_fenced();
     let state = match (&status.state, microvm.spec.desired_state) {
+        (_, MicroVMDesiredState::Running) if cold_recovery => {
+            let runner = pod
+                .spec
+                .as_ref()
+                .and_then(|spec| {
+                    spec.containers
+                        .iter()
+                        .find(|container| container.name == "runner")
+                })
+                .context("claimed slot has no runner")?;
+            // The fenced runner has reaped Firecracker. Upgrade only that runner,
+            // leaving its already attached home, private root, and slot identity in place.
+            if runner.image.as_deref() != Some(runtime_image.as_ref()) {
+                update_slot_image(client, namespace, &pod, "runner", runtime_image, leadership)
+                    .await?;
+            }
+            let runner_updated = pod
+                .status
+                .as_ref()
+                .and_then(|status| status.container_statuses.as_ref())
+                .is_some_and(|containers| {
+                    containers.iter().any(|container| {
+                        container.name == "runner"
+                            && container.image_id == runtime_image.as_ref()
+                            && container
+                                .state
+                                .as_ref()
+                                .is_some_and(|state| state.running.is_some())
+                    })
+                });
+            if runner_updated {
+                supervisor
+                    .restore(&microvm, authorization, leadership)
+                    .await?
+            } else {
+                crate::slot::runner::SlotStatus {
+                    state: SlotState::ColdBooting {
+                        claim: claim_for(&microvm)?,
+                    },
+                    ..status
+                }
+            }
+        }
         (SlotState::Preparing | SlotState::Failed { .. } | SlotState::Stopped { .. }, _) => status,
         (_, MicroVMDesiredState::Running) => {
             let claim = claim_for(&microvm)?;
@@ -472,7 +518,8 @@ pub async fn converge(
         .await
         {
             Ok(updated) => {
-                if status.phase == MicroVMPhase::Ready
+                if !cold_recovery
+                    && status.phase == MicroVMPhase::Ready
                     && current.status.as_ref().is_none_or(|s| !s.guest_ready)
                     && let Some((resume, millis)) = lifecycle_latency(&current, Utc::now())
                 {
@@ -612,8 +659,12 @@ fn status_for(
             )
         }
         SlotState::Awake { .. } => (
-            "SnapshotRestored",
-            "Files, terminal, and initialized Codex passed the guest resume hook",
+            "GuestReady",
+            "Files, terminal, and initialized Codex passed the guest readiness checks",
+        ),
+        SlotState::ColdBooting { .. } => (
+            "RetainedDiskBootInProgress",
+            "Restarting the workspace from its retained disks",
         ),
         SlotState::Sleeping { .. } => (
             "GuestStopped",
@@ -1430,11 +1481,15 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
                 })
                 .context("claimed slot has no supervisor")?;
             if supervisor.image.as_deref() != Some(context.runtime_image.as_ref()) {
-                context.leader()?;
-                pods.patch(&lease.name_any(), &PatchParams::default(), &Patch::Strategic(json!({
-                    "metadata": {"uid": uid, "resourceVersion": pod.resource_version().context("slot Pod has no version")?},
-                    "spec": {"containers": [{"name": "supervisor", "image": context.runtime_image.as_ref()}]}
-                }))).await?;
+                update_slot_image(
+                    &context.client,
+                    &context.namespace,
+                    &pod,
+                    "supervisor",
+                    &context.runtime_image,
+                    context.leader()?,
+                )
+                .await?;
             }
         }
         return prepare_slot(context, lease).await;
@@ -1509,6 +1564,23 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
         }
     }
     prepare_slot(context, lease).await
+}
+
+async fn update_slot_image(
+    client: &Client,
+    namespace: &str,
+    pod: &Pod,
+    container: &str,
+    image: &str,
+    leadership: &crate::leadership::Guard,
+) -> anyhow::Result<()> {
+    leadership.fence()?;
+    Api::<Pod>::namespaced(client.clone(), namespace)
+        .patch(&pod.name_any(), &PatchParams::default(), &Patch::Strategic(json!({
+            "metadata": {"uid": pod.uid().context("slot Pod has no UID")?, "resourceVersion": pod.resource_version().context("slot Pod has no version")?},
+            "spec": {"containers": [{"name": container, "image": image}]}
+        }))).await?;
+    Ok(())
 }
 
 fn spare_slot_is_starting(pod: &Pod) -> bool {
@@ -3188,7 +3260,7 @@ mod tests {
         assert_eq!(repeated, unknown);
         let recovered = status_for(&microvm, &Pod::default(), &state, false);
         assert_eq!(recovered.conditions[0].status, "True");
-        assert_eq!(recovered.conditions[0].reason, "SnapshotRestored");
+        assert_eq!(recovered.conditions[0].reason, "GuestReady");
         assert_ne!(
             recovered.conditions[0].last_transition_at,
             unknown.conditions[0].last_transition_at
