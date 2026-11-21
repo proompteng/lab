@@ -376,6 +376,12 @@ reporting do not change trading authority or risk limits. Stored v1 and v2 input
 receipts only on historical read and cannot enter current assessment admission.
 Their original source/digest controller comparison is frozen separately from the current build matcher.
 Those historical results do not establish a certificate under the current build-binding rule.
+Stored v37 operational registrations also preserve their original frozen protocol schema and exact default parameter
+hash from `4467bce540bb135b96a59b1ee37396885914df0a`. Historical registration, source-cut and receipt readers can
+reproduce those bytes; current registration and assessment admission still reject v37. The synthetic fixture
+`original-v37-operational.test-fixture.json` was generated from that source's fixture and evaluator with the current
+Effect 4.1.4 test harness. Its original registration, source-cut and inconclusive receipt hashes are fixed regression
+goldens. It contains no production account evidence, and replay grants no trading or economic qualification.
 Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
 unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small
 receipt/timing summaries without retaining complete archived records. A replay-policy/input mismatch is rejected.

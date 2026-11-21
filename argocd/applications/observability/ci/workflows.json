@@ -39,6 +39,10 @@
   ],
   "attic-build-push.yaml": [
     {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "build-and-push",
       "pattern": "^build-and-push(?: \\(.*\\))?(?: /.*)?$"
     }

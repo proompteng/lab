@@ -64,9 +64,10 @@ and KVM acceptance pass. No operator-created image alias or digest promotion PR 
 Preserve the MicroVM UID, home PVC UID, filesystem and native operation history. Never submit the accepted input
 again. A Ready pod, journal activity, or a recorded `turn/start` result does not prove the turn completed.
 
-`authorization_required` retains the turn ID and waits for **Resume recovery** or a renewed Stop from the current
-signed-in session. Both controls update authority for the existing run. `needs_reconciliation` retains the same
-identity and backs off to one observation per minute. Neither state releases its conversation or sleep pin.
+`authorization_required` retains the run identity and waits for **Reconnect** or Stop from the current signed-in
+session. Both controls update authority for the existing run. `needs_reconciliation` retains the same identity and
+backs off to one observation per minute. Neither state releases its conversation or sleep pin. A durable rejection
+recorded before the native request was sent lets the existing workflow settle and release both pins.
 Run-worker probes use HTTP `/healthz` on 8080; the Restate HTTP/2 listener remains on 9080.
 
 The `TengriRunStatusFailures` alert counts reads that exhausted their recovery budget. `TengriRunRecoveryBlocked`
@@ -515,6 +516,12 @@ Use [the chat acceptance contract](agent-chat.md) for authenticated account, tur
 proof. Infrastructure health, unit tests, or a fast Firecracker API call do not establish usable end-to-end latency.
 
 ## Recovery
+
+A lifecycle that loses leadership while a command is in flight fences and reaps Firecracker. If the original
+slot Pod and its disks are still attached, the controller can cold-boot those disks when Ofz again authorizes
+the workspace to run. The runner requires its fenced journal and the same slot allocation. It leaves the Pod,
+home, root disk, and accepted run records in place and discards unusable memory snapshots. A cold boot restarts
+processes, so it does not count as snapshot resume or prove that an interrupted Codex turn completed.
 
 A controller restart leaves existing slot Pods and owned homes intact. A sleeping runner can reopen its committed
 journal only with matching pins and identity. An active runner restart, missing Pod, partition, or incompatible snapshot
