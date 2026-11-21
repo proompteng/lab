@@ -93,6 +93,55 @@ test('rotation rejects mismatched account bindings and exhausted epochs', () => 
   ).toBe(true)
 })
 
+test('rotation rechecks successor authority before retiring the predecessor', async () => {
+  const failure = new Error('restricted generation still needs its mandate-bearing owner')
+  let projected = 0
+  let stateWrites = 0
+  let deliveries = 0
+  const object = makeBaynExecutionController(
+    {
+      controllerKey,
+      planHash,
+      sourceRevision,
+      operationTimeoutMs: 30_000,
+      activationAuthorizationHash: Result.getOrThrow(
+        executionActivationAuthorizationHash(Buffer.alloc(32, 7).toString('base64url')),
+      ),
+    },
+    {
+      prepareActivation: async () => {
+        throw failure
+      },
+      advance: async () => {
+        throw new Error('must not advance')
+      },
+      log: async () => undefined,
+      projectState: async () => {
+        projected += 1
+      },
+    },
+  ) as unknown as {
+    object: { rotate: (ctx: ObjectContext, input: unknown) => Promise<ExecutionControllerState> }
+  }
+  const state = structuredClone(original)
+  const ctx = {
+    key: controllerKey,
+    get: async () => state,
+    set: () => {
+      stateWrites += 1
+    },
+    run: async <A>(_name: string, action: () => Promise<A>) => action(),
+    request: () => ({ id: 'blocked-rotation', attemptCompletedSignal: new AbortController().signal }),
+    genericSend: () => {
+      deliveries += 1
+    },
+  } as unknown as ObjectContext
+
+  await expect(object.object.rotate(ctx, rotation)).rejects.toBe(failure)
+  expect(state).toEqual(original)
+  expect({ projected, stateWrites, deliveries }).toEqual({ projected: 0, stateWrites: 0, deliveries: 0 })
+})
+
 test.each(['before-projection', 'after-projection', 'before-watch', 'before-state', 'before-schedule'] as const)(
   'rotation reconciles an uncertain %s failure without persisting inactive state',
   async (failure) => {

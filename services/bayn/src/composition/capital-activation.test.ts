@@ -1,6 +1,6 @@
 import { retainedJevProtocolV39Document } from '../jev/protocol'
 import { expect, test } from 'bun:test'
-import { Effect, Redacted, Result } from 'effect'
+import { Effect, Redacted, Ref, Result } from 'effect'
 
 import type { ApplicationPlan } from '../app'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
@@ -38,6 +38,12 @@ import {
   validateResearchCapitalPreflight,
   validateResearchCapitalRiskPolicy,
 } from './capital-activation'
+import {
+  executionGenerationNeedsRecovery,
+  makeGenerationCycleDriver,
+  makeRebindingCycleDriver,
+} from './generation-cycle'
+import { validateObserveActivationAuthority } from './native-activation-preflight'
 
 const accountId = '123e4567-e89b-42d3-a456-426614174000'
 const identity = Result.getOrThrow(
@@ -484,18 +490,25 @@ test('a cutover mandate rearms through current proof and exact reconciliation be
   }
 })
 
-test('an incomplete reconciliation retains only the exact restricted generation for cancellation recovery', async () => {
+test('a recognized cutover retains only the exact restricted generation for terminal recovery', async () => {
   const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
   const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
   const retained = generation(current, 'a'.repeat(64))
-  for (const scenario of ['bound', 'operator-hold', 'foreign-request'] as const) {
+  for (const [restriction, scenario] of [
+    ...(['bound', 'operator-hold', 'foreign-request'] as const).map(
+      (scenario) => ['reconciliation pass incomplete', scenario] as const,
+    ),
+    ...(['bound', 'operator-hold', 'foreign-request'] as const).map(
+      (scenario) => [strategyProtocolCutoverRestrictionReason, scenario] as const,
+    ),
+  ]) {
     const authority: AuthorityState = {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: retained.generationHash,
       maximum: Authority.Execution,
       effective: Authority.Observe,
       kill: KillState.Active,
-      reason: scenario === 'operator-hold' ? 'operator hold' : 'reconciliation pass incomplete',
+      reason: scenario === 'operator-hold' ? 'operator hold' : restriction,
       version: 2,
       updatedAt: '2026-11-10T16:49:33.128Z',
     }
@@ -539,4 +552,185 @@ test('an incomplete reconciliation retains only the exact restricted generation 
       version: 2,
     })
   }
+})
+
+test('the matching incumbent settles once and its retained mandate cannot reopen PAPER', async () => {
+  const policy = Result.getOrThrow(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe))
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const retained = generation(current, 'a'.repeat(64))
+  const successorHash = Result.getOrThrow(
+    executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: retained.generationHash }),
+  )
+  const clear: AuthorityState = {
+    schemaVersion: 'bayn.paper-authority.v1',
+    generationHash: retained.generationHash,
+    maximum: Authority.Execution,
+    effective: Authority.Execution,
+    kill: KillState.Clear,
+    version: 1,
+    updatedAt: '2026-11-21T14:00:00.000Z',
+  }
+  const restricted: AuthorityState = {
+    ...clear,
+    effective: Authority.Observe,
+    kill: KillState.Active,
+    reason: strategyProtocolCutoverRestrictionReason,
+    version: 2,
+    updatedAt: '2026-11-21T14:01:00.000Z',
+  }
+  const successor: AuthorityState = {
+    ...clear,
+    generationHash: successorHash,
+    maximum: Authority.Observe,
+    effective: Authority.Observe,
+    version: 3,
+    updatedAt: '2026-11-21T14:02:00.000Z',
+  }
+  const pass = {
+    observation: {
+      result: 'FAILURE' as const,
+      observedAt: '2026-11-21T14:01:00.000Z',
+      operation: 'run-cycle-pass' as const,
+      failure: 'context' as const,
+      message: 'migration 207 restricted the incumbent after the flat pass',
+    },
+  }
+  const reconciliation = {
+    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+    accountId,
+    reconciliationId: '2'.repeat(64),
+    contentHash: '3'.repeat(64),
+    expectedHash: '4'.repeat(64),
+    observedHash: '4'.repeat(64),
+    status: ReconciliationStatus.Exact,
+    discrepancies: [],
+    reconciledAt: successor.updatedAt,
+  }
+  const brokerState: ReconciledBrokerState = {
+    account: {
+      schemaVersion: 'bayn.paper-account-snapshot.v2',
+      cryptoFeeTier: null,
+      accountId,
+      status: AccountStatus.Active,
+      currency: 'USD',
+      cashMicros: '100000000000',
+      equityMicros: '100000000000',
+      buyingPowerMicros: '100000000000',
+      observedAt: successor.updatedAt,
+    },
+    positions: [],
+    orders: [],
+    positionsObservedAt: successor.updatedAt,
+    ordersObservedAt: successor.updatedAt,
+    accountingHash: '1'.repeat(64),
+    unknownOrderCount: 0,
+    reconciliation,
+  }
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const authority = yield* Ref.make(clear)
+      const activationAttempts = yield* Ref.make(0)
+      const forbidden = Effect.die('restricted incumbent preparation cannot activate or rearm authority')
+      const retiredActivation = Ref.update(activationAttempts, (count) => count + 1).pipe(
+        Effect.flatMap(() => Effect.die('database retired research capital activation for this account')),
+      )
+      const store: AuthorityGenerationStoreShape = {
+        readAuthorityState: Ref.get(authority),
+        readResearchAuthorityGeneration: (generationHash) =>
+          Effect.succeed(generationHash === retained.generationHash ? retained : undefined),
+        readOrInitializeObserveAuthority: () => forbidden,
+        readAuthorityGenerationLineage: () => forbidden,
+        ensureAuthorityGeneration: (input) =>
+          Ref.get(authority).pipe(
+            Effect.map((observed) => {
+              expect(input).toEqual({ generationHash: observed.generationHash, maximum: Authority.Observe })
+              return observed
+            }),
+          ),
+      }
+      const reconcile = Ref.get(authority).pipe(
+        Effect.map((observed) => ({
+          report: {
+            reconciliation,
+            metrics: {
+              brokerPollAgeMs: 0,
+              oldestUnknownMutationAgeMs: 0,
+              cashDifferenceMicros: '0',
+              positionDifferenceMicros: '0',
+              equityDifferenceMicros: '0',
+              accountingExact: true,
+              discrepancyCount: 0,
+            },
+          },
+          brokerState,
+          riskContext: {
+            tradingDate: '2026-11-21' as const,
+            authority: observed,
+            authorityObservedAt: successor.updatedAt,
+            unknownMutationCount: 0,
+            dailyTradedNotionalMicros: '0',
+            dayStartEquityMicros: brokerState.account.equityMicros,
+            peakEquityMicros: brokerState.account.equityMicros,
+          },
+        })),
+      )
+      const prepare = Effect.gen(function* () {
+        const prepared = yield* prepareOrRecoverResearchCapitalActivation(
+          plan(),
+          current,
+          null,
+          null,
+          store,
+          { activateResearchCapitalGrant: () => retiredActivation },
+          reconcile,
+          1000,
+        )
+        const observed = yield* Ref.get(authority)
+        const closeOnly =
+          observed.generationHash === prepared.generationHash && executionGenerationNeedsRecovery(observed)
+        return yield* makeGenerationCycleDriver(
+          {
+            generationHash: prepared.generationHash,
+            mode: closeOnly ? 'CloseOnly' : 'Mutation',
+            readAuthority: Ref.get(authority),
+            reconcileWhenHeld: forbidden,
+            settle: Effect.gen(function* () {
+              expect(closeOnly).toBe(true)
+              yield* Ref.set(authority, successor)
+              return {
+                _tag: 'RolledOver' as const,
+                previousGenerationHash: retained.generationHash,
+                generationHash: successorHash,
+                blockedCycleCount: 0,
+                blockedIntentCount: 0,
+                expiredIntentCount: 0,
+                terminalIntentCount: 0,
+              } as const
+            }),
+          },
+          {
+            advance: closeOnly ? forbidden : Ref.set(authority, restricted).pipe(Effect.as(pass)),
+            timeoutMs: 1000,
+            nextDelayMs: 1000,
+            onTimeout: Effect.fail,
+          },
+        )
+      })
+      const driver = yield* makeRebindingCycleDriver(yield* prepare, prepare)
+      expect(yield* driver.advance).toEqual(pass)
+      expect(yield* Ref.get(authority)).toEqual(restricted)
+      expect((yield* driver.advance).observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+      const handedOff = yield* Ref.get(authority)
+      expect(handedOff).toEqual(successor)
+      expect(validateObserveActivationAuthority(handedOff)).toEqual(Result.succeed(undefined))
+      // The same long-lived driver retries preparation after the handoff, and a fresh driver models a process restart.
+      // Both reach the durable activation boundary; neither can change the clear OBSERVE successor.
+      expect((yield* Effect.exit(driver.advance))._tag).toBe('Failure')
+      expect(yield* Ref.get(activationAttempts)).toBe(1)
+      expect(yield* Ref.get(authority)).toEqual(successor)
+      expect((yield* Effect.exit(prepare))._tag).toBe('Failure')
+      expect(yield* Ref.get(activationAttempts)).toBe(2)
+      expect(yield* Ref.get(authority)).toEqual(successor)
+    }),
+  )
 })
