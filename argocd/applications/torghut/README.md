@@ -23,6 +23,21 @@ rollout order, and recovery constraints. The post-deploy workflow verifies absen
 then verifies both retained Flink jobs, checkpoints, websocket/Kafka flow, and TA freshness. It observes the
 Kargo-owned rollout and does not contact the retired API endpoints.
 
+Kargo's `kargo-http-smoke` verification checks that the TA HTTP response contains `RUNNING`; it can succeed while
+the previous job still serves during a handover. The separate `torghut-post-deploy-verify` workflow binds its
+pipeline and telemetry evidence to the verified generated Git revision. After the existing pipeline and market-data
+checks, it verifies Alloy's current Deployment/ReplicaSet/Pod, promoted image, resources, rollout digest and mounted
+config hash. A collector restart or OOM during that Argo operation fails acceptance, even if the Pod is Ready again.
+
+The telemetry check derives expected TaskManager counts and images from the promoted manifests and binds every
+target to a current ready worker's owner, UID and IP. Both successful scrapes and native Flink metrics must reach
+Mimir within three configured scrape intervals and advance across a two-interval observation window. Old targets,
+empty results and stale readiness cannot satisfy it. Remote-write delivery must advance without dropped samples;
+normal nonzero queues and recovered retries are recorded and allowed when their delivery timestamps stay current.
+This is a bounded delivery check, not a market latency or profitability SLO. It uses the runner's existing read/exec
+access and Mimir endpoint, adds no credentials or permissions, and retains sanitized evidence with the pipeline
+artifact. Its five-minute convergence budget leaves the existing rollout and market-data retry budgets unchanged.
+
 ## Latest IEX observations for Bayn
 
 The websocket producer also polls IEX latest quotes and trades for
