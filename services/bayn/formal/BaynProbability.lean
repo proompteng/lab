@@ -160,4 +160,35 @@ theorem executable_radius_covers_registered_expected_profit
     exact_mod_cast normalized
   · exact positiveAlpha
 
+/-- A zero-width policy uses a strict lower-bound failure event. Its point-support premise is an
+    explicit registration obligation; observed equal values do not establish it. -/
+theorem zero_width_point_support_has_no_strict_lower_bound_failure
+    {Ω : Type*} {mΩ : MeasurableSpace Ω} {μ : Measure Ω}
+    [IsProbabilityMeasure μ] {X : ℕ → Ω → ℝ}
+    (means : ℕ → ℝ) (n denominator : Nat)
+    (meanIdentity : ∀ i < n, means i = ∫ ω, X i ω ∂μ)
+    (pointSupport : ∀ i < n, ∀ ω, X i ω = means i) :
+    μ.real {ω | (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ) <
+      (∑ i ∈ Finset.range n, X i ω) - (conditionalRadius n 0 denominator : ℝ)} = 0 := by
+  have radiusZero : (conditionalRadius n 0 denominator : ℝ) = 0 := by
+    simp [conditionalRadius, ceilSquareRoot]
+  have expected : (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ) =
+      ∑ i ∈ Finset.range n, means i := by
+    apply Finset.sum_congr rfl
+    intro i member
+    exact (meanIdentity i (Finset.mem_range.mp member)).symm
+  have eventEmpty : {ω | (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ) <
+      (∑ i ∈ Finset.range n, X i ω) - (conditionalRadius n 0 denominator : ℝ)} = ∅ := by
+    ext ω
+    simp only [Set.mem_ofPred_eq, Set.mem_empty_iff_false, iff_false]
+    rw [radiusZero, sub_zero, expected]
+    have actual : (∑ i ∈ Finset.range n, X i ω) = ∑ i ∈ Finset.range n, means i := by
+      apply Finset.sum_congr rfl
+      intro i member
+      exact pointSupport i (Finset.mem_range.mp member) ω
+    rw [actual]
+    exact lt_irrefl _
+  rw [eventEmpty]
+  simp
+
 end Bayn

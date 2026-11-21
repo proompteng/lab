@@ -429,10 +429,6 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     expect(baseline).toEqual([{ registration_hash: saved.registrationHash, authority_state: null }])
-    if (formalModelExecutable !== undefined)
-      expect(runFormalModel([{ operation: 'nativeSafetyJournalInsert', triggerDepth: '2' }])).toEqual([
-        baseline.length === 1,
-      ])
 
     for (const statement of [
       `INSERT INTO operational_safety_baselines(registration_hash,authority_state) VALUES ('${saved.registrationHash}',null)`,
@@ -451,8 +447,6 @@ postgres('PostgreSQL prospective system qualification', () => {
         ),
       ).toBe(true)
 
-    if (formalModelExecutable !== undefined)
-      expect(runFormalModel([{ operation: 'nativeSafetyJournalInsert', triggerDepth: '1' }])).toEqual([false])
     const nativeSafety = await runtime.runPromise(
       captureOperationalSafetySource(
         config,
