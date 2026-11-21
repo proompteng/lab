@@ -68,6 +68,7 @@ describe('landing browser validation workflow', () => {
       Bun.spawnSync(['bash', '-c', script], {
         env: {
           ...process.env,
+          FULL_VALIDATION: 'false',
           PLAN_RESULT: 'success',
           VALIDATE_RESULT: validate,
           VALIDATE_EXPECTED: validateExpected,
