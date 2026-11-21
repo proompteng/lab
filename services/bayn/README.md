@@ -1695,7 +1695,7 @@ See the [cycle operations runbook](../../docs/runbooks/bayn-cycle-operations.md#
 Normal delivery uses the shared Kargo path:
 
 1. merge reviewed source to `main`;
-2. build the exact multi-architecture image and publish its immutable `kargo-sha-<source>` alias;
+2. build the three exact multi-architecture images and publish their immutable `kargo-sha-<source>-run-<run>` aliases;
 3. let the `bayn` Warehouse and automatic Stage copy that source into `kargo/bayn`, update all three runtime image
    bindings and the existing research build lineage, and push the generated GitOps commit; and
 4. let Argo reconcile the execution worker, activation hook, and status service in their existing sync order.
@@ -1703,6 +1703,23 @@ Normal delivery uses the shared Kargo path:
 Builds are scoped to Bayn inputs and finish when later commits arrive. There is no separate release workflow or
 promotion-eligibility script. Kargo controls delivery; the native activation hook and runtime enforce the configured
 account, strategy, capital grant, reconciliation, and order-risk contracts.
+
+Bayn disables the shared workflow's default index publisher and prepares all three indexes in its existing
+`publish-cohort` job. That job waits for all six platform jobs to finish with success, preserving their native checks,
+pushes, cache-warming policy and log uploads. It resolves each architecture tag once, validates source commit,
+commit timestamp and platform through the resulting immutable digest, then passes those same digests to the shared
+OCI index helper. All six platform proofs must pass before any index is created. Preparation uses only `sha-<source>`
+tags; it publishes neither `latest` nor a Kargo alias. The job checks each returned index's exact child set by digest,
+verifies all three source/run receipts, uploads the existing cohort artifact, and rechecks source eligibility before
+publishing any discovery alias. A failed preparation may leave undiscoverable indexes, but cannot expose a partial
+output set to discovery. Kargo continues to require the complete cohort from one source and run.
+
+This consolidation reduces publication jobs from four ARC runners to one, avoiding three runner starts per eligible
+release while retaining the existing 15-minute cohort budget. It does not change runner counts, storage, build
+concurrency or timeouts. Other consumers retain the shared `publish_index: true` default. This is a structural work
+reduction, not a measured release-latency or cost result. Workflow-only changes keep the existing non-publication
+filters; static and PR validation do not prove live use of the consolidated publisher. The next ordinary eligible
+Bayn build exercises it through the normal release path.
 
 A release that retires executable decision or market-data contracts must follow its reviewed cutover procedure.
 Verify that unfinished cycles remain recoverable by their owning release and that broker orders, positions and
@@ -2575,6 +2592,45 @@ authentication, version and other HTTP failures remain terminal. This handles th
 binding its socket and attaching its request handler without extending readiness or restarting the child. Scope
 shutdown allows 25 seconds for SIGTERM, including the native server's 20-second graceful drain, before escalating
 to SIGKILL for a child that has not exited.
+
+The native integration test records one failure-only process snapshot before outer test-scope cleanup. It checks that its owned
+child is still running before and after seven bounded reads, and requires the PID, parent and kernel start time to agree.
+The capture has a 200 ms budget inside a 250 ms observation budget; each read stops at 4,097 bytes and rejects content
+above 4,096 bytes. Missing, malformed, oversized, changed-identity and timed-out observations remain explicitly
+unavailable. The allowlisted record is emitted as one JSON message so the default console formatter preserves nested
+counters and unavailable reasons. Diagnostic read, parser, serialization and logger failures preserve the original test
+failure. Successful starts perform no additional reads; all readiness, probe, outer-test and shutdown deadlines remain unchanged.
+
+The main-task [wait channel](https://man7.org/linux/man-pages/man5/proc_pid_wchan.5.html) emits only a fixed allowlist of
+kernel symbols. Zero remains ambiguous (including hidden or unavailable symbols), and unknown symbols are unavailable.
+The main-task [syscall observation](https://man7.org/linux/man-pages/man5/proc_pid_syscall.5.html) retains only a validated
+nonnegative syscall number, `RUNNING`, or `NOT_IN_SYSCALL`; arguments, stack pointers and program counters are discarded.
+Numbers are not mapped to syscall names without an observed ABI. Missing and permission-denied reads remain explicit;
+these two proc files have different ptrace access checks, and neither diagnostic changes permissions. The register format
+is checked against [Linux v6.18 source](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/fs/proc/base.c),
+which is format provenance, not a claim about the CI host's kernel version. Reads are sequential within the identity
+bracket, not an atomic stack snapshot; a wait symbol and syscall number cannot establish a particular file, device or cause.
+
+An otherwise unknown wait-channel value can carry a fingerprint while remaining `UNRECOGNIZED_WAIT_CHANNEL`.
+Only a trimmed ASCII C identifier of 1–128 characters qualifies. Pure hexadecimal or address-like forms, zero,
+fixed placeholders, offsets, module annotations, paths, embedded whitespace and decorated names receive no fingerprint.
+The record contains only the domain `bayn.opencode-native-wchan-symbol.v1` and a lowercase SHA-256 digest of
+`UTF-8(domain) || 0x00 || UTF-8(trimmed-symbol)`. Known symbols retain their existing output without hashing.
+Candidate public kernel symbols can be compared offline using the same recipe; a match identifies normalized bytes,
+not the host's kernel version, a blocking operation or a cause. The helper reuses the already-read bytes within the
+same seven-read and time budgets. Hashing failures preserve the original test failure, and raw unknown content is never emitted.
+
+The allowlisted [process counters](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) retain raw CPU clock ticks,
+fault counts, thread count, virtual bytes and resident pages without assuming a tick frequency or page size.
+[Status](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html) memory values are approximate KiB; context switches
+and [scheduler counters](https://docs.kernel.org/scheduler/sched-stats.html) describe the main task, not every worker.
+Scheduler counters can remain zero when accounting is disabled; their presence does not establish that it is enabled.
+[I/O accounting](https://man7.org/linux/man-pages/man5/proc_pid_io.5.html) includes the process and its waited-for children;
+syscall bytes differ from storage bytes, and zero storage reads do not prove absence of filesystem work. A single
+cumulative sample cannot establish utilization, latency, an initialization stage or a storage cause. It is not a cgroup
+measurement or a pre-spawn identity baseline. No command, environment, pathname, process name, file body or arbitrary
+error text is emitted, and native child stdout/stderr remain suppressed. If the observation or its logger cannot finish,
+the extra record can be absent; the original test failure still takes precedence.
 
 New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
 [the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),
