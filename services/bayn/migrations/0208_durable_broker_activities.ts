@@ -73,6 +73,68 @@ export default Effect.gen(function* () {
     BEFORE TRUNCATE ON broker_activity_event_projections
     FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()`
 
+  yield* sql`CREATE TABLE broker_activity_source_conflicts (
+    account_id text NOT NULL,
+    source_event_id text NOT NULL CHECK (source_event_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    retained_source_event_hash text CHECK (
+      retained_source_event_hash IS NULL OR retained_source_event_hash ~ '^[a-f0-9]{64}$'
+    ),
+    conflicting_source_event_hash text NOT NULL CHECK (conflicting_source_event_hash ~ '^[a-f0-9]{64}$'),
+    transport_event_id text NOT NULL CHECK (transport_event_id ~ '^[a-f0-9]{64}$'),
+    source_revision text NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
+    session_id text NOT NULL CHECK (session_id <> '' AND char_length(session_id) <= 100),
+    request_id text NOT NULL CHECK (request_id <> '' AND char_length(request_id) <= 200),
+    received_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    activity_json text NOT NULL CHECK (activity_json <> ''),
+    PRIMARY KEY(account_id,source_event_id,conflicting_source_event_hash),
+    UNIQUE(account_id,transport_event_id)
+  )`
+  yield* sql`CREATE TRIGGER broker_activity_source_conflicts_immutable
+    BEFORE UPDATE OR DELETE ON broker_activity_source_conflicts
+    FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()`
+  yield* sql`CREATE TRIGGER broker_activity_source_conflicts_no_truncate
+    BEFORE TRUNCATE ON broker_activity_source_conflicts
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()`
+
+  yield* sql`CREATE TABLE broker_activity_coverage_receipts (
+    account_id text NOT NULL,
+    transport_event_id text NOT NULL CHECK (transport_event_id ~ '^[a-f0-9]{64}$'),
+    source_revision text NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
+    session_id text NOT NULL CHECK (session_id <> '' AND char_length(session_id) <= 100),
+    request_id text NOT NULL CHECK (request_id <> '' AND char_length(request_id) <= 200),
+    received_at timestamptz NOT NULL,
+    cursor text CHECK (cursor IS NULL OR cursor ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    replay_from_id text NOT NULL CHECK (replay_from_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    replay_until_id text NOT NULL CHECK (replay_until_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    event_count bigint NOT NULL CHECK (event_count >= 0),
+    prefix_hash text NOT NULL CHECK (prefix_hash ~ '^[a-f0-9]{64}$'),
+    range_request_hash text NOT NULL CHECK (range_request_hash ~ '^[a-f0-9]{64}$'),
+    completion_hash text NOT NULL CHECK (completion_hash ~ '^[a-f0-9]{64}$'),
+    observed_cursor text CHECK (observed_cursor IS NULL OR observed_cursor ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    observed_event_count bigint NOT NULL CHECK (observed_event_count >= 0),
+    observed_prefix_hash text NOT NULL CHECK (observed_prefix_hash ~ '^[a-f0-9]{64}$'),
+    observed_range_request_hash text NOT NULL CHECK (observed_range_request_hash ~ '^[a-f0-9]{64}$'),
+    observed_completion_hash text NOT NULL CHECK (observed_completion_hash ~ '^[a-f0-9]{64}$'),
+    status text NOT NULL CHECK (status IN ('COMPLETE','POISONED')),
+    reason text CHECK (
+      (status = 'COMPLETE' AND reason IS NULL) OR
+      (status = 'POISONED' AND reason IN (
+        'CATCHUP_CURSOR_MISMATCH','CATCHUP_BOUNDARY_CONFLICT','LATE_PUBLICATION'
+      ))
+    ),
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(account_id,transport_event_id)
+  )`
+  yield* sql`CREATE INDEX broker_activity_coverage_status
+    ON broker_activity_coverage_receipts(account_id,status,recorded_at)`
+  yield* sql`CREATE TRIGGER broker_activity_coverage_receipts_immutable
+    BEFORE UPDATE OR DELETE ON broker_activity_coverage_receipts
+    FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()`
+  yield* sql`CREATE TRIGGER broker_activity_coverage_receipts_no_truncate
+    BEFORE TRUNCATE ON broker_activity_coverage_receipts
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()`
+
   yield* sql`CREATE TABLE broker_activity_cursors (
     account_id text PRIMARY KEY,
     source_revision text NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
@@ -83,8 +145,23 @@ export default Effect.gen(function* () {
       last_source_event_hash IS NULL OR last_source_event_hash ~ '^[a-f0-9]{64}$'
     ),
     last_activity_received_at timestamptz,
-    caught_up boolean NOT NULL DEFAULT false,
-    covered_through_at timestamptz,
+    coverage_status text NOT NULL DEFAULT 'UNPROVEN' CHECK (
+      coverage_status IN ('UNPROVEN','COMPLETE','POISONED')
+    ),
+    replay_from_id text CHECK (replay_from_id IS NULL OR replay_from_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    replay_until_id text CHECK (replay_until_id IS NULL OR replay_until_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    bootstrap_session_id text CHECK (
+      bootstrap_session_id IS NULL OR (bootstrap_session_id <> '' AND char_length(bootstrap_session_id) <= 100)
+    ),
+    bootstrap_request_id text CHECK (
+      bootstrap_request_id IS NULL OR (bootstrap_request_id <> '' AND char_length(bootstrap_request_id) <= 200)
+    ),
+    bootstrap_event_count bigint CHECK (bootstrap_event_count IS NULL OR bootstrap_event_count >= 0),
+    bootstrap_prefix_hash text CHECK (
+      bootstrap_prefix_hash IS NULL OR bootstrap_prefix_hash ~ '^[a-f0-9]{64}$'
+    ),
+    range_request_hash text CHECK (range_request_hash IS NULL OR range_request_hash ~ '^[a-f0-9]{64}$'),
+    completion_hash text CHECK (completion_hash IS NULL OR completion_hash ~ '^[a-f0-9]{64}$'),
     fill_fee_complete boolean NOT NULL DEFAULT true,
     session_id text CHECK (session_id IS NULL OR (session_id <> '' AND char_length(session_id) <= 100)),
     request_id text CHECK (request_id IS NULL OR (request_id <> '' AND char_length(request_id) <= 200)),
@@ -100,8 +177,15 @@ export default Effect.gen(function* () {
       (session_id IS NOT NULL AND request_id IS NOT NULL AND heartbeat_at IS NOT NULL)
     ),
     CHECK (
-      (NOT caught_up AND covered_through_at IS NULL) OR
-      (caught_up AND covered_through_at IS NOT NULL)
+      (coverage_status <> 'COMPLETE' AND replay_from_id IS NULL AND replay_until_id IS NULL
+        AND bootstrap_session_id IS NULL AND bootstrap_request_id IS NULL
+        AND bootstrap_event_count IS NULL AND bootstrap_prefix_hash IS NULL
+        AND range_request_hash IS NULL AND completion_hash IS NULL) OR
+      (coverage_status = 'COMPLETE' AND replay_from_id IS NOT NULL AND replay_until_id IS NOT NULL
+        AND replay_from_id <= replay_until_id
+        AND bootstrap_session_id IS NOT NULL AND bootstrap_request_id IS NOT NULL
+        AND bootstrap_event_count IS NOT NULL AND bootstrap_prefix_hash IS NOT NULL
+        AND range_request_hash IS NOT NULL AND completion_hash IS NOT NULL)
     )
   )`
 })

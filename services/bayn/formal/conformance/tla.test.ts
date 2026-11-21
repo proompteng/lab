@@ -163,7 +163,8 @@ const CancellationAdmissionState = Schema.Struct({
 const ActivityCursorState = Schema.Struct({
   cursor: int,
   caughtUp: bool,
-  coverage: int,
+  replayFrom: int,
+  replayUntil: int,
   complete: bool,
   session: int,
   fresh: bool,
@@ -174,21 +175,27 @@ const ActivityCursorState = Schema.Struct({
   supported: bool,
   eventSession: int,
   boundaryCursor: int,
-  boundaryCoverage: int,
+  boundaryReplayFrom: int,
+  boundaryReplayUntil: int,
+  boundaryEvidenceMatches: bool,
   heartbeatCursor: int,
   heartbeatSession: int,
   revisionMatches: bool,
   eventDecision: Schema.Literals(['REJECT', 'REPLAY', 'APPEND']),
   canCatchup: bool,
   canHeartbeat: bool,
+  invalidatesCoverage: bool,
   preserveSession: bool,
   ready: bool,
   regressed: bool,
   badReplayAccepted: bool,
   boundaryConflictAccepted: bool,
+  unprovedCatchupAccepted: bool,
+  catchupEstablishedLiveness: bool,
   prematureHeartbeat: bool,
   recoveredCompleteness: bool,
   staleSessionLive: bool,
+  latePublicationStayedCovered: bool,
   projectionReadAccepted: bool,
   unsafeProjectionRead: bool,
 })
@@ -210,13 +217,16 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
     expect(cases.some((state) => state.eventDecision === 'REJECT')).toBe(true)
     expect(cases.some((state) => state.ready)).toBe(true)
     expect(cases.some((state) => !state.complete && state.caughtUp)).toBe(true)
+    expect(cases.some((state) => state.invalidatesCoverage)).toBe(true)
+    expect(cases.every((state) => !state.latePublicationStayedCovered)).toBe(true)
     expect(cases.some((state) => state.projectionReadAccepted)).toBe(true)
     expect(cases.every((state) => !state.unsafeProjectionRead)).toBe(true)
     for (const state of cases) {
       const current = {
         cursor: activityCursor(state.cursor),
         caughtUp: state.caughtUp,
-        coveredThrough: state.coverage === 0 ? null : at(state.coverage),
+        replayFromId: activityCursor(state.replayFrom),
+        replayUntilId: activityCursor(state.replayUntil),
         fillFeeComplete: state.complete,
         sessionId: activitySession(state.session),
         requestId: activityRequest(state.session),
@@ -239,15 +249,25 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
         expect(event.success._tag.toUpperCase()).toBe(state.eventDecision)
         if (event.success._tag === 'Append') {
           expect(event.success.fillFeeComplete).toBe(state.complete && state.supported)
+          expect(event.success.invalidatesCoverage).toBe(state.invalidatesCoverage)
           expect(event.success.preserveHeartbeat).toBe(state.preserveSession)
         }
       }
 
-      const catchup = decideBrokerActivityCatchup(current, {
-        cursor: activityCursor(state.boundaryCursor),
-        coveredThrough: at(state.boundaryCoverage),
-      })
+      const catchup = decideBrokerActivityCatchup(
+        current,
+        {
+          cursor: activityCursor(state.boundaryCursor),
+          replayFromId: activityCursor(state.boundaryReplayFrom)!,
+          replayUntilId: activityCursor(state.boundaryReplayUntil)!,
+        },
+        state.boundaryEvidenceMatches,
+      )
       expect(Result.isSuccess(catchup)).toBe(state.canCatchup)
+      if (Result.isSuccess(catchup)) {
+        expect(catchup.success.replayFromId).toBe(activityCursor(state.boundaryReplayFrom))
+        expect(catchup.success.replayUntilId).toBe(activityCursor(state.boundaryReplayUntil))
+      }
 
       const heartbeat = decideBrokerActivityHeartbeat(current, {
         cursor: activityCursor(state.heartbeatCursor),

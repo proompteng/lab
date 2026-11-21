@@ -10,7 +10,7 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 2
-  # One verified process owns trade_updates and Activity SSE; reconnect emits durable gap-repair boundaries.
+  # One verified process owns trade_updates plus finite-prefix and long-lived Activity SSE connections.
   strategy:
     type: Recreate
   selector:

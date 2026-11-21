@@ -33,10 +33,11 @@ explicit target configuration; the research service's scoped database identity i
 
 `bayn-broker-feed` runs Dorvud's `BrokerFeedMain` for the existing Bayn PAPER account. It verifies `/v2/account`
 with the loaded `bayn-alpaca-auth` credentials before opening the authenticated `trade_updates` WebSocket and Activity
-SSE through `bayn-egress-proxy`. Each session boundary, trade update, activity, and Activity heartbeat is signed and
-sent directly to Restate's internal ingress with a stable event ID as the HTTP idempotency key. Dorvud reads the next
+SSE through `bayn-egress-proxy`. Each session boundary, trade update, activity, clean-EOF receipt and Activity heartbeat
+is signed and sent directly to Restate's internal ingress with a delivery ID bound to revision, credentials, session,
+handler and provider event. Dorvud reads the next
 source event only after Restate acknowledges durable retention. Collector readiness requires both streams to verify
-the account, finish the finite account-creation-to-cutoff Activity replay, establish their live provider session, and
+the account, finish a finite `since_id`/`until_id` publication range at clean EOF, establish their live provider session, and
 receive the matching durable Restate receipt; a listening HTTP port
 alone is insufficient.
 
@@ -44,7 +45,7 @@ alone is insufficient.
 flowchart TB
   Alpaca[Bayn PAPER account] -->|verified GET, trade_updates WS, Activity SSE| Dorvud[One Dorvud broker feed]
   Dorvud -->|signed lifecycle event| Notify[BaynBrokerObservations.notify]
-  Dorvud -->|signed activity, catch-up boundary or heartbeat| Activity[BaynBrokerActivities]
+  Dorvud -->|signed activity, clean-EOF receipt or heartbeat| Activity[BaynBrokerActivities]
   Notify --> Ledger[(Immutable broker_source_events)]
   Activity --> ActivityLedger[(Exact activity source, ULID cursor, heartbeat)]
   Ledger --> Project[BaynBrokerSourceProjector, exclusive per account]
@@ -74,7 +75,7 @@ conflicts fail closed into reconciliation. The serialized canonical snapshot rem
 accounting, cash, fees, corrections, gaps and provider convergence.
 
 Feed readiness also requires acknowledgements to name the exact promoted source revision and the
-`bayn.broker-source-projection.v1` and `bayn.broker-activity-projection.v1` contracts. A response from a retired handler fails the source session and the
+`bayn.broker-source-projection.v1` and `bayn.broker-activity-projection.v2` contracts. A response from a retired handler fails the source session and the
 next attempt emits a new session boundary instead of trusting a cached old acknowledgement. Migration 206 retains a
 separate append-only `broker_notification_receipts` sink only while Restate drains already accepted old-worker
 invocations. Current code has no caller for it. After live acceptance, the cleanup migration merges any late identities
@@ -161,10 +162,12 @@ If the new stream fails, deploy a reviewed streaming fix or restore a compatible
 through Kargo and verify canonical reconciliation against the same PAPER account. Do not start an ordinary polling path,
 repoint Torghut, reset financial history, or bypass promotion gates.
 
-The single feed now owns financial-completeness Activity SSE. PostgreSQL retains the exact source text, ULID cursor,
-`ref_id`/`previous_id` chain, first deterministic projection, finite replay cutoff, and signed live heartbeat. A
-heartbeat cannot certify historical completeness. Documented events outside the fill/fee view are retained as
-canonical-only evidence while REST account and position reads remain authoritative. A missing catch-up boundary,
+The single feed now owns financial-completeness Activity SSE. PostgreSQL retains the exact source text, publication
+ULID cursor, `ref_id`/`previous_id` chain, first deterministic projection, immutable finite-range receipts, source
+conflicts, late-publication coverage conflicts, and signed live heartbeat. A heartbeat cannot certify historical
+completeness. A publication inside a retained clean-EOF range poisons that proof and blocks final submission rather
+than being accepted as ordinary live tail. Documented events outside the fill/fee view are retained as
+canonical-only evidence while REST account and position reads remain authoritative. A missing clean-EOF receipt,
 stale heartbeat, unknown activity, cross-view correction, or failed invariant closes the durable view and falls back
 to canonical REST reconciliation; it does not skip the event or select a runner-up source. The provider contract and release boundaries are recorded in
 [durable broker event architecture](../../../docs/bayn/durable-broker-event-architecture.md). Until live equivalence is

@@ -5,6 +5,8 @@ import { Redacted, Result } from 'effect'
 
 import {
   brokerActivityVersion,
+  brokerActivityCompletionHash,
+  brokerActivityRangeRequestHash,
   projectBrokerActivity,
   verifyBrokerActivity,
   type BrokerActivityEvent,
@@ -152,14 +154,37 @@ describe('durable broker activities', () => {
 
   test('binds catchup coverage and live heartbeats to the durable cursor', () => {
     const receivedAt = '2026-11-21T16:00:01.000Z'
+    const replayFromId = cursor(0)
+    const replayUntilId = cursor(9)
+    const prefixHash = sha256('publication-prefix')
+    const rangeRequestHash = brokerActivityRangeRequestHash({
+      identityHash,
+      sessionId: session.sessionId,
+      requestId: session.requestId,
+      replayFromId,
+      replayUntilId,
+    })
+    const completionHash = brokerActivityCompletionHash({
+      rangeRequestHash,
+      cursor: cursor(4),
+      eventCount: 4,
+      prefixHash,
+    })
     const catchup = {
       _tag: 'CatchupComplete',
       schemaVersion: brokerActivityVersion,
-      eventId: sha256(`${identityHash}\nactivity-catchup\n${session.sessionId}\n${cursor(4)}\n${at}\n${receivedAt}`),
+      eventId: sha256(
+        `${identityHash}\nactivity-catchup\n${session.sessionId}\n${cursor(4)}\n${replayFromId}\n${replayUntilId}\n4\n${prefixHash}\n${rangeRequestHash}\n${completionHash}\n${receivedAt}`,
+      ),
       session,
       receivedAt,
       cursor: cursor(4),
-      coveredThrough: at,
+      replayFromId,
+      replayUntilId,
+      eventCount: 4,
+      prefixHash,
+      rangeRequestHash,
+      completionHash,
     } as const
     expect(verifyBrokerActivity(signed(catchup), connection, Date.parse(receivedAt))).toEqual(Result.succeed(catchup))
     const heartbeat = {
@@ -173,7 +198,7 @@ describe('durable broker activities', () => {
     expect(verifyBrokerActivity(signed(heartbeat), connection, Date.parse(receivedAt))).toEqual(
       Result.succeed(heartbeat),
     )
-    const changed = { ...catchup, coveredThrough: '2026-11-21T16:00:00.001Z' }
+    const changed = { ...catchup, replayFromId: cursor(1) }
     expect(Result.isFailure(verifyBrokerActivity(signed(changed), connection, Date.parse(changed.receivedAt)))).toBe(
       true,
     )

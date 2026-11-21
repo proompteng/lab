@@ -95,6 +95,63 @@ PostgreSQL owns execution evidence, TigerBeetle owns posted money, and the selec
 choice. A second cursor, selector, mutation loop, accounting projection, or executable compatibility path is a defect,
 not redundancy. Historical decoders may reproduce retained evidence but never start a current cycle.
 
+## End-to-end request and timing boundaries
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant I as Alpaca IEX WebSocket
+  participant D as Dorvud market owner
+  participant K as Kafka and Flink
+  participant W as Bayn projection worker
+  participant R as Restate controller
+  participant J as Jev proposal batch
+  participant S as Economic selector and risk
+  participant P as PostgreSQL writer fence
+  participant A as Alpaca order API
+  participant B as Broker account streams
+  participant C as Canonical verifier
+  participant T as TigerBeetle
+
+  I-->>D: bars, quotes and trades
+  D->>K: exact raw events
+  K-->>W: raw prefix plus versioned features
+  W->>R: coalesced marketChanged wake
+  R->>W: cut one immutable observation
+  W->>J: source-bound chart and numeric evidence
+  J-->>R: retained long and short proposals
+  Note over J,A: Retained request: 5.974 s Jev batch to physical dispatch
+  R->>S: select exactly one proposal or CASH
+  S->>P: commit decision, intent and risk evidence
+  P->>P: revalidate activity, reconciliation and authority under final writer fence
+  P->>A: physical order submit
+  A-->>P: broker acceptance
+  Note over P,A: Retained request: 77 ms dispatch to acceptance
+  B-->>D: trade_updates lifecycle event
+  D->>R: signed revision-bound delivery
+  R->>P: immutable lifecycle append and immediate projection
+  B-->>D: Activity publication event
+  D->>R: signed publication and delivery identities
+  R->>P: immutable financial append and observation revocation
+  P->>C: coalesced complete-history convergence
+  C->>T: post canonical money movement
+  Note over B,T: Retained request: 9.433 s last fill source to canonical, then 1.545 s to posting
+```
+
+Signal arrival through observation cutting has telemetry boundaries but no verified comparable p50/p95 claim yet.
+The retained request measured `SUBMIT_STARTED` to dispatch at 184 ms and dispatch to acceptance at 77 ms. Acceptance
+to the last canonical fill was 14.346 s; the nested 9.433 s label starts at the last fill source event, so it must not
+be added to the acceptance interval. The finite Activity range runs only at startup or recovery. Live heartbeat is a
+readiness lease, not an order step. Activity append shares the final-submit writer fence and enters the submit critical
+path only during real contention; that serialization prevents a stale fetched observation from authorizing a submit.
+A live publication inside a range already retained at clean EOF is not an ordinary append. It retains contradictory
+evidence, poisons coverage and forces canonical reconciliation before any later order can pass the final fence.
+
+Ordinary work is event-driven: market changes, inference completion and broker events send coalesced Restate wakes.
+Named freshness, retry, protection and close timers remain because they represent deadlines, not discovery polling.
+Canonical REST reads remain a safety and convergence path until live equivalence proves that the durable Activity
+prefix can assume more accounting work. They are not replaced by fabricated stream completeness.
+
 ## Intraday flow
 
 1. Restate invokes one bounded `advanceExecutionOnce` pass for the canonical account-binding hash.

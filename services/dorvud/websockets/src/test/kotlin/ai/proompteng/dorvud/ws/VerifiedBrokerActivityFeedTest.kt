@@ -24,9 +24,15 @@ import io.ktor.client.engine.cio.CIO as ClientCIO
 
 class VerifiedBrokerActivityFeedTest {
   private val accountId = "00000000-0000-4000-8000-000000000001"
-  private val sourceEventId = "00000000000000000000000001"
+  private val sourceEventId = "01KH7JBG000000000000000002"
   private val refId = "00000000-0000-4000-8000-000000000002"
   private val orderId = "00000000-0000-4000-8000-000000000003"
+
+  @Test
+  fun `constructs an inclusive publication frontier at the maximum ULID entropy`() {
+    assertEquals("0000000000ZZZZZZZZZZZZZZZZ", activityPublicationUpperFrontier(Instant.ofEpochMilli(0)))
+    assertEquals("01KH7JBG00ZZZZZZZZZZZZZZZZ", activityPublicationUpperFrontier(Instant.parse("2026-02-12T00:00:00Z")))
+  }
 
   @Test
   fun `persists each exact activity before readiness and resumes from the durable inclusive cursor`() =
@@ -53,11 +59,7 @@ class VerifiedBrokerActivityFeedTest {
                   .joinToString("&") { (key, values) -> "$key=${values.single()}" }
               call.response.header("x-request-id", "activity-request-${queries.size}")
               call.respondText(
-                if (call.request.queryParameters.contains("until")) {
-                  ": welcome to the Alpaca events\n\ndata: $raw\n\n"
-                } else {
-                  ": welcome to the Alpaca events\n\ndata: $raw\n\n: heartbeat\n\n"
-                },
+                ": welcome to the Alpaca events\n\ndata: $raw\n\n: heartbeat\n\n",
                 ContentType.parse("text/event-stream"),
               )
             }
@@ -67,7 +69,9 @@ class VerifiedBrokerActivityFeedTest {
       val client = HttpClient(ClientCIO) { install(HttpTimeout) }
       var cursor: String? = null
       var caughtUp = false
-      var coveredThrough: String? = null
+      var replayFromId: String? = null
+      var replayUntilId: String? = null
+      var completionHash: String? = null
       val protocolJson = Json { classDiscriminator = "_tag" }
       val connection =
         BrokerFeedConnection(
@@ -84,32 +88,66 @@ class VerifiedBrokerActivityFeedTest {
           connection,
           client,
           cursor = {
-            BrokerActivityCursorReceipt(cursor, caughtUp, coveredThrough, true, connection.sourceRevision)
+            BrokerActivityCursorReceipt(
+              cursor,
+              caughtUp,
+              replayFromId,
+              replayUntilId,
+              completionHash,
+              true,
+              connection.sourceRevision,
+            )
           },
-          publish = { key, eventId, signed ->
+          publish = { key, delivery, signed ->
             assertEquals(brokerFeedIdentityHash(accountId), key)
             val event = protocolJson.decodeFromString<BrokerActivityMessage>(signed.message)
             assertTrue(event is BrokerActivityMessage.Event)
-            assertEquals(eventId, event.eventId)
+            assertEquals(delivery.eventId, event.eventId)
             publications += event
             cursor = event.sourceEventId
-            BrokerActivityCursorReceipt(cursor, caughtUp, coveredThrough, true, connection.sourceRevision)
+            BrokerActivityCursorReceipt(
+              cursor,
+              caughtUp,
+              replayFromId,
+              replayUntilId,
+              completionHash,
+              true,
+              connection.sourceRevision,
+            )
           },
-          completeCatchup = { _, eventId, signed ->
+          completeCatchup = { _, delivery, signed ->
             val boundary = protocolJson.decodeFromString<BrokerActivityMessage>(signed.message)
             assertTrue(boundary is BrokerActivityMessage.CatchupComplete)
-            assertEquals(eventId, boundary.eventId)
+            assertEquals(delivery.eventId, boundary.eventId)
             assertEquals(cursor, boundary.cursor)
             caughtUp = true
-            coveredThrough = boundary.coveredThrough
-            BrokerActivityCursorReceipt(cursor, caughtUp, coveredThrough, true, connection.sourceRevision)
+            replayFromId = boundary.replayFromId
+            replayUntilId = boundary.replayUntilId
+            completionHash = boundary.completionHash
+            BrokerActivityCursorReceipt(
+              cursor,
+              caughtUp,
+              replayFromId,
+              replayUntilId,
+              completionHash,
+              true,
+              connection.sourceRevision,
+            )
           },
-          heartbeat = { _, eventId, signed ->
+          heartbeat = { _, delivery, signed ->
             val boundary = protocolJson.decodeFromString<BrokerActivityMessage>(signed.message)
             assertTrue(boundary is BrokerActivityMessage.Heartbeat)
-            assertEquals(eventId, boundary.eventId)
+            assertEquals(delivery.eventId, boundary.eventId)
             assertEquals(cursor, boundary.cursor)
-            BrokerActivityCursorReceipt(cursor, caughtUp, coveredThrough, true, connection.sourceRevision)
+            BrokerActivityCursorReceipt(
+              cursor,
+              caughtUp,
+              replayFromId,
+              replayUntilId,
+              completionHash,
+              true,
+              connection.sourceRevision,
+            )
           },
           now = { Instant.parse("2026-11-21T16:00:01Z") },
           newSessionId = { "activity-session-${sessions.incrementAndGet()}" },
@@ -120,7 +158,7 @@ class VerifiedBrokerActivityFeedTest {
         assertFailsWith<IllegalStateException> { feed.collect() }
         assertEquals(
           listOf(
-            "since=2026-07-22T16:32:23.149Z&until=2026-11-21T16:00:01.000Z",
+            "since_id=$ACTIVITY_HISTORY_REPLAY_FROM_ID&until_id=${activityPublicationUpperFrontier(Instant.parse("2026-11-21T15:59:56Z"))}",
             "since_id=$sourceEventId",
             "since_id=$sourceEventId",
           ),
@@ -139,13 +177,15 @@ class VerifiedBrokerActivityFeedTest {
     }
 
   @Test
-  fun `unfinished finite catchup replays from account creation without regressing its durable cursor`() =
+  fun `unfinished catchup replays from the fixed publication floor without regressing its durable cursor`() =
     runBlocking {
-      val olderSourceEventId = "00000000000000000000000000"
+      val olderSourceEventId = "01KH7JBG000000000000000001"
       val publications = AtomicInteger()
       val readiness = AtomicInteger()
       val raw =
         """{"activity_type":"TRD","event_id":"$olderSourceEventId","ref_id":"$refId","account_id":"$accountId","executed_at":"2026-11-21T16:00:00.123456789Z","price":"100.25","qty":"1","details":{"order_id":"$orderId","cum_qty":"1","leaves_qty":"0","symbol":"AAPL","side":"buy","execution_type":"fill","order_status":"filled"}}"""
+      val retainedRaw =
+        """{"activity_type":"TRD","event_id":"$sourceEventId","ref_id":"00000000-0000-4000-8000-000000000004","account_id":"$accountId","executed_at":"2026-11-21T16:00:00.223456789Z","price":"100.50","qty":"1","details":{"order_id":"$orderId","cum_qty":"2","leaves_qty":"0","symbol":"AAPL","side":"buy","execution_type":"fill","order_status":"filled"}}"""
       val server =
         embeddedServer(CIO, port = 0) {
           routing {
@@ -156,9 +196,10 @@ class VerifiedBrokerActivityFeedTest {
               )
             }
             get("/v2beta1/events/activities") {
-              call.response.header("x-request-id", "partial-catchup-request")
+              val catchup = call.request.queryParameters["until_id"] != null
+              call.response.header("x-request-id", if (catchup) "partial-catchup-request" else "live-request")
               call.respondText(
-                if (call.request.queryParameters.contains("until")) "data: $raw\n\n" else ": heartbeat\n\n",
+                if (catchup) "data: $raw\n\ndata: $retainedRaw\n\n" else ": heartbeat\n\n",
                 ContentType.parse("text/event-stream"),
               )
             }
@@ -168,7 +209,9 @@ class VerifiedBrokerActivityFeedTest {
       val client = HttpClient(ClientCIO) { install(HttpTimeout) }
       val protocolJson = Json { classDiscriminator = "_tag" }
       var caughtUp = false
-      var coveredThrough: String? = null
+      var replayFromId: String? = null
+      var replayUntilId: String? = null
+      var completionHash: String? = null
       val connection =
         BrokerFeedConnection(
           accountId = accountId,
@@ -180,7 +223,15 @@ class VerifiedBrokerActivityFeedTest {
           activityUrl = "http://127.0.0.1:$port/v2beta1/events/activities",
         )
       val receipt = {
-        BrokerActivityCursorReceipt(sourceEventId, caughtUp, coveredThrough, true, connection.sourceRevision)
+        BrokerActivityCursorReceipt(
+          sourceEventId,
+          caughtUp,
+          replayFromId,
+          replayUntilId,
+          completionHash,
+          true,
+          connection.sourceRevision,
+        )
       }
       val feed =
         VerifiedBrokerActivityFeed(
@@ -190,7 +241,7 @@ class VerifiedBrokerActivityFeedTest {
           publish = { _, _, signed ->
             val event = protocolJson.decodeFromString<BrokerActivityMessage>(signed.message)
             assertTrue(event is BrokerActivityMessage.Event)
-            assertEquals(olderSourceEventId, event.sourceEventId)
+            assertTrue(event.sourceEventId == olderSourceEventId || event.sourceEventId == sourceEventId)
             publications.incrementAndGet()
             receipt()
           },
@@ -199,7 +250,9 @@ class VerifiedBrokerActivityFeedTest {
             assertTrue(boundary is BrokerActivityMessage.CatchupComplete)
             assertEquals(sourceEventId, boundary.cursor)
             caughtUp = true
-            coveredThrough = boundary.coveredThrough
+            replayFromId = boundary.replayFromId
+            replayUntilId = boundary.replayUntilId
+            completionHash = boundary.completionHash
             receipt()
           },
           heartbeat = { _, _, _ -> receipt() },
@@ -208,8 +261,69 @@ class VerifiedBrokerActivityFeedTest {
         )
       try {
         assertFailsWith<IllegalStateException> { feed.collect() }
-        assertEquals(1, publications.get())
+        assertEquals(2, publications.get())
         assertEquals(1, readiness.get())
+      } finally {
+        client.close()
+        server.stop(0, 1000)
+      }
+    }
+
+  @Test
+  fun `does not promote a finite range heartbeat when the provider reports an error before clean EOF`() =
+    runBlocking {
+      val catchups = AtomicInteger()
+      val readiness = AtomicInteger()
+      val server =
+        embeddedServer(CIO, port = 0) {
+          routing {
+            get("/v2/account") {
+              call.respondText(
+                """{"id":"$accountId","created_at":"2026-07-22T16:32:23.149747Z"}""",
+                ContentType.Application.Json,
+              )
+            }
+            get("/v2beta1/events/activities") {
+              call.response.header("x-request-id", "failed-range-request")
+              call.respondText(
+                ": heartbeat\n\n: provider failed to replay the range\n\n",
+                ContentType.parse("text/event-stream"),
+              )
+            }
+          }
+        }.start(wait = false)
+      val port = server.resolvedConnectors().single().port
+      val client = HttpClient(ClientCIO) { install(HttpTimeout) }
+      val connection =
+        BrokerFeedConnection(
+          accountId = accountId,
+          keyId = "test-key",
+          secretKey = "test-secret",
+          sourceRevision = "a".repeat(40),
+          accountUrl = "http://127.0.0.1:$port/v2/account",
+          streamUrl = "ws://127.0.0.1:$port/unused",
+          activityUrl = "http://127.0.0.1:$port/v2beta1/events/activities",
+        )
+      val unavailable = BrokerActivityCursorReceipt(null, false, null, null, null, true, connection.sourceRevision)
+      val feed =
+        VerifiedBrokerActivityFeed(
+          connection,
+          client,
+          cursor = { unavailable },
+          publish = { _, _, _ -> unavailable },
+          completeCatchup = { _, _, _ ->
+            catchups.incrementAndGet()
+            unavailable
+          },
+          heartbeat = { _, _, _ -> unavailable },
+          now = { Instant.parse("2026-11-21T16:00:01Z") },
+          onReady = { readiness.incrementAndGet() },
+        )
+      try {
+        val failure = assertFailsWith<IllegalStateException> { feed.collect() }
+        assertEquals("broker activity stream reported lost data or an internal failure", failure.message)
+        assertEquals(0, catchups.get())
+        assertEquals(0, readiness.get())
       } finally {
         client.close()
         server.stop(0, 1000)
@@ -250,7 +364,7 @@ class VerifiedBrokerActivityFeedTest {
         )
       val unavailable = {
         durableCalls.incrementAndGet()
-        BrokerActivityCursorReceipt(null, false, null, false, connection.sourceRevision)
+        BrokerActivityCursorReceipt(null, false, null, null, null, false, connection.sourceRevision)
       }
       val feed =
         VerifiedBrokerActivityFeed(

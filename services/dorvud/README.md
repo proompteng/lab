@@ -20,12 +20,13 @@ and reconciliation. Dorvud does not grant trading authority or establish strateg
 The separate `bayn-broker-feed` image runs `ai.proompteng.dorvud.ws.BrokerFeedMain` from the websockets module.
 It uses Bayn's existing paper account secret and egress proxy. Before opening either source, it calls Alpaca's account
 endpoint with the loaded credentials and requires the returned account ID to match Bayn's configured account. It then
-authenticates the `trade_updates` WebSocket. A new Activity cursor first runs a finite
-`since=account.created_at` / `until=cutoff` replay and durably records that cutoff before opening the long-lived
-request. Later sessions resume from the retained `event_id` with `since_id`; an empty history resumes from the
-retained cutoff. Alpaca only exposes activities booked after February 11, 2026, so accounts created before February
-12 UTC fail before cursor access rather than being mislabeled complete. The WebSocket retains the original update JSON. Activity SSE retains its exact source text, content
-hash, ULID cursor, `ref_id`, and `previous_id`.
+authenticates the `trade_updates` WebSocket. A new Activity cursor first opens a finite publication-order range from
+the February 12 history floor with `since_id` through a clock-safe ULID `until_id`. Only clean EOF creates the signed
+range receipt. Dorvud then opens one long-lived Activity connection from the retained `event_id`, or from the proved
+upper frontier when the range was empty. Later sessions resume the retained cursor. Alpaca only exposes activities
+booked after February 11, 2026, so accounts created before February 12 UTC fail before cursor access rather than being
+mislabeled complete. The WebSocket retains the original update JSON. Activity SSE retains its exact source text,
+content hash, publication ULID, `ref_id`, and `previous_id`.
 
 ```mermaid
 flowchart TB
@@ -33,10 +34,10 @@ flowchart TB
   A --> H[Finite Activity replay to signed cutoff]
   H --> E[Live Activity SSE with durable since_id]
   W --> C[Signed SessionReady and TradeUpdate]
-  H --> F[Signed activity and catch-up boundary]
+  H --> F[Signed activity and clean-EOF receipt]
   E --> F[Signed activity and heartbeat]
-  C -->|direct HTTP plus stable idempotency key| R[Restate durable ingress]
-  F -->|direct HTTP plus stable idempotency key| R
+  C -->|direct HTTP plus revision-bound delivery ID| R[Restate durable ingress]
+  F -->|direct HTTP plus revision-bound delivery ID| R
   R --> S[Immutable source ledgers and durable cursor]
   S --> O[Immediate lifecycle projection and durable fill/fee view]
   R --> G[Serialized canonical gap reconciliation]
@@ -48,13 +49,18 @@ time. HMAC-SHA256 over the exact message bytes uses the existing broker secret. 
 checked against `fixtures/bayn-broker-notification-v1.json`, which contains synthetic credentials. Bayn verifies and
 persists the source before projection; Dorvud cannot grant account, risk or capital authority.
 
-Each source awaits a successful Restate receipt before reading its next event. Transient HTTP failures retry with the
-same idempotency key; a terminal response or exhausted connection ends only that source and reconnects it. Activity
-SSE historical completeness requires the finite account-creation-to-cutoff replay; a provider heartbeat cannot replace
-that proof. Live delivery resumes inclusively from the durable ULID, so replay must match the retained content hash. Corrections and busts
+Each source awaits a successful Restate receipt before reading its next event. Provider identity is the publication
+ULID plus exact content hash; economic lineage is `ref_id` plus `previous_id`; delivery identity additionally binds the
+source revision, credential hash, connection session, handler and provider event. A transient retry keeps that delivery
+identity, while a reconnect, credential rotation or revision creates a new one and cannot receive a cached predecessor
+response. A terminal response or exhausted connection ends only that source and reconnects it. Activity SSE historical
+completeness requires the finite publication range and clean EOF; a provider heartbeat proves only connection liveness.
+Live delivery resumes inclusively from the durable ULID, so replay must match the retained content hash. Corrections and busts
 reverse the `previous_id` activity through append-only projection rows. Signed provider heartbeats keep the durable
 view fresh without scheduling repeated reconciliation. Unknown activities, cross-view corrections, and slow-reader
-comments fail closed to the canonical REST path. Documented cash, transfer and corporate-action events are retained as canonical-only
+comments fail closed to the canonical REST path. Bayn also rejects an acknowledged live publication whose ULID falls
+inside the finite range already retained at clean EOF; Dorvud reconnects from the returned poisoned cursor without
+relabeling that contradiction as a new complete prefix. Documented cash, transfer and corporate-action events are retained as canonical-only
 evidence; they do not masquerade as a fill or fee projection. `/readyz` requires both sources and resets when either disconnects. `/metrics`
 exposes combined and per-source readiness, publications, and session failures without account labels.
 

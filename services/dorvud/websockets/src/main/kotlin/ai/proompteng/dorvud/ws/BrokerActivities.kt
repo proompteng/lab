@@ -25,10 +25,13 @@ import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-internal const val BROKER_ACTIVITY_VERSION = "bayn.broker-activity.v1"
-internal const val BROKER_ACTIVITY_PROJECTION_CONTRACT = "bayn.broker-activity-projection.v1"
+internal const val BROKER_ACTIVITY_VERSION = "bayn.broker-activity.v2"
+internal const val BROKER_ACTIVITY_PROJECTION_CONTRACT = "bayn.broker-activity-projection.v2"
 private const val MAXIMUM_ACTIVITY_CHARACTERS = 262_144
 private val ACTIVITY_HISTORY_AVAILABLE_FROM = Instant.parse("2026-02-12T00:00:00Z")
+internal const val ACTIVITY_HISTORY_REPLAY_FROM_ID = "01KH7JBG000000000000000000"
+private const val ACTIVITY_CATCHUP_CLOCK_SAFETY_SECONDS = 5L
+private val crockfordBase32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 private val activityEventId = Regex("[0-9A-HJKMNP-TV-Z]{26}")
 private val activityJson =
   Json {
@@ -79,7 +82,12 @@ internal sealed interface BrokerActivityMessage {
     override val session: VerifiedBrokerActivitySession,
     override val receivedAt: String,
     val cursor: String?,
-    val coveredThrough: String,
+    val replayFromId: String,
+    val replayUntilId: String,
+    val eventCount: Int,
+    val prefixHash: String,
+    val rangeRequestHash: String,
+    val completionHash: String,
     override val schemaVersion: String = BROKER_ACTIVITY_VERSION,
   ) : BrokerActivityMessage
 
@@ -104,7 +112,9 @@ internal data class SignedBrokerActivity(
 internal data class BrokerActivityCursorReceipt(
   val cursor: String?,
   val caughtUp: Boolean,
-  val coveredThrough: String?,
+  val replayFromId: String?,
+  val replayUntilId: String?,
+  val completionHash: String?,
   val fillFeeComplete: Boolean,
   val sourceRevision: String,
 )
@@ -148,18 +158,59 @@ private fun activityHeader(raw: String): ActivityHeader {
   )
 }
 
+internal fun activityPublicationUpperFrontier(at: Instant): String {
+  var milliseconds = at.toEpochMilli()
+  require(milliseconds >= 0) { "activity publication frontier predates the ULID epoch" }
+  val result = CharArray(26) { 'Z' }
+  for (index in 9 downTo 0) {
+    result[index] = crockfordBase32[(milliseconds and 31L).toInt()]
+    milliseconds = milliseconds ushr 5
+  }
+  check(milliseconds == 0L) { "activity publication frontier exceeds the ULID timestamp range" }
+  return result.concatToString()
+}
+
+private data class ActivityPublication(
+  val sourceEventId: String,
+  val sourceEventHash: String,
+)
+
+private fun activityPrefixHash(events: List<ActivityPublication>): String =
+  brokerFeedSha256(events.joinToString("\n\n") { "${it.sourceEventId}\n${it.sourceEventHash}" })
+
+private fun activityRangeRequestHash(
+  session: VerifiedBrokerActivitySession,
+  replayFromId: String,
+  replayUntilId: String,
+): String =
+  brokerFeedSha256(
+    "${session.identityHash}\n${session.sessionId}\n${session.requestId}\n$replayFromId\n$replayUntilId",
+  )
+
+private fun activityCompletionHash(
+  rangeRequestHash: String,
+  cursor: String?,
+  eventCount: Int,
+  prefixHash: String,
+): String = brokerFeedSha256("$rangeRequestHash\n${cursor ?: "empty"}\n$eventCount\n$prefixHash\nclean-eof")
+
 private data class ActivityStreamResult(
   val cursor: String?,
   val session: VerifiedBrokerActivitySession,
+  val publications: List<ActivityPublication>,
 )
 
 internal class VerifiedBrokerActivityFeed(
   private val connection: BrokerFeedConnection,
   private val client: HttpClient,
   private val cursor: suspend (String) -> BrokerActivityCursorReceipt,
-  private val publish: suspend (String, String, SignedBrokerActivity) -> BrokerActivityCursorReceipt,
-  private val completeCatchup: suspend (String, String, SignedBrokerActivity) -> BrokerActivityCursorReceipt,
-  private val heartbeat: suspend (String, String, SignedBrokerActivity) -> BrokerActivityCursorReceipt,
+  private val publish: suspend (String, BrokerDeliveryIdentity, SignedBrokerActivity) -> BrokerActivityCursorReceipt,
+  private val completeCatchup: suspend (
+    String,
+    BrokerDeliveryIdentity,
+    SignedBrokerActivity,
+  ) -> BrokerActivityCursorReceipt,
+  private val heartbeat: suspend (String, BrokerDeliveryIdentity, SignedBrokerActivity) -> BrokerActivityCursorReceipt,
   private val now: () -> Instant = Instant::now,
   private val newSessionId: () -> String = { UUID.randomUUID().toString() },
   private val onReady: () -> Unit = {},
@@ -188,50 +239,89 @@ internal class VerifiedBrokerActivityFeed(
     val identityHash = brokerFeedIdentityHash(connection.accountId)
     var retained = cursor(identityHash)
     check(retained.sourceRevision == connection.sourceRevision) { "broker activity cursor source revision mismatch" }
-    var currentCursor = retained.cursor
     val url = Url(connection.activityUrl)
-
     if (!retained.caughtUp) {
-      val coveredThrough = now()
-      val historicalEndpoint =
+      val replayFromId = ACTIVITY_HISTORY_REPLAY_FROM_ID
+      val replayUntilId =
+        activityPublicationUpperFrontier(verifiedAt.minusSeconds(ACTIVITY_CATCHUP_CLOCK_SAFETY_SECONDS))
+      check(retained.cursor == null || checkNotNull(retained.cursor) <= replayUntilId) {
+        "broker activity publication clock regressed behind the durable cursor"
+      }
+      val catchupEndpoint =
         URLBuilder(url)
           .apply {
-            parameters.append("since", activityTime.format(accountCreatedAt))
-            parameters.append("until", activityTime.format(coveredThrough))
+            parameters.append("since_id", replayFromId)
+            parameters.append("until_id", replayUntilId)
           }.build()
-      val result = consume(historicalEndpoint, identityHash, verifiedAt, currentCursor, live = false)
-      currentCursor = result.cursor
+      val result =
+        withTimeout(120_000) {
+          consume(
+            catchupEndpoint,
+            identityHash,
+            verifiedAt,
+            retained.cursor,
+            replayFromId,
+            replayUntilId,
+          )
+        }
+      check(result.publications.lastOrNull()?.sourceEventId == result.cursor) {
+        "broker activity range completion does not match the retained publication cursor"
+      }
+      val prefixHash = activityPrefixHash(result.publications)
+      val rangeRequestHash = activityRangeRequestHash(result.session, replayFromId, replayUntilId)
+      val completionHash =
+        activityCompletionHash(rangeRequestHash, result.cursor, result.publications.size, prefixHash)
       val receivedAt = activityTime.format(now())
-      val coverage = activityTime.format(coveredThrough)
       val eventId =
         brokerFeedSha256(
-          "$identityHash\nactivity-catchup\n${result.session.sessionId}\n${currentCursor ?: "empty"}\n$coverage\n$receivedAt",
+          "$identityHash\nactivity-catchup\n${result.session.sessionId}\n${result.cursor ?: "empty"}\n" +
+            "$replayFromId\n$replayUntilId\n${result.publications.size}\n$prefixHash\n" +
+            "$rangeRequestHash\n$completionHash\n$receivedAt",
         )
       val boundary =
         BrokerActivityMessage.CatchupComplete(
           eventId = eventId,
           session = result.session,
           receivedAt = receivedAt,
-          cursor = currentCursor,
-          coveredThrough = coverage,
+          cursor = result.cursor,
+          replayFromId = replayFromId,
+          replayUntilId = replayUntilId,
+          eventCount = result.publications.size,
+          prefixHash = prefixHash,
+          rangeRequestHash = rangeRequestHash,
+          completionHash = completionHash,
         )
-      retained = completeCatchup(identityHash, eventId, signBrokerActivity(boundary, connection.secretKey))
-      check(retained.cursor == currentCursor && retained.caughtUp && retained.coveredThrough == coverage) {
-        "broker activity catchup receipt did not retain the complete historical boundary"
+      retained =
+        completeCatchup(
+          identityHash,
+          brokerDeliveryIdentity(
+            connection.sourceRevision,
+            result.session.credentialHash,
+            result.session.sessionId,
+            "catchup",
+            eventId,
+          ),
+          signBrokerActivity(boundary, connection.secretKey),
+        )
+      check(
+        retained.cursor == result.cursor &&
+          retained.caughtUp &&
+          retained.replayFromId == replayFromId &&
+          retained.replayUntilId == replayUntilId &&
+          retained.completionHash == completionHash,
+      ) {
+        "broker activity catchup receipt did not retain the proved publication range"
       }
     }
 
-    check(retained.caughtUp) { "broker activity historical catchup is incomplete" }
+    check(retained.caughtUp) { "broker activity publication catchup is incomplete" }
+    val resumeFromId = retained.cursor ?: checkNotNull(retained.replayUntilId)
     val liveEndpoint =
       URLBuilder(url)
         .apply {
-          if (currentCursor === null) {
-            parameters.append("since", checkNotNull(retained.coveredThrough))
-          } else {
-            parameters.append("since_id", checkNotNull(currentCursor))
-          }
+          parameters.append("since_id", resumeFromId)
         }.build()
-    consume(liveEndpoint, identityHash, verifiedAt, currentCursor, live = true)
+    consume(liveEndpoint, identityHash, verifiedAt, retained.cursor, resumeFromId, null)
   }
 
   private suspend fun consume(
@@ -239,7 +329,8 @@ internal class VerifiedBrokerActivityFeed(
     identityHash: String,
     verifiedAt: Instant,
     initialCursor: String?,
-    live: Boolean,
+    streamFromId: String,
+    finiteUntilId: String?,
   ): ActivityStreamResult =
     client
       .prepareGet(endpoint) {
@@ -269,17 +360,18 @@ internal class VerifiedBrokerActivityFeed(
             requestId = requestId,
           )
         val data = ArrayList<String>()
+        val publications = ArrayList<ActivityPublication>()
         var characters = 0
         var sessionReady = false
         var currentCursor = initialCursor
-        var lastStreamCursor = if (live) initialCursor else null
+        var lastStreamCursor = streamFromId
         val channel = stream.bodyAsChannel()
         while (true) {
           val line = withTimeout(30_000) { channel.readUTF8Line() }
           if (line == null) {
-            check(!live) { "broker activity live stream ended" }
-            check(data.isEmpty()) { "broker activity historical stream ended inside an event" }
-            return@execute ActivityStreamResult(currentCursor, session)
+            check(finiteUntilId != null) { "broker activity live stream ended" }
+            check(data.isEmpty()) { "broker activity finite range ended inside an incomplete event" }
+            return@execute ActivityStreamResult(currentCursor, session, publications)
           }
           when {
             line.isEmpty() -> {
@@ -291,8 +383,11 @@ internal class VerifiedBrokerActivityFeed(
                 check(header.accountId == null || header.accountId == connection.accountId) {
                   "broker activity belongs to another account"
                 }
-                check(lastStreamCursor == null || header.sourceEventId >= checkNotNull(lastStreamCursor)) {
+                check(header.sourceEventId >= lastStreamCursor) {
                   "broker activity cursor regressed"
+                }
+                check(finiteUntilId == null || header.sourceEventId <= finiteUntilId) {
+                  "broker activity finite range exceeded its publication boundary"
                 }
                 lastStreamCursor = header.sourceEventId
                 val contentHash = brokerFeedSha256(raw)
@@ -309,15 +404,27 @@ internal class VerifiedBrokerActivityFeed(
                     activityType = header.activityType,
                     activityJson = raw,
                   )
-                val retained = publish(identityHash, eventId, signBrokerActivity(event, connection.secretKey))
+                val retained =
+                  publish(
+                    identityHash,
+                    brokerDeliveryIdentity(
+                      connection.sourceRevision,
+                      session.credentialHash,
+                      session.sessionId,
+                      "ingest",
+                      eventId,
+                    ),
+                    signBrokerActivity(event, connection.secretKey),
+                  )
                 check(checkNotNull(retained.cursor) >= header.sourceEventId) {
                   "broker activity receipt did not cover its source event"
                 }
                 currentCursor = retained.cursor
+                if (finiteUntilId != null) publications += ActivityPublication(header.sourceEventId, contentHash)
               }
             }
             line == ": heartbeat" || line == ":heartbeat" -> {
-              if (live) {
+              if (finiteUntilId == null) {
                 val receivedAt = activityTime.format(now())
                 val eventId =
                   brokerFeedSha256(
@@ -330,7 +437,18 @@ internal class VerifiedBrokerActivityFeed(
                     receivedAt = receivedAt,
                     cursor = currentCursor,
                   )
-                val retained = heartbeat(identityHash, eventId, signBrokerActivity(boundary, connection.secretKey))
+                val retained =
+                  heartbeat(
+                    identityHash,
+                    brokerDeliveryIdentity(
+                      connection.sourceRevision,
+                      session.credentialHash,
+                      session.sessionId,
+                      "heartbeat",
+                      eventId,
+                    ),
+                    signBrokerActivity(boundary, connection.secretKey),
+                  )
                 check(retained.cursor == currentCursor && retained.caughtUp) {
                   "broker activity heartbeat did not cover a caught-up durable prefix"
                 }
@@ -351,6 +469,7 @@ internal class VerifiedBrokerActivityFeed(
             else -> error("broker activity stream sent an unsupported field")
           }
         }
-        error("broker activity stream loop terminated unexpectedly")
+        @Suppress("UNREACHABLE_CODE")
+        error("broker activity stream loop terminated without a result")
       }
 }

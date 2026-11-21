@@ -24,6 +24,7 @@ import { ValkeyCache } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerNotificationSchema, type BrokerNotification } from '../broker/notifications'
+import { acquireExecutionWriterFence } from '../execution/writer-fence'
 import {
   BrokerSourceProjectionReceiptSchema,
   type BrokerSourceProjectionReceipt,
@@ -31,19 +32,25 @@ import {
 import {
   FillActivitySchema,
   brokerActivityCursorIsReady,
+  brokerActivityCompletionHash,
   brokerActivityHeartbeatFreshnessMs,
+  brokerActivityPrefixEvidence,
   brokerActivityProjectionContract,
+  brokerActivityRangeRequestHash,
   decideBrokerActivityCatchup,
   decideBrokerActivityEvent,
   decideBrokerActivityHeartbeat,
   type AccountActivityCut,
+  type BrokerActivityCatchupResult,
   type BrokerActivityCatchupComplete,
   type BrokerActivityCursorState,
   type BrokerActivityEvent,
   type BrokerActivityHeartbeat,
   type BrokerActivityHeartbeatReceipt,
   type BrokerActivityProjection,
+  type BrokerActivityRecordResult,
   type BrokerActivityReceipt,
+  type BrokerActivityPersistenceResult,
 } from '../broker/activities'
 
 const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes', {
@@ -57,13 +64,22 @@ const ActivityCursorRows = Schema.Array(
     cursor: Schema.NullOr(Schema.String),
     sourceRevision: Schema.String,
     caughtUp: Schema.Boolean,
-    coveredThrough: Schema.NullOr(UtcInstantSchema),
+    replayFromId: Schema.NullOr(Schema.String),
+    replayUntilId: Schema.NullOr(Schema.String),
+    bootstrapEventCount: Schema.NullOr(Schema.BigInt),
+    bootstrapPrefixHash: Schema.NullOr(Schema.String),
+    rangeRequestHash: Schema.NullOr(Schema.String),
+    completionHash: Schema.NullOr(Schema.String),
     fillFeeComplete: Schema.Boolean,
     fresh: Schema.Boolean,
     sessionId: Schema.NullOr(Schema.String),
     requestId: Schema.NullOr(Schema.String),
   }),
 ).check(Schema.isMaxLength(1))
+
+const ActivityOwnerRows = Schema.Array(Schema.Struct({ sourceRevision: Schema.String })).check(Schema.isMaxLength(1))
+
+const ActivityPrefixRows = Schema.Array(Schema.Struct({ sourceEventId: Schema.String, sourceEventHash: Schema.String }))
 
 const ActivityProjectionRows = Schema.Array(
   Schema.Struct({
@@ -237,17 +253,21 @@ export const makeBrokerObservationStore = (
 
   const activate = (nextPollNotBeforeMs: number) =>
     run(
-      sql`
-    INSERT INTO broker_observations (account_id, source_revision, next_poll_not_before)
-    VALUES (${accountId}, ${sourceRevision}, to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
-    ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
-      generation = broker_observations.generation + 1, available = false,
-      poll_started_at = NULL, notification_fence_at = NULL, financial_reconciliation_fence_at = NULL,
-      observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
-      protection_read_expires_at = NULL, protection_read_cost_ms = NULL, protection_read_claim_id = NULL,
-      next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
-          to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
-  `.pipe(Effect.asVoid),
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* acquireExecutionWriterFence(sql)
+          yield* sql`
+            INSERT INTO broker_observations (account_id, source_revision, next_poll_not_before)
+            VALUES (${accountId}, ${sourceRevision}, to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
+            ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
+              generation = broker_observations.generation + 1, available = false,
+              poll_started_at = NULL, notification_fence_at = NULL, financial_reconciliation_fence_at = NULL,
+              observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, state_hash = NULL,
+              protection_read_expires_at = NULL, protection_read_cost_ms = NULL, protection_read_claim_id = NULL,
+              next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
+                to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))`
+        }),
+      ),
     )
   const invalidate = run(
     sql`
@@ -292,21 +312,35 @@ export const makeBrokerObservationStore = (
       ),
     )
   const cursorRows = sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
-      caught_up AS "caughtUp",
-      CASE WHEN covered_through_at IS NULL THEN NULL
-        ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+      (coverage_status = 'COMPLETE') AS "caughtUp",
+      replay_from_id AS "replayFromId",
+      replay_until_id AS "replayUntilId", bootstrap_event_count AS "bootstrapEventCount",
+      bootstrap_prefix_hash AS "bootstrapPrefixHash", range_request_hash AS "rangeRequestHash",
+      completion_hash AS "completionHash",
       fill_fee_complete AS "fillFeeComplete",
       heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
       session_id AS "sessionId", request_id AS "requestId"
     FROM broker_activity_cursors WHERE account_id = ${accountId}`.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(ActivityCursorRows, strictParseOptions)),
   )
+  const activityOwnerRows = sql`SELECT source_revision AS "sourceRevision"
+    FROM broker_observations WHERE account_id = ${accountId}`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ActivityOwnerRows, strictParseOptions)),
+  )
+  const retiredActivityRevision = (rows: readonly { readonly sourceRevision: string }[]) => {
+    const activeSourceRevision = rows[0]?.sourceRevision ?? null
+    return activeSourceRevision === null || activeSourceRevision === sourceRevision
+      ? undefined
+      : ({ _tag: 'RetiredRevision', activeSourceRevision } as const)
+  }
   const readActivityCursor: Effect.Effect<BrokerActivityCursorState, BrokerReadError> = run(
     cursorRows.pipe(
       Effect.map((rows) => ({
         cursor: rows[0]?.cursor ?? null,
         caughtUp: rows[0]?.caughtUp ?? false,
-        coveredThrough: rows[0]?.coveredThrough ?? null,
+        replayFromId: rows[0]?.replayFromId ?? null,
+        replayUntilId: rows[0]?.replayUntilId ?? null,
+        completionHash: rows[0]?.completionHash ?? null,
         fillFeeComplete: rows[0]?.fillFeeComplete ?? true,
         sourceRevision,
       })),
@@ -320,16 +354,41 @@ export const makeBrokerObservationStore = (
       Effect.flatMap(Schema.decodeUnknownEffect(ActivityProjectionRows, strictParseOptions)),
       Effect.map((rows) => rows[0]),
     )
+  const activityPrefixRows = (replayFromId: string, replayUntilId: string) =>
+    sql`SELECT source_event_id AS "sourceEventId", source_event_hash AS "sourceEventHash"
+      FROM broker_activity_events
+      WHERE account_id = ${accountId}
+        AND source_event_id >= ${replayFromId}
+        AND source_event_id <= ${replayUntilId}
+      ORDER BY source_event_id COLLATE "C"`.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(ActivityPrefixRows, strictParseOptions)),
+    )
+  const activityCoveragePoisonedBy = (transportEventId: string) =>
+    sql`SELECT EXISTS (
+        SELECT 1 FROM broker_activity_coverage_receipts
+        WHERE account_id = ${accountId} AND transport_event_id = ${transportEventId}
+          AND status = 'POISONED'
+      ) AS poisoned`.pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ poisoned: Schema.Boolean })]), strictParseOptions),
+      ),
+      Effect.map(([row]) => row.poisoned),
+    )
   const recordActivity = (event: BrokerActivityEvent, requested: BrokerActivityProjection) =>
     run(
       sql.withTransaction(
         Effect.gen(function* () {
+          yield* acquireExecutionWriterFence(sql)
+          const retired = retiredActivityRevision(yield* activityOwnerRows)
+          if (retired !== undefined) return retired
           yield* sql`INSERT INTO broker_activity_cursors(account_id,source_revision)
             VALUES (${accountId},${sourceRevision}) ON CONFLICT (account_id) DO NOTHING`
           const locked = yield* sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
-              caught_up AS "caughtUp",
-              CASE WHEN covered_through_at IS NULL THEN NULL
-                ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+              (coverage_status = 'COMPLETE') AS "caughtUp",
+              replay_from_id AS "replayFromId",
+              replay_until_id AS "replayUntilId", bootstrap_event_count AS "bootstrapEventCount",
+              bootstrap_prefix_hash AS "bootstrapPrefixHash", range_request_hash AS "rangeRequestHash",
+              completion_hash AS "completionHash",
               fill_fee_complete AS "fillFeeComplete",
               heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
               session_id AS "sessionId", request_id AS "requestId"
@@ -343,23 +402,47 @@ export const makeBrokerObservationStore = (
               ? yield* retainedActivityProjection(event.sourceEventId)
               : undefined
           const admission = decideBrokerActivityEvent(current, event, retained?.sourceEventHash, true)
-          if (Result.isFailure(admission))
-            return yield* observationUnavailable('Activity replay regressed or changed its retained source event')
+          if (Result.isFailure(admission)) {
+            const inserted = yield* sql`INSERT INTO broker_activity_source_conflicts(
+              account_id,source_event_id,retained_source_event_hash,conflicting_source_event_hash,
+              transport_event_id,source_revision,session_id,request_id,received_at,activity_json
+            ) VALUES (
+              ${accountId},${event.sourceEventId},${retained?.sourceEventHash ?? null},${event.contentHash},
+              ${event.eventId},${sourceRevision},${event.session.sessionId},${event.session.requestId},
+              ${event.receivedAt}::timestamptz,${event.activityJson}
+            ) ON CONFLICT (account_id,source_event_id,conflicting_source_event_hash) DO NOTHING
+              RETURNING source_event_id`
+            if (inserted.length === 1) {
+              yield* sql`UPDATE broker_activity_cursors SET fill_fee_complete = false,
+                  session_id = NULL, request_id = NULL, heartbeat_at = NULL, updated_at = clock_timestamp()
+                WHERE account_id = ${accountId}`
+              yield* sql`UPDATE broker_observations SET generation = generation + 1, available = false
+                WHERE account_id = ${accountId}`
+            }
+            return { _tag: 'SourceConflict', eventId: event.eventId } as const
+          }
           if (admission.success._tag === 'Replay') {
             if (retained === undefined)
               return yield* observationUnavailable('Activity replay is missing its retained projection')
+            if (yield* activityCoveragePoisonedBy(event.eventId))
+              return { _tag: 'CoverageConflict', eventId: event.eventId } as const
             return {
-              accepted: true,
-              eventId: event.eventId,
-              cursor: current.cursor,
-              caughtUp: current.caughtUp,
-              coveredThrough: current.coveredThrough,
-              sourceRevision,
-              fillFeeComplete: current.fillFeeComplete,
-              replayed: true,
-              projection: activityProjectionReceipt(retained.projection),
-              projectionContract: brokerActivityProjectionContract,
-            } as BrokerActivityReceipt
+              _tag: 'Accepted',
+              receipt: {
+                accepted: true,
+                eventId: event.eventId,
+                cursor: current.cursor,
+                caughtUp: current.caughtUp,
+                replayFromId: current.replayFromId,
+                replayUntilId: current.replayUntilId,
+                completionHash: current.completionHash,
+                sourceRevision,
+                fillFeeComplete: current.fillFeeComplete,
+                replayed: true,
+                projection: activityProjectionReceipt(retained.projection),
+                projectionContract: brokerActivityProjectionContract,
+              },
+            } satisfies BrokerActivityRecordResult
           }
 
           yield* sql`INSERT INTO broker_activity_events(
@@ -454,7 +537,53 @@ export const makeBrokerObservationStore = (
           const append = decideBrokerActivityEvent(current, event, undefined, projection._tag !== 'ReconcileRequired')
           if (Result.isFailure(append) || append.success._tag !== 'Append')
             return yield* observationUnavailable('Activity append no longer advances the durable cursor')
-          const { fillFeeComplete, preserveHeartbeat } = append.success
+          const { fillFeeComplete, invalidatesCoverage, preserveHeartbeat } = append.success
+          yield* sql`UPDATE broker_observations SET generation = generation + 1, available = false
+            WHERE account_id = ${accountId}`
+          if (invalidatesCoverage) {
+            const { replayFromId, replayUntilId, bootstrapEventCount, bootstrapPrefixHash, rangeRequestHash } = current
+            if (
+              replayFromId === null ||
+              replayUntilId === null ||
+              bootstrapEventCount === null ||
+              bootstrapPrefixHash === null ||
+              rangeRequestHash === null ||
+              current.completionHash === null
+            )
+              return yield* observationUnavailable('Complete activity coverage has no retained proof')
+            const prefixRows = yield* activityPrefixRows(replayFromId, replayUntilId)
+            const evidence = brokerActivityPrefixEvidence(prefixRows)
+            const observedCursor = prefixRows.at(-1)?.sourceEventId ?? null
+            const observedCompletionHash = brokerActivityCompletionHash({
+              rangeRequestHash,
+              cursor: observedCursor,
+              eventCount: evidence.eventCount,
+              prefixHash: evidence.prefixHash,
+            })
+            yield* sql`INSERT INTO broker_activity_coverage_receipts(
+                account_id,transport_event_id,source_revision,session_id,request_id,received_at,cursor,
+                replay_from_id,replay_until_id,event_count,prefix_hash,range_request_hash,completion_hash,
+                observed_cursor,observed_event_count,observed_prefix_hash,observed_range_request_hash,
+                observed_completion_hash,status,reason
+              ) VALUES (
+                ${accountId},${event.eventId},${sourceRevision},${event.session.sessionId},
+                ${event.session.requestId},${event.receivedAt}::timestamptz,${current.cursor},
+                ${replayFromId},${replayUntilId},${bootstrapEventCount},${bootstrapPrefixHash},
+                ${rangeRequestHash},${current.completionHash},${observedCursor},${evidence.eventCount},
+                ${evidence.prefixHash},${rangeRequestHash},${observedCompletionHash},'POISONED','LATE_PUBLICATION'
+              ) ON CONFLICT (account_id,transport_event_id) DO NOTHING`
+            yield* sql`UPDATE broker_activity_cursors SET
+                source_revision = ${sourceRevision}, last_source_event_id = ${event.sourceEventId},
+                last_source_event_hash = ${event.contentHash},
+                last_activity_received_at = ${event.receivedAt}::timestamptz,
+                coverage_status = 'POISONED', replay_from_id = NULL, replay_until_id = NULL,
+                bootstrap_session_id = NULL, bootstrap_request_id = NULL, bootstrap_event_count = NULL,
+                bootstrap_prefix_hash = NULL, range_request_hash = NULL, completion_hash = NULL,
+                fill_fee_complete = ${fillFeeComplete}, session_id = NULL, request_id = NULL,
+                heartbeat_at = NULL, updated_at = clock_timestamp()
+              WHERE account_id = ${accountId}`
+            return { _tag: 'CoverageConflict', eventId: event.eventId } as const
+          }
           yield* sql`UPDATE broker_activity_cursors SET
               source_revision = ${sourceRevision}, last_source_event_id = ${event.sourceEventId},
               last_source_event_hash = ${event.contentHash}, last_activity_received_at = ${event.receivedAt}::timestamptz,
@@ -471,17 +600,22 @@ export const makeBrokerObservationStore = (
               updated_at = clock_timestamp()
             WHERE account_id = ${accountId}`
           return {
-            accepted: true,
-            eventId: event.eventId,
-            cursor: event.sourceEventId,
-            caughtUp: current.caughtUp,
-            coveredThrough: current.coveredThrough,
-            sourceRevision,
-            fillFeeComplete,
-            replayed: false,
-            projection: projection._tag,
-            projectionContract: brokerActivityProjectionContract,
-          } satisfies BrokerActivityReceipt
+            _tag: 'Accepted',
+            receipt: {
+              accepted: true,
+              eventId: event.eventId,
+              cursor: event.sourceEventId,
+              caughtUp: current.caughtUp,
+              replayFromId: current.replayFromId,
+              replayUntilId: current.replayUntilId,
+              completionHash: current.completionHash,
+              sourceRevision,
+              fillFeeComplete,
+              replayed: false,
+              projection: projection._tag,
+              projectionContract: brokerActivityProjectionContract,
+            },
+          } satisfies BrokerActivityRecordResult
         }),
       ),
     )
@@ -489,12 +623,17 @@ export const makeBrokerObservationStore = (
     run(
       sql.withTransaction(
         Effect.gen(function* () {
+          yield* acquireExecutionWriterFence(sql)
+          const retired = retiredActivityRevision(yield* activityOwnerRows)
+          if (retired !== undefined) return retired
           yield* sql`INSERT INTO broker_activity_cursors(account_id,source_revision)
             VALUES (${accountId},${sourceRevision}) ON CONFLICT (account_id) DO NOTHING`
           const locked = yield* sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
-              caught_up AS "caughtUp",
-              CASE WHEN covered_through_at IS NULL THEN NULL
-                ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+              (coverage_status = 'COMPLETE') AS "caughtUp",
+              replay_from_id AS "replayFromId",
+              replay_until_id AS "replayUntilId", bootstrap_event_count AS "bootstrapEventCount",
+              bootstrap_prefix_hash AS "bootstrapPrefixHash", range_request_hash AS "rangeRequestHash",
+              completion_hash AS "completionHash",
               fill_fee_complete AS "fillFeeComplete",
               heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
               session_id AS "sessionId", request_id AS "requestId"
@@ -503,24 +642,80 @@ export const makeBrokerObservationStore = (
           )
           const current = locked[0]
           if (current === undefined) return yield* observationUnavailable('Durable activity cursor is absent')
-          const admission = decideBrokerActivityCatchup(current, boundary)
-          if (Result.isFailure(admission))
-            return yield* observationUnavailable(
-              admission.failure === 'CATCHUP_CURSOR_MISMATCH'
-                ? 'Activity catchup does not cover the durable cursor'
-                : 'Activity catchup conflicts with the retained historical boundary',
-            )
+          const prefixRows = yield* activityPrefixRows(boundary.replayFromId, boundary.replayUntilId)
+          const evidence = brokerActivityPrefixEvidence(prefixRows)
+          const rangeRequestHash = brokerActivityRangeRequestHash({
+            identityHash: boundary.session.identityHash,
+            sessionId: boundary.session.sessionId,
+            requestId: boundary.session.requestId,
+            replayFromId: boundary.replayFromId,
+            replayUntilId: boundary.replayUntilId,
+          })
+          const completionHash = brokerActivityCompletionHash({
+            rangeRequestHash,
+            cursor: boundary.cursor,
+            eventCount: evidence.eventCount,
+            prefixHash: evidence.prefixHash,
+          })
+          const last = prefixRows.at(-1)?.sourceEventId ?? null
+          const evidenceMatches =
+            last === boundary.cursor &&
+            evidence.eventCount === boundary.eventCount &&
+            evidence.prefixHash === boundary.prefixHash &&
+            rangeRequestHash === boundary.rangeRequestHash &&
+            completionHash === boundary.completionHash
+          const admission = decideBrokerActivityCatchup(current, boundary, evidenceMatches)
+          const coverageReceipt = yield* sql`INSERT INTO broker_activity_coverage_receipts(
+              account_id,transport_event_id,source_revision,session_id,request_id,received_at,cursor,
+              replay_from_id,replay_until_id,event_count,prefix_hash,range_request_hash,completion_hash,
+              observed_cursor,observed_event_count,observed_prefix_hash,observed_range_request_hash,
+              observed_completion_hash,status,reason
+            ) VALUES (
+              ${accountId},${boundary.eventId},${sourceRevision},${boundary.session.sessionId},
+              ${boundary.session.requestId},${boundary.receivedAt}::timestamptz,${boundary.cursor},
+              ${boundary.replayFromId},${boundary.replayUntilId},${boundary.eventCount},${boundary.prefixHash},
+              ${boundary.rangeRequestHash},${boundary.completionHash},${last},${evidence.eventCount},
+              ${evidence.prefixHash},${rangeRequestHash},${completionHash},
+              ${Result.isSuccess(admission) ? 'COMPLETE' : 'POISONED'},
+              ${Result.isFailure(admission) ? admission.failure : null}
+            ) ON CONFLICT (account_id,transport_event_id) DO NOTHING
+              RETURNING transport_event_id`
+          if (Result.isFailure(admission)) {
+            if (coverageReceipt.length === 1 || current.caughtUp) {
+              yield* sql`UPDATE broker_activity_cursors SET source_revision = ${sourceRevision},
+                  coverage_status = 'POISONED', replay_from_id = NULL, replay_until_id = NULL,
+                  bootstrap_session_id = NULL, bootstrap_request_id = NULL, bootstrap_event_count = NULL,
+                  bootstrap_prefix_hash = NULL, range_request_hash = NULL, completion_hash = NULL,
+                  session_id = NULL, request_id = NULL, heartbeat_at = NULL,
+                  updated_at = clock_timestamp()
+                WHERE account_id = ${accountId}`
+              yield* sql`UPDATE broker_observations SET generation = generation + 1, available = false
+                WHERE account_id = ${accountId}`
+            }
+            return { _tag: 'CoverageConflict', eventId: boundary.eventId } as const
+          }
           yield* sql`UPDATE broker_activity_cursors SET source_revision = ${sourceRevision},
-              caught_up = true, covered_through_at = ${admission.success.coveredThrough}::timestamptz,
+              coverage_status = 'COMPLETE', replay_from_id = ${admission.success.replayFromId},
+              replay_until_id = ${admission.success.replayUntilId},
+              bootstrap_session_id = ${boundary.session.sessionId},
+              bootstrap_request_id = ${boundary.session.requestId}, bootstrap_event_count = ${boundary.eventCount},
+              bootstrap_prefix_hash = ${boundary.prefixHash}, range_request_hash = ${boundary.rangeRequestHash},
+              completion_hash = ${boundary.completionHash}, session_id = NULL, request_id = NULL,
+              heartbeat_at = NULL,
               updated_at = clock_timestamp()
             WHERE account_id = ${accountId}`
           return {
-            cursor: current.cursor,
-            caughtUp: true,
-            coveredThrough: boundary.coveredThrough,
-            fillFeeComplete: current.fillFeeComplete,
-            sourceRevision,
-          } satisfies BrokerActivityCursorState
+            _tag: 'Accepted',
+            receipt: {
+              cursor: current.cursor,
+              caughtUp: true,
+              replayFromId: boundary.replayFromId,
+              replayUntilId: boundary.replayUntilId,
+              completionHash: boundary.completionHash,
+              fillFeeComplete: current.fillFeeComplete,
+              sourceRevision,
+            },
+          } satisfies BrokerActivityCatchupResult
         }),
       ),
     )
@@ -528,10 +723,15 @@ export const makeBrokerObservationStore = (
     run(
       sql.withTransaction(
         Effect.gen(function* () {
+          yield* acquireExecutionWriterFence(sql)
+          const retired = retiredActivityRevision(yield* activityOwnerRows)
+          if (retired !== undefined) return retired
           const locked = yield* sql`SELECT last_source_event_id AS cursor, source_revision AS "sourceRevision",
-              caught_up AS "caughtUp",
-              CASE WHEN covered_through_at IS NULL THEN NULL
-                ELSE to_char(covered_through_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS "coveredThrough",
+              (coverage_status = 'COMPLETE') AS "caughtUp",
+              replay_from_id AS "replayFromId",
+              replay_until_id AS "replayUntilId", bootstrap_event_count AS "bootstrapEventCount",
+              bootstrap_prefix_hash AS "bootstrapPrefixHash", range_request_hash AS "rangeRequestHash",
+              completion_hash AS "completionHash",
               fill_fee_complete AS "fillFeeComplete",
               heartbeat_at IS NOT NULL AND heartbeat_at >= clock_timestamp() - (${brokerActivityHeartbeatFreshnessMs} * interval '1 millisecond') AS fresh,
               session_id AS "sessionId", request_id AS "requestId"
@@ -554,13 +754,18 @@ export const makeBrokerObservationStore = (
               updated_at = clock_timestamp()
             WHERE account_id = ${accountId}`
           return {
-            cursor: current.cursor,
-            caughtUp: current.caughtUp,
-            coveredThrough: current.coveredThrough,
-            fillFeeComplete: current.fillFeeComplete,
-            sourceRevision,
-            activated,
-          } satisfies BrokerActivityHeartbeatReceipt
+            _tag: 'Accepted',
+            receipt: {
+              cursor: current.cursor,
+              caughtUp: current.caughtUp,
+              replayFromId: current.replayFromId,
+              replayUntilId: current.replayUntilId,
+              completionHash: current.completionHash,
+              fillFeeComplete: current.fillFeeComplete,
+              sourceRevision,
+              activated,
+            },
+          } satisfies BrokerActivityPersistenceResult<BrokerActivityHeartbeatReceipt>
         }),
       ),
     )

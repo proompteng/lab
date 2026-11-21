@@ -21,7 +21,15 @@ const inactiveActivityRuntime = {
   verify: () => {
     throw new Error('discovery does not verify broker activities')
   },
-  cursor: async () => ({ cursor: null, caughtUp: false, coveredThrough: null, fillFeeComplete: true, sourceRevision }),
+  cursor: async () => ({
+    cursor: null,
+    caughtUp: false,
+    replayFromId: null,
+    replayUntilId: null,
+    completionHash: null,
+    fillFeeComplete: true,
+    sourceRevision,
+  }),
   record: async () => {
     throw new Error('discovery does not record broker activities')
   },

@@ -116,7 +116,7 @@ internal fun signBrokerNotification(
 internal class VerifiedBrokerFeed(
   private val connection: BrokerFeedConnection,
   private val client: HttpClient,
-  private val publish: suspend (String, String, SignedBrokerNotification) -> Unit,
+  private val publish: suspend (String, BrokerDeliveryIdentity, SignedBrokerNotification) -> Unit,
   private val now: () -> Instant = Instant::now,
   private val newSessionId: () -> String = { UUID.randomUUID().toString() },
   private val onReady: () -> Unit = {},
@@ -155,12 +155,13 @@ internal class VerifiedBrokerFeed(
             authenticatedAt = brokerFeedTime.format(subscription.authenticatedAt),
             subscribedAt = brokerFeedTime.format(subscription.subscribedAt),
           )
+        val eventId = brokerFeedSha256("$identityHash\n$sessionId\nready")
         publish(
           identityHash,
-          brokerFeedSha256("$identityHash\n$sessionId\nready"),
+          brokerDeliveryIdentity(connection.sourceRevision, proof.credentialHash, sessionId, "notify", eventId),
           signBrokerNotification(
             BrokerFeedNotification.SessionReady(
-              eventId = brokerFeedSha256("$identityHash\n$sessionId\nready"),
+              eventId = eventId,
               session = proof,
               receivedAt = brokerFeedTime.format(subscription.subscribedAt),
             ),
@@ -182,7 +183,17 @@ internal class VerifiedBrokerFeed(
           )
         // Publication must finish durably before consuming the next update. A failure ends the
         // session; its replacement publishes a new verified readiness event for canonical gap repair.
-        publish(identityHash, notification.eventId, signBrokerNotification(notification, connection.secretKey))
+        publish(
+          identityHash,
+          brokerDeliveryIdentity(
+            connection.sourceRevision,
+            proof.credentialHash,
+            proof.sessionId,
+            "notify",
+            notification.eventId,
+          ),
+          signBrokerNotification(notification, connection.secretKey),
+        )
       },
     )
   }

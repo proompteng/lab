@@ -10,7 +10,9 @@ import {
   type BrokerActivityHeartbeat,
   type BrokerActivityHeartbeatReceipt,
   type BrokerActivityMessage,
-  type BrokerActivityReceipt,
+  type BrokerActivityCatchupResult,
+  type BrokerActivityPersistenceResult,
+  type BrokerActivityRecordResult,
 } from '../broker/activities'
 import { brokerObservationJsonSerde, type BrokerObservationOwnerConfig } from './restate-broker-observations'
 
@@ -19,12 +21,15 @@ const persistenceRunOptions = { initialRetryInterval: 50, maxRetryInterval: 1_00
 export interface BrokerActivityRuntime {
   readonly verify: (candidate: unknown, nowMs: number) => Result.Result<BrokerActivityMessage, BrokerActivityError>
   readonly cursor: (signal: AbortSignal) => Promise<BrokerActivityCursorState>
-  readonly record: (signal: AbortSignal, event: BrokerActivityEvent) => Promise<BrokerActivityReceipt>
+  readonly record: (signal: AbortSignal, event: BrokerActivityEvent) => Promise<BrokerActivityRecordResult>
   readonly completeCatchup: (
     signal: AbortSignal,
     event: BrokerActivityCatchupComplete,
-  ) => Promise<BrokerActivityCursorState>
-  readonly heartbeat: (signal: AbortSignal, event: BrokerActivityHeartbeat) => Promise<BrokerActivityHeartbeatReceipt>
+  ) => Promise<BrokerActivityCatchupResult>
+  readonly heartbeat: (
+    signal: AbortSignal,
+    event: BrokerActivityHeartbeat,
+  ) => Promise<BrokerActivityPersistenceResult<BrokerActivityHeartbeatReceipt>>
 }
 
 export const makeBaynBrokerActivities = (
@@ -86,11 +91,26 @@ export const makeBaynBrokerActivities = (
           const activity = await verify(ctx, candidate)
           if (activity._tag !== 'Event')
             throw new restate.TerminalError('broker activity ingest requires a source event', { errorCode: 400 })
-          const receipt = await ctx.run(
+          const result = await ctx.run(
             'retain and project broker activity',
             () => runtime.record(ctx.request().attemptCompletedSignal, activity),
             persistenceRunOptions,
           )
+          if (result._tag === 'RetiredRevision')
+            throw new restate.TerminalError('broker activity owner revision is retired', { errorCode: 409 })
+          if (result._tag === 'SourceConflict') {
+            reconcile(ctx, result.eventId)
+            throw new restate.TerminalError('broker activity source content conflicts with retained evidence', {
+              errorCode: 409,
+            })
+          }
+          if (result._tag === 'CoverageConflict') {
+            reconcile(ctx, result.eventId)
+            throw new restate.TerminalError('broker activity contradicts retained publication coverage', {
+              errorCode: 409,
+            })
+          }
+          const receipt = result.receipt
           if (receipt.caughtUp) reconcile(ctx, receipt.eventId)
           return receipt
         },
@@ -104,15 +124,21 @@ export const makeBaynBrokerActivities = (
             throw new restate.TerminalError('broker activity catchup requires a completed historical boundary', {
               errorCode: 400,
             })
-          const cursor = await ctx.run(
+          const result = await ctx.run(
             'retain broker activity catchup boundary',
             () => runtime.completeCatchup(ctx.request().attemptCompletedSignal, activity),
             persistenceRunOptions,
           )
+          if (result._tag === 'RetiredRevision')
+            throw new restate.TerminalError('broker activity owner revision is retired', { errorCode: 409 })
+          if (result._tag === 'CoverageConflict') {
+            reconcile(ctx, result.eventId)
+            throw new restate.TerminalError('broker activity publication coverage is unproved', { errorCode: 409 })
+          }
           return {
             accepted: true,
             eventId: activity.eventId,
-            ...cursor,
+            ...result.receipt,
             projectionContract: brokerActivityProjectionContract,
           }
         },
@@ -126,11 +152,14 @@ export const makeBaynBrokerActivities = (
             throw new restate.TerminalError('broker activity heartbeat requires a live stream boundary', {
               errorCode: 400,
             })
-          const cursor = await ctx.run(
+          const result = await ctx.run(
             'retain broker activity heartbeat',
             () => runtime.heartbeat(ctx.request().attemptCompletedSignal, activity),
             persistenceRunOptions,
           )
+          if (result._tag === 'RetiredRevision')
+            throw new restate.TerminalError('broker activity owner revision is retired', { errorCode: 409 })
+          const cursor = result.receipt
           if (cursor.activated) reconcile(ctx, activity.eventId)
           return {
             accepted: true,

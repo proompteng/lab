@@ -98,8 +98,8 @@ internal suspend fun runVerifiedBrokerFeed(settings: BrokerFeedSettings) {
       }
     val backoff = ReconnectBackoff(1000, 30_000)
     val tradeFeed =
-      VerifiedBrokerFeed(settings.connection, brokerClient, publish = { key, eventId, notification ->
-        publisher.publish(key, eventId, notification)
+      VerifiedBrokerFeed(settings.connection, brokerClient, publish = { key, delivery, notification ->
+        publisher.publish(key, delivery, notification)
         publications.increment()
       }, onReady = { tradeReady.set(1) })
     val activityFeed =
@@ -107,16 +107,18 @@ internal suspend fun runVerifiedBrokerFeed(settings: BrokerFeedSettings) {
         settings.connection,
         brokerClient,
         cursor = publisher::activityCursor,
-        publish = { key, eventId, activity ->
-          val receipt = publisher.publishActivity(key, eventId, activity)
+        publish = { key, delivery, activity ->
+          val receipt = publisher.publishActivity(key, delivery, activity)
           publications.increment()
           receipt
         },
-        completeCatchup = { key, eventId, activity ->
-          publisher.completeActivityCatchup(key, eventId, activity)
+        completeCatchup = { key, delivery, activity ->
+          val receipt = publisher.completeActivityCatchup(key, delivery, activity)
+          activityHeartbeats.increment()
+          receipt
         },
-        heartbeat = { key, eventId, activity ->
-          val receipt = publisher.publishActivityHeartbeat(key, eventId, activity)
+        heartbeat = { key, delivery, activity ->
+          val receipt = publisher.publishActivityHeartbeat(key, delivery, activity)
           activityHeartbeats.increment()
           receipt
         },

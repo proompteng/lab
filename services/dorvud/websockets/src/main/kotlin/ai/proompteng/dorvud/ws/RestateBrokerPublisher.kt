@@ -17,8 +17,32 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
 
 private val brokerIdentityPattern = Regex("[a-f0-9]{64}")
+private val sourceRevisionPattern = Regex("[a-f0-9]{40}")
 internal const val RESTATE_IDEMPOTENCY_HEADER = "idempotency-key"
 internal const val BROKER_SOURCE_PROJECTION_CONTRACT = "bayn.broker-source-projection.v1"
+
+internal data class BrokerDeliveryIdentity(
+  val eventId: String,
+  val deliveryId: String,
+)
+
+internal fun brokerDeliveryIdentity(
+  sourceRevision: String,
+  credentialHash: String,
+  sessionId: String,
+  handler: String,
+  eventId: String,
+): BrokerDeliveryIdentity {
+  require(sourceRevision.matches(sourceRevisionPattern)) { "broker delivery source revision is not canonical" }
+  require(credentialHash.matches(brokerIdentityPattern)) { "broker delivery credential identity is not canonical" }
+  require(sessionId.isNotBlank()) { "broker delivery session is empty" }
+  require(handler in setOf("notify", "ingest", "catchup", "heartbeat")) { "broker delivery handler is invalid" }
+  require(eventId.matches(brokerIdentityPattern)) { "broker delivery event id is not canonical" }
+  return BrokerDeliveryIdentity(
+    eventId = eventId,
+    deliveryId = brokerFeedSha256("$sourceRevision\n$credentialHash\n$sessionId\n$handler\n$eventId"),
+  )
+}
 
 internal class RestateBrokerPublisher(
   private val client: HttpClient,
@@ -28,14 +52,19 @@ internal class RestateBrokerPublisher(
 ) {
   private val ingressUrl = ingressUrl.trimEnd('/')
 
+  private fun requireDelivery(delivery: BrokerDeliveryIdentity) {
+    require(delivery.eventId.matches(brokerIdentityPattern)) { "broker delivery event id is not canonical" }
+    require(delivery.deliveryId.matches(brokerIdentityPattern)) { "broker transport delivery id is not canonical" }
+  }
+
   suspend fun publish(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     notification: SignedBrokerNotification,
   ) {
     require(key.matches(brokerIdentityPattern)) { "broker notification key is not a canonical identity hash" }
-    require(eventId.matches(brokerIdentityPattern)) { "broker notification event id is not canonical" }
-    retry { post(key, eventId, notification) }
+    requireDelivery(delivery)
+    retry { post(key, delivery, notification) }
   }
 
   suspend fun activityCursor(key: String): BrokerActivityCursorReceipt {
@@ -45,31 +74,31 @@ internal class RestateBrokerPublisher(
 
   suspend fun publishActivity(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     activity: SignedBrokerActivity,
-  ): BrokerActivityCursorReceipt = publishActivityMessage(key, eventId, activity, "ingest")
+  ): BrokerActivityCursorReceipt = publishActivityMessage(key, delivery, activity, "ingest")
 
   suspend fun completeActivityCatchup(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     activity: SignedBrokerActivity,
-  ): BrokerActivityCursorReceipt = publishActivityMessage(key, eventId, activity, "catchup")
+  ): BrokerActivityCursorReceipt = publishActivityMessage(key, delivery, activity, "catchup")
 
   suspend fun publishActivityHeartbeat(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     activity: SignedBrokerActivity,
-  ): BrokerActivityCursorReceipt = publishActivityMessage(key, eventId, activity, "heartbeat")
+  ): BrokerActivityCursorReceipt = publishActivityMessage(key, delivery, activity, "heartbeat")
 
   private suspend fun publishActivityMessage(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     activity: SignedBrokerActivity,
     handler: String,
   ): BrokerActivityCursorReceipt {
     require(key.matches(brokerIdentityPattern)) { "broker activity key is not a canonical identity hash" }
-    require(eventId.matches(brokerIdentityPattern)) { "broker activity event id is not canonical" }
-    return retry { postActivity(key, eventId, activity, handler) }
+    requireDelivery(delivery)
+    return retry { postActivity(key, delivery, activity, handler) }
   }
 
   private suspend fun <A> retry(action: suspend () -> A): A {
@@ -86,13 +115,13 @@ internal class RestateBrokerPublisher(
 
   private suspend fun post(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     notification: SignedBrokerNotification,
   ) {
     val response =
       client.post("$ingressUrl/BaynBrokerObservations/$key/notify") {
         contentType(ContentType.Application.Json)
-        header(RESTATE_IDEMPOTENCY_HEADER, eventId)
+        header(RESTATE_IDEMPOTENCY_HEADER, delivery.deliveryId)
         setBody(Json.encodeToString(notification))
       }
     val responseBody = response.bodyAsText()
@@ -107,7 +136,7 @@ internal class RestateBrokerPublisher(
         .getOrElse { throw IllegalStateException("Restate broker ingress returned an invalid receipt", it) }
     check(
       receipt["accepted"]?.jsonPrimitive?.booleanOrNull == true &&
-        receipt["eventId"]?.jsonPrimitive?.content == eventId &&
+        receipt["eventId"]?.jsonPrimitive?.content == delivery.eventId &&
         receipt["sourceRevision"]?.jsonPrimitive?.content == sourceRevision &&
         receipt["projectionContract"]?.jsonPrimitive?.content == BROKER_SOURCE_PROJECTION_CONTRACT,
     ) {
@@ -126,17 +155,17 @@ internal class RestateBrokerPublisher(
 
   private suspend fun postActivity(
     key: String,
-    eventId: String,
+    delivery: BrokerDeliveryIdentity,
     activity: SignedBrokerActivity,
     handler: String,
   ): BrokerActivityCursorReceipt {
     val response =
       client.post("$ingressUrl/BaynBrokerActivities/$key/$handler") {
         contentType(ContentType.Application.Json)
-        header(RESTATE_IDEMPOTENCY_HEADER, eventId)
+        header(RESTATE_IDEMPOTENCY_HEADER, delivery.deliveryId)
         setBody(Json.encodeToString(activity))
       }
-    return activityReceipt(response.status.value, response.bodyAsText(), eventId)
+    return activityReceipt(response.status.value, response.bodyAsText(), delivery.eventId)
   }
 
   private fun activityReceipt(
@@ -167,7 +196,9 @@ internal class RestateBrokerPublisher(
       caughtUp =
         receipt["caughtUp"]?.jsonPrimitive?.booleanOrNull
           ?: error("Restate broker activity receipt omitted catchup state"),
-      coveredThrough = receipt["coveredThrough"]?.jsonPrimitive?.contentOrNull,
+      replayFromId = receipt["replayFromId"]?.jsonPrimitive?.contentOrNull,
+      replayUntilId = receipt["replayUntilId"]?.jsonPrimitive?.contentOrNull,
+      completionHash = receipt["completionHash"]?.jsonPrimitive?.contentOrNull,
       fillFeeComplete =
         receipt["fillFeeComplete"]?.jsonPrimitive?.booleanOrNull
           ?: error("Restate broker activity receipt omitted fill and fee completeness"),

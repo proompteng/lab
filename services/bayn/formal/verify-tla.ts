@@ -136,9 +136,23 @@ const faults = [
   {
     model: 'ActivityCursor',
     name: 'changed-activity-catchup-boundary',
-    before: 'CanCatchup == boundaryCursor = cursor /\\ (~caughtUp \\/ coverage = boundaryCoverage)',
-    after: 'CanCatchup == boundaryCursor = cursor',
+    before: ' /\\ CatchupBoundaryMatches',
+    after: '',
     violation: 'Invariant CatchupBoundaryIsImmutable is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'unproved-activity-catchup',
+    before: ' /\\ CatchupProofIsValid',
+    after: '',
+    violation: 'Invariant CatchupRequiresMatchingEvidence is violated.',
+  },
+  {
+    model: 'ActivityCursor',
+    name: 'catchup-pretends-live',
+    before: " /\\ session' = 0 /\\ fresh' = FALSE",
+    after: " /\\ session' = 1 /\\ fresh' = TRUE",
+    violation: 'Invariant CatchupDoesNotEstablishLiveness is violated.',
   },
   {
     model: 'ActivityCursor',
@@ -156,9 +170,16 @@ const faults = [
   },
   {
     model: 'ActivityCursor',
+    name: 'late-activity-publication-stays-covered',
+    before: "caughtUp' = IF InvalidatesCoverage THEN FALSE ELSE caughtUp",
+    after: "caughtUp' = caughtUp",
+    violation: 'Invariant LatePublicationInvalidatesCoverage is violated.',
+  },
+  {
+    model: 'ActivityCursor',
     name: 'retained-stale-activity-session',
-    before: 'PreserveSession == session = eventSession',
-    after: 'PreserveSession == TRUE',
+    before: 'PreserveSession == session = eventSession /\\ ~InvalidatesCoverage',
+    after: 'PreserveSession == ~InvalidatesCoverage',
     violation: 'Invariant ChangedSessionIsNotLive is violated.',
   },
   {
