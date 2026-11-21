@@ -80,6 +80,9 @@ const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): 
   if (broker.error?.startsWith('Alpaca account permission drift detected') === true) {
     return 'BROKER_ACCOUNT_PERMISSION_DRIFT'
   }
+  if (broker.readAvailable === false && broker.observationFailure === 'CASH_FEES_PENDING') {
+    return 'BROKER_CASH_FEES_PENDING'
+  }
   if (broker.readAvailable === false) return 'BROKER_READ_UNAVAILABLE'
   if (broker.accountBound === false) return 'BROKER_ACCOUNT_BINDING_UNAVAILABLE'
   return broker.error === null ? null : 'BROKER_STATUS_UNAVAILABLE'
