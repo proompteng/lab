@@ -43,6 +43,9 @@ jobs:
   headlamp:
     uses: ./.github/workflows/headlamp-ci.yml
 
+  jangar:
+    uses: ./.github/workflows/jangar-ci.yml
+
   jangar-guardrails:
     uses: ./.github/workflows/jangar-guardrails.yml
 

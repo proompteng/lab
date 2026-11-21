@@ -489,6 +489,10 @@
       "pattern": "^headlamp(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "jangar",
+      "pattern": "^jangar(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "jangar-guardrails",
       "pattern": "^jangar-guardrails(?: \\(.*\\))?(?: /.*)?$"
     },
