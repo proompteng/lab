@@ -23,8 +23,10 @@ jobs:
       gepa: ${{ github.event_name != 'pull_request' && steps.manual.outputs.gepa || fromJSON(steps.filter.outputs.affected).gepa }}
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Detect Bayn release inputs
         id: filter

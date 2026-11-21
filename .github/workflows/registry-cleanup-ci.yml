@@ -6,6 +6,8 @@ on:
       - argocd/applications/registry/**
       - packages/scripts/src/registry/**
       - .github/workflows/registry-cleanup-ci.yml
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
     paths:
