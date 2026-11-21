@@ -117,10 +117,16 @@ let
 
       export HOME="$TMPDIR/home"
       export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
+      if [ "${dependencyClosure}" = "bunCache" ]; then
+        # Install in the unpacked source and write only the cache to the store.
+        export BUN_INSTALL_CACHE_DIR="$out"
+      else
+        mkdir -p "$out"
+        cp -R . "$out/"
+        cd "$out"
+      fi
       export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
-      mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$out"
-      cp -R . "$out/"
-      cd "$out"
+      mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR"
 
       run_bun_install() {
         local attempt
@@ -165,10 +171,6 @@ let
       run_bun_install
 
       if [ "${dependencyClosure}" = "bunCache" ]; then
-        cd "$TMPDIR"
-        rm -rf "$out"
-        mkdir -p "$out"
-        cp -R "$BUN_INSTALL_CACHE_DIR/." "$out/"
         bash ${./relativize-bun-cache.sh} "$out" "$BUN_INSTALL_CACHE_DIR"
       else
         bash ${./prune-bun-dependency-metadata.sh} "$out"
