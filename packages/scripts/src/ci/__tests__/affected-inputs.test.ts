@@ -38,6 +38,11 @@ const targets = {
   landing: { workspaces: ['', 'apps/landing'], paths: ['apps/landing/**', 'bun.lock', '**/package.json'] },
 }
 const tengriPublisherPath = '.github/workflows/tengri-images.yml'
+const baynPostgresTestHelpers = [
+  ['services/bayn/src/testing/postgres-template.test-support.ts', true],
+  ['services/bayn/tools/postgres-file-preload.ts', false],
+  ['services/bayn/tools/postgres-test-databases.ts', false],
+] as const
 
 const publicationWorkflows = readdirSync('.github/workflows').filter((filename) => {
   if (!/\.ya?ml$/.test(filename)) return false
@@ -162,6 +167,40 @@ test('OpenCode CLI changes publish only the owning image', () => {
   }
 })
 
+test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
+  '%s excludes only the PostgreSQL test helpers from main publication',
+  (filename) => {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing publication inputs: ${filename}`)
+    const patterns = paths.map(text)
+    const selected = (files: readonly string[]) => files.some((file) => matchesPaths(file, patterns))
+    const helpers = baynPostgresTestHelpers.map(([path]) => path)
+    expect(selected(helpers)).toBe(false)
+    for (const helper of helpers) {
+      expect(patterns).toContain(`!${helper}`)
+      expect(selected([helper])).toBe(false)
+      expect(selected([helper.replace(/\.ts$/, '.runtime.ts')])).toBe(true)
+    }
+    for (const runtime of [
+      'services/bayn/src/execution/controller.ts',
+      'services/bayn/tools/compile-frozen-control.ts',
+      'services/bayn/package.json',
+      'nix/images/bayn-runtime-root.nix',
+      'patches/effect@4.1.4.patch',
+      ...(filename === 'opencode-build-push.yml'
+        ? ['services/opencode/start.sh', 'nix/images/opencode.nix', 'nix/oci-push.sh']
+        : ['nix/images/bayn.nix', 'argocd/applications/bayn/configmap.yaml']),
+    ]) {
+      expect(selected([runtime])).toBe(true)
+      expect(selected([...helpers, runtime])).toBe(true)
+      expect(selected([runtime, ...helpers])).toBe(true)
+    }
+    for (const orchestration of [`.github/workflows/${filename}`, '.github/workflows/nix-oci-build-common.yml'])
+      expect(selected([...helpers, orchestration])).toBe(false)
+  },
+)
+
 test('OpenCode PR validation selects the PR head without publication secrets', () => {
   const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))
@@ -201,6 +240,8 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
     expect(selected(validation, event, ref, file)).toBe(validate)
     expect(selected(publication, event, ref, file)).toBe(publish)
   }
+  for (const [helper] of baynPostgresTestHelpers)
+    expect(selected(validation, 'pull_request', 'refs/pull/42/merge', helper)).toBe(false)
 })
 
 test('Bayn CI does not run trading qualification for orchestration and documentation changes', () => {
@@ -819,6 +860,8 @@ test('Bayn separates formal checks from runtime validation and publication', () 
   })
   for (const path of ['services/bayn/src/risk.test.ts', 'services/bayn/tools/history.test.ts'])
     expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal: false, gepa: false })
+  for (const [path, formal] of baynPostgresTestHelpers)
+    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: true, formal, gepa: false })
   expect(selectAffectedInputs(['services/bayn/gepa/runner.py'], targets, lock, lock)).toEqual({
     bayn: true,
     formal: false,
