@@ -26,7 +26,7 @@ export default Effect.gen(function* () {
     account_id text NOT NULL,
     event_id text NOT NULL CHECK (event_id ~ '^[a-f0-9]{64}$'),
     source_revision text NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
-    outcome text NOT NULL CHECK (outcome IN ('PROJECTED','RECONCILE_REQUIRED')),
+    outcome text NOT NULL CHECK (outcome IN ('CANONICALLY_COVERED','PROJECTED','RECONCILE_REQUIRED')),
     reason text,
     order_event_id text CHECK (order_event_id IS NULL OR order_event_id ~ '^[a-f0-9]{64}$'),
     fill_event_id text CHECK (fill_event_id IS NULL OR fill_event_id ~ '^[a-f0-9]{64}$'),
@@ -36,6 +36,8 @@ export default Effect.gen(function* () {
     PRIMARY KEY(account_id,event_id),
     FOREIGN KEY(account_id,event_id) REFERENCES broker_source_events(account_id,event_id),
     CHECK (
+      (outcome = 'CANONICALLY_COVERED' AND reason IS NULL AND order_event_id IS NULL
+        AND fill_event_id IS NULL AND accounting_receipt_id IS NULL) OR
       (outcome = 'PROJECTED' AND reason IS NULL AND order_event_id IS NOT NULL) OR
       (outcome = 'RECONCILE_REQUIRED' AND reason IS NOT NULL AND order_event_id IS NULL
         AND fill_event_id IS NULL AND accounting_receipt_id IS NULL)

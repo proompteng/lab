@@ -423,6 +423,7 @@ export const makeBaynBrokerSourceProjector = (
             () => runtime.project(signal, receipt.eventId),
             persistenceRunOptions,
           )
+          if (projection._tag === 'CanonicallyCovered') return projection
           const covered = await ctx.run(
             'check canonical broker source coverage',
             () => runtime.isNotificationCovered(signal, receipt.eventId),

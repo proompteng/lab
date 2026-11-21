@@ -51,9 +51,11 @@ import {
 import { ExecutionStoreLive } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { makeBrokerObservationStore } from './broker-observations'
 import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
 import { migrationLoader } from './migrations'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
+import { valkeyFixture } from '../testing/valkey-fixture'
 import { brokerFeeLedgerPlan } from '../accounting/domain'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { LedgerPlan } from '../ledger-plan'
@@ -526,6 +528,41 @@ describePostgres('PostgreSQL execution persistence', () => {
     })
     expect(result.valuationReplay).toEqual(result.valuation)
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
+  })
+
+  test('identifies a newer canonical order before a delayed stream state can supersede it', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const sql = yield* PgClient.PgClient
+        const canonicalOccurredAt = '2026-08-28T14:31:01.000Z'
+        const canonicalOrder = {
+          ...orderEvent(),
+          sourceEventId: 'order-observation-canonical',
+          occurredAt: canonicalOccurredAt,
+          observedAt: canonicalOccurredAt,
+          order: {
+            ...order(),
+            filledQuantityAtoms: order().quantityAtoms,
+            status: OrderStatus.Filled,
+            observedAt: canonicalOccurredAt,
+          },
+        }
+        const normalized = {
+          ...canonicalOrder,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(canonicalOrder.order)),
+        }
+        const receipt = yield* events.ingest(normalized)
+        const source = makeBrokerObservationStore(sql, accountId, 'a'.repeat(40), 60_000, valkeyFixture().cache)
+        return {
+          receipt,
+          delayed: yield* source.readNewerOrderEventId(normalized.order.brokerOrderId, occurredAt),
+          equal: yield* source.readNewerOrderEventId(normalized.order.brokerOrderId, canonicalOccurredAt),
+        }
+      }),
+    )
+    expect(result.delayed).toBe(result.receipt.eventId)
+    expect(result.equal).toBeUndefined()
   })
 
   test('rejects an ambient transaction before running reconciliation ingestion', async () => {

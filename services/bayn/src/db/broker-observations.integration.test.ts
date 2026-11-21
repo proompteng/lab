@@ -60,7 +60,11 @@ const claim = (store: ReturnType<typeof makeBrokerObservationStore>, captureId =
       ),
     )
 const snapshot = (ticket: BrokerObservationTicket) => observedBrokerSnapshotFixture(accountId, ticket.startedAt)
-const sourceEvent = (eventId: string, receivedAt: string): BrokerNotification => ({
+const sourceEvent = (
+  eventId: string,
+  receivedAt: string,
+  sessionId = `test-${eventId.slice(0, 8)}`,
+): BrokerNotification => ({
   _tag: 'SessionReady',
   schemaVersion: 'bayn.broker-notification.v1',
   eventId,
@@ -70,12 +74,17 @@ const sourceEvent = (eventId: string, receivedAt: string): BrokerNotification =>
     accountId,
     environment: BrokerEnvironment.Sandbox,
     credentialHash: '2'.repeat(64),
-    sessionId: `test-${eventId.slice(0, 8)}`,
+    sessionId,
     sourceRevision: revision,
     verifiedAt: receivedAt,
     authenticatedAt: receivedAt,
     subscribedAt: receivedAt,
   },
+})
+const tradeSourceEvent = (eventId: string, receivedAt: string, sessionId: string): BrokerNotification => ({
+  ...sourceEvent(eventId, receivedAt, sessionId),
+  _tag: 'TradeUpdate',
+  frameJson: '{"stream":"trade_updates","data":{}}',
 })
 const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
   TestClock.setTime(Date.parse(ticket.startedAt) + delta)
@@ -364,6 +373,57 @@ describePostgres('Durable per-account broker observations', () => {
               WHERE account_id = ${accountId} AND event_id = ${event.eventId}`.pipe(Effect.result),
           ),
         ).toBe(true)
+      }),
+    ))
+
+  test('a failed trade projection poisons only its broker session while canonical coverage is an explicit no-op', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        const receivedAt = '2026-11-01T00:00:00.000Z'
+        const cleanSession = 'clean-session'
+        const boundary = sourceEvent('7'.repeat(64), receivedAt, cleanSession)
+        const covered = tradeSourceEvent('8'.repeat(64), receivedAt, cleanSession)
+        yield* store.recordNotification(boundary)
+        yield* store.recordNotification(covered)
+        yield* store.recordProjection({
+          _tag: 'ReconcileRequired',
+          eventId: boundary.eventId,
+          observedAt: boundary.receivedAt,
+          reason: BrokerStreamReconciliationReason.SessionBoundary,
+        })
+        expect(yield* store.hasSessionProjectionGap(cleanSession)).toBe(false)
+
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        expect(yield* store.publish(ticket, snapshot(ticket), 0)).toBe(true)
+        expect(yield* store.isNotificationCovered(covered.eventId)).toBe(true)
+        const coveredReceipt = {
+          _tag: 'CanonicallyCovered',
+          eventId: covered.eventId,
+          observedAt: covered.receivedAt,
+        } as const
+        expect(yield* store.recordProjection(coveredReceipt)).toEqual(coveredReceipt)
+        expect(yield* store.readSourceProjection(covered.eventId)).toEqual(coveredReceipt)
+        expect(yield* store.hasSessionProjectionGap(cleanSession)).toBe(false)
+
+        const poisonedSession = 'poisoned-session'
+        const invalid = tradeSourceEvent('9'.repeat(64), receivedAt, poisonedSession)
+        yield* store.recordNotification(invalid)
+        yield* store.recordProjection({
+          _tag: 'ReconcileRequired',
+          eventId: invalid.eventId,
+          observedAt: invalid.receivedAt,
+          reason: BrokerStreamReconciliationReason.InvalidFill,
+        })
+        expect(yield* store.hasSessionProjectionGap(poisonedSession)).toBe(true)
+
+        const recovery = yield* claim(store)
+        yield* advanceToTicket(recovery)
+        expect(yield* store.publish(recovery, snapshot(recovery), 0)).toBe(true)
+        expect(yield* store.isNotificationCovered(invalid.eventId)).toBe(true)
+        expect(yield* store.hasSessionProjectionGap(poisonedSession)).toBe(true)
+        expect(yield* store.hasSessionProjectionGap('replacement-session')).toBe(false)
       }),
     ))
 

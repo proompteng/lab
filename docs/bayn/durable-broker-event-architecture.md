@@ -78,11 +78,15 @@ sequenceDiagram
   R-->>D: accepted receipt
   R->>P: ordered project(event ID)
   P->>S: Read source + first retained projection
-  P->>E: Idempotent order/fill ingest
-  P->>T: Deterministic fill accounting
-  P->>S: Append projection receipt + check canonical fence
-  P->>X: BrokerEvent wake
-  opt Source event is not already covered
+  alt Canonical snapshot already covers this event
+    P->>S: Append CANONICALLY_COVERED receipt
+  else Gap-free session under PostgreSQL writer fence
+    P->>E: Skip superseded order or ingest current order/fill
+    P->>T: Deterministic fill accounting
+    P->>S: Append PROJECTED receipt
+    P->>X: BrokerEvent wake
+  else Session has an unresolved source gap
+    P->>S: Append RECONCILE_REQUIRED receipt
     P->>C: coalesced reconcile(event ID)
     C->>C: account/order/fill/fee snapshot when required
   end
@@ -101,7 +105,12 @@ are exported without account or event IDs through `bayn_broker_source_projection
 `bayn_broker_source_projection_total`. The projector is a separate exclusive Restate object keyed by account: fill
 accounting stays ordered, but a multi-second canonical capture cannot block this queue. After reconnect, the fast path
 remains closed until a published capture's immutable notification fence covers that session's `SessionReady` event.
-Any update arriving before that proof permanently records `SESSION_BOUNDARY` and takes the canonical safety lane.
+Canonical coverage is checked inside the same PostgreSQL writer fence as order/fill ingestion, so reconciliation and
+the stream cannot race to make a delayed order state newest. A stream order older than the latest durable broker
+`occurred_at` reuses that newer canonical order instead of appending a regressive state. Any trade update arriving
+before the session proof, or any later invalid, unsupported, unbound or conflicting trade update, poisons only that
+session's fast lane; all subsequent updates in that session take canonical reconciliation. A new gap-free
+`SessionReady` session can re-enter the fast path after its own boundary is covered.
 
 ## Target financial-state path
 

@@ -10,6 +10,8 @@ import { OrderResponseSchema, OrderSide, U128_MAX, responseParseOptions } from '
 import { normalizeOrderResult } from './alpaca/normalizers'
 import type { BrokerNotification } from './notifications'
 
+type OrderEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order' }>
+
 const TradeUpdateFrameSchema = Schema.fromJsonString(
   Schema.Struct({
     stream: Schema.Literal('trade_updates'),
@@ -45,6 +47,7 @@ const projectedEvents = new Set([
 
 export enum BrokerStreamReconciliationReason {
   SessionBoundary = 'SESSION_BOUNDARY',
+  UnresolvedGap = 'UNRESOLVED_GAP',
   InvalidFrame = 'INVALID_FRAME',
   UnsupportedEvent = 'UNSUPPORTED_EVENT',
   MissingIntent = 'MISSING_INTENT',
@@ -54,6 +57,10 @@ export enum BrokerStreamReconciliationReason {
 }
 
 export const BrokerSourceProjectionReceiptSchema = Schema.TaggedUnion({
+  CanonicallyCovered: {
+    eventId: Sha256Schema,
+    observedAt: UtcInstantSchema,
+  },
   Projected: {
     eventId: Sha256Schema,
     observedAt: UtcInstantSchema,
@@ -81,7 +88,7 @@ export type BrokerTradeUpdateProjection =
       readonly eventId: string
       readonly observedAt: string
       readonly brokerEvent: string
-      readonly order: BrokerEventInput
+      readonly order: OrderEventInput
       readonly fill?: FillEventInput
     }
 
@@ -119,7 +126,8 @@ export const projectBrokerTradeUpdate = (
     observedAt: notification.receivedAt,
   }
   const order = orderObservation(normalizedOrder.success, evidence, binding.intentId)
-  if (Result.isFailure(order)) return reconcile(notification, BrokerStreamReconciliationReason.InvalidOrder)
+  if (Result.isFailure(order) || order.success._tag !== 'Order')
+    return reconcile(notification, BrokerStreamReconciliationReason.InvalidOrder)
   if (data.event !== 'fill' && data.event !== 'partial_fill') {
     return {
       _tag: 'Project',

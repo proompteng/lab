@@ -343,6 +343,27 @@ describe('event-driven Restate broker observation owner', () => {
     expect(h.deliveries[0]?.method).toBe('project')
     expect(h.invalidations()).toBe(0)
   })
+  test('canonical source coverage completes without another database check, wake, or reconciliation', async () => {
+    const h = harness({
+      runtime: {
+        project: async (_signal, eventId) => ({
+          _tag: 'CanonicallyCovered',
+          eventId,
+          observedAt: new Date(initialNow).toISOString(),
+        }),
+        isNotificationCovered: async () => {
+          throw new Error('canonical coverage receipt is final')
+        },
+      },
+    })
+    expect(await h.projectorHandlers.project(h.context, receipt)).toEqual({
+      _tag: 'CanonicallyCovered',
+      eventId: receipt.eventId,
+      observedAt: new Date(initialNow).toISOString(),
+    })
+    expect(h.commands).toEqual(['project durable broker source event'])
+    expect(h.deliveries).toEqual([])
+  })
   test('a projected source event wakes execution immediately without waiting for the reconciliation capture', async () => {
     const h = harness({
       runtime: {

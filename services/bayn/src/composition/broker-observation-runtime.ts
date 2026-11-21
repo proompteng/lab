@@ -48,7 +48,7 @@ import {
 } from '../db/protection-release'
 import { PostgresClientLive } from '../db/postgres-client'
 import { IntentStoreLive } from '../execution/intents/postgres'
-import { WriterFenceLive } from '../execution/writer-fence'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { readProtectionRelease } from '../execution/protection-release'
 import { BrokerEnvironment } from '../broker/identity'
@@ -76,8 +76,13 @@ const brokerSourceProjectionLag = Metric.histogram('bayn_broker_source_projectio
 
 const observeBrokerSourceProjection = (receipt: BrokerSourceProjectionReceipt, replayed: boolean) =>
   Effect.gen(function* () {
-    const outcome = receipt._tag === 'Projected' ? 'projected' : 'reconcile_required'
-    const reason = receipt._tag === 'Projected' ? 'none' : receipt.reason
+    const outcome =
+      receipt._tag === 'Projected'
+        ? 'projected'
+        : receipt._tag === 'CanonicallyCovered'
+          ? 'canonically_covered'
+          : 'reconcile_required'
+    const reason = receipt._tag === 'ReconcileRequired' ? receipt.reason : 'none'
     const lagSeconds = Math.max(0, (yield* Clock.currentTimeMillis) - Date.parse(receipt.observedAt)) / 1_000
     const attributes = { namespace: 'bayn', outcome, reason, replayed: String(replayed) }
     yield* Metric.update(brokerSourceProjectionTotal.pipe(Metric.withAttributes(attributes)), 1)
@@ -300,64 +305,118 @@ export const acquireBrokerObservationRuntime = (
                 yield* observeBrokerSourceProjection(retained, true)
                 return retained
               }
-              const retain = (receipt: BrokerSourceProjectionReceipt) =>
-                source
-                  .recordProjection(receipt)
-                  .pipe(Effect.tap((recorded) => observeBrokerSourceProjection(recorded, false)))
+              const retain = (receipt: BrokerSourceProjectionReceipt) => source.recordProjection(receipt)
+              const record = (receipt: BrokerSourceProjectionReceipt) =>
+                retain(receipt).pipe(Effect.tap((recorded) => observeBrokerSourceProjection(recorded, false)))
               const notification = yield* source.readNotification(eventId)
-              if (
-                notification._tag === 'TradeUpdate' &&
-                !(yield* source.isSessionBoundaryCovered(notification.session.sessionId))
-              )
-                return yield* retain({
-                  _tag: 'ReconcileRequired',
-                  eventId: notification.eventId,
-                  observedAt: notification.receivedAt,
-                  reason: BrokerStreamReconciliationReason.SessionBoundary,
-                })
-              const bindings = yield* (yield* ReconciliationStore).bindings(plan.config.alpaca.expectedAccountId)
-              const projection = projectBrokerTradeUpdate(notification, bindings)
-              if (projection._tag === 'ReconcileRequired') {
-                return yield* retain(projection)
-              }
-              const result = yield* Effect.gen(function* () {
-                const events = yield* BrokerEventStore
-                const order = yield* events.ingest(projection.order)
-                if (projection.fill === undefined)
-                  return {
-                    _tag: 'Projected',
-                    eventId: projection.eventId,
-                    observedAt: projection.observedAt,
-                    orderEventId: order.eventId,
-                  } satisfies BrokerSourceProjectionReceipt
-                const fill = yield* events.ingest(projection.fill)
-                const accounting = yield* (yield* FillAccountingStore).account(projection.fill)
-                return {
-                  _tag: 'Projected',
-                  eventId: projection.eventId,
-                  observedAt: projection.observedAt,
-                  orderEventId: order.eventId,
-                  fillEventId: fill.eventId,
-                  accountingReceiptId: accounting.receiptId,
-                } satisfies BrokerSourceProjectionReceipt
-              }).pipe(Effect.result)
-              if (Result.isFailure(result)) {
-                const failure = result.failure
+              const writerFence = yield* WriterFence
+              const prepared = yield* writerFence
+                .transaction(
+                  Effect.gen(function* () {
+                    if (yield* source.isNotificationCovered(notification.eventId))
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'CanonicallyCovered',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                        }),
+                      }
+                    if (
+                      notification._tag === 'TradeUpdate' &&
+                      !(yield* source.isSessionBoundaryCovered(notification.session.sessionId))
+                    )
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'ReconcileRequired',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                          reason: BrokerStreamReconciliationReason.SessionBoundary,
+                        }),
+                      }
+                    if (
+                      notification._tag === 'TradeUpdate' &&
+                      (yield* source.hasSessionProjectionGap(notification.session.sessionId))
+                    )
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'ReconcileRequired',
+                          eventId: notification.eventId,
+                          observedAt: notification.receivedAt,
+                          reason: BrokerStreamReconciliationReason.UnresolvedGap,
+                        }),
+                      }
+                    const bindings = yield* (yield* ReconciliationStore).bindings(plan.config.alpaca.expectedAccountId)
+                    const decision = projectBrokerTradeUpdate(notification, bindings)
+                    if (decision._tag === 'ReconcileRequired')
+                      return { _tag: 'Receipt' as const, receipt: yield* retain(decision) }
+                    const events = yield* BrokerEventStore
+                    const newerOrderEventId = yield* source.readNewerOrderEventId(
+                      decision.order.order.brokerOrderId,
+                      decision.order.occurredAt,
+                    )
+                    const orderEventId = newerOrderEventId ?? (yield* events.ingest(decision.order)).eventId
+                    const fill = decision.fill
+                    if (fill === undefined)
+                      return {
+                        _tag: 'Receipt' as const,
+                        receipt: yield* retain({
+                          _tag: 'Projected',
+                          eventId: decision.eventId,
+                          observedAt: decision.observedAt,
+                          orderEventId,
+                        }),
+                      }
+                    const fillEventId = (yield* events.ingest(fill)).eventId
+                    return { _tag: 'PreparedFill' as const, decision, fill, orderEventId, fillEventId }
+                  }),
+                )
+                .pipe(Effect.result)
+              if (Result.isFailure(prepared)) {
+                const failure = prepared.failure
                 if (
                   failure instanceof ExecutionStoreError &&
                   (failure.failure === 'conflict' || failure.failure === 'decode' || failure.failure === 'invariant')
                 ) {
                   const receipt = {
                     _tag: 'ReconcileRequired',
-                    eventId: projection.eventId,
-                    observedAt: projection.observedAt,
+                    eventId: notification.eventId,
+                    observedAt: notification.receivedAt,
                     reason: BrokerStreamReconciliationReason.ProjectionConflict,
                   } satisfies BrokerSourceProjectionReceipt
-                  return yield* retain(receipt)
+                  return yield* record(receipt)
                 }
                 return yield* failure
               }
-              return yield* retain(result.success)
+              if (prepared.success._tag === 'Receipt') {
+                yield* observeBrokerSourceProjection(prepared.success.receipt, false)
+                return prepared.success.receipt
+              }
+              const accounting = yield* (yield* FillAccountingStore).account(prepared.success.fill).pipe(Effect.result)
+              if (Result.isFailure(accounting)) {
+                const failure = accounting.failure
+                if (
+                  failure instanceof ExecutionStoreError &&
+                  (failure.failure === 'conflict' || failure.failure === 'decode' || failure.failure === 'invariant')
+                )
+                  return yield* record({
+                    _tag: 'ReconcileRequired',
+                    eventId: prepared.success.decision.eventId,
+                    observedAt: prepared.success.decision.observedAt,
+                    reason: BrokerStreamReconciliationReason.ProjectionConflict,
+                  })
+                return yield* failure
+              }
+              return yield* record({
+                _tag: 'Projected',
+                eventId: prepared.success.decision.eventId,
+                observedAt: prepared.success.decision.observedAt,
+                orderEventId: prepared.success.orderEventId,
+                fillEventId: prepared.success.fillEventId,
+                accountingReceiptId: accounting.success.receiptId,
+              })
             }).pipe(
               withObservedStage('bayn.broker.source-event.project', {
                 dependency: 'postgresql',

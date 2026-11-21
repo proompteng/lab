@@ -24,6 +24,7 @@ import { ValkeyCache } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerNotificationSchema, type BrokerNotification } from '../broker/notifications'
+import { Broker } from '../execution/contracts'
 import {
   BrokerSourceProjectionReceiptSchema,
   type BrokerSourceProjectionReceipt,
@@ -254,6 +255,11 @@ export const makeBrokerObservationStore = (
             'fillEventId', fill_event_id,
             'accountingReceiptId', accounting_receipt_id
           ))
+          WHEN outcome = 'CANONICALLY_COVERED' THEN jsonb_build_object(
+            '_tag', 'CanonicallyCovered',
+            'eventId', event_id,
+            'observedAt', to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          )
           ELSE jsonb_build_object(
             '_tag', 'ReconcileRequired',
             'eventId', event_id,
@@ -279,7 +285,7 @@ export const makeBrokerObservationStore = (
           account_id,event_id,source_revision,outcome,reason,order_event_id,fill_event_id,accounting_receipt_id,observed_at
         ) VALUES (
           ${accountId},${projection.eventId},${sourceRevision},
-          ${projection._tag === 'Projected' ? 'PROJECTED' : 'RECONCILE_REQUIRED'},
+          ${projection._tag === 'Projected' ? 'PROJECTED' : projection._tag === 'CanonicallyCovered' ? 'CANONICALLY_COVERED' : 'RECONCILE_REQUIRED'},
           ${projection._tag === 'ReconcileRequired' ? projection.reason : null},
           ${projection._tag === 'Projected' ? projection.orderEventId : null},
           ${projection._tag === 'Projected' ? (projection.fillEventId ?? null) : null},
@@ -291,6 +297,39 @@ export const makeBrokerObservationStore = (
           return yield* observationUnavailable('Durable broker source projection receipt is absent')
         return retained
       }),
+    )
+  const hasSessionProjectionGap = (sessionId: string) =>
+    run(
+      sql`SELECT EXISTS (
+        SELECT 1 FROM broker_source_event_projections AS projection
+        JOIN broker_source_events AS event USING (account_id,event_id)
+        WHERE projection.account_id = ${accountId} AND event.source_revision = ${sourceRevision}
+          AND event.session_id = ${sessionId} AND projection.outcome = 'RECONCILE_REQUIRED'
+          AND NOT (projection.reason = 'SESSION_BOUNDARY' AND event.event_kind = 'SessionReady')
+      ) AS unresolved`.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })]), strictParseOptions),
+        ),
+        Effect.map(([row]) => row.unresolved),
+      ),
+    )
+  const readNewerOrderEventId = (brokerOrderId: string, occurredAt: string) =>
+    run(
+      sql`SELECT event.event_id FROM broker_events AS event
+        JOIN orders AS observed_order USING (event_id)
+        WHERE event.broker = ${Broker.Alpaca} AND event.account_id = ${accountId}
+          AND observed_order.broker_order_id = ${brokerOrderId}
+          AND event.occurred_at > ${occurredAt}::timestamptz
+        ORDER BY event.occurred_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
+        LIMIT 1`.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ event_id: Sha256Schema })).check(Schema.isMaxLength(1)),
+            strictParseOptions,
+          ),
+        ),
+        Effect.map(([row]) => row?.event_id),
+      ),
     )
   const recoverUnfinished = (captureId: string) =>
     run(
@@ -664,6 +703,8 @@ export const makeBrokerObservationStore = (
     readNotification,
     readSourceProjection,
     recordProjection,
+    hasSessionProjectionGap,
+    readNewerOrderEventId,
     read,
     readState: readState(null),
     readForSubmit: readState,
