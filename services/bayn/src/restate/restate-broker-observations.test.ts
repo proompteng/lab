@@ -40,7 +40,7 @@ const identity = Result.getOrThrow(
 )
 const connection = { identity, key: Redacted.make(fixture.keyId), secret: Redacted.make(fixture.secret) }
 const controllerKey = identity.identityHash
-const sourceRevision = 'b'.repeat(40)
+const sourceRevision = 'a'.repeat(40)
 const initialNow = Date.parse('2026-11-11T17:37:20.000Z')
 const config = { controllerKey, sourceRevision, maxAgeMs: 60_000, freshnessLeadMs: 30_000, operationTimeoutMs: 30_000 }
 type State = typeof BrokerObservationOwnerStateSchema.Type
@@ -302,6 +302,13 @@ describe('event-driven Restate broker observation owner', () => {
       h.projections().map((delivery) => delivery.idempotencyKey),
     )
     expect(JSON.stringify([...h.durable.entries()])).not.toContain(fixture.secret)
+  })
+  test('rejects a signed notification from another source revision before persistence', async () => {
+    const h = harness({ ownerConfig: { sourceRevision: 'b'.repeat(40) } })
+    const failure = await h.handlers.notify(h.context, fixture.notification).catch((cause: unknown) => cause)
+    expect(String(failure)).toContain('broker notification source revision mismatch')
+    expect(h.commands).toEqual(['verify broker notification'])
+    expect(h.deliveries).toEqual([])
   })
   test.each([
     { name: 'null', candidate: null },

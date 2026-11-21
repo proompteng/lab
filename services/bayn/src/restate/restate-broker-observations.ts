@@ -202,6 +202,8 @@ export const makeBaynBrokerObservations = (
           if (!verified.accepted)
             throw new restate.TerminalError(`broker notification rejected: ${verified.reason}`, { errorCode: 400 })
           const notification = verified.notification
+          if (notification.session.sourceRevision !== config.sourceRevision)
+            throw new restate.TerminalError('broker notification source revision mismatch', { errorCode: 409 })
           const signal = ctx.request().attemptCompletedSignal
           await ctx.run(
             'record verified broker notification',

@@ -57,6 +57,7 @@ const connection = {
 const original = Result.getOrThrow(
   Schema.decodeUnknownResult(Schema.fromJsonString(BrokerNotificationSchema))(reference.notification.message),
 )
+const sourceRevision = '2'.repeat(40)
 const eventId = sha256(
   `${connection.identity.identityHash}\n${original._tag === 'TradeUpdate' ? original.frameJson : `${original.session.sessionId}\nready`}`,
 )
@@ -67,6 +68,7 @@ const message = JSON.stringify({
     ...original.session,
     identityHash: connection.identity.identityHash,
     accountId: connection.identity.accountId,
+    sourceRevision,
   },
 })
 const fixture = {
@@ -78,7 +80,7 @@ const fixture = {
 }
 const config = {
   controllerKey: connection.identity.identityHash,
-  sourceRevision: '2'.repeat(40),
+  sourceRevision,
   maxAgeMs: 60_000,
   freshnessLeadMs: 5_000,
   operationTimeoutMs: 5_000,
