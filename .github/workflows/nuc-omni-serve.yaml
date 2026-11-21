@@ -9,8 +9,7 @@ on:
       - 'devices/nuc/omni/scripts/verify.sh'
       - 'devices/nuc/omni/scripts/test-serve-ownership.sh'
       - '.github/workflows/nuc-omni-serve.yaml'
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches: [main]
     paths:

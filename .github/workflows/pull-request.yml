@@ -495,6 +495,11 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: ./.github/workflows/torghut-notebooks-ci.yml
 
+  queue-services:
+    name: Queue service validation
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/queue-service-validation.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -513,6 +518,7 @@ jobs:
       - torghut
       - torghut-schema
       - torghut-notebooks
+      - queue-services
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -532,6 +538,7 @@ jobs:
           TORGHUT_RESULT: ${{ needs.torghut.result }}
           TORGHUT_SCHEMA_RESULT: ${{ needs.torghut-schema.result }}
           TORGHUT_NOTEBOOKS_RESULT: ${{ needs.torghut-notebooks.result }}
+          QUEUE_SERVICES_RESULT: ${{ needs.queue-services.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -562,6 +569,10 @@ jobs:
           fi
           if [[ "${FULL_VALIDATION}" == true && ( "${TORGHUT_RESULT}" != success || "${TORGHUT_SCHEMA_RESULT}" != success || "${TORGHUT_NOTEBOOKS_RESULT}" != success ) ]]; then
             echo "Torghut validation failed: core=${TORGHUT_RESULT}, schema=${TORGHUT_SCHEMA_RESULT}, notebooks=${TORGHUT_NOTEBOOKS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && "${QUEUE_SERVICES_RESULT}" != success ]]; then
+            echo "Queue service validation failed: ${QUEUE_SERVICES_RESULT}" >&2
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
