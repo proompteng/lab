@@ -2,7 +2,7 @@ import { canonicalHashV1Result } from '../hash'
 import { ValkeyCacheError } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { randomUUID } from 'node:crypto'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, Schema, Tracer } from 'effect'
@@ -20,6 +20,11 @@ import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { checkHealth } from '../health/program'
 import { readinessResponseDecision, runtimeHealthFreshnessLeaseMs, statusReadinessResponseDecision } from '../http'
 import { initialState } from '../runtime-state'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../testing/postgres-template.test-support'
 import { config as runtimeConfig } from '../testing/runtime-fixtures'
 import { BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -34,11 +39,11 @@ const revision = 'a'.repeat(40)
 const generationHash = 'b'.repeat(64)
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55449/bayn_broker_observations_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
     PostgresClientLive({
       operationTimeoutMs: 5000,
-      postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+      postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
     }).pipe(Layer.provideMerge(NodeServices.layer)),
   )
 const claim = (store: ReturnType<typeof makeBrokerObservationStore>, captureId = randomUUID()) =>
@@ -203,25 +208,32 @@ const reserve = (sql: PgClient.PgClient, id: string, at: string) =>
   })
 
 describePostgres('Durable per-account broker observations', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
-      throw new Error('Observation integration tests require a local _test database')
-    runtime = makeRuntime()
+  beforeAll(async () => {
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const schema = makeRuntime(url)
+      try {
+        await schema.runPromise(postgresMigrations)
+      } finally {
+        await schema.dispose()
+      }
+    })
   })
   beforeEach(async () => {
     cacheFixture = valkeyFixture()
-    return runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
-      }),
-    )
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
-  afterAll(async () => runtime?.dispose())
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
+  })
+  afterAll(async () => template?.dispose())
   const run = <A, E>(
     effect: (sql: PgClient.PgClient, store: ReturnType<typeof makeBrokerObservationStore>) => Effect.Effect<A, E>,
   ) =>
