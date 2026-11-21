@@ -169,7 +169,7 @@
       "pattern": "^seed(?: \\(.*\\))?$"
     }
   ],
-  "codex-devbox.yml": [
+  "codex-devbox-validate.yml": [
     {
       "id": "validate",
       "pattern": "^validate(?: \\(.*\\))?$"
@@ -177,6 +177,12 @@
     {
       "id": "build",
       "pattern": "^build(?: \\(.*\\))?$"
+    }
+  ],
+  "codex-devbox.yml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish",
@@ -268,7 +274,7 @@
     },
     {
       "id": "catalog",
-      "pattern": "^Validate Talos 1\\.14 catalog(?: \\(.*\\))?$"
+      "pattern": "^catalog(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish-catalog",
@@ -276,7 +282,7 @@
     },
     {
       "id": "build",
-      "pattern": "^Build .* extension(?: \\(.*\\))?$"
+      "pattern": "^build(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish",
@@ -285,6 +291,16 @@
     {
       "id": "installers",
       "pattern": "^Build .* installer(?: \\(.*\\))?$"
+    }
+  ],
+  "kata-validation.yml": [
+    {
+      "id": "catalog",
+      "pattern": "^Validate Talos 1\\.14 catalog(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^Build .* extension(?: \\(.*\\))?$"
     }
   ],
   "manual-docker-build-push.yaml": [
@@ -373,6 +389,242 @@
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "landing",
+      "pattern": "^PR validation \\(landing\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "agents-full",
+      "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bayn",
+      "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz",
+      "pattern": "^Ofz authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "relay",
+      "pattern": "^Relay platform(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "tengri",
+      "pattern": "^Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "buf",
+      "pattern": "^Protobuf validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "scripts",
+      "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut",
+      "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-schema",
+      "pattern": "^Torghut ClickHouse schema(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut-notebooks",
+      "pattern": "^Torghut notebooks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "queue-services",
+      "pattern": "^Queue service validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
+    }
+  ],
+  "queue-service-validation.yml": [
+    {
+      "id": "agentctl",
+      "pattern": "^agentctl(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "attic-image",
+      "pattern": "^attic-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bumba",
+      "pattern": "^bumba(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "buzz",
+      "pattern": "^buzz(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "codex",
+      "pattern": "^codex(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "codex-devbox",
+      "pattern": "^codex-devbox(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "dernier",
+      "pattern": "^dernier(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "dorvud",
+      "pattern": "^dorvud(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "facteur",
+      "pattern": "^facteur(?: \\(.*\\))?$"
+    },
+    {
+      "id": "feature-flags",
+      "pattern": "^feature-flags(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "flamingo",
+      "pattern": "^flamingo(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "froussard",
+      "pattern": "^froussard(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "galette",
+      "pattern": "^galette(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "golink",
+      "pattern": "^golink(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "graf-service",
+      "pattern": "^graf-service(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "headlamp",
+      "pattern": "^headlamp(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "jangar",
+      "pattern": "^jangar(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "jangar-guardrails",
+      "pattern": "^jangar-guardrails(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "karapace",
+      "pattern": "^karapace(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "kata",
+      "pattern": "^kata(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "khoshut",
+      "pattern": "^khoshut(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "miel",
+      "pattern": "^miel(?: \\(.*\\))?$"
+    },
+    {
+      "id": "nuc-omni-serve",
+      "pattern": "^nuc-omni-serve(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "oirat",
+      "pattern": "^oirat(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "opencode",
+      "pattern": "^opencode(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "orbit-salvage",
+      "pattern": "^orbit-salvage(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "otel",
+      "pattern": "^otel(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "product-dependency-closure",
+      "pattern": "^product-dependency-closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "product-image",
+      "pattern": "^product-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "reestr",
+      "pattern": "^reestr(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "registry-cleanup",
+      "pattern": "^registry-cleanup(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "restate",
+      "pattern": "^restate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ricochet-rush",
+      "pattern": "^ricochet-rush(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "schematic",
+      "pattern": "^schematic(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "signal-publisher",
+      "pattern": "^signal-publisher(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "signal-publisher-image",
+      "pattern": "^signal-publisher-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "spire-migration",
+      "pattern": "^spire-migration(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "symphony",
+      "pattern": "^symphony(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "synthesis",
+      "pattern": "^synthesis(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "temporal-bun-sdk",
+      "pattern": "^temporal-bun-sdk(?: \\(.*\\))?$"
+    },
+    {
+      "id": "temporal-bun-sdk-integration",
+      "pattern": "^Temporal Bun SDK integration and load(?: \\(.*\\))?$"
+    },
+    {
+      "id": "temporal-worker",
+      "pattern": "^Temporal worker build and heartbeat tests \\(.*\\)(?: \\(.*\\))?$"
+    }
+  ],
   "relay.yml": [
     {
       "id": "validate",
@@ -385,6 +637,16 @@
   ],
   "restate-images.yml": [
     {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "restate-validation.yml": [
+    {
       "id": "changes",
       "pattern": "^changes(?: \\(.*\\))?$"
     },
@@ -395,10 +657,6 @@
     {
       "id": "cache-proof",
       "pattern": "^cache-proof(?: \\(.*\\))?$"
-    },
-    {
-      "id": "publish",
-      "pattern": "^publish(?: \\(.*\\))?$"
     }
   ],
   "sag-build-push.yaml": [
@@ -439,12 +697,8 @@
   ],
   "tengri-images.yml": [
     {
-      "id": "validate-tengri",
-      "pattern": "^Validate Tengri(?: \\(.*\\))?$"
-    },
-    {
-      "id": "validate-nanoagent",
-      "pattern": "^Validate Nanoagent(?: \\(.*\\))?$"
+      "id": "validate",
+      "pattern": "^Validate Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "build",

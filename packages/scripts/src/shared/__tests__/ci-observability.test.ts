@@ -12,6 +12,7 @@ describe('CI build observability', () => {
     )
     const discovered = observedWorkflows(repoRoot)
     expect(discovered).toContain('bayn-ci.yml')
+    expect(discovered).toContain('pull-request.yml')
     expect(discovered).toContain('temporal-worker-images.yml')
     expect(discovered).toContain('symphony-build-push.yaml')
     expect(discovered).toContain('arc-runner-build-push.yml')
@@ -75,12 +76,12 @@ describe('CI build observability', () => {
   })
 
   test('retains static suffixes that distinguish dynamic matrix job names', () => {
-    const families = workflowCatalog(repoRoot)['kata-firecracker-extension.yaml']
-    if (!families) throw new Error('Kata workflow is missing from enrollment')
-    const match = (name: string) =>
-      families.filter((family) => new RegExp(family.pattern).test(name)).map((family) => family.id)
-    expect(match('Build amd64 extension')).toEqual(['build'])
-    expect(match('Build cloud-hypervisor installer')).toEqual(['installers'])
+    const catalog = workflowCatalog(repoRoot)
+    const match = (file: string, name: string) =>
+      catalog[file]?.filter((family) => new RegExp(family.pattern).test(name)).map((family) => family.id)
+    expect(match('kata-validation.yml', 'Build amd64 extension')).toEqual(['build'])
+    expect(match('kata-firecracker-extension.yaml', 'build / Build amd64 extension')).toEqual(['build'])
+    expect(match('kata-firecracker-extension.yaml', 'Build cloud-hypervisor installer')).toEqual(['installers'])
   })
 
   test('evaluates alerts and dashboard queries with native Prometheus', () => {

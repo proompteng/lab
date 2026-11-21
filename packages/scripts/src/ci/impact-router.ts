@@ -87,26 +87,31 @@ export const loadImpactMap = (mapPath: string): ImpactMap => {
   return parsed as ImpactMap
 }
 
-export const selectImpactPlan = (changedFiles: Iterable<string>, map: ImpactMap): ImpactPlan => {
+export const selectImpactPlan = (changedFiles: Iterable<string>, map: ImpactMap, full = false): ImpactPlan => {
   const files = sortUnique([...changedFiles].map((file) => file.trim()).filter(Boolean))
   const validationTargets = new Set<string>()
   const delegatedWorkflows = new Set<string>()
 
   for (const [name, target] of Object.entries(map.targets)) {
     if (target.kind === 'planner') continue
-    const ownsFile = target.paths.some((glob) =>
-      files.some(
-        (file) =>
-          matchesGlob(file, glob) && !(target.exclude ?? []).some((excludedGlob) => matchesGlob(file, excludedGlob)),
-      ),
-    )
-    if (!ownsFile) continue
+    if (!full) {
+      const ownsFile = target.paths.some((glob) =>
+        files.some(
+          (file) =>
+            matchesGlob(file, glob) && !(target.exclude ?? []).some((excludedGlob) => matchesGlob(file, excludedGlob)),
+        ),
+      )
+      if (!ownsFile) continue
+    }
 
     if (target.kind === 'validation') validationTargets.add(name)
     if (target.kind === 'delegated' && target.workflow) delegatedWorkflows.add(target.workflow)
   }
 
-  if (validationTargets.size === 0) validationTargets.add('planner')
+  if (validationTargets.size === 0) {
+    if (full) throw new Error('Full CI plan has no validation targets')
+    validationTargets.add('planner')
+  }
 
   return {
     files,
@@ -129,11 +134,14 @@ const main = (): void => {
   const filesPath = readArg(args, '--files')
   const mapPath = readArg(args, '--map') ?? '.github/ci/impact-map.yml'
   const githubOutput = readArg(args, '--github-output')
-  if (!filesPath) throw new Error('Usage: impact-router.ts --files <path> [--map <path>] [--github-output <path>]')
+  const full = args.includes('--full')
+  if (!filesPath && !full)
+    throw new Error('Usage: impact-router.ts (--files <path> | --full) [--map <path>] [--github-output <path>]')
 
   const plan = selectImpactPlan(
-    readFileSync(resolve(filesPath), 'utf8').split(/\r?\n/),
+    filesPath === undefined ? [] : readFileSync(resolve(filesPath), 'utf8').split(/\r?\n/),
     loadImpactMap(resolve(mapPath)),
+    full,
   )
   process.stdout.write(`${JSON.stringify(plan)}\n`)
 

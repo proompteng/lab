@@ -40,44 +40,11 @@ jobs:
             prRunner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
-      - name: Resolve source metadata
-        id: source
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          echo "timestamp=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup-buildkit
-      - name: Build runtime
-        uses: docker/build-push-action@v6
+      - uses: ./.github/actions/build-temporal-worker
         with:
-          context: services/temporal-worker
-          platforms: linux/${{ matrix.architecture }}
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          outputs: type=image,oci-mediatypes=true
-          provenance: false
-          tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
-          cache-from: |
-            type=gha,scope=temporal-worker-runtime-${{ matrix.architecture }}
-          cache-to: type=gha,mode=max,scope=temporal-worker-runtime-${{ matrix.architecture }}
-      - name: Retain SDK heartbeat proof
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-        run: |
-          set -euo pipefail
-          mkdir -p .artifacts/temporal-worker
-          docker buildx build services/temporal-worker --target evidence --platform "linux/${ARCHITECTURE}" \
-            --output type=local,dest=.artifacts/temporal-worker \
-            --cache-from "type=gha,scope=temporal-worker-runtime-${ARCHITECTURE}"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: temporal-worker-proof-${{ matrix.architecture }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: .artifacts/temporal-worker
-          if-no-files-found: error
+          architecture: ${{ matrix.architecture }}
+          release-image: ${{ env.IMAGE }}
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

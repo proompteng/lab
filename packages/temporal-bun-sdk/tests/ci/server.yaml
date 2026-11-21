@@ -1,0 +1,60 @@
+log:
+  stdout: true
+  level: warn
+
+persistence:
+  defaultStore: main
+  visibilityStore: visibility
+  numHistoryShards: 4
+  datastores:
+    main:
+      sql:
+        pluginName: postgres12
+        databaseName: temporal
+        connectAddr: postgres:5432
+        connectProtocol: tcp
+        user: temporal
+        password: temporal-fixture
+    visibility:
+      sql:
+        pluginName: postgres12
+        databaseName: temporal_visibility
+        connectAddr: postgres:5432
+        connectProtocol: tcp
+        user: temporal
+        password: temporal-fixture
+
+global:
+  membership:
+    broadcastAddress: TEMPORAL_CONTAINER_IP
+
+services:
+  frontend:
+    rpc:
+      grpcPort: 7233
+      membershipPort: 6933
+      httpPort: 7243
+      bindOnIP: 0.0.0.0
+  history:
+    rpc:
+      grpcPort: 7234
+      membershipPort: 6934
+  matching:
+    rpc:
+      grpcPort: 7235
+      membershipPort: 6935
+  worker:
+    rpc:
+      grpcPort: 7239
+      membershipPort: 6939
+
+clusterMetadata:
+  failoverVersionIncrement: 10
+  masterClusterName: active
+  currentClusterName: active
+  clusterInformation:
+    active:
+      enabled: true
+      initialFailoverVersion: 1
+      rpcName: frontend
+      rpcAddress: 127.0.0.1:7233

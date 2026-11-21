@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: mirror.gcr.io/library/postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+      - /var/lib/postgresql/data:size=1g
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal-fixture
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, temporal]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  schema:
+    image: mirror.gcr.io/temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
+    read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SQL_PASSWORD: temporal-fixture
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        for database in temporal temporal_visibility; do
+          set -- --plugin postgres12 --ep postgres --port 5432 --user temporal --db "$$database"
+          temporal-sql-tool "$$@" create
+          temporal-sql-tool "$$@" setup-schema -v 0.0
+          temporal-sql-tool "$$@" update-schema -d "/etc/temporal/schema/postgresql/v12/$${database#temporal_}/versioned"
+        done
+
+  temporal:
+    image: mirror.gcr.io/temporalio/server:1.32.2@sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
+    read_only: true
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    environment:
+      USER: temporal
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./server.yaml:/ci/server.yaml:ro
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        address="$$(hostname -i)"
+        sed "s/TEMPORAL_CONTAINER_IP/$$address/" /ci/server.yaml >/tmp/temporal-server.yaml
+        exec temporal-server --config-file /tmp/temporal-server.yaml --allow-no-auth start
+
+networks:
+  default:
+    internal: true
