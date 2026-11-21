@@ -149,9 +149,11 @@ fee-inclusive funding, collateral and fresh borrow eligibility can reject a prop
 does not generate prices or quantities.
 
 The final JEV call asks whether each setup is confirmed and whether its stop invalidates the setup. Both judgments
-must be at least 0.70. Within a symbol, selection ranks eligible proposals by the lower of those judgments, then lower
-modeled stop loss, then stable proposal ID. These scores are not calibrated probabilities of profit. The parameters
-and target construction have not established a profitable trading advantage.
+must be at least 0.70. Every proposal that passes those structural checks reaches one global selector. That selector
+ranks the complete eligible set by the lower structural judgment, then lower modeled stop loss, symbol and stable
+proposal ID; it admits at most one proposal per symbol while selecting the portfolio. There is no per-symbol winner
+upstream. These scores are not calibrated probabilities of profit. The parameters and target construction have not
+established a profitable trading advantage.
 
 Candidate pipelines run concurrently. Each CHART terminal and final-call handoff commits atomically before that
 candidate's final JEV dispatch; another candidate can still be in CHART. Both calls share the original ten-second
@@ -210,6 +212,37 @@ prospective qualification; these bullets do not describe a currently qualified e
 5. Outcomes append to evidence and accounting. They do not tune the running policy. Any learned change becomes a new
    preregistered protocol evaluated prospectively.
 
+Research and broker qualification are separate stages:
+
+```mermaid
+flowchart LR
+  Facts[(One immutable market, broker and cost ledger)] --> Fanout{Deterministic fanout}
+  Fanout --> Candidate[Candidate shadow ledger]
+  Fanout --> Incumbent[Registered-incumbent shadow ledger]
+  Fanout --> Cash[Costed-cash shadow ledger]
+  Candidate --> ResearchGate[Prospective research elimination gate]
+  Incumbent --> ResearchGate
+  Cash --> ResearchGate
+  ResearchGate -->|freeze one surviving protocol| Assignment[Precommitted one-account session or block assignment]
+  Assignment --> Paper[Small broker-PAPER switchback canary]
+  Paper --> Accounting[(Canonical broker and TigerBeetle economics)]
+  Accounting --> Bounds[Anytime-valid absolute and treatment-effect bounds]
+  Bounds -->|all lower bounds positive| Review[Reviewed protocol and capital request]
+  Bounds -->|otherwise| Observe[CASH / OBSERVE]
+```
+
+Virtual policies share source facts but own separate deterministic state, cash, positions, liquidity consumption,
+cost allocation and decision cursors. They open no provider connection and have no mutation capability. This permits
+many cheap prequential falsification arms without pretending their fills reproduce a broker account. Shadow evidence
+can eliminate a candidate; it cannot qualify PAPER.
+
+The surviving protocol enters one bounded PAPER switchback on the actual account. Candidate, incumbent and cash
+assignments are frozen before each registered session or carryover-safe block. The account must be flat, reconciled
+and cost-complete at every assignment boundary; capital, drawdown and liabilities carry forward rather than reset.
+An abstention remains the assigned policy's zero-trade result and never promotes another arm. Unavailable data,
+unknown broker outcomes or incomplete costs remain unresolved. A randomized one-account experiment replaces the
+unobtainable different-account-per-policy requirement without treating simultaneous virtual fills as broker evidence.
+
 One session's primary economic outcome is
 `close broker equity - open broker equity - external funding - costs not yet recognized in broker equity`. The
 candidate is compared on matched prospective sessions against `INCUMBENT_AT_REGISTRATION` and `COSTED_CASH`.
@@ -222,6 +255,21 @@ market regimes and for long and short opportunities, with the protocol, universe
 stopping rule and multiplicity policy frozen before the first observation. Failure of any bound means `CASH`/OBSERVE,
 not a threshold retune. Formal proofs cover determinism, fencing and accounting conservation; only prospective broker
 outcomes can establish edge.
+
+The statistical design follows primary results rather than inventing a Bayn-specific significance rule:
+
+- [Design and Analysis of Switchback Experiments](https://doi.org/10.1287/mnsc.2022.4583) supplies the one-unit,
+  carryover-aware randomization family; Bayn must preregister its block length from execution carryover rather than
+  optimize it after outcomes.
+- [Time-uniform, nonparametric, nonasymptotic confidence sequences](https://arxiv.org/abs/1810.08240) supplies
+  anytime-valid bounds; the registered familywise error allocation and attempt index remain part of the evidence.
+- [The Probability of Backtest Overfitting](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf) motivates an
+  append-only trial registry. Discarded selectors, features, thresholds and stopping attempts cannot disappear.
+- [The Price Impact of Order Book Events](https://arxiv.org/abs/1011.6402),
+  [Queue Imbalance as a One-Tick-Ahead Price Predictor](https://arxiv.org/abs/1512.03492), and
+  [The Micro-Price](https://dx.doi.org/10.2139/ssrn.2970694) justify testing point-in-time top-of-book imbalance,
+  order-flow imbalance and microprice as execution-horizon features. They do not establish that IEX-only observations
+  predict Bayn's fully costed returns. Any such feature starts as a new frozen shadow policy with no capital authority.
 
 ## Effect composition
 
