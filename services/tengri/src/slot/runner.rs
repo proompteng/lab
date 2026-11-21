@@ -487,6 +487,11 @@ async fn verify_guest_file_mode(root: &Path, path: &str, mode: &str) -> anyhow::
     let stdout = String::from_utf8_lossy(&metadata.stdout);
     ensure!(
         metadata.status.success()
+            && stdout.contains("Type: regular")
+            && stdout
+                .split_once("User:")
+                .and_then(|(_, suffix)| suffix.split_whitespace().next())
+                == Some("0")
             && stdout
                 .split_once("Mode:")
                 .and_then(|(_, suffix)| suffix.split_whitespace().next())

@@ -214,7 +214,24 @@ func codexOperationResult(op codexOperation) (codexCallResult, error) {
 }
 
 func (supervisor *codexSupervisor) operationBootEnded(op codexOperation) bool {
-	return codexOperationID.MatchString(op.BootID) && codexOperationID.MatchString(supervisor.bootID) && op.BootID != supervisor.bootID
+	if !codexOperationID.MatchString(supervisor.bootID) {
+		return false
+	}
+	if op.BootID == "" {
+		// A retained root only receives the marker after the old VMM is reaped.
+		// Every operation written by this guest records its boot ID.
+		return supervisor.retainedBoot && op.Generation != ""
+	}
+	return codexOperationID.MatchString(op.BootID) && op.BootID != supervisor.bootID
+}
+
+func (supervisor *codexSupervisor) settleUnconfirmedStart(op codexOperation) (codexOperation, error) {
+	if op.Method != "turn/start" || !supervisor.operationBootEnded(op) {
+		return op, errCodexOperationUnknown
+	}
+	op.State = "unconfirmed"
+	op.FencedBy = supervisor.bootID
+	return op, nil
 }
 
 func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op codexOperation) (codexOperation, error) {
@@ -229,6 +246,11 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 		params, _ := json.Marshal(map[string]any{"threadId": op.Thread, "cursor": cursor, "limit": 100, "sortDirection": "desc"})
 		result, err := supervisor.request(ctx, "thread/items/list", params, true, nil)
 		if err != nil {
+			var rpcError *codexRPCError
+			if page == 0 && errors.As(err, &rpcError) && rpcError.code == -32600 &&
+				rpcError.message == "no rollout found for thread id "+op.Thread {
+				return supervisor.settleUnconfirmedStart(op)
+			}
 			return op, errCodexOperationUnknown
 		}
 		bytes += len(result.result)
@@ -258,14 +280,7 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 		}
 		if items.Next == nil {
 			if turn == "" {
-				// Snapshot restore keeps the kernel boot ID. A different boot
-				// proves the original local writer cannot still be running.
-				if op.Method == "turn/start" && supervisor.operationBootEnded(op) {
-					op.State = "unconfirmed"
-					op.FencedBy = supervisor.bootID
-					return op, nil
-				}
-				return op, errCodexOperationUnknown
+				return supervisor.settleUnconfirmedStart(op)
 			}
 			value := map[string]any{"turnId": turn}
 			if op.Method == "turn/start" {
@@ -358,7 +373,8 @@ func readCodexOperation(path string) (codexOperation, error) {
 	case op.State == "completed" && (len(op.Result) == 0) != (len(op.Error) == 0) && op.FencedBy == "":
 		return op, nil
 	case op.State == "unconfirmed" && empty && op.Method == "turn/start" &&
-		codexOperationID.MatchString(op.BootID) && codexOperationID.MatchString(op.FencedBy) && op.BootID != op.FencedBy:
+		(op.BootID == "" || codexOperationID.MatchString(op.BootID)) &&
+		codexOperationID.MatchString(op.FencedBy) && op.BootID != op.FencedBy:
 		return op, nil
 	default:
 		return codexOperation{}, errors.New("invalid Codex operation journal")

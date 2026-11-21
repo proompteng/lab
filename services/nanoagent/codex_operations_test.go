@@ -101,11 +101,22 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 	const reconcile = `{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`
 	for _, test := range []struct {
 		name, boot, currentBoot string
+		retainedBoot            bool
+		historyError            json.RawMessage
 		wantReleased            bool
 	}{
 		{name: "record predates boot evidence", currentBoot: replacementBoot},
-		{name: "same boot", boot: originalBoot, currentBoot: originalBoot},
+		{name: "same boot", boot: originalBoot, currentBoot: originalBoot, retainedBoot: true},
 		{name: "different boot", boot: originalBoot, currentBoot: replacementBoot, wantReleased: true},
+		{name: "legacy operation with fenced retained root", currentBoot: replacementBoot, retainedBoot: true, wantReleased: true},
+		{
+			name: "legacy operation with no native rollout", currentBoot: replacementBoot, retainedBoot: true, wantReleased: true,
+			historyError: json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
+		},
+		{
+			name: "native history read failure", currentBoot: replacementBoot, retainedBoot: true,
+			historyError: json.RawMessage(`{"code":-32603,"message":"failed to read history"}`),
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			original, writer := readyCodexSupervisor(t)
@@ -127,6 +138,7 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 			replacement, writer := readyCodexSupervisor(t)
 			replacement.cwd = original.cwd
 			replacement.bootID = test.currentBoot
+			replacement.retainedBoot = test.retainedBoot
 			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			result := make(chan error, 1)
@@ -141,7 +153,11 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 			if request.Method != "thread/items/list" {
 				t.Fatalf("recovery must read history without dispatching: %s", request.Method)
 			}
-			replacement.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"data":[]}`)})
+			if test.historyError != nil {
+				replacement.resolveResponse(codexRPCMessage{ID: request.ID, Error: test.historyError})
+			} else {
+				replacement.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"data":[]}`)})
+			}
 			err := <-result
 			if !test.wantReleased {
 				if !errors.Is(err, errCodexOperationUnknown) {

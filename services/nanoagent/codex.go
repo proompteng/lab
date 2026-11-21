@@ -107,6 +107,7 @@ type codexSupervisor struct {
 	browserMCP      bool
 	cwd             string
 	bootID          string
+	retainedBoot    bool
 	closed          atomic.Bool
 	requestID       atomic.Uint64
 	writePermit     chan struct{}

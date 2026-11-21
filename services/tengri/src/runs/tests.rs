@@ -839,9 +839,14 @@ impl Drop for Worker {
         let _ = self.0.wait();
     }
 }
-fn worker(port: u16, key_file: &std::path::Path) -> Worker {
+fn worker(port: u16, key_file: &std::path::Path, previous: bool) -> Worker {
+    let executable = previous
+        .then(|| env::var_os("TENGRI_RESTATE_PREVIOUS_WORKER"))
+        .flatten()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| env::current_exe().unwrap());
     Worker(
-        Command::new(env::current_exe().unwrap())
+        Command::new(executable)
             .args([
                 "--ignored",
                 "--exact",
@@ -856,6 +861,17 @@ fn worker(port: u16, key_file: &std::path::Path) -> Worker {
             .spawn()
             .unwrap(),
     )
+}
+
+async fn invocation_row(http: &reqwest::Client, admin: &str, run: &str) -> serde_json::Value {
+    let response: serde_json::Value = http
+        .post(format!("{admin}/query"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({"query": format!(
+            "SELECT id,status,pinned_deployment_id,journal_size,last_failure FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{run}'"
+        )}))
+        .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    response["rows"][0].clone()
 }
 
 async fn register(
@@ -998,7 +1014,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port();
     drop(socket);
-    let mut process = worker(port, &key_file);
+    let mut process = worker(port, &key_file, true);
     let http = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     let original_deployment = register(&http, &admin, port, deadline).await;
@@ -1293,12 +1309,59 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let next_port = socket.local_addr().unwrap().port();
     drop(socket);
-    let mut next_version = worker(next_port, &key_file);
+    let mut next_version = worker(next_port, &key_file, false);
     let next_deployment = register(&http, &admin, next_port, deadline).await;
     assert_ne!(
         original_deployment, next_deployment,
         "version registration must retain the original pinned endpoint"
     );
+    let original = invocation_row(&http, &admin, &parallel.id).await;
+    let invocation_id = original["id"].as_str().unwrap();
+    assert_eq!(original["pinned_deployment_id"], original_deployment);
+    loop {
+        let current = invocation_row(&http, &admin, &parallel.id).await;
+        if matches!(current["status"].as_str(), Some("paused" | "suspended")) {
+            break;
+        }
+        let pause = http
+            .patch(format!("{admin}/invocations/{invocation_id}/pause"))
+            .send()
+            .await
+            .unwrap();
+        assert!(pause.status().is_success() || pause.status() == reqwest::StatusCode::CONFLICT);
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run could not be paused before migration"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    http.patch(format!("{admin}/invocations/{invocation_id}/resume"))
+        .query(&[("deployment", &next_deployment)])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    loop {
+        let current = invocation_row(&http, &admin, &parallel.id).await;
+        assert_eq!(current["id"], invocation_id);
+        assert_eq!(current["last_failure"], serde_json::Value::Null);
+        if current["pinned_deployment_id"] == next_deployment
+            && current["journal_size"].as_u64().unwrap()
+                > original["journal_size"].as_u64().unwrap()
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run did not replay on the replacement worker"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(matches!(
+        status(&read_client, &parallel, &owner).await.unwrap().state,
+        State::WaitingForGuest { .. }
+    ));
     // Repeated input is the same workflow, and a changed payload is rejected by readback.
     workspace
         .admit(Json(admission(&service, input.clone()).await))
@@ -1388,8 +1451,8 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         "the mounted key must actually rotate before admission readback"
     );
     // These are independent OS processes. Listener cancellation alone would leave HTTP/2 tasks alive.
-    process = worker(port, &key_file);
-    next_version = worker(next_port, &key_file);
+    process = worker(port, &key_file, true);
+    next_version = worker(next_port, &key_file, false);
     let latest = proof_client
         .inspect(Json(proof_claim.clone()))
         .call()
