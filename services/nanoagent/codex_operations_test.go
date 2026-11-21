@@ -31,7 +31,7 @@ func TestCodexDispatchDoesNotResumeForOtherRejections(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := supervisor.dispatchOperation(ctx, test.method, json.RawMessage(operationParams))
+				_, err := supervisor.dispatchOperation(ctx, test.method, json.RawMessage(operationParams), supervisor.generation, nil)
 				done <- err
 			}()
 			request := readCodexWireRequest(t, writer)
@@ -133,6 +133,62 @@ func TestCodexOperationRetrySurvivesSupervisorReplacement(t *testing.T) {
 	}
 }
 
+func TestCodexUnsentOperationReconcilesAndUnblocksConversation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	<-supervisor.writePermit
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(operationParams))
+		done <- err
+	}()
+	path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", "11111111-1111-4111-8111-111111111111.json")
+	deadline := time.After(5 * time.Second)
+	for {
+		supervisor.mu.Lock()
+		pending := len(supervisor.workRequests) == 1
+		supervisor.mu.Unlock()
+		if pending {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("operation never reached the native write gate")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, errCodexOperationRejected) {
+		t.Fatalf("unsent operation remained uncertain: %v", err)
+	}
+	supervisor.writePermit <- struct{}{}
+	if receipt, err := readCodexOperation(path); err != nil || receipt.State != "completed" || len(receipt.Error) == 0 {
+		t.Fatalf("definite rejection was not persisted: %+v, %v", receipt, err)
+	}
+	if _, err := supervisor.call(context.Background(), "tengri/reconcileOperation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`)); !errors.Is(err, errCodexOperationRejected) {
+		t.Fatalf("reconciliation did not report the recorded rejection: %v", err)
+	}
+	select {
+	case request := <-writer.messages:
+		t.Fatalf("cancelled operation reached Codex: %s", request)
+	default:
+	}
+	other := strings.ReplaceAll(operationParams, "11111111", "22222222")
+	go func() {
+		_, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(other))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	if request.Method != "turn/start" || !strings.Contains(string(request.Params), "22222222") {
+		t.Fatalf("next request did not dispatch: %+v", request)
+	}
+	supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"turn":{"id":"turn-2"}}`)})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCodexOperationLostResponseBlocksResendAndNewIdentity(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -167,22 +223,21 @@ func TestCodexOperationLostResponseBlocksResendAndNewIdentity(t *testing.T) {
 func TestCodexUncertainOperationDoesNotBlockAnotherConversation(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	t.Cleanup(cancel)
+	first := make(chan error, 1)
 	go func() {
 		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(operationParams))
-		done <- err
+		first <- err
 	}()
 	readCodexWireRequest(t, writer)
-	cancel()
-	if err := <-done; !errors.Is(err, errCodexOperationUnknown) {
-		t.Fatalf("first conversation must remain uncertain: %v", err)
-	}
-	other := strings.ReplaceAll(strings.ReplaceAll(operationParams, "thread-1", "thread-2"), "11111111", "22222222")
+	otherThread := strings.ReplaceAll(operationParams, "thread-1", "thread-2")
+	other := strings.ReplaceAll(otherThread, "11111111", "22222222")
+	second := make(chan error, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(other))
-		done <- err
+		second <- err
 	}()
 	request := readCodexWireRequest(t, writer)
 	if request.Method != "turn/start" || !strings.Contains(string(request.Params), `"threadId":"thread-2"`) {
@@ -190,12 +245,62 @@ func TestCodexUncertainOperationDoesNotBlockAnotherConversation(t *testing.T) {
 	}
 	response, _ := json.Marshal(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"turn":{"id":"turn-2","status":"inProgress"}}`)})
 	supervisor.readMessagesWithLimit(nil, supervisor.generation, strings.NewReader(string(response)+"\n"), codexProtocolLineMaxBytes)
-	if err := <-done; err != nil {
+	if err := <-second; err != nil {
 		t.Fatalf("another conversation was blocked by the uncertain turn: %v", err)
+	}
+	if _, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(otherThread)); !errors.Is(err, errCodexOperationConflict) {
+		t.Fatalf("another conversation reused the active operation ID: %v", err)
+	}
+	cancel()
+	if err := <-first; !errors.Is(err, errCodexOperationUnknown) {
+		t.Fatalf("first conversation must remain uncertain: %v", err)
 	}
 	newIdentity := strings.ReplaceAll(operationParams, "11111111", "33333333")
 	if _, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(newIdentity)); !errors.Is(err, errCodexOperationUnknown) {
 		t.Fatalf("the uncertain conversation lost its own fence: %v", err)
+	}
+}
+
+func TestCodexOperationKeepsAcceptanceAfterCallerTimesOut(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(operationParams))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	cancel()
+	if err := <-done; !errors.Is(err, errCodexOperationUnknown) {
+		t.Fatalf("operation must remain unconfirmed before the late reply: %v", err)
+	}
+	accepted := json.RawMessage(`{"turn":{"id":"turn-1","status":"inProgress"}}`)
+	supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Result: accepted})
+	path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", "11111111-1111-4111-8111-111111111111.json")
+	deadline := time.After(5 * time.Second)
+	for {
+		receipt, err := readCodexOperation(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if receipt.State == "completed" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("native acceptance was lost after caller timeout")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	recovered, err := supervisor.call(context.Background(), "tengri/reconcileOperation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`))
+	if err != nil || string(recovered.result) != string(accepted) {
+		t.Fatalf("recovery did not use the late native acceptance: %s, %v", recovered.result, err)
+	}
+	select {
+	case unexpected := <-writer.messages:
+		t.Fatalf("recovery made another native call: %s", unexpected)
+	default:
 	}
 }
 
