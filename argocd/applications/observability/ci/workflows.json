@@ -553,6 +553,10 @@
       "pattern": "^signal-publisher(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "signal-publisher-image",
+      "pattern": "^signal-publisher-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "spire-migration",
       "pattern": "^spire-migration(?: \\(.*\\))?(?: /.*)?$"
     },
