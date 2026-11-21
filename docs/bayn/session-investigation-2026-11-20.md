@@ -429,3 +429,32 @@ The end-to-end checks exposed three additional issues:
 
 The two operational repairs and prospective policy correction are follow-up source changes. Their deployment
 and runtime acceptance must be recorded separately from the completed first Bayn release above.
+
+## Prospective profitability qualification
+
+A bounded read-only follow-up at source `87a8d928433f476530a2323b9afc8166e1c261a3` found eight retained
+registrations, all operational reliability studies. The latest registered window was November 13 and used
+Jev v40. Seven operational receipts existed: six INCONCLUSIVE and one REJECTED. There were no economic
+registrations or system-assessment receipts, and no prospective registration for November 16–20 or the
+serving v41 policy. Registration, capture and assessment are explicit operator commands; these observations
+alone do not distinguish an omitted invocation from a failed attempt.
+
+The existing economic contract requires two to four policies with distinct account bindings, while retained
+authority generations contain only one distinct account. Its `DEPLOYED_BAYN` control is explicitly the frozen
+pre-Jev control, rather than the current serving Jev incumbent. An actual-incumbent comparison therefore
+requires an explicit policy identity and genuinely distinct matched account evidence. The retained history
+origin already contains six economic attempts, making the next attempt seven; operational history makes the
+next attempt nine. Neither sequence may be reset, and a historical period cannot be registered retrospectively.
+
+[Draft PR #16095](https://github.com/proompteng/lab/pull/16095), inspected at
+`3a9ae952860a87886251f299e2b7f311e38adf8d`, owns the native calendar, exact broker source-pair lineage,
+fee-ledger verification and native-arrival frontier work. That draft does not supply an actual-incumbent
+comparison, another account binding or a prospectively registered profitable period. Those prerequisites,
+complete cost allocation and original approval requirements remain separate from these runtime repairs.
+
+The follow-up also reproduced a retained-reader defect: the current pure operational-registration validator
+rejects the four stored v37 registrations, while accepting the four v38/v40 registrations. This blocks replay
+of six of the seven retained operational receipts even though the historical protocol schema retains v37.
+A retained-only repair must preserve original hashes and outcomes and leave new admission on the current
+protocol. Restoring historical readability would preserve inconclusive or rejected evidence; it would not
+turn those periods into economic qualification.
