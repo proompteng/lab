@@ -91,6 +91,18 @@ describe('Tengri image workflow', () => {
     expect(ofz.jobs['build-ofz'].if).toBe(mainPublication)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
     expect(ofz.jobs.validate.if).toBeUndefined()
+    const ofzChecks = ofz.jobs.validate.steps.map((step: { run?: string }) => step.run ?? '').join('\n')
+    expect(ofzChecks).not.toMatch(/bash services\/ofz\/test-control\.sh control\b/)
+    expect(ofzChecks.match(/bash services\/tengri\/test-database-failover\.sh\b/g)).toHaveLength(1)
+    const promotion = readFileSync(resolve(repositoryRoot, 'services/tengri/test-database-failover.sh'), 'utf8')
+    expect(promotion).toContain('ofz/test-control.sh" failover')
+    const control = readFileSync(resolve(repositoryRoot, 'services/ofz/test-control.sh'), 'utf8')
+    expect(control).toMatch(
+      /if \[\[ "\$fixture_mode" == failover \]\]; then\s+cargo test --locked --lib control_integration/,
+    )
+    expect(control).toContain(
+      'runtime_state_test::physical_database_promotion_preserves_authority_and_consumed_capabilities',
+    )
     const products = YAML.parse(
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )

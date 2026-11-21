@@ -179,10 +179,9 @@ jobs:
       - name: Verify initial bootstrap and archive-gated activation
         if: steps.selection.outputs.run != 'false'
         run: bash services/ofz/test-control.sh bootstrap
-      - name: Verify control authority and platform clients in isolated fixtures
+      - name: Verify platform clients in isolated fixtures
         if: steps.selection.outputs.run != 'false'
         run: |
-          bash services/ofz/test-control.sh control
           bash services/ofz/test-control.sh platform
           bash services/ofz/qualify-platform.sh
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -193,6 +192,7 @@ jobs:
       - name: Verify independent immutable audit export
         if: steps.selection.outputs.run != 'false'
         run: bash services/ofz/test-control.sh archive
+      # The promotion fixture seeds its database by running the full control integration test.
       - name: Verify control state and synchronous physical database promotion
         if: steps.selection.outputs.run != 'false'
         run: bash services/tengri/test-database-failover.sh
