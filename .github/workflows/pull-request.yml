@@ -76,62 +76,37 @@ jobs:
             echo "- Delegated service workflows: \`${DELEGATED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-  validate:
-    name: PR validation (${{ matrix.target }})
+  landing:
+    name: PR validation (landing)
     needs: plan
-    if: ${{ needs.plan.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.plan.outputs.targets) }}
-    runs-on: >-
-      ${{
-        matrix.target == 'landing' && 'ubuntu-24.04' ||
-        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
-        'ubuntu-latest'
-      }}
-    env:
-      CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
-      CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
+    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.targets), 'landing') }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
 
       - name: Set up Bun
-        if: ${{ matrix.target != 'shellcheck' && matrix.target != 'workflow-lint' && matrix.target != 'argo-lint' && matrix.target != 'kubeconform' }}
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
 
       - name: Install build tools
-        if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
 
-      - name: Set up Nix toolchain
-        if: ${{ matrix.target == 'shared-compat' || matrix.target == 'argo-lint' || matrix.target == 'kubeconform' || matrix.target == 'cdk8s' }}
-        uses: ./.github/actions/setup-nix-toolchain
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          extra-nix-config: |
-            experimental-features = nix-command flakes
-
       - name: Set up editor acceptance Go
-        if: ${{ matrix.target == 'landing' }}
         uses: actions/setup-go@v6
         with:
           go-version-file: services/nanoagent/go.mod
           cache-dependency-path: services/nanoagent/go.sum
 
       - name: Set up editor acceptance Rust
-        if: ${{ matrix.target == 'landing' }}
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.90.0
 
       - name: Cache editor acceptance Rust dependencies
-        if: ${{ matrix.target == 'landing' }}
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: landing-editor-acceptance
@@ -140,11 +115,9 @@ jobs:
             services/ofz -> target
 
       - name: Install editor acceptance prerequisites
-        if: ${{ matrix.target == 'landing' }}
         run: sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
 
       - name: Run landing validation
-        if: ${{ matrix.target == 'landing' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -160,7 +133,7 @@ jobs:
           TENGRI_EDITOR_NEXT_MODE=start bash services/nanoagent/test-vscode-browser.sh
 
       - name: Upload landing browser artifacts
-        if: ${{ always() && matrix.target == 'landing' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v5
         with:
           name: landing-browser-${{ github.run_attempt }}
@@ -178,8 +151,49 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  validate:
+    name: PR validation (${{ matrix.target }})
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.targets != '["landing"]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+        exclude:
+          - target: landing
+    runs-on: >-
+      ${{
+        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
+        'ubuntu-latest'
+      }}
+    env:
+      CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
+      CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        if: ${{ matrix.target != 'shellcheck' && matrix.target != 'workflow-lint' && matrix.target != 'argo-lint' && matrix.target != 'kubeconform' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install build tools
+        if: ${{ matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Set up Nix toolchain
+        if: ${{ matrix.target == 'shared-compat' || matrix.target == 'argo-lint' || matrix.target == 'kubeconform' || matrix.target == 'cdk8s' }}
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+
       - name: Run selected validation
-        if: ${{ matrix.target != 'landing' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -407,6 +421,7 @@ jobs:
     needs:
       - plan
       - validate
+      - landing
       - agents
     runs-on: ubuntu-latest
     steps:
@@ -414,12 +429,19 @@ jobs:
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          VALIDATE_EXPECTED: ${{ needs.plan.outputs.targets == '["landing"]' && 'skipped' || 'success' }}
+          LANDING_RESULT: ${{ needs.landing.result }}
+          LANDING_EXPECTED: ${{ contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing') && 'success' || 'skipped' }}
           AGENTS_RESULT: ${{ needs.agents.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
         run: |
           set -euo pipefail
-          if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != success ]; then
-            echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}" >&2
+          if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != "${VALIDATE_EXPECTED}" ]; then
+            echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}, expected=${VALIDATE_EXPECTED}" >&2
+            exit 1
+          fi
+          if [ "${LANDING_RESULT}" != "${LANDING_EXPECTED}" ]; then
+            echo "Landing validation failed: landing=${LANDING_RESULT}, expected=${LANDING_EXPECTED}" >&2
             exit 1
           fi
           if [ "${AGENTS_RESULT}" != success ] && [ "${AGENTS_RESULT}" != skipped ]; then
