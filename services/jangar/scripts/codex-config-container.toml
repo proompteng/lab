@@ -18,7 +18,6 @@ code_mode = true
 runtime_metrics = true
 memories = true
 chronicle = true
-multi_agent = true
 multi_agent_v2 = true
 enable_fanout = true
 apps = true
