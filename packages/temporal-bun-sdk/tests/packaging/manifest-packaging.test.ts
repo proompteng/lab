@@ -219,6 +219,8 @@ describe('temporal-bun-sdk packaging manifest', () => {
 
   test('hands deterministic evidence from the test job to the integration release gate', async () => {
     const workflow = await readFile(join(packageRoot, '..', '..', '.github', 'workflows', 'temporal-bun-sdk.yml'), 'utf8')
+    const actionPath = '.github/actions/test-temporal-bun-sdk'
+    const testAction = await readFile(join(packageRoot, '..', '..', actionPath, 'action.yml'), 'utf8')
     const testJobStart = workflow.indexOf('\n  test:')
     const integrationJobStart = workflow.indexOf('\n  integration:')
     const prepareReleaseJobStart = workflow.indexOf('\n  prepare-release:')
@@ -229,11 +231,12 @@ describe('temporal-bun-sdk packaging manifest', () => {
 
     const testJob = workflow.slice(testJobStart, integrationJobStart)
     const integrationJob = workflow.slice(integrationJobStart, prepareReleaseJobStart)
-    expect(testJob).toContain('name: Upload deterministic readiness evidence')
-    expect(testJob).toContain('name: temporal-bun-sdk-determinism-artifacts')
-    expect(testJob).toContain('packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json')
-    expect(testJob).toContain('packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json')
-    expect(testJob).toContain('if-no-files-found: error')
+    expect(testJob).toContain(`uses: ./${actionPath}`)
+    expect(testAction).toContain('name: Upload deterministic readiness evidence')
+    expect(testAction).toContain('name: temporal-bun-sdk-determinism-artifacts')
+    expect(testAction).toContain('packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json')
+    expect(testAction).toContain('packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json')
+    expect(testAction).toContain('if-no-files-found: error')
     expect(integrationJob).toContain('needs:\n      - test')
     expect(integrationJob).toContain('name: Download deterministic readiness evidence')
     expect(integrationJob).toContain('name: temporal-bun-sdk-determinism-artifacts')

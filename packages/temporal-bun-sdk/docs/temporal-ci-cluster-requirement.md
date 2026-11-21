@@ -2,7 +2,11 @@
 
 ## Summary
 
-Temporal integration tests in `@proompteng/temporal-bun-sdk` must run against the shared Temporal cluster managed by ArgoCD.
+Release qualification for `@proompteng/temporal-bun-sdk` must run against the shared Temporal cluster managed by ArgoCD.
+
+The merge queue runs the same integration and worker load commands against an isolated Temporal Server 1.32.2 with fresh
+PostgreSQL persistence and advanced visibility. Its server and schema tooling use the release's upstream images. The
+shared-cluster qualification continues to cover the deployed Cassandra and Elasticsearch configuration.
 
 They must **not** be switched to a local `start-dev` Temporal server in CI.
 
@@ -15,7 +19,7 @@ They must **not** be switched to a local `start-dev` Temporal server in CI.
   - unstable harness startup/teardown behavior under parallel test execution.
 - This produced false negatives that were unrelated to the production task-queue-kind fix.
 
-## Required CI behavior
+## Required behavior for release qualification
 
 - Keep CI pointed at the ArgoCD Temporal endpoint via the short Tailscale hostname
   (`TEMPORAL_ADDRESS=temporal-grpc:7233` in the current workflow).
@@ -34,3 +38,5 @@ When touching Temporal CI or test harness code:
 3. Prefer stronger readiness waiting, transient CLI retries, and DNS diagnostics over topology changes
    or swapping back to a fully-qualified fallback.
 4. Keep the workflow checks that enforce a remote endpoint and verify `temporal-grpc` resolves on ARC.
+5. Keep merge-group test traffic on its runner's isolated Docker network. Create a fresh namespace and require failures
+   to surface if the server, integration suite, load suite, or workflow cleanup is unhealthy.

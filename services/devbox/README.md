@@ -53,8 +53,8 @@ uses the shared Docker retry helper and the registry's
 
 Builds use Docker's native image store instead of exporting and reloading the
 whole image through a separate BuildKit container. Validated main builds publish
-an inline cache at `cache-amd64` and `cache-arm64`. PRs can read those caches but
-cannot replace them. Cache tags are excluded from Kargo discovery. Main releases
+an inline cache at `cache-amd64` and `cache-arm64`. PRs and queued commits have
+read-only access to those caches. Cache tags are excluded from Kargo discovery. Main releases
 finish publishing when newer commits arrive; superseded PR builds are cancelled.
 Boot files and the source revision are applied after dependency installation, so
 boot-only changes reuse the Nix, Rust, workspace dependency, and browser layers.

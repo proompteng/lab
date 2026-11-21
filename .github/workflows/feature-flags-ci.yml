@@ -1,8 +1,7 @@
 name: Feature flags CI
 
 on:
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
   push:
     branches:
       - main

@@ -1,0 +1,94 @@
+name: Codex devbox validation
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-nix-toolchain
+      - name: Validate bootstrap and GitOps configuration
+        run: |
+          set -euo pipefail
+          bash -n services/devbox/*.sh
+          test "$(cat /proc/1/comm)" = systemd
+          rsync_path=$(nix shell --inputs-from . nixpkgs#rsync --command sh -c 'command -v rsync')
+          sudo env "PATH=$(dirname "$rsync_path"):$PATH" PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/devbox/tests -v
+          kubectl kustomize argocd/applications/devbox > /tmp/devbox.yaml
+          kubectl kustomize argocd/applications/kargo > /tmp/kargo.yaml
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ inputs.publish && format('arc-{0}', matrix.architecture) || matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - name: Resolve immutable build metadata
+        id: meta
+        shell: bash
+        env:
+          ARCH: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          image=registry.ide-newton.ts.net/lab/codex-devbox
+          {
+            printf 'image=%s\n' "$image"
+            printf 'tag=build-%s-run-%s-%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ARCH"
+            printf 'created=%s\n' "$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Configure signed Nix cache for image builds
+        env:
+          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          {
+            if [[ "$PUBLISH" == true ]]; then
+              test -n "${ATTIC_PUBLIC_KEY}"
+              printf '%s\n' \
+                'substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/' \
+                "extra-trusted-public-keys = ${ATTIC_PUBLIC_KEY}"
+            else
+              printf '%s\n' 'substituters = https://cache.nixos.org/'
+            fi
+            printf '%s\n' \
+              'require-sigs = true' \
+              'fallback = false' \
+              'connect-timeout = 10' \
+              'stalled-download-timeout = 60' \
+              'download-attempts = 3'
+          } > "$RUNNER_TEMP/devbox-nix.conf"
+      - uses: docker/build-push-action@v6
+        with:
+          push: ${{ inputs.publish }}
+          context: .
+          file: services/devbox/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          network: host
+          allow: network.host
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          secret-files: nix-config=${{ runner.temp }}/devbox-nix.conf
+          labels: |
+            org.opencontainers.image.source=https://github.com/proompteng/lab
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+          cache-from: ${{ inputs.publish && format('type=registry,ref={0}:cache-{1}', steps.meta.outputs.image, matrix.architecture) || '' }}
+          cache-to: ${{ inputs.publish && format('type=registry,ref={0}:cache-{1},mode=max', steps.meta.outputs.image, matrix.architecture) || '' }}
