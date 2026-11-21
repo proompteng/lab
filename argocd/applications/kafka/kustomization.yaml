@@ -44,6 +44,7 @@ resources:
   - torghut-hyperliquid-feed-kafkauser.yaml
   - torghut-topics.yaml
   - bayn-market-data-topics.yaml
+  - bayn-broker-notifications.yaml
   - tempo-topic.yaml
   - mimir-topic.yaml
   - torghut-sim-topics.yaml

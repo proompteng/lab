@@ -52,9 +52,13 @@ capture covers that exact session boundary. Session boundaries, unsupported even
 projection conflicts fail closed into reconciliation. The serialized canonical snapshot remains an independent safety
 lane for cash, fees, corrections, gaps and provider convergence; it is not on the immediate fill projection path.
 
-This hard migration removes the broker-only Kafka topic, adapter, consumer group, health script and Kafka credentials.
-It does not change Dorvud's market-data Kafka/Flink pipeline. Notifications cannot grant capital authority: account,
-strategy, risk, reconciliation and mutation checks remain in Bayn, and Jev remains the strategy inference component.
+This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
+credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while
+Bayn tracks `kargo/bayn`, so deleting the topic in the implementation merge would break the incumbent before Kargo
+could promote its replacement. After live direct-path acceptance, an immediate cleanup PR deletes that last topic.
+No promoted runtime reads or writes it. This does not change Dorvud's market-data Kafka/Flink pipeline. Notifications
+cannot grant capital authority: account, strategy, risk, reconciliation and mutation checks remain in Bayn, and Jev
+remains the strategy inference component.
 Market workers use `RESTATE_INGRESS_ORIGIN` to send authenticated advisory `marketChanged` hints directly to Restate.
 The gateway awaits the short private `wake` handler, which durably schedules any required financial tick. It does not
 wait for that tick or a native audit flush. One request remains in flight per stable publisher while source incorporation

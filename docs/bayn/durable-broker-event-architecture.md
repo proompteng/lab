@@ -11,8 +11,11 @@ REST snapshots verify convergence and repair gaps; they are not the normal fill 
 including Jev, produces proposals only. Risk, reconciliation and accounting remain independent authorities.
 
 Kafka and Flink remain correct for fan-out market data and feature computation. They are unnecessary serialization
-and failure domains for the single-account broker lifecycle lane, so the broker-only Kafka topic and adapter are
-deleted. This distinction keeps each transport aligned with its workload instead of imposing one bus everywhere.
+and failure domains for the single-account broker lifecycle lane, so the broker-only adapter and every producer and
+consumer are deleted. The inert topic is retained only across the live cutover because the Kafka application tracks
+`main` while Bayn tracks `kargo/bayn`; deleting it before promotion would break the incumbent path. The immediate
+post-rollout cleanup deletes the topic after the direct path is proven. This distinction keeps each transport aligned
+with its workload instead of imposing one bus everywhere.
 
 ## Measured pre-change request flow
 
