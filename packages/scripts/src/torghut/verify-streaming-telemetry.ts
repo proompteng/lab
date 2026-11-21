@@ -508,14 +508,14 @@ export const collectTelemetrySnapshot = async (): Promise<TelemetrySnapshot> => 
 }
 
 export const createTelemetryObservationWindow = (expected: TelemetryExpectation) => {
-  let baseline: TelemetryObservation | undefined
+  let lastGood: TelemetryObservation | undefined
   let windowStartedAt: number | undefined
   return {
     observe(snapshot: TelemetrySnapshot) {
-      const observation = evaluateStreamingTelemetry(expected, snapshot, baseline, windowStartedAt)
+      const observation = evaluateStreamingTelemetry(expected, snapshot, lastGood, windowStartedAt)
       const complete =
         windowStartedAt !== undefined && observation.observedAt - windowStartedAt >= expected.scrapeInterval * 2
-      baseline ??= observation
+      lastGood = observation
       windowStartedAt ??= observation.observedAt
       return { observation, complete }
     },

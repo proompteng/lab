@@ -540,6 +540,27 @@ describe('Torghut current-rollout telemetry acceptance', () => {
     expect(() => window.observe(next.snapshot)).toThrow('dropped samples or reset')
   })
 
+  it('rejects an observed sent-counter decrease that remains above the first observation', () => {
+    const first = fixture()
+    first.snapshot.remoteMetrics = remote(now, { sent: 100 })
+    const window = createTelemetryObservationWindow(first.expected)
+    window.observe(first.snapshot)
+    const second = fixture(now + 30)
+    second.snapshot.remoteMetrics = remote(now + 30, { sent: 300 })
+    expect(window.observe(second.snapshot).complete).toBe(false)
+    const regressed = fixture(now + 60)
+    regressed.snapshot.remoteMetrics = remote(now + 60, { sent: 250 })
+    expect(() => window.observe(regressed.snapshot)).toThrow('dropped samples or reset')
+  })
+
+  it('completes the normal two-interval window while retaining each last-good observation', () => {
+    const first = fixture()
+    const window = createTelemetryObservationWindow(first.expected)
+    expect(window.observe(first.snapshot).complete).toBe(false)
+    expect(window.observe(fixture(now + 30).snapshot).complete).toBe(false)
+    expect(window.observe(fixture(now + 60).snapshot).complete).toBe(true)
+  })
+
   it('restarts only the freshness window after a transient failure', () => {
     const first = fixture()
     const window = createTelemetryObservationWindow(first.expected)
