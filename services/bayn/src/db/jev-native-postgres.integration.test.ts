@@ -42,6 +42,7 @@ import { NodeServices } from '@effect/platform-node'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { sourceTimestamp } from '../broker/observations'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { CryptoFeeTier } from '../broker/crypto-fees'
 import { CycleStore } from '../cycle/store/model'
@@ -737,9 +738,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
             ${brokerOrderId},100,${observedAt},${observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-          symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status)
+          symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status,
+          broker_updated_at)
           VALUES(${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'protective-child-client',${intentId},
-            'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW')`
+            'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW',
+            ${Result.getOrThrow(sourceTimestamp(observedAt))})`
             }),
           )
           const store = yield* IntentStore
@@ -2798,18 +2801,21 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                   source_event_id,source_sequence,occurred_at,observed_at) VALUES (${parentEventId},'bayn.paper-broker-event.v1',
                   ${parentEventId},'ORDER','ALPACA',${replayAccountId},${parent.brokerOrderId},99,${entryFill.occurredAt},${entryFill.occurredAt})`
                 yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-                  symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status)
+                  symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,
+                  broker_updated_at)
                   VALUES (${parentEventId},${replayAccountId},'bayn.order.v3',${parent.brokerOrderId},${parent.clientOrderId},${entryId},
-                  'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED')`
+                  'AAPL','BUY','LIMIT','DAY',${originalQuantity},${originalQuantity},${parent.limitPriceMicros ?? '0'},'FILLED',
+                  ${Result.getOrThrow(sourceTimestamp(entryFill.occurredAt))})`
               }
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at) VALUES (${eventId},'bayn.paper-broker-event.v1',
             ${eventId},'ORDER','ALPACA',${replayAccountId},${brokerOrderId},100,${cancelAt},${cancelAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
-            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id)
+            symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,status,parent_broker_order_id,
+            broker_updated_at)
             VALUES (${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'partial-tp-native-child',${entryId},
             'AAPL','SELL','LIMIT','DAY',${originalQuantity},2000000000,${levels.profitLimitPriceMicros},'PARTIALLY_FILLED',
-            ${keepNative ? parent.brokerOrderId : null})`
+            ${keepNative ? parent.brokerOrderId : null},${Result.getOrThrow(sourceTimestamp(cancelAt))})`
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
                 source_event_id,source_sequence,occurred_at,observed_at) VALUES (${partialEventId},'bayn.paper-broker-event.v1',
                 ${partialEventId},'FILL','ALPACA',${replayAccountId},'partial-tp-fill',101,${cancelAt},${cancelAt})`

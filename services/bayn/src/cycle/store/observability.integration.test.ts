@@ -600,10 +600,12 @@ describePostgres('PostgreSQL intraday observability projection', () => {
               yield* sql`
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
-            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status
+            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status,
+            broker_updated_at
           ) VALUES (
             ${'e'.repeat(64)}, ${accountId}, 'bayn.order.v3', 'latency-order', 'bayn-observability-unresolved',
-            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED'
+            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED',
+            '2026-08-28T14:32:00.350000000Z'
           )`
               yield* sql`
           INSERT INTO fills (

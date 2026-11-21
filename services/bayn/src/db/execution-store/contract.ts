@@ -23,6 +23,7 @@ export interface EventReceipt {
   readonly eventId: string
   readonly sourceSequence: string
   readonly deduplicated: boolean
+  readonly superseded?: boolean
 }
 
 export interface PositionSnapshotReceipt {

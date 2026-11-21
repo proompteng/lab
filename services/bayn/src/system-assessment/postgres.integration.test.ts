@@ -71,6 +71,7 @@ import { makePostgresMutationStore } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { formalModelExecutable, runFormalModel } from './formal-model.test-support'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { sourceTimestamp } from '../broker/observations'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument, retainedJevProtocolV40Document } from '../jev/protocol'
@@ -1884,10 +1885,11 @@ postgres('PostgreSQL prospective system qualification', () => {
             ${row.eventId},${sequence},${row.occurredAt},${order.observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
           symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,
-          parent_broker_order_id,status)
+          parent_broker_order_id,status,broker_updated_at)
           VALUES(${row.eventId},${account},${order.schemaVersion},${order.brokerOrderId},${order.clientOrderId},${intentId},
             ${order.symbol},${order.side},${order.orderType},${order.timeInForce},${order.quantityAtoms},${order.filledQuantityAtoms},
-            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status})`
+            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status},
+            ${Result.getOrThrow(sourceTimestamp(row.occurredAt))})`
             }),
           )
         }

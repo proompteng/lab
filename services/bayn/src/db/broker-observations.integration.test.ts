@@ -391,6 +391,26 @@ describePostgres('Durable per-account broker observations', () => {
         const event = sourceEvent('5'.repeat(64), '2026-11-01T00:00:00.000Z')
         yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
           VALUES (${accountId},${event.eventId},${revision},${event.receivedAt}::timestamptz)`
+        const legacyOrderEventId = '6'.repeat(64)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO broker_events(
+              event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,
+              occurred_at,observed_at
+            ) VALUES (
+              ${legacyOrderEventId},'bayn.paper-broker-event.v1',${'7'.repeat(64)},'ORDER','ALPACA',${accountId},
+              'order:legacy-order:2026-11-01T00:00:00.000900Z',0,
+              ${event.receivedAt}::timestamptz,${event.receivedAt}::timestamptz
+            )`
+            yield* sql`INSERT INTO orders(
+              event_id,account_id,schema_version,broker_order_id,client_order_id,symbol,side,order_type,time_in_force,
+              quantity_atoms,filled_quantity_atoms,status
+            ) VALUES (
+              ${legacyOrderEventId},${accountId},'bayn.order.v3','legacy-order','legacy-client','AAPL','BUY','MARKET','DAY',
+              1000000000,0,'NEW'
+            )`
+          }),
+        )
         const [{ receiptTableOid }] =
           yield* sql`SELECT 'broker_notification_receipts'::regclass::oid::integer AS "receiptTableOid"`
 
@@ -399,6 +419,9 @@ describePostgres('Durable per-account broker observations', () => {
         const store = makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache)
         expect(yield* sql`SELECT 'broker_notification_receipts'::regclass::oid::integer AS "receiptTableOid"`).toEqual([
           { receiptTableOid },
+        ])
+        expect(yield* sql`SELECT broker_updated_at FROM orders WHERE event_id = ${legacyOrderEventId}`).toEqual([
+          { broker_updated_at: '2026-11-01T00:00:00.000900000Z' },
         ])
         const drainingEventId = '3'.repeat(64)
         yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)

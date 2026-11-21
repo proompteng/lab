@@ -81,6 +81,7 @@ describe('broker trade-update projection', () => {
     expect(result.order).toMatchObject({
       _tag: 'Order',
       sourceEventId: `order:${orderId}:${order.updated_at}`,
+      sourceTimestamp: '2026-11-11T17:37:18.784802000Z',
       order: { accountId, brokerOrderId: orderId, clientOrderId, intentId, status: 'FILLED' },
     })
     expect(result.fill).toMatchObject({

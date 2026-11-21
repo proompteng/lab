@@ -373,11 +373,7 @@ export const acquireBrokerObservationRuntime = (
                     if (decision._tag === 'ReconcileRequired')
                       return { _tag: 'Receipt' as const, receipt: yield* retain(decision) }
                     const events = yield* BrokerEventStore
-                    const newerOrderEventId = yield* source.readNewerOrderEventId(
-                      decision.order.order.brokerOrderId,
-                      decision.order.occurredAt,
-                    )
-                    const orderEventId = newerOrderEventId ?? (yield* events.ingest(decision.order)).eventId
+                    const orderEventId = (yield* events.ingest(decision.order)).eventId
                     const fill = decision.fill
                     return {
                       _tag: 'Receipt' as const,

@@ -3,6 +3,32 @@ import { SqlClient } from 'effect/sql'
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  // Order current-state selection must use Alpaca's full provider version, not local arrival order or PostgreSQL's
+  // lower timestamp precision. Every historical source identity already retains that version; materialize its canonical
+  // nine-digit form once so stream and snapshot ingestion share one monotonic boundary.
+  yield* sql`ALTER TABLE orders ADD COLUMN broker_updated_at text`
+  // The evidence table is normally immutable. Open only the existing UPDATE guard for this one deterministic
+  // materialization; the migration transaction restores it before any new schema can become visible.
+  yield* sql`ALTER TABLE orders DISABLE TRIGGER orders_append_only`
+  yield* sql`WITH versions AS (
+    SELECT observed.event_id,
+      parts[1] || '.' || rpad(COALESCE(parts[2], ''),9,'0') || 'Z' AS broker_updated_at
+    FROM orders AS observed
+    JOIN broker_events AS event USING (event_id)
+    CROSS JOIN LATERAL regexp_match(
+      event.source_event_id,
+      '([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:[.]([0-9]{1,9}))?Z$'
+    ) AS parts
+  )
+  UPDATE orders AS observed SET broker_updated_at = versions.broker_updated_at
+  FROM versions WHERE versions.event_id = observed.event_id`
+  yield* sql`ALTER TABLE orders ENABLE TRIGGER orders_append_only`
+  yield* sql`ALTER TABLE orders ALTER COLUMN broker_updated_at SET NOT NULL`
+  yield* sql`ALTER TABLE orders ADD CONSTRAINT orders_broker_updated_at_check CHECK (
+    broker_updated_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{9}Z$'
+  )`
+  yield* sql`CREATE INDEX orders_current_provider_version
+    ON orders(account_id,broker_order_id,broker_updated_at COLLATE "C" DESC)`
   // Restate keeps the replaced worker revision while accepted invocations drain. Its only remaining write is the
   // retired identity receipt. Keep that physical table and its OID intact so even a prepared old-worker statement
   // cannot be redirected into the new payload contract. Current code has no caller for the old table; the post-cutover

@@ -119,8 +119,12 @@ which completion histograms cannot see. The projector is a separate exclusive Re
 delivery stays ordered, but a multi-second canonical capture cannot block this queue. After reconnect, the fast path
 remains closed until a published capture's immutable notification fence covers that session's `SessionReady` event.
 Canonical coverage is checked inside the same PostgreSQL writer fence as order/fill ingestion, so reconciliation and
-the stream cannot race to make a delayed order state newest. A stream order older than the latest durable broker
-`occurred_at` reuses that newer canonical order instead of appending a regressive state. Any trade update arriving
+the stream cannot race to make a delayed order state newest. Order current state is selected by Alpaca's full
+nine-digit provider `updated_at`, retained as `orders.broker_updated_at`; local arrival order and PostgreSQL's
+lower-precision timestamp conversion never decide freshness. A delayed stream order reuses the receipt for the newer
+durable provider version instead of appending a regressive state. A complete-history snapshot selects the newest
+provider version per broker order and fails closed if that version is older than the one already retained. Reuse of
+one provider timestamp with a different source identity is a conflict. Any trade update arriving
 before the session proof, or any later invalid, unsupported, unbound or conflicting trade update, poisons only that
 session's fast lane; all subsequent updates in that session take canonical reconciliation. A new gap-free
 `SessionReady` session can re-enter the fast path after its own boundary is covered.

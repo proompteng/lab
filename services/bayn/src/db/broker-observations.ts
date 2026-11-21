@@ -24,7 +24,6 @@ import { ValkeyCache } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerNotificationSchema, type BrokerNotification } from '../broker/notifications'
-import { Broker } from '../execution/contracts'
 import {
   BrokerSourceProjectionReceiptSchema,
   type BrokerSourceProjectionReceipt,
@@ -330,24 +329,6 @@ export const makeBrokerObservationStore = (
           Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })]), strictParseOptions),
         ),
         Effect.map(([row]) => row.unresolved),
-      ),
-    )
-  const readNewerOrderEventId = (brokerOrderId: string, occurredAt: string) =>
-    run(
-      sql`SELECT event.event_id FROM broker_events AS event
-        JOIN orders AS observed_order USING (event_id)
-        WHERE event.broker = ${Broker.Alpaca} AND event.account_id = ${accountId}
-          AND observed_order.broker_order_id = ${brokerOrderId}
-          AND event.occurred_at > ${occurredAt}::timestamptz
-        ORDER BY event.occurred_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
-        LIMIT 1`.pipe(
-        Effect.flatMap(
-          Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Struct({ event_id: Sha256Schema })).check(Schema.isMaxLength(1)),
-            strictParseOptions,
-          ),
-        ),
-        Effect.map(([row]) => row?.event_id),
       ),
     )
   const recoverUnfinished = (captureId: string) =>
@@ -724,7 +705,6 @@ export const makeBrokerObservationStore = (
     readProjectionBacklog,
     recordProjection,
     hasSessionProjectionGap,
-    readNewerOrderEventId,
     read,
     readState: readState(null),
     readForSubmit: readState,

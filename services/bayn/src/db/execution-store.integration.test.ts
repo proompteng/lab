@@ -51,11 +51,9 @@ import {
 import { ExecutionStoreLive } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
-import { makeBrokerObservationStore } from './broker-observations'
 import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
 import { migrationLoader } from './migrations'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
-import { valkeyFixture } from '../testing/valkey-fixture'
 import { brokerFeeLedgerPlan } from '../accounting/domain'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { LedgerPlan } from '../ledger-plan'
@@ -215,6 +213,7 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
     contentHash: Result.getOrThrow(canonicalHashV1Result(observedOrder)),
     occurredAt,
     observedAt,
+    sourceTimestamp: '2026-08-28T14:30:59.000000000Z',
     order: observedOrder,
   }
 }
@@ -530,15 +529,16 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
   })
 
-  test('identifies a newer canonical order before a delayed stream state can supersede it', async () => {
+  test('keeps order state monotonic at full provider precision across stream and snapshot ingestion', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const events = yield* BrokerEventStore
         const sql = yield* PgClient.PgClient
         const canonicalOccurredAt = '2026-08-28T14:31:01.000Z'
-        const canonicalOrder = {
+        const currentOrder = {
           ...orderEvent(),
-          sourceEventId: 'order-observation-canonical',
+          sourceEventId: 'order:order-1:2026-08-28T14:31:01.000900000Z',
+          sourceTimestamp: '2026-08-28T14:31:01.000900000Z',
           occurredAt: canonicalOccurredAt,
           observedAt: canonicalOccurredAt,
           order: {
@@ -548,21 +548,47 @@ describePostgres('PostgreSQL execution persistence', () => {
             observedAt: canonicalOccurredAt,
           },
         }
-        const normalized = {
-          ...canonicalOrder,
-          contentHash: Result.getOrThrow(canonicalHashV1Result(canonicalOrder.order)),
+        const current = {
+          ...currentOrder,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(currentOrder.order)),
         }
-        const receipt = yield* events.ingest(normalized)
-        const source = makeBrokerObservationStore(sql, accountId, 'a'.repeat(40), 60_000, valkeyFixture().cache)
+        const delayedOrder = {
+          ...orderEvent(),
+          sourceEventId: 'order:order-1:2026-08-28T14:31:01.000100000Z',
+          sourceTimestamp: '2026-08-28T14:31:01.000100000Z',
+          occurredAt: canonicalOccurredAt,
+          observedAt: canonicalOccurredAt,
+          order: { ...order(), observedAt: canonicalOccurredAt },
+        }
+        const delayed = {
+          ...delayedOrder,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(delayedOrder.order)),
+        }
+        const receipt = yield* events.ingest(current)
+        const superseded = yield* events.ingest(delayed)
+        const staleSnapshot = yield* events.completeHistory([delayed]).pipe(Effect.flip)
+        const retained = yield* sql`
+          SELECT observed.status, observed.broker_updated_at
+          FROM orders AS observed JOIN broker_events AS event USING (event_id)
+          WHERE observed.account_id = ${accountId} AND observed.broker_order_id = ${current.order.brokerOrderId}
+          ORDER BY event.source_sequence`
         return {
           receipt,
-          delayed: yield* source.readNewerOrderEventId(normalized.order.brokerOrderId, occurredAt),
-          equal: yield* source.readNewerOrderEventId(normalized.order.brokerOrderId, canonicalOccurredAt),
+          superseded,
+          staleSnapshot,
+          retained,
         }
       }),
     )
-    expect(result.delayed).toBe(result.receipt.eventId)
-    expect(result.equal).toBeUndefined()
+    expect(result.superseded).toEqual({ ...result.receipt, deduplicated: true, superseded: true })
+    expect(result.staleSnapshot).toMatchObject({
+      operation: 'ingest',
+      failure: 'conflict',
+      message: expect.stringContaining('older than the retained provider version'),
+    })
+    expect(result.retained).toEqual([
+      { status: OrderStatus.Filled, broker_updated_at: '2026-08-28T14:31:01.000900000Z' },
+    ])
   })
 
   test('rejects an ambient transaction before running reconciliation ingestion', async () => {
@@ -1457,7 +1483,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000000', '100000000')
     const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000000', '101000000')
     const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000000', '101000000')
-    const newOrder = { ...observedOrder, sourceEventId: 'order-observation-2' }
+    const newOrder = {
+      ...observedOrder,
+      sourceEventId: 'order:order-1:2026-08-28T14:31:00.000000000Z',
+      sourceTimestamp: '2026-08-28T14:31:00.000000000Z',
+    }
 
     const result = await runtime.runPromise(
       Effect.gen(function* () {
