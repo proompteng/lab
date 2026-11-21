@@ -107,19 +107,59 @@ export default Effect.gen(function* () {
     DECLARE
       target_generation_hash text;
       target_account_id text;
+      current_generation_hash text;
+      current_maximum text;
+      current_effective text;
+      current_kill_state text;
+      current_reason text;
     BEGIN
-      SELECT state.generation_hash, generation.account_id
-        INTO target_generation_hash, target_account_id
-      FROM authority_state state JOIN authority_generations generation USING (generation_hash)
-      WHERE generation.strategy_name='jev'
-        AND generation.strategy_parameter_schema_version='bayn.jev.protocol.v41'
-        AND generation.strategy_behavior_hash='76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
-        AND generation.strategy_parameter_hash='004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696'
-        AND generation.strategy_protocol_hash='b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9'
-        AND state.maximum='PAPER' AND state.effective='PAPER' AND state.kill_state='CLEAR'
-        AND state.reason IS NULL;
-      -- Empty installations, successor protocols and existing restrictions remain untouched.
+      SELECT target.generation_hash, target.account_id, state.generation_hash, state.maximum,
+        state.effective, state.kill_state, state.reason
+        INTO target_generation_hash, target_account_id, current_generation_hash, current_maximum,
+          current_effective, current_kill_state, current_reason
+      FROM authority_state state
+      JOIN authority_generations current_generation ON current_generation.generation_hash=state.generation_hash
+      JOIN authority_generations target ON (
+        target.generation_hash=state.generation_hash
+        OR (
+          current_generation.maximum='OBSERVE'
+          AND current_generation.previous_generation_hash=target.generation_hash
+        )
+      )
+      WHERE target.strategy_name='jev'
+        AND target.strategy_parameter_schema_version='bayn.jev.protocol.v41'
+        AND target.strategy_behavior_hash='76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
+        AND target.strategy_parameter_hash='004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696'
+        AND target.strategy_protocol_hash='b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9'
+        AND current_generation.account_id=target.account_id
+      ORDER BY (target.generation_hash=state.generation_hash) DESC
+      LIMIT 1;
+      -- Empty installations, unrelated lineages and successor PAPER protocols remain untouched.
       IF target_generation_hash IS NULL THEN RETURN; END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM public.research_capital_activation_retirements
+        WHERE account_id=target_account_id AND retired_generation_hash=target_generation_hash
+          AND reason='SUPPORT_RECOVERY_V41_RETIRED'
+      ) THEN RETURN; END IF;
+      IF EXISTS (
+        SELECT 1 FROM public.research_capital_activation_retirements
+        WHERE account_id=target_account_id
+      ) THEN
+        RAISE EXCEPTION 'research capital activation retirement conflicts with the v41 incumbent'
+          USING ERRCODE='55000';
+      END IF;
+
+      -- Recovery first commits a clear OBSERVE successor and only then prepares another PAPER generation. Consuming
+      -- this migration between those commits would install no retirement and let the retained request reopen PAPER.
+      -- Fail the migration transactionally until the exact v41 generation is current and can be retired atomically.
+      IF current_generation_hash<>target_generation_hash
+        OR current_maximum<>'PAPER' OR current_effective<>'PAPER' OR current_kill_state<>'CLEAR'
+        OR current_reason IS NOT NULL
+      THEN
+        RAISE EXCEPTION 'support-recovery OBSERVE cutover requires durable v41 retirement before recovery can leave PAPER'
+          USING ERRCODE='55000';
+      END IF;
 
       IF EXISTS (SELECT 1 FROM intents WHERE account_id=target_account_id AND state <> 'TERMINAL')
         OR EXISTS (SELECT 1 FROM autonomous_cycles WHERE state IN ('PENDING', 'ACTIVE'))
