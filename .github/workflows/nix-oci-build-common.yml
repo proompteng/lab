@@ -77,7 +77,8 @@ jobs:
             runner: arc-arm64
             hosted_runner: ubuntu-24.04-arm
     runs-on: >-
-      ${{ github.event_name == 'merge_group' && (inputs.image_name == 'app' || inputs.image_name == 'proompteng')
+      ${{ github.event_name == 'merge_group'
+          && contains(fromJSON('["app", "attic", "docs", "headlamp", "proompteng", "synthesis"]'), inputs.image_name)
           && matrix.hosted_runner || matrix.runner }}
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
