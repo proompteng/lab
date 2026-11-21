@@ -29,6 +29,8 @@ type codexOperation struct {
 	Thread     string          `json:"thread"`
 	State      string          `json:"state"`
 	Generation string          `json:"generation"`
+	BootID     string          `json:"bootId,omitempty"`
+	FencedBy   string          `json:"fencedByBootId,omitempty"`
 	Result     json.RawMessage `json:"result,omitempty"`
 	Error      json.RawMessage `json:"error,omitempty"`
 }
@@ -89,7 +91,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 		return codexCallResult{}, err
 	}
 	digest := sha256.Sum256(append([]byte(method+"\n"), canonical...))
-	op := codexOperation{Version: 1, ID: input.ID, Digest: hex.EncodeToString(digest[:]), Method: method, Thread: input.Thread, State: "dispatching"}
+	op := codexOperation{Version: 1, ID: input.ID, Digest: hex.EncodeToString(digest[:]), Method: method, Thread: input.Thread, State: "dispatching", BootID: supervisor.bootID}
 	unlock, err := supervisor.lockOperation(ctx, input.Thread)
 	if err != nil {
 		return codexCallResult{}, err
@@ -123,7 +125,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 		if previous.Digest != op.Digest || previous.Method != method || previous.Thread != input.Thread {
 			return codexCallResult{}, errCodexOperationConflict
 		}
-		if previous.State != "completed" {
+		if previous.State == "dispatching" {
 			recovered, err := supervisor.reconcileOperation(ctx, previous)
 			if err != nil {
 				return codexCallResult{}, err
@@ -131,12 +133,9 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 			if err := writeCodexOperation(path, recovered); err != nil {
 				return codexCallResult{}, errCodexOperationUnknown
 			}
-			return codexCallResult{result: recovered.Result}, nil
+			return codexOperationResult(recovered)
 		}
-		if len(previous.Error) != 0 {
-			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(previous.Error))
-		}
-		return codexCallResult{result: previous.Result}, nil
+		return codexOperationResult(previous)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return codexCallResult{}, fmt.Errorf("read Codex operation journal: %w", err)
@@ -147,7 +146,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 		active, err := readCodexOperation(activePath)
 		if err == nil {
 			committed, err := readCodexOperation(filepath.Join(directory, active.ID+".json"))
-			if err != nil || committed.State != "completed" {
+			if err != nil || committed.State == "dispatching" {
 				return codexCallResult{}, errCodexOperationUnknown
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -204,6 +203,37 @@ func recordCodexOperation(path string, op codexOperation, result codexCallResult
 	return requestErr
 }
 
+func codexOperationResult(op codexOperation) (codexCallResult, error) {
+	if op.FencedBy != "" {
+		return codexCallResult{result: json.RawMessage(`{"outcome":"unconfirmed"}`)}, nil
+	}
+	if len(op.Error) != 0 {
+		return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
+	}
+	return codexCallResult{result: op.Result}, nil
+}
+
+func (supervisor *codexSupervisor) operationBootEnded(op codexOperation) bool {
+	if !codexOperationID.MatchString(supervisor.bootID) {
+		return false
+	}
+	if op.BootID == "" {
+		// A retained root only receives the marker after the old VMM is reaped.
+		// Every operation written by this guest records its boot ID.
+		return supervisor.retainedBoot && op.Generation != ""
+	}
+	return codexOperationID.MatchString(op.BootID) && op.BootID != supervisor.bootID
+}
+
+func (supervisor *codexSupervisor) settleUnconfirmedStart(op codexOperation) (codexOperation, error) {
+	if op.Method != "turn/start" || !supervisor.operationBootEnded(op) {
+		return op, errCodexOperationUnknown
+	}
+	op.State = "unconfirmed"
+	op.FencedBy = supervisor.bootID
+	return op, nil
+}
+
 func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op codexOperation) (codexOperation, error) {
 	if op.Method != "turn/start" && op.Method != "turn/steer" {
 		return op, errCodexOperationUnknown
@@ -216,6 +246,11 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 		params, _ := json.Marshal(map[string]any{"threadId": op.Thread, "cursor": cursor, "limit": 100, "sortDirection": "desc"})
 		result, err := supervisor.request(ctx, "thread/items/list", params, true, nil)
 		if err != nil {
+			var rpcError *codexRPCError
+			if page == 0 && errors.As(err, &rpcError) && rpcError.code == -32600 &&
+				rpcError.message == "no rollout found for thread id "+op.Thread {
+				return supervisor.settleUnconfirmedStart(op)
+			}
 			return op, errCodexOperationUnknown
 		}
 		bytes += len(result.result)
@@ -232,7 +267,7 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 			} `json:"data"`
 			Next *string `json:"nextCursor"`
 		}
-		if json.Unmarshal(result.result, &items) != nil {
+		if json.Unmarshal(result.result, &items) != nil || items.Data == nil {
 			return op, errCodexOperationUnknown
 		}
 		for _, entry := range items.Data {
@@ -245,7 +280,7 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 		}
 		if items.Next == nil {
 			if turn == "" {
-				return op, errCodexOperationUnknown
+				return supervisor.settleUnconfirmedStart(op)
 			}
 			value := map[string]any{"turnId": turn}
 			if op.Method == "turn/start" {
@@ -328,12 +363,22 @@ func readCodexOperation(path string) (codexOperation, error) {
 	var op codexOperation
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&op) != nil || decoder.Decode(new(any)) != io.EOF || op.Version != 1 || !codexOperationID.MatchString(op.ID) ||
-		len(op.Digest) != 64 || (op.State != "dispatching" && op.State != "completed") ||
-		(op.State == "completed" && (len(op.Result) == 0) == (len(op.Error) == 0)) {
+	if decoder.Decode(&op) != nil || decoder.Decode(new(any)) != io.EOF || op.Version != 1 || !codexOperationID.MatchString(op.ID) || len(op.Digest) != 64 {
 		return codexOperation{}, errors.New("invalid Codex operation journal")
 	}
-	return op, nil
+	empty := len(op.Result) == 0 && len(op.Error) == 0
+	switch {
+	case op.State == "dispatching" && empty && op.FencedBy == "":
+		return op, nil
+	case op.State == "completed" && (len(op.Result) == 0) != (len(op.Error) == 0) && op.FencedBy == "":
+		return op, nil
+	case op.State == "unconfirmed" && empty && op.Method == "turn/start" &&
+		(op.BootID == "" || codexOperationID.MatchString(op.BootID)) &&
+		codexOperationID.MatchString(op.FencedBy) && op.BootID != op.FencedBy:
+		return op, nil
+	default:
+		return codexOperation{}, errors.New("invalid Codex operation journal")
+	}
 }
 
 func writeCodexOperation(path string, op codexOperation) error {

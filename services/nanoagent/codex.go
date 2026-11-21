@@ -106,6 +106,8 @@ type codexSupervisor struct {
 	binary          string
 	browserMCP      bool
 	cwd             string
+	bootID          string
+	retainedBoot    bool
 	closed          atomic.Bool
 	requestID       atomic.Uint64
 	writePermit     chan struct{}
@@ -376,7 +378,9 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
 		supervisor.mu.Unlock()
 		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
-		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
+		raw, err := json.Marshal(map[string]any{
+			"generationAlive": alive, "state": op.State, "terminalStatus": terminal, "bootEnded": supervisor.operationBootEnded(op),
+		})
 		return codexCallResult{result: raw}, err
 	}
 	if method == "tengri/reconcileOperation" {
@@ -397,7 +401,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 		if err != nil || op.Thread != input.Thread {
 			return codexCallResult{}, errCodexOperationUnknown
 		}
-		if op.State != "completed" {
+		if op.State == "dispatching" {
 			op, err = supervisor.reconcileOperation(ctx, op)
 			if err != nil {
 				return codexCallResult{}, err
@@ -406,10 +410,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 				return codexCallResult{}, errCodexOperationUnknown
 			}
 		}
-		if len(op.Error) != 0 {
-			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
-		}
-		return codexCallResult{result: op.Result}, nil
+		return codexOperationResult(op)
 	}
 	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
 		return supervisor.operation(ctx, method, params)

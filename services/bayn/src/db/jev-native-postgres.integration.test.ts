@@ -2643,6 +2643,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Effect.gen(function* () {
               yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions ON COMMIT DROP
               AS SELECT * FROM public.autonomous_cycle_shadow_decisions`
+              // Rebind prepared reads from the public table to the temporary fixture.
+              yield* sql`SET LOCAL search_path TO pg_temp, public`
               for (const [targetVersion, policyVersion] of [
                 ['bayn.entry-ablation-target.v1', 'bayn.entry-ablation-policy.v1'],
                 ['bayn.repeated-momentum-target.v1', 'bayn.repeated-momentum-policy.v1'],

@@ -1,5 +1,10 @@
 use std::{
-    env, future::Future, os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc, time::Duration,
+    env,
+    future::Future,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context, ensure};
@@ -20,6 +25,9 @@ use super::{Claim, FIRECRACKER_VERSION, Slot, SlotConfig, SlotIdentity, SlotStat
 
 pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 pub(super) const FENCING_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const PACKAGED_GUEST_AGENT: &str = "/usr/share/tengri/nanoagent";
+const GUEST_AGENT: &str = "/usr/local/bin/nanoagent";
+const GUEST_COLD_REFRESH: &str = "/etc/tengri-agent-replaced";
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum CommandWithdrawn {
@@ -375,6 +383,184 @@ pub(super) async fn stage_root_disk(
     );
     fs::remove_file(config_file).await?;
     Ok(())
+}
+
+#[tracing::instrument(name = "guest.update_agent", skip_all)]
+pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Result<()> {
+    let expected = fs::read(agent).await.context("read packaged Nanoagent")?;
+    ensure!(!expected.is_empty(), "packaged Nanoagent is empty");
+    if read_guest_agent(root).await? == expected {
+        return Ok(());
+    }
+
+    // The runner owns the stopped VMM's private root. Repair and update a copy
+    // so interruption or an ext4 error cannot damage the only retained root.
+    let staged = root.with_extension("ext4.next");
+    match fs::remove_file(&staged).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("remove interrupted root update"),
+    }
+    let result = async {
+        let copied = Command::new("cp")
+            .kill_on_drop(true)
+            .args(["--reflink=auto", "--sparse=always", "--"])
+            .args([root, &staged])
+            .output()
+            .await?;
+        ensure!(copied.status.success(), "stage retained guest root");
+        let checked = Command::new("e2fsck")
+            .kill_on_drop(true)
+            .arg("-fp")
+            .arg(&staged)
+            .output()
+            .await?;
+        ensure!(
+            matches!(checked.status.code(), Some(0 | 1)),
+            "retained guest root needs filesystem repair"
+        );
+        for request in [
+            format!("rm {GUEST_AGENT}"),
+            format!("write {} {GUEST_AGENT}", agent.display()),
+            format!("set_inode_field {GUEST_AGENT} mode 0100755"),
+            format!("write /dev/null {GUEST_COLD_REFRESH}"),
+            format!("set_inode_field {GUEST_COLD_REFRESH} mode 0100444"),
+        ] {
+            let written = Command::new("debugfs")
+                .kill_on_drop(true)
+                .args(["-w", "-R", &request])
+                .arg(&staged)
+                .output()
+                .await?;
+            ensure!(written.status.success(), "update guest Nanoagent");
+        }
+        let checked = Command::new("e2fsck")
+            .kill_on_drop(true)
+            .arg("-fn")
+            .arg(&staged)
+            .output()
+            .await?;
+        ensure!(
+            checked.status.success(),
+            "updated guest root failed filesystem validation"
+        );
+        ensure!(
+            read_guest_agent(&staged).await? == expected,
+            "updated guest Nanoagent failed readback"
+        );
+        verify_guest_file_mode(&staged, GUEST_AGENT, "0755").await?;
+        verify_guest_file_mode(&staged, GUEST_COLD_REFRESH, "0444").await?;
+        fs::File::open(&staged).await?.sync_all().await?;
+        fs::rename(&staged, root).await?;
+        fs::File::open(root.parent().context("guest root must have a parent")?)
+            .await?
+            .sync_all()
+            .await?;
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&staged).await;
+    }
+    result
+}
+
+async fn read_guest_agent(root: &Path) -> anyhow::Result<Vec<u8>> {
+    let output = Command::new("debugfs")
+        .kill_on_drop(true)
+        .args(["-R", &format!("cat {GUEST_AGENT}")])
+        .arg(root)
+        .output()
+        .await?;
+    ensure!(output.status.success(), "read guest Nanoagent");
+    Ok(output.stdout)
+}
+
+async fn verify_guest_file_mode(root: &Path, path: &str, mode: &str) -> anyhow::Result<()> {
+    let metadata = Command::new("debugfs")
+        .kill_on_drop(true)
+        .env("LC_ALL", "C")
+        .args(["-R", &format!("stat {path}")])
+        .arg(root)
+        .output()
+        .await?;
+    let stdout = String::from_utf8_lossy(&metadata.stdout);
+    ensure!(
+        metadata.status.success()
+            && stdout.contains("Type: regular")
+            && stdout
+                .split_once("User:")
+                .and_then(|(_, suffix)| suffix.split_whitespace().next())
+                == Some("0")
+            && stdout
+                .split_once("Mode:")
+                .and_then(|(_, suffix)| suffix.split_whitespace().next())
+                == Some(mode),
+        "invalid retained guest file mode for {path}"
+    );
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[tokio::test]
+async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_copy() {
+    let directory = env::temp_dir().join(format!("tengri-root-update-{}", uuid::Uuid::new_v4()));
+    let template = directory.join("template");
+    let root = directory.join("root.ext4");
+    let packaged = directory.join("nanoagent");
+    fs::create_dir_all(template.join("usr/local/bin"))
+        .await
+        .unwrap();
+    let result: anyhow::Result<()> = async {
+        fs::create_dir_all(template.join("etc")).await?;
+        fs::write(template.join("usr/local/bin/nanoagent"), b"old agent").await?;
+        fs::write(template.join("retained"), b"keep this file").await?;
+        fs::File::create(&root).await?.set_len(8 << 20).await?;
+        let created = Command::new("mkfs.ext4")
+            .args(["-q", "-F", "-d"])
+            .arg(&template)
+            .arg(&root)
+            .status()
+            .await?;
+        ensure!(created.success(), "create fixture root");
+        let before = fs::read(&root).await?;
+        fs::write(&packaged, vec![7; 10 << 20]).await?;
+        ensure!(
+            update_guest_agent(&root, &packaged).await.is_err(),
+            "oversized update committed"
+        );
+        ensure!(
+            fs::read(&root).await? == before,
+            "failed update modified the retained root"
+        );
+
+        fs::write(&packaged, b"updated agent").await?;
+        update_guest_agent(&root, &packaged).await?;
+        verify_guest_file_mode(&root, GUEST_COLD_REFRESH, "0444").await?;
+        ensure!(
+            read_guest_agent(&root).await? == b"updated agent",
+            "agent update missing"
+        );
+        let retained = Command::new("debugfs")
+            .args(["-R", "cat /retained"])
+            .arg(&root)
+            .output()
+            .await?;
+        ensure!(
+            retained.stdout == b"keep this file",
+            "unrelated root file changed"
+        );
+        let after = fs::read(&root).await?;
+        update_guest_agent(&root, &packaged).await?;
+        ensure!(
+            fs::read(&root).await? == after,
+            "retry rewrote a committed root"
+        );
+        Ok(())
+    }
+    .await;
+    fs::remove_dir_all(directory).await.unwrap();
+    result.unwrap();
 }
 
 async fn configuration() -> anyhow::Result<SlotConfig> {
