@@ -545,6 +545,10 @@
       "pattern": "^registry-cleanup(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "restate",
+      "pattern": "^restate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ricochet-rush",
       "pattern": "^ricochet-rush(?: \\(.*\\))?(?: /.*)?$"
     },
@@ -585,6 +589,16 @@
   ],
   "restate-images.yml": [
     {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "restate-validation.yml": [
+    {
       "id": "changes",
       "pattern": "^changes(?: \\(.*\\))?$"
     },
@@ -595,10 +609,6 @@
     {
       "id": "cache-proof",
       "pattern": "^cache-proof(?: \\(.*\\))?$"
-    },
-    {
-      "id": "publish",
-      "pattern": "^publish(?: \\(.*\\))?$"
     }
   ],
   "sag-build-push.yaml": [

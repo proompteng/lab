@@ -5,11 +5,17 @@ import YAML from 'yaml'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 const workflowPath = '.github/workflows/restate-images.yml'
+const validationPath = '.github/workflows/restate-validation.yml'
 const image = 'registry.ide-newton.ts.net/lab/restate'
 
 export function runtimeInputs(revision: string, cwd = process.cwd()): string {
   const workflow = YAML.parse(git(cwd, 'show', `${revision}:${workflowPath}`))
-  const steps = workflow.jobs.build.steps
+  // Qualified releases may reference commits before the build moved into the reusable workflow.
+  const validation =
+    workflow.jobs.validate?.uses === `./${validationPath}`
+      ? YAML.parse(git(cwd, 'show', `${revision}:${validationPath}`))
+      : workflow
+  const steps = validation.jobs.build.steps
   const inputs = ['Prove metadata writes and cold-peer elections', 'Build runtime'].map((name) => {
     const step = steps.find((entry: { name?: string }) => entry.name === name)
     if (!step?.with) throw new Error(`Missing build inputs for ${name}`)
