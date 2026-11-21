@@ -383,3 +383,49 @@ ORDER BY observation_id;
 Raw account identifiers, provider payloads, credentials and per-trade private packets are deliberately absent
 from this report. SQL outputs remain private operational evidence. No strategy threshold, risk limit or
 qualification criterion is inferred from these realized outcomes.
+
+## Post-merge verification and follow-up findings
+
+The observations below were collected after the economic cut above. Times in this section are UTC.
+They concern release behavior and prospective research compatibility; the historical economic results remain fixed.
+
+[PR #16097](https://github.com/proompteng/lab/pull/16097) merged as
+`87a8d928433f476530a2323b9afc8166e1c261a3`. Its exact-head CI passed 5,957 unit tests
+with zero failures; the separate database, ledger, streaming, replay and formal release gates also passed.
+The [Bayn main build](https://github.com/proompteng/lab/actions/runs/44871171689) published all three
+images for both amd64 and arm64. Kargo promoted Freight `1ae75901530187362472b4806b5b8b6298eb666f`
+at 06:10:13 on November 21, and its verification analysis completed successfully at 06:10:31.
+Argo converged at generated branch commit `f8744abdce0573d35c5623572371343686778123`.
+
+Both API replicas reported the intended embedded source and OCI index identity. Their actual Node processes
+ran on arm64/Linux and x64/Linux respectively; the Pod image IDs reported index digests, so this observation
+does not independently prove each platform child-manifest digest. The activation hook succeeded, controller
+epoch advanced from 452 to 453, and a fresh durable WAITING pass completed at 06:12:30. Both APIs exposed
+`BROKER_CASH_FEES_PENDING` while accounting remained EXACT. The existing fee gate and research authority
+remained in force. This is live verification of status fidelity and successor activity, rather than evidence
+of additional trading profit or an observed improvement during an open market session.
+
+The end-to-end checks exposed three additional issues:
+
+- The separate [OpenCode main image build](https://github.com/proompteng/lab/actions/runs/44871171425)
+  failed its native amd64 startup test twice, including one controlled same-source retry. The prior healthy
+  deployment remained selected. The second attempt reproduced the 25-second readiness timeout without the
+  first attempt's transient cache-download error. Logs did not identify whether the original stall occurred
+  in the redundant version process or the server itself. The startup correction removes that duplicate
+  bootstrap, proves the live authenticated version, and propagates child failure promptly. Exact native
+  amd64 and arm64 image tests remain required; a latency saving has not been established.
+- All four TA and eight archive TaskManager metrics targets became visible. Their 41,717 post-relabel
+  samples per scrape raised Alloy's observed working set from 139.7 MiB to 225.7 MiB. During Flink handover,
+  Alloy was OOM-killed at 06:08:09 under its 256 MiB limit. The scoped capacity correction requests 256 MiB
+  and allows 512 MiB while preserving metric content. Acceptance requires fresh Flink checkpoints and live
+  target, collector-memory, restart and remote-write checks through the corrected rollout.
+- Bayn's current Flamingo admission policy still pinned the former serving image after the reviewed
+  [vLLM upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890).
+  Read-only live identity matched the committed new image and the existing model checkpoint. The prospective
+  correction must freeze historical policy variants independently, admit the new exact image for new runs,
+  and preserve signed run hashes, receipts and budgets. Each prospective run still requires its own valid
+  approval through the existing workflow. This compatibility finding does not attribute the November 20
+  trading losses to the research service.
+
+The two operational repairs and prospective policy correction are follow-up source changes. Their deployment
+and runtime acceptance must be recorded separately from the completed first Bayn release above.
