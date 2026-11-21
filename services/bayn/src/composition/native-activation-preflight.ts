@@ -5,9 +5,8 @@ import type { ApplicationPlan } from '../app'
 import { databaseUtcInstant } from '../db/clock'
 import { authorityStateFromRow } from '../db/execution-store/authority-shared'
 import { decodeAuthorityStateObservationRows } from '../db/execution-store/rows'
-import { observeCycleGenerationHash, validateAuthorityObservation } from '../execution/capital-grant-algebra'
+import { validateAuthorityObservation } from '../execution/capital-grant-algebra'
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
-import { isExecutionMandateRecoveryRestriction, isRetiredOneShotMandateRestriction } from '../execution/mandate'
 import { configuredCapitalActivation } from './capital-activation'
 
 export class NativeActivationPreflightError extends Data.TaggedError('NativeActivationPreflightError')<{
@@ -16,18 +15,15 @@ export class NativeActivationPreflightError extends Data.TaggedError('NativeActi
 }> {}
 
 export const validateObserveActivationAuthority = (authority: AuthorityState | null): Result.Result<void, string> => {
-  if (authority === null || Result.isSuccess(observeCycleGenerationHash(authority))) return Result.succeed(undefined)
-  // Admission to the existing recovery path is not proof of settlement or permission to change authority.
   if (
-    authority.maximum === Authority.Execution &&
-    authority.effective === Authority.Observe &&
-    authority.kill === KillState.Active &&
-    (isExecutionMandateRecoveryRestriction(authority.reason) || isRetiredOneShotMandateRestriction(authority.reason))
+    authority === null ||
+    (authority.maximum === Authority.Observe &&
+      authority.effective === Authority.Observe &&
+      authority.kill === KillState.Clear &&
+      authority.reason === undefined)
   )
     return Result.succeed(undefined)
-  return Result.fail(
-    'OBSERVE deployment requires OBSERVE authority or an existing recoverable restriction before controller handoff',
-  )
+  return Result.fail('mandate-free OBSERVE deployment requires clear OBSERVE authority before controller handoff')
 }
 
 export const nativeActivationPreflight = (plan: ApplicationPlan) =>

@@ -434,7 +434,7 @@ describe('execution mandate decisions', () => {
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
   })
 
-  test('rearms only the exact retired-generation protocol cutover clamp', () => {
+  test('routes only the exact protocol cutover clamp to incumbent recovery or successor rearm', () => {
     const cutover = {
       generationHash: 'b'.repeat(64),
       sourceGenerationHash: 'a'.repeat(64),
@@ -445,10 +445,12 @@ describe('execution mandate decisions', () => {
       reason: strategyProtocolCutoverRestrictionReason,
     }
     expect(decideExecutionMandateAuthority(cutover)).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(decideExecutionMandateAuthority({ ...cutover, currentGenerationMatchesRequest: true })).toEqual(
+      Result.succeed({ _tag: 'ResumeRestricted' }),
+    )
     for (const rejected of [
       { ...cutover, reason: 'operator kill' },
       { ...cutover, reason: `${strategyProtocolCutoverRestrictionReason} extra` },
-      { ...cutover, currentGenerationMatchesRequest: true },
       { ...cutover, sourceGenerationHash: cutover.generationHash },
       { ...cutover, maximum: 'OBSERVE' as const },
       { ...cutover, kill: 'CLEAR' as const },

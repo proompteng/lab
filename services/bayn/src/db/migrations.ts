@@ -1,3 +1,4 @@
+import supportRecoveryObserveCutover from '../../migrations/0207_support_recovery_observe_cutover'
 import durableBrokerSourceEvents from '../../migrations/0206_durable_broker_source_events'
 import inferenceSourceSeals from '../../migrations/0205_inference_source_seals'
 import protectionClosePlans from '../../migrations/0204_protection_close_plans'
@@ -207,6 +208,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '207_support_recovery_observe_cutover': supportRecoveryObserveCutover,
   '206_durable_broker_source_events': durableBrokerSourceEvents,
   '205_inference_source_seals': inferenceSourceSeals,
   '204_protection_close_plans': protectionClosePlans,

@@ -45,10 +45,10 @@ test.each([
   `${executionMandateFailureRestrictionPrefix} run-cycle-pass: timeout`,
   executionMandateCompletedRestrictionReason,
   executionActivationExpiredRestrictionReason,
-])('retains native restricted-generation recovery without performing it: %s', (reason) => {
+])('leaves restricted-generation recovery with the mandate-bearing predecessor: %s', (reason) => {
   const current = { ...authority, effective: Authority.Observe, kill: KillState.Active, reason }
   const before = structuredClone(current)
-  expect(Result.isSuccess(validateObserveActivationAuthority(current))).toBe(true)
+  expect(Result.isFailure(validateObserveActivationAuthority(current))).toBe(true)
   expect(current).toEqual(before)
 })
 
@@ -72,4 +72,17 @@ test('a clear PAPER maximum with OBSERVE effective authority still needs a recog
   expect(Result.isFailure(validateObserveActivationAuthority({ ...authority, effective: Authority.Observe }))).toBe(
     true,
   )
+})
+
+test('a restricted OBSERVE generation cannot be mistaken for clear OBSERVE authority', () => {
+  const current: AuthorityState = {
+    ...authority,
+    maximum: Authority.Observe,
+    effective: Authority.Observe,
+    kill: KillState.Active,
+    reason: 'operator hold',
+  }
+  const before = structuredClone(current)
+  expect(Result.isFailure(validateObserveActivationAuthority(current))).toBe(true)
+  expect(current).toEqual(before)
 })
