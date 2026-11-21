@@ -27,6 +27,7 @@ describe('Tengri image workflow', () => {
 
   it('builds the two native images independently and verifies the pushed guest artifacts', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      on: { merge_group: { types: string[] } }
       jobs: Record<
         string,
         {
@@ -44,17 +45,26 @@ describe('Tengri image workflow', () => {
         }
       >
     }
-    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
-    expect(workflow.jobs.build?.if).toBe(releaseOnly)
+    const mainPublication =
+      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+    expect(workflow.on.merge_group).toEqual({ types: ['checks_requested'] })
+    expect(workflow.jobs.build?.if).toBe(mainPublication)
+    expect(workflow.jobs.publish?.if).toBe(mainPublication)
     expect(workflow.jobs.build?.['runs-on']).toBe('arc-${{ matrix.architecture }}')
     expect(workflow.jobs.build?.strategy?.matrix).toEqual({
       architecture: ['amd64', 'arm64'],
       image: ['nanoagent', 'tengri'],
-      include: [{ image: 'tengri', build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\n' }],
+      include: [
+        {
+          image: 'tengri',
+          build_contexts: 'ofz-proto=proto\nofz-catalog=services/ofz\nnanoagent-src=services/nanoagent\n',
+        },
+      ],
     })
     expect(workflow.jobs['validate-kvm']).toBeUndefined()
-    expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
-    expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
+    for (const job of ['validate-tengri', 'validate-nanoagent']) {
+      expect(workflow.jobs[job]?.if).toBe("github.event.action != 'edited' || github.event.changes.base")
+    }
     const steps = workflow.jobs.build.steps
     expect(steps.filter((step) => step.uses === './.github/actions/setup-buildkit')).toHaveLength(1)
     const build = steps.find((step) => step.uses === 'docker/build-push-action@v6')
@@ -68,7 +78,7 @@ describe('Tengri image workflow', () => {
     )
     const cache = 'type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}'
     expect(build.with?.['cache-from']).toBe(cache)
-    expect(build.with?.['cache-to']).toBe(`${cache},mode=min,ignore-error=true`)
+    expect(build.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
     expect(build['continue-on-error']).not.toBe(true)
     expect(pairedBoot.if).toBe("matrix.image == 'nanoagent'")
     expect(steps.indexOf(pairedBoot)).toBeGreaterThan(steps.indexOf(build))
@@ -77,12 +87,14 @@ describe('Tengri image workflow', () => {
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
-    expect(ofz.jobs['build-ofz'].if).toBe(releaseOnly)
+    expect(ofz.on.merge_group.types).toEqual(['checks_requested'])
+    expect(ofz.jobs['build-ofz'].if).toBe(mainPublication)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
     expect(ofz.jobs.validate.if).toBeUndefined()
     const products = YAML.parse(
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
+    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
       expect(products.jobs[`build-${service}`].if).toBe(
         service === 'app'
@@ -122,7 +134,6 @@ describe('Tengri image workflow', () => {
     expect(source).not.toMatch(
       /docker buildx imagetools inspect[\s\\]+--format '\{\{json \.Manifest\}\}'[\s\\]+"\$\{kargo_reference\}"/,
     )
-    expect(source).toContain("if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")
     expect(source).not.toContain(':latest')
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')

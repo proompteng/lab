@@ -432,10 +432,14 @@ quota reservations and replay protection retain their existing durable semantics
 
 Each capture brackets account and position reads with matching complete order, fill and fee histories. Consecutive
 successful tickets with an unchanged latest fill can reuse the prior after-history as the next before-history.
-The PAPER execution controller verifies the account and opens one Alpaca Activity SSE connection for both startup
-replay and live delivery. It resumes from the last validated event ID on reconnect. Alpaca sends that event again, so
-the reader verifies its payload before advancing. It waits for a stream heartbeat before admitting the activity history.
-A disconnect, dropped frame or unsupported correction makes the local activity history unavailable.
+Each PAPER execution-controller process currently verifies the account and opens an Alpaca Activity SSE connection for
+both startup replay and live delivery. Its cursor and activity materialization are process-local. It resumes from the
+last locally validated event ID on reconnect; a pod restart replays from the configured history boundary. Alpaca sends
+the reconnect cursor again, so the reader verifies its payload before advancing. It waits for a stream heartbeat before
+admitting the activity history. A disconnect, dropped frame or unsupported correction makes the local activity history
+unavailable. This replica-local ownership is retained only until the
+[single-owner durable cursor migration](../../docs/bayn/durable-broker-event-architecture.md#target-financial-state-path)
+is deployed and proven equivalent.
 
 PAPER captures take immutable views of the stream's fills. Each fill retains its provider evidence and the same
 activity ID and microsecond timestamp used by existing ledger records. Fee events advance the fee history on
@@ -521,15 +525,30 @@ including after a fallback obtains a newer cut. Missing settlement evidence keep
 with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, terminalize the cycle, clear restrictions
 or authorize an order. The next exact cut can resume the same bounded close path.
 
-Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservations/notify` handler through
-Restate Kafka ingress. Bayn verifies the exact signed payload against its loaded broker account and credentials in
-a journaled step, then retains its stable identity, original receipt time and database arrival time before
-acknowledgement. These compact receipts permanently deduplicate republication and fence projections or captures
-that started before a new notification arrived, including while the exclusive capture handler is running.
-The private owner coalesces pending notifications into one canonical capture. The first notification in a pending wave
-invalidates the older projection before waiting for quota. Raw websocket events never supply ledger fills or
-trading authority; the existing complete, bracketed account/history capture remains authoritative. A published
-canonical cut sends the controller a compact snapshot hash and original observation time.
+Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservations/notify` handler directly through
+Restate HTTP ingress. The stable source event ID is the transport idempotency key. Bayn verifies the exact signed payload
+against its loaded broker account and credentials in a journaled step, then commits the entire notification to
+`broker_source_events` before acknowledgement. The separate account-keyed `BaynBrokerSourceProjector` serializes the
+immutable source in delivery order without sharing the slow snapshot owner's queue. It normalizes known order and fill
+events, runs the existing idempotent broker-event store, appends the first immutable projection receipt, and wakes
+execution without waiting for the canonical snapshot. It does not post money because WebSocket delivery cannot prove
+that an unseen economic predecessor does not exist; complete-history reconciliation retains sole TigerBeetle
+authority until Activity SSE provides a durable ordered prefix. Replays return that first receipt
+instead of recomputing it against later intent bindings. A new broker session remains fail-closed after capture
+publication. It opens only after complete-history persistence and accounting are exact and a completion bound to the
+same source revision, observation generation and snapshot hash advances the financial-reconciliation fence past its
+`SessionReady` source event. Updates arriving before that proof retain `SESSION_BOUNDARY` and use reconciliation
+instead of guessing across a reconnect gap; concurrent ingress makes a stale completion a no-op.
+
+The exclusive owner independently coalesces new source events into canonical safety capture. Session boundaries,
+unsupported events, absent intent linkage and deterministic projection conflicts explicitly require reconciliation.
+The first notification in a pending wave invalidates the older projection before waiting for quota. Source events never
+grant trading authority; the complete, bracketed account/history capture remains authoritative for convergence, cash,
+fees, gaps and corrections. A published canonical cut sends the controller its compact snapshot hash and original
+observation time. Source-to-projection lag and bounded outcomes are exported under
+`bayn_broker_source_projection_lag_seconds` and `bayn_broker_source_projection_total`. The worker also samples
+`bayn_broker_source_projection_pending` and `bayn_broker_source_projection_oldest_pending_seconds` from PostgreSQL so
+a stalled first projection remains visible across process restarts.
 
 An admitted event rechecks a retryable local `NO_ADMISSIBLE_CUT` preflight failure immediately through the same
 broker-observation and reconciliation fences. A cached failure cannot conceal a newly published cut until the
@@ -2478,10 +2497,16 @@ These parallel shards use Bun 1.4.3 for its isolated-file finalizer fixes. See t
 [upstream fixes](https://bun.sh/blog/bun-v1.4.3#bun-test).
 The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
-four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
-runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
-the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+four shards, each with its own disposable database server in CI. Every test file runs in an isolated Bun module
+graph with a fresh database, and Bun prints the randomized order's seed. Run one shard locally with
+`bun run --filter @proompteng/bayn test:postgres 1/4` or omit the shard to run the complete suite. The local PostgreSQL
+role needs `CREATEDB` and a loopback URL for a database that ends in `_test`. The Jev batch, migration cutover and broker
+observation suites migrate each fixture once, then clone and remove a separate database for each test. ClickHouse/Java
+archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
 The release gate requires every shard and integration job to pass.
+
+Successful PostgreSQL CI shards upload their measured file durations as `bayn-postgres-timings-<shard>-<attempt>`
+artifacts for balancing future runs.
 
 Streaming failure integration runs in a separate required job with disposable PostgreSQL, Restate 1.8.1 and Kafka.
 Run `bash services/bayn/scripts/test-streaming-integrations.sh` from a local Docker host using the pinned toolchain.
@@ -2513,6 +2538,7 @@ partial-fill and re-entry cases with modeled slippage. Every measured buy fill m
 adverse arrival quotes remain unfilled and retain separate broker coverage.
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
+The cycle recovery cases need a local role with `CREATEDB` to clone their migrated fixture.
 
 The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
 ID `2001`. It posts 10,500 synthetic transfers, verifies account and performance evidence, and supports rerunning against
@@ -2541,6 +2567,14 @@ with one hosted call per proposal and no paid fallback. Its actual provider inpu
 identity travel in the verified research receipt, with separate gateway and worker source revisions.
 See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
 for development access and the verified state migration.
+
+The research gateway validates the authenticated identity of one pinned native process before serving proposals.
+Each startup identity probe has a one-second bound within the existing 25-second overall readiness budget. A
+transport failure, unanswered probe or authenticated, version-verified starting response may retry the same process;
+authentication, version and other HTTP failures remain terminal. This handles the native server's interval between
+binding its socket and attaching its request handler without extending readiness or restarting the child. Scope
+shutdown allows 25 seconds for SIGTERM, including the native server's 20-second graceful drain, before escalating
+to SIGKILL for a child that has not exited.
 
 New Flamingo research registrations pin the vLLM 0.34.0 serving image introduced by
 [the reviewed Flamingo upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890),

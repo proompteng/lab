@@ -381,7 +381,7 @@ discovery.kubernetes "bayn_broker_stream_pods" {
 
 	selectors {
 		role  = "pod"
-		label = "app.kubernetes.io/name in (bayn-broker-feed,bayn-broker-kafka-ingress)"
+		label = "app.kubernetes.io/name=bayn-broker-feed"
 	}
 }
 
@@ -416,7 +416,7 @@ prometheus.relabel "bayn_broker_stream_metrics" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__"]
-		regex         = "up|dorvud_broker_feed_.*|restate_kafka_.*|kafka_consumer_.*"
+		regex         = "up|dorvud_broker_feed_.*"
 	}
 }
 

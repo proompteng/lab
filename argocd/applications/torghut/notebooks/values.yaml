@@ -36,7 +36,7 @@ hub:
         - '3333333333333333333333333333333333333333333333333333333333333333'
   extraEnv:
     TORGHUT_NOTEBOOK_IMAGE:
-      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:9a147628ad6e9a1922a949248ed1c07438dd46cf9969e7f0e74977622b335dc1
+      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:cecd745cf7b8047dc04ff9cd23646f0af8c2d84d47728711e691643adf754f2a
     TORGHUT_HUB_COOKIE_SECRET:
       valueFrom:
         secretKeyRef:

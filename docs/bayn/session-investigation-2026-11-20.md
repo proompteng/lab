@@ -3,6 +3,11 @@
 Status: evidence for the active profitability and reliability investigation. This document records a bounded
 historical cut; source, GitOps and fresh runtime evidence remain authoritative.
 
+Later settlement evidence is recorded in [the November 21 addendum](#later-fee-settlement-and-runtime-recovery--november-21-2026).
+At its 08:35:10 UTC cut, all $64.03 of observed weekly broker fees were posted: gross trading less broker fees
+was -$1,416.03, or -$1,417.717284228 after the original-cut known inference estimate. Both API instances had
+returned to READY with EXACT accounting. The earlier pending-fee figures below retain their original cut.
+
 ## Scope and provenance
 
 Financial and decision evidence was collected read-only on November 21, 2026, approximately 04:38–04:47 UTC;
@@ -472,6 +477,83 @@ kept 16 WebSocket bar symbols and six completed-REST-only bar symbols, but the t
 sets, the complete shared allowlist and quote/trade coverage, and the unchanged 30-stream WebSocket budget.
 Runtime manifests and trading eligibility are unchanged.
 
+### Main publication and native startup follow-up
+
+PR #16098 merged as `c217c1ddcce8f87d6c4306de27a1894cf8afe4ec` at 07:42:59 UTC on November 21.
+Its final PR source `3ce84941e941e5a1d7f5341b465dc32b6d2e49f5` passed both native image jobs and
+all required CI gates. The subsequent [main OpenCode build](https://github.com/proompteng/lab/actions/runs/44881526170)
+failed on both architectures. The previous healthy OpenCode deployment remained selected; a passing PR build
+did not establish that the intermittent startup failure was resolved.
+
+The new diagnostic records put the arm64 failed startup at 07:49:03.937–07:49:28.952 and amd64 at
+07:49:38.024–07:50:03.036. Child acquisition took 54 ms and 26 ms. Arm64 made three native requests,
+with two early transport failures and no HTTP response; amd64 made two, with one early transport failure
+and no HTTP response. Each last request remained unanswered until the original 25-second budget expired.
+On amd64, scoped cleanup then remained pending until Bun's 90-second test ceiling killed a dangling process.
+
+The pinned [OpenCode server source](https://github.com/anomalyco/opencode/blob/bb25a2f4a3f3f04d7c344bec0c0574ea3510b3b1/packages/server/src/process.ts)
+awaits listening on an initially handler-free server before attaching its request dispatcher. Its exact
+`@effect/platform-node` 4.0.1 dependency has the same listen-before-handler ordering. The dependency's npm
+archive SHA-512 was checked against that upstream commit's `bun.lock`. An isolated loopback reproduction
+on Node 24.11.1 and Bun 1.4.2 observed one early request event with zero handlers: that first request stayed
+unanswered after handler installation, while a second request returned HTTP 200. This proves an exposed
+failure mechanism, not the exact phase or syscall of either historical failed request.
+
+The follow-up therefore bounds each complete authenticated identity probe, including JSON validation, to
+one second within the unchanged 25-second total readiness budget. Only a probe timeout, transport failure
+or authenticated and version-verified HTTP 503 may retry. Authentication errors, wrong versions, other HTTP
+errors, defects and child exits retain their existing terminal behavior. Retries use the same owned process.
+Scope shutdown now allows 25 seconds after SIGTERM, preserving the native library's 20-second graceful
+drain, before escalating to SIGKILL. This is not a hard exit-time guarantee for uninterruptible kernel I/O.
+
+Before the correction, a never-answering probe regression failed because no second probe was attempted,
+and a real child ignoring SIGTERM required the test's independent cleanup watchdog. With the correction,
+all 13 startup/shutdown tests passed, including unchanged authentication and whole-budget negatives, and
+the resistant child was reaped in 25.028 seconds without its watchdog. The broader local suite passed 414
+tests with 77 explicit environment-gated skips. Native CI and live release acceptance remain separate gates.
+
+### Shared storage latency observed during publication
+
+The failed native startup phases overlapped substantial Ceph-backed runner I/O pressure. Arm64's one-minute
+RBD mean write latency was approximately 1.7–3.4 seconds, with estimated queue depth near 20. The amd64
+runner's corresponding mean read latency was 7.834 seconds and mean write latency 1.858 seconds. Both
+had zero observed CPU throttling and approximately 1 GiB working sets under 32 GiB limits. These are
+scrape-window measurements, not independent measurements of each 25-second request; they establish
+correlation, not request-specific storage causation.
+
+The live TA and archive jobs also experienced slow checkpoints while still on the earlier `87a8d928` cohort,
+with no pending promotion or savepoint. TA checkpoint 168640 eventually completed; the coordinator log
+reported 754.670 seconds from its recorded trigger timestamp to the completion log. Read-only JobManager
+thread dumps at
+08:05:01 showed TA waiting for S3 `putObject` response headers while creating a checkpoint directory marker,
+and archive waiting for `completeMultipartUpload` while finalizing checkpoint metadata. RGW logs matched
+the next TA checkpoint's metadata path: an existence-probe HEAD took 6.952 seconds, multipart initiation
+2.604 seconds and metadata PUT 15.564 seconds. The HEAD's 404 was a normal absence probe, not a failed
+checkpoint. This directly identifies slow S3 request completion on the checkpoint path.
+
+The exact live [Flink 2.2.1 checkpoint coordinator](https://github.com/apache/flink/blob/450c63e961805a90aa18cb815d6b412f44303b9b/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/CheckpointCoordinator.java)
+records its trigger timestamp before queued initialization work and arms its timeout later, when creating the
+pending checkpoint. The [configured TA timeout](https://github.com/proompteng/lab/blob/87a8d928433f476530a2323b9afc8166e1c261a3/argocd/applications/torghut/ta/configmap.yaml)
+is 300,000 ms, also verified from the live ConfigMap and Flink REST. The approximately 553.8-second
+pre-initialization interval was outside that timer. Both initialization and old-checkpoint cleanup use the
+same observed single-worker JobManager I/O executor; slow cleanup is a supported amplification path, but
+the exact queued task count was not captured. No executor or timeout setting was changed.
+
+At 08:08, the observed source lag and task backpressure were zero despite slow checkpoint completion. The
+deployed `TorghutSignalPipelineCheckpointsStalled` age alert independently covered this case: the loaded Mimir
+rule was healthy and 14 sampled observations showed TA FIRING between 07:53:00 and 08:06:30. This is not
+a claim of continuous firing or email delivery. Archive reached pending, and by 08:15:33 both checkpoint
+ages were recent (TA 35.3 seconds, archive 42.1 seconds), with the rule inactive. No additional alert was
+needed for the demonstrated condition.
+
+At 08:06, five-minute measurements showed the three Turin OSDs' shared BlueStore DB device at 99.76%
+busy, estimated queue depth 13.46 and 51.75 ms mean writes. Their BlueFS fsync means were 110–122 ms,
+and OSD mean writes were 3.65–5.08 seconds. Ceph still reported HEALTH_OK: durable health did not imply
+low latency. The exact load share attributable to each client remains unproved. The separate Nix download
+concurrency trial must finish and retain its baseline pair before the lower-concurrency candidate, with
+checkpoints still advancing and no new failures. The identified S3 delay remains a comparison confound;
+no runner-count, storage durability, scrub, checkpoint or financial database setting was changed.
+
 ## Prospective profitability qualification
 
 A bounded read-only follow-up at source `87a8d928433f476530a2323b9afc8166e1c261a3` found eight retained
@@ -503,6 +585,87 @@ registration and execution admission remain unchanged.
 A read-only validation of the same eight live immutable registrations with the repaired reader passed all
 eight, and every recomputed registration hash matched its stored key. A fixed historical fixture exercises
 the public receipt reader and preserves its INCONCLUSIVE / NOT_ASSESSED outcome, including the original
-registration, source-cut and receipt hashes. Forged or altered v37 parameters remain rejected. All six live
-historical source cuts have not been fully replayed; restoring their registration readability does not
-establish a completed replay or economic qualification.
+registration, source-cut and receipt hashes. Forged or altered v37 parameters remain rejected. The subsequent
+full graph readback found one further retained-only boundary: a v37 protocol inside archived position-hold
+evidence was still being decoded with the current protocol schema. Its immutable archive bytes and original
+protocol hash matched the historical registration; this was not missing or corrupted evidence.
+
+Review also required retaining the original long-only evidence domain: positive held quantity and cost,
+only the original funded-plan versions, and no protection-evidence marker introduced later under v41.
+Resealed short and later-marker fixtures first reproduce through the general current calculation, then
+fail the historical decoder. Current long and short execution admission remain unchanged.
+
+The narrow retained-hold correction then replayed all seven actual immutable graphs through the source
+reader with exact stored receipt, registration and source-cut hashes. The replay made 1,650 archived-record
+reads; all 1,608 distinct referenced records existed. Six outcomes remain INCONCLUSIVE / NOT_ASSESSED.
+The remaining outcome stays REJECTED / NOT_ASSESSED, including its 550 UNBOUND_CONTROLLER_BUILD
+findings and INCOMPLETE_SAFETY_AUDIT finding. Current execution, registration and assessment admission
+remain unchanged. This was a bounded SELECT-only source-function replay; it did not run a new assessment,
+persist a receipt, grant authority or independently prove the deployed HTTP reader. No historical outcome
+was upgraded, and replay compatibility does not establish economic qualification.
+
+## Native follow-up validation after the combined correction
+
+At combined head `dd816275ac206c48aa5f2b013f72a441a1b0298b`, the ARM native job
+[136787823098](https://github.com/proompteng/lab/actions/runs/44884858281/job/136787823098)
+recovered initial readiness in 17.878 seconds after 11 cancelled probes. Restart readiness took 1.230 seconds.
+The whole test nevertheless reached its unchanged 90-second limit with ten assertions. That count places
+its last assertion at the second inference outcome; it does not establish whether the outcome assertion or
+subsequent receipt validation failed before cleanup. The first shutdown interval was approximately 25 seconds.
+The second request retained the first request's absolute 60-second deadline, so a late failure followed by
+scope cleanup can hide its cause behind the outer test timeout. No request window or test deadline was extended.
+
+Bounded test-only lifecycle markers now report inference outcome before assertions, child-exit observations,
+shutdown boundaries and at most 32 native operations classified by fixed purpose. They omit authentication,
+session identifiers, request bodies and provider payloads. They record assertion exit before outer cleanup so
+subsequent native failures are inspectable. These diagnostics are not an additional production repair.
+
+A local x64 preflight verified the exact pinned npm archive SHA-512 and unchanged extracted binary bytes,
+then invoked that binary through an existing glibc loader. The full native lifecycle passed all 30 assertions;
+with complete instrumentation it took 13.122 seconds. Provider calls used the in-process test stub only.
+This validates the harness and diagnostics locally, not Nix packaging, ARM behavior or the cause of the CI failure.
+The native CI gates remain required on the final source before release.
+
+The same combined head's amd64 native job passed all 30 assertions in 37.250 seconds. It recovered initial
+readiness in 16.681 seconds after 13 cancelled probes and restarted in 1.211 seconds. This confirms recovery
+of unanswered probes in that run, while the ARM lifecycle failure above remains a separate unresolved observation.
+
+## Later fee settlement and runtime recovery — November 21, 2026
+
+This addendum preserves the original 04:47 UTC evidence cut. New SELECT-only evidence, bounded at 08:35:10 UTC, confirms that the two November 20 fees previously witnessed through Activity SSE became canonical REST/ledger records: **$22.66 and $0.08, totaling $22.74**. Both REST reads were HTTP 200 at **07:56:15.222 UTC**; ledger posting timestamps are **07:56:23.828326** and **07:56:23.865249**. Neither record has a match correction.
+
+The broker cash view lagged those fee records. Retained cash/equity remained **$92,931.77** through **08:22:04.144**, then first reflected **$92,909.03** at **08:22:35.170**. The approximately 26-minute lag produced 127 retained DISCREPANCY reconciliation observations from **07:56:23.415** through **08:22:12.509**. The exact restriction-triggering receipt contains only a CASH discrepancy: expected 92,909,030,000 micros versus observed 92,931,770,000, a $22.74 difference. The first retained EXACT reconciliation followed at **08:22:41.438**. The safety audit shows effective OBSERVE with active kill at version 1875, a clear OBSERVE successor at 1876, then PAPER reactivation at 1877 only after a fresh exact reconciliation. These were the existing controller's durable recovery transitions; the investigation issued no writes.
+
+| November 16–20 economic bridge | USD |
+| --- | ---: |
+| Gross realized trading | -1,352.00 |
+| Canonically posted broker fees, ten records | -64.03 |
+| Broker cash/equity change, $94,325.06 to $92,909.03 | -1,416.03 |
+| Original-cut known inference tariff estimate | -1.687284228 |
+| Gross less posted broker fees and known inference estimate | **-1,417.717284228** |
+
+The inference total was independently re-summed from 8,674 latest request/stage quotes at the original 04:47 cut: **1,687,284,228,000 pico-USD**, all bound to exactly one configured PAPER account with no missing request-generation binding. This is an estimate, not a provider invoice. Earlier-session unknown usage and unallocated infrastructure, data and research expense remain unresolved. The final row is therefore a known-cost result, not fully costed net profit or economic qualification. November 20 alone is now canonically **-$536.02 after broker fees**, or **-$536.253999892 including its original-cut known inference estimate**.
+
+Fill coverage remains **863 fills** from November 16; the last execution is November 20 at **20:54:48.067**, last observed at **20:54:48.182**. There were zero fills executed from November 21 onward and zero newly observed fills after the original evidence cut. Settlement did not revise the original trading cohort.
+
+### Authority and runtime provenance
+
+Both existing API pods on amd64 and arm64 returned HTTP 200, **operational READY**, broker execution eligible and accounting EXACT at **08:33:15–17 UTC**. They were still source **87a8d928433f476530a2323b9afc8166e1c261a3**, image **sha256:33db25f066060f7cca1d0394f457169cc3cd70ac8f8f48b4b2d79e2c8460088e**; c217 publication had not promoted.
+
+The immutable Research mandate request remains **6856f071e54529227ea48fa7b077506209ffd887c939d7351e948d7e03020130**, plan **033c6388b975b4f460393b26161dd3651b1c4c80451fc2d3400a950c55af9660**. The old and recovered generations have the same sandbox account/broker identity, maximum PAPER capability, Jev v41 strategy behavior/parameters/protocol, risk-policy hash and plan hash. The request's zero-open-order/zero-position fields are activation preconditions, not post-activation portfolio limits. The configured build lineage retains the authored request (source 503cb2d...) and binds the already reviewed deployed 87a8d928 source/image. There is no new mandate or changed trading policy.
+
+Recovery lineage is old generation **6e2cc4028f3c631ca1741768a82ef2e770e9811387b1d17d523a910fafd6039c** → clear OBSERVE **6961e2d590812b09eed14965bcf6e8871fa4c4c1cb5da3e3c82444b4063b5ba0** at 08:22:42.697450 → recovered PAPER **412430d571d9ab22e4f4cfcb747334d04306c7f860eec022149e1357be394571** at 08:22:44.908044. The new generation's bound reconciliation at **08:22:43.635** is EXACT, with zero discrepancies and equal expected/observed hashes; its stored content hash matches the generation binding.
+
+The durable controller remains epoch **453** and progressed from sequence **365858** to **365859**, SUCCESS/WINDOW_CLOSED. Its next eligible window is **2026-11-23T13:01:02Z**. The generation changed as part of exact-reconciliation recovery; it must not be reported as unchanged. This observed recovery does not prove strategy profitability.
+
+### Reproduction
+
+The bounded SELECT-only queries are retained in
+[`sql/fee-settlement-2026-11-21.sql`](sql/fee-settlement-2026-11-21.sql).
+They fix the later financial cut and preserve the original inference cut, use READ ONLY transactions with
+12–15-second statement timeouts, and emit no raw account identifiers, credentials or provider payloads.
+This is a historical evidence read, not a new system assessment.
+
+Source contracts inspected at c217/4c07: `src/db/broker-fees.ts`, migrations 0063 and 0105,
+`src/blocked-generation-recovery.ts`, `src/composition/capital-activation.ts`,
+`src/execution/configuration.ts` and migration 0181. Their deployed source was 87a8d928 as recorded above.

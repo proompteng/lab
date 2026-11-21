@@ -3,7 +3,12 @@ import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
 import type { PgClient } from '@effect/sql-pg'
 import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
-import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
+import {
+  BrokerObservations,
+  decodeObservedBrokerSnapshot,
+  validateObservedBrokerSnapshot,
+  type ObservedBrokerSnapshot,
+} from './observed-snapshot'
 import { TestClock } from 'effect/testing'
 import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
 
@@ -37,6 +42,8 @@ import { brokerSnapshotCacheConfig, makeBrokerObservationCapture, makeProjectedB
 
 const config = { maxAgeMs: 60_000 }
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+const forReconciliation = <E, R>(read: Effect.Effect<ObservedBrokerSnapshot, E, R>) =>
+  read.pipe(Effect.map((observation) => ({ observation, complete: Effect.void })))
 
 const fixture = (
   history: {
@@ -182,6 +189,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: observed,
+            readForReconciliation: forReconciliation(observed),
             readState: observed,
             readForSubmit: () => observed,
             invalidate: Effect.void,
@@ -368,6 +376,7 @@ describe('durable broker observations', () => {
               reads += 1
               return value
             }),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.sync(() => {
               reads += 1
               return value
@@ -406,6 +415,7 @@ describe('durable broker observations', () => {
             queries += 1
             return [
               {
+                generation: 1,
                 state_hash: snapshotHash,
                 snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)),
                 observedAt: value.observedAt,
@@ -484,6 +494,7 @@ describe('durable broker observations', () => {
                   )
                 : Effect.succeed(current)
             }),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.suspend(() => {
               reads += 1
               return unavailable
@@ -558,6 +569,7 @@ describe('durable broker observations', () => {
                   }),
                 ),
               ),
+              readForReconciliation: Effect.die('unexpected reconciliation read'),
               readState: Effect.sync(() => {
                 reads += 1
               }).pipe(
@@ -635,6 +647,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.succeed(value),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.succeed(value),
             readForSubmit: () => Effect.succeed(value),
             invalidate: Effect.void,
@@ -665,6 +678,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.succeed(value),
+            readForReconciliation: forReconciliation(Effect.succeed(value)),
             readState: Effect.succeed(value),
             readForSubmit: () => Effect.succeed(value),
             invalidate: Effect.sync(() => {
@@ -725,6 +739,7 @@ describe('durable broker observations', () => {
                 message: 'unavailable',
               }),
             ),
+            readForReconciliation: Effect.die('unexpected reconciliation read'),
             readState: Effect.fail(
               new BrokerReadError({
                 operation: 'preflight',

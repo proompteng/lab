@@ -37,6 +37,9 @@ evidence commands.
 
 The homepage shows a “convex backend” badge once it can reach the Convex health check query.
 
+The Landing PR build uses the committed generated Convex client in `packages/backend/convex/_generated`. The browser
+and admin tests use isolated fixtures. Convex deployment credentials belong to the backend deployment workflow.
+
 ## Tengri BFF development
 
 Browser identity lives in `src/lib/platform/auth.ts` and uses the platform authorization API. Each web deployment sets
