@@ -932,16 +932,20 @@ const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
   }
 
   const workflow = await readFile(workflowPath, 'utf8')
-  const testAction = '.github/actions/test-temporal-bun-sdk'
-  const actionPath = join(repoRoot, testAction, 'action.yml')
-  if (!workflow.includes(`uses: ./${testAction}`) || !existsSync(actionPath)) {
-    return buildGate(false, 'Temporal Bun SDK validation action missing from the release workflow')
+  const sources = [workflow]
+  for (const action of ['test-temporal-bun-sdk', 'test-temporal-bun-sdk-integration']) {
+    const actionPath = `.github/actions/${action}`
+    const definition = join(repoRoot, actionPath, 'action.yml')
+    if (!workflow.includes(`uses: ./${actionPath}`) || !existsSync(definition)) {
+      return buildGate(false, `Temporal Bun SDK validation action ${action} missing from the release workflow`)
+    }
+    sources.push(await readFile(definition, 'utf8'))
   }
-  const sources = `${workflow}\n${await readFile(actionPath, 'utf8')}`
+  const effectiveWorkflow = sources.join('\n')
   const missing = requiredCiWorkflowFragments
     .filter(
       (requirement) =>
-        countOccurrences(sources, requirement.fragment) <
+        countOccurrences(effectiveWorkflow, requirement.fragment) <
         ('minimumOccurrences' in requirement ? requirement.minimumOccurrences : 1),
     )
     .map((requirement) => requirement.id)
