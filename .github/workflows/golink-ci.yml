@@ -14,6 +14,9 @@ on:
       - 'services/golink/**'
       - 'packages/scripts/src/golink/**'
       - 'argocd/applications/golink/**'
+      - '.github/workflows/golink-ci.yml'
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
