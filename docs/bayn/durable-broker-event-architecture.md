@@ -130,7 +130,10 @@ which completion histograms cannot see. That backlog spans retained source revis
 success gauge makes database sampling failure visible instead of preserving a stale zero. The projector is a separate
 exclusive Restate object keyed by account with a projection-only PostgreSQL store: source delivery stays ordered, but
 a multi-second canonical capture cannot block this queue. After reconnect, the fast path
-remains closed until a published capture's immutable notification fence covers that session's `SessionReady` event.
+remains closed after publication and opens only when complete-history persistence is exact, accounting is exact, and
+completion advances the capture's financial-reconciliation fence past that session's `SessionReady` event. Completion
+is bound to the source revision, observation generation and snapshot hash, so concurrent ingress makes a stale
+completion a no-op.
 Canonical coverage is checked inside the same PostgreSQL writer fence as order/fill ingestion, so reconciliation and
 the stream cannot race to make a delayed order state newest. Order current state is selected by Alpaca's full
 nine-digit provider `updated_at`, retained as `orders.broker_updated_at`; local arrival order and PostgreSQL's
@@ -140,7 +143,7 @@ provider version per broker order and fails closed if that version is older than
 one provider timestamp with a different source identity is a conflict. Any trade update arriving
 before the session proof, or any later invalid, unsupported, unbound or conflicting trade update, poisons only that
 session's fast lane; all subsequent updates in that session take canonical reconciliation. A new gap-free
-`SessionReady` session can re-enter the fast path after its own boundary is covered.
+`SessionReady` session can re-enter the fast path only after its own boundary is financially reconciled.
 
 The WebSocket projector never posts money. A valid later fill can arrive before an unseen valid predecessor, so
 serialized delivery alone cannot prove an economic prefix. The projector retains order/fill evidence and wakes the

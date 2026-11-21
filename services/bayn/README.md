@@ -534,9 +534,11 @@ events, runs the existing idempotent broker-event store, appends the first immut
 execution without waiting for the canonical snapshot. It does not post money because WebSocket delivery cannot prove
 that an unseen economic predecessor does not exist; complete-history reconciliation retains sole TigerBeetle
 authority until Activity SSE provides a durable ordered prefix. Replays return that first receipt
-instead of recomputing it against later intent bindings. A new broker session remains fail-closed until a canonical
-capture's durable notification fence covers its `SessionReady` source event; updates arriving before that proof retain
-`SESSION_BOUNDARY` and use reconciliation instead of guessing across a reconnect gap.
+instead of recomputing it against later intent bindings. A new broker session remains fail-closed after capture
+publication. It opens only after complete-history persistence and accounting are exact and a completion bound to the
+same source revision, observation generation and snapshot hash advances the financial-reconciliation fence past its
+`SessionReady` source event. Updates arriving before that proof retain `SESSION_BOUNDARY` and use reconciliation
+instead of guessing across a reconnect gap; concurrent ingress makes a stale completion a no-op.
 
 The exclusive owner independently coalesces new source events into canonical safety capture. Session boundaries,
 unsupported events, absent intent linkage and deterministic projection conflicts explicitly require reconciliation.
