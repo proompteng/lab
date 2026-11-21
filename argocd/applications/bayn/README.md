@@ -4,6 +4,17 @@
 
 [The native short cutover](../../../docs/bayn/equity-short-cutover.md) first settles the exact v40 PAPER identity through migration 199 and native OBSERVE recovery. Migration 200 admits v41 only from settled, flat, clear OBSERVE. The mandate stays absent until the immutable successor image and same-account PAPER request are verified. [The universe and strategy evidence](../../../docs/bayn/native-short-universe-2026-11-14.md) records the ten S&P 100 entry candidates, retained source symbols, directional execution and economic limitations.
 
+## Support-recovery quarantine cutover
+
+The current [support-recovery quarantine cutover](../../../docs/bayn/support-recovery-quarantine-cutover.md) first
+deploys a settlement-capable v41 revision with the existing mandate and Kargo-updated build lineage. Migration 207 then
+settles the exact v41 PAPER generation to clear OBSERVE, so recovery does not depend on an older pod surviving a
+cross-system controller handoff. Only a later reviewed cleanup, after clear OBSERVE and predecessor drain are proven,
+removes mandate consumption and the encrypted request. Migration 207 requires retained direct-stream session,
+projection and canonical financial-fence coverage; exact transport rollout and restart/reconnect acceptance remain
+independent deployment gates. Keep the v42 source and any new mandate out until those gates pass. Quarantine and later
+qualification retain Jev; neither settlement nor architectural cleanup establishes profitability.
+
 ## Images and operating commands
 
 The `bayn` image serves status, execution, activation and market projection. It retains `bayn-forward-performance`

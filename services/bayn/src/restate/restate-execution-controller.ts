@@ -513,6 +513,14 @@ export const makeBaynExecutionController = (
           )
           verifyDeploymentBinding(config, ctx.key, request.deployment)
           verifyDeactivationBinding(config, ctx.key, request.predecessor)
+          // The early shared preflight keeps an invalid successor away from the predecessor. Recheck while this
+          // exclusive controller invocation owns the handoff so a mandate-free revision cannot retire the recovery
+          // owner of a restriction observed after that first read.
+          await ctx.run(
+            'reverify Bayn deployment authority before controller rotation',
+            () => runtime.prepareActivation(ctx.request().attemptCompletedSignal),
+            { maxRetryAttempts: 0 },
+          )
           const decision = decisionOrTerminal(decideExecutionControllerRotation(await readState(ctx), request))
           await ctx.run(
             'project Bayn execution controller rotation',
