@@ -791,6 +791,10 @@ bytes and financial hashes remain readable through their original codecs. The or
 inference and persistence. Bayn computes execution quantities, risk and exit triggers; current candidate admission
 uses [candidate-only queries](src/jev/observation-query.ts).
 
+Jev's structural checks return every supported funded proposal. After verifying the quotes, the entry selector ranks
+that set by structural support, modeled loss, symbol and proposal ID. It binds protection only for the selected
+proposal. Native execution, replay and the target verifier reproduce that choice from the same batch evidence.
+
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
 each reported probability, so the total allowance scales with the number of choices. These are Bayn validation bounds, not a
