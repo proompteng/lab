@@ -209,6 +209,14 @@ Current high throttle ratios seen on Valkey and PostgreSQL pod aggregates belong
 or backup sidecars. The data does not support increasing controller, database or cache limits to solve the
 observed economic or fee-settlement problems. Current pool and cache queue measurements also show no saturation.
 
+A follow-up on the same source and nine-hour cut grouped the broker-read histograms by `operation` and
+`outcome`. Successful order reads had estimated median/p95 0.670/1.607 seconds, versus 0.081/0.218 seconds
+for account reads. The order-read headers stage measured 0.280/0.496 seconds and its body stage
+0.382/0.919 seconds. These nested quantiles cannot be added, and the operation includes both recent/open
+order probes and complete history pages. They identify a slower read class without proving the cause of
+an individual expired cycle. The source already overlaps independent reads and reuses only verified
+history; complete before/after history checks preserve the account snapshot's authority.
+
 To reproduce stage quantiles, query the existing Mimir endpoint at `2026-11-20T22:00:00Z`:
 
 ```promql
@@ -383,3 +391,118 @@ ORDER BY observation_id;
 Raw account identifiers, provider payloads, credentials and per-trade private packets are deliberately absent
 from this report. SQL outputs remain private operational evidence. No strategy threshold, risk limit or
 qualification criterion is inferred from these realized outcomes.
+
+## Post-merge verification and follow-up findings
+
+The observations below were collected after the economic cut above. Times in this section are UTC.
+They concern release behavior and prospective research compatibility; the historical economic results remain fixed.
+
+[PR #16097](https://github.com/proompteng/lab/pull/16097) merged as
+`87a8d928433f476530a2323b9afc8166e1c261a3`. Its exact-head CI passed 5,957 unit tests
+with zero failures; the separate database, ledger, streaming, replay and formal release gates also passed.
+The [Bayn main build](https://github.com/proompteng/lab/actions/runs/44871171689) published all three
+images for both amd64 and arm64. Kargo promoted Freight `1ae75901530187362472b4806b5b8b6298eb666f`
+at 06:10:13 on November 21, and its verification analysis completed successfully at 06:10:31.
+Argo converged at generated branch commit `f8744abdce0573d35c5623572371343686778123`.
+
+Both API replicas reported the intended embedded source and OCI index identity. Their actual Node processes
+ran on arm64/Linux and x64/Linux respectively; the Pod image IDs reported index digests, so this observation
+does not independently prove each platform child-manifest digest. The activation hook succeeded, controller
+epoch advanced from 452 to 453, and a fresh durable WAITING pass completed at 06:12:30. Both APIs exposed
+`BROKER_CASH_FEES_PENDING` while accounting remained EXACT. The existing fee gate and research authority
+remained in force. This is live verification of status fidelity and successor activity, rather than evidence
+of additional trading profit or an observed improvement during an open market session.
+
+The end-to-end checks exposed three additional issues:
+
+- The separate [OpenCode main image build](https://github.com/proompteng/lab/actions/runs/44871171425)
+  failed its native amd64 startup test twice, including one controlled same-source retry. The prior healthy
+  deployment remained selected. The second attempt reproduced the 25-second readiness timeout without the
+  first attempt's transient cache-download error. Logs did not identify whether the original stall occurred
+  in the redundant version process or the server itself. The startup correction removes that duplicate
+  bootstrap, proves the live authenticated version, and propagates child failure promptly. Exact native
+  amd64 and arm64 image tests remain required; a latency saving has not been established.
+- All four TA and eight archive TaskManager metrics targets became visible. Their 41,717 post-relabel
+  samples per scrape raised Alloy's observed working set from 139.7 MiB to 225.7 MiB. During Flink handover,
+  Alloy was OOM-killed at 06:08:09 under its 256 MiB limit. The scoped capacity correction requests 256 MiB
+  and allows 512 MiB while preserving metric content. Acceptance requires fresh Flink checkpoints and live
+  target, collector-memory, restart and remote-write checks through the corrected rollout.
+- Bayn's current Flamingo admission policy still pinned the former serving image after the reviewed
+  [vLLM upgrade](https://github.com/proompteng/lab/commit/66badfc269c0cbaa69c150cd46cb35475e7b6890).
+  Read-only live identity matched the committed new image and the existing model checkpoint. The prospective
+  correction must freeze historical policy variants independently, admit the new exact image for new runs,
+  and preserve signed run hashes, receipts and budgets. Each prospective run still requires its own valid
+  approval through the existing workflow. This compatibility finding does not attribute the November 20
+  trading losses to the research service.
+
+The operational repairs and prospective policy correction are tracked in
+[PR #16098](https://github.com/proompteng/lab/pull/16098). Their deployment and runtime acceptance must be
+recorded separately from the completed first Bayn release above.
+
+The Torghut post-deploy workflow previously accepted the rollout without testing collector health. Its
+runtime observation window, 06:07:56–06:08:50, overlapped the Alloy OOM at 06:08:09. The follow-up adds
+acceptance checks bound to the verified Argo revision, promoted manifests, current process identity and
+actual TaskManager replicas. It verifies collector capacity, absence of retained rollout OOM/restarts,
+current metric targets and fresh samples, and advancing remote-write delivery without drops or counter
+regression over two scrape intervals. Transient probe failures retain the original process and observation
+history. A bounded read-only run against the original deployment correctly rejected its retained OOM.
+Deleted-Pod history and drops before the first observation of a reused collector remain explicit limits.
+
+At follow-up source `77163050aeea08c635f31b3bdcafa08a02087260`, the
+[core Bayn CI](https://github.com/proompteng/lab/actions/runs/44875746366) passed. The separate
+[native build](https://github.com/proompteng/lab/actions/runs/44875746373) passed on amd64 with 30 assertions
+but failed on arm64 with the unchanged 25-second readiness timeout. The passing test's 53.273-second total
+includes two launches and cleanup; it is not a readiness latency measurement. The failed runner showed no
+measured CPU throttling or restarts and no memory-limit saturation, but these observations do not identify
+the cause. The subsequent test-only diagnostics record bounded spawn, native readiness and gateway phases
+without exposing credentials or changing the original deadlines, retry budgets, ownership or assertions.
+Both architectures must pass on the final source before release.
+
+The subsequent [native run at `6219a192`](https://github.com/proompteng/lab/actions/runs/44878792846)
+passed both architecture jobs with 30 native assertions each. The diagnostic gateway-readiness observations
+were 17.911 seconds initially and 1.237 seconds on restart for arm64, and 14.472/1.213 seconds for amd64.
+Process handles were acquired in 45/18 ms and 25/7 ms, respectively. These observations locate the time
+after process acquisition for this passing run; they neither explain the previous timeout nor establish
+a production latency improvement. All original deadlines and authentication assertions remained in force.
+
+Broader Torghut CI exposed a stale universe assertion from before the reviewed
+[equity-short source extension #15946](https://github.com/proompteng/lab/pull/15946). The runtime had already
+kept 16 WebSocket bar symbols and six completed-REST-only bar symbols, but the test compared their shared
+22-symbol `SYMBOLS` field with the old 16-symbol WebSocket set. The corrected contract verifies both exact
+sets, the complete shared allowlist and quote/trade coverage, and the unchanged 30-stream WebSocket budget.
+Runtime manifests and trading eligibility are unchanged.
+
+## Prospective profitability qualification
+
+A bounded read-only follow-up at source `87a8d928433f476530a2323b9afc8166e1c261a3` found eight retained
+registrations, all operational reliability studies. The latest registered window was November 13 and used
+Jev v40. Seven operational receipts existed: six INCONCLUSIVE and one REJECTED. There were no economic
+registrations or system-assessment receipts, and no prospective registration for November 16–20 or the
+serving v41 policy. Registration, capture and assessment are explicit operator commands; these observations
+alone do not distinguish an omitted invocation from a failed attempt.
+
+The existing economic contract requires two to four policies with distinct account bindings, while retained
+authority generations contain only one distinct account. Its `DEPLOYED_BAYN` control is explicitly the frozen
+pre-Jev control, rather than the current serving Jev incumbent. An actual-incumbent comparison therefore
+requires an explicit policy identity and genuinely distinct matched account evidence. The retained history
+origin already contains six economic attempts, making the next attempt seven; operational history makes the
+next attempt nine. Neither sequence may be reset, and a historical period cannot be registered retrospectively.
+
+[Draft PR #16095](https://github.com/proompteng/lab/pull/16095), inspected at
+`3a9ae952860a87886251f299e2b7f311e38adf8d`, owns the native calendar, exact broker source-pair lineage,
+fee-ledger verification and native-arrival frontier work. That draft does not supply an actual-incumbent
+comparison, another account binding or a prospectively registered profitable period. Those prerequisites,
+complete cost allocation and original approval requirements remain separate from these runtime repairs.
+
+The follow-up also reproduced a retained-reader defect: the original current validator rejected all four
+stored v37 registrations while accepting the four v38/v40 registrations. That blocked replay of six of the
+seven retained operational receipts even though the historical protocol schema retained v37. The repair
+accepts v37 only in the retained reader and only with the exact historical default parameters. Current
+registration and execution admission remain unchanged.
+
+A read-only validation of the same eight live immutable registrations with the repaired reader passed all
+eight, and every recomputed registration hash matched its stored key. A fixed historical fixture exercises
+the public receipt reader and preserves its INCONCLUSIVE / NOT_ASSESSED outcome, including the original
+registration, source-cut and receipt hashes. Forged or altered v37 parameters remain rejected. All six live
+historical source cuts have not been fully replayed; restoring their registration readability does not
+establish a completed replay or economic qualification.
