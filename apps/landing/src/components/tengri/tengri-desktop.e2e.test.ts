@@ -2824,9 +2824,8 @@ test('shows a submitted message before the server accepts it and restores reject
       timeout: 1_000,
     })
     await expect(composer).toHaveValue('')
-    await expect(tengri.getByRole('status', { name: 'Agent activity' })).toHaveText('Thinking')
-    await expect(tengri.getByText('Starting', { exact: true })).toHaveCount(0)
-    await expect(tengri.getByLabel('Agent status', { exact: true })).toHaveText('Working')
+    await expect(tengri.getByLabel('Agent status', { exact: true })).toHaveText('Sending')
+    await expect(tengri.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
   } finally {
     releaseSend()
   }
