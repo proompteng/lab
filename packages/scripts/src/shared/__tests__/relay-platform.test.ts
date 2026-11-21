@@ -100,6 +100,7 @@ test('queued revisions require the platform suites', () => {
         TENGRI_RESULT: tengri,
         BUF_RESULT: 'success',
         SCRIPTS_RESULT: 'success',
+        TORGHUT_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
