@@ -40,6 +40,8 @@ import { decodeReceipts, decodeTransactions } from '../forward-performance/postg
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../db/accounting-rows'
 import { decodeAccountingReceipt } from '../execution/contracts'
 import { verifyRetainedAccountLedgerPrefix } from './accounting-source'
+import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
+import { forwardPerformanceSnapshot } from '../forward-performance/postgres/snapshot'
 
 export const ProgramHistorySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.system-qualification-history.v1'),
@@ -67,37 +69,55 @@ const verifyNativeCashLedgerSources = (
   Effect.gen(function* () {
     if (registration.schemaVersion !== 'bayn.system-registration.v5') return
     const retained = yield* Effect.fromResult(decodeRetainedCashEvidence(cut.sourceMaterial))
-    const sql = yield* PgClient.PgClient
-    for (const account of retained.accounts ?? []) {
+    const accounts = (retained.accounts ?? []).flatMap((account) => {
       const transactions = account.forward.accountTransactions
       const reconciledAt = account.forward.accountPositionCounts?.reconciledAt
-      if (
-        transactions === undefined ||
-        reconciledAt === undefined ||
-        !account.forward.ledgerExact ||
-        !account.forward.accountingReceiptsExact
-      )
-        continue
-      const cutoff = DateTime.toDateUtc(DateTime.makeUnsafe(reconciledAt))
-      const durableTransactions = (yield* ledgerTransactionQuery(sql, account.identity.accountId, cutoff).pipe(
-        Effect.flatMap(decodeTransactions),
-      )).map(accountingTransactionFromRow)
-      const receiptRows = yield* ledgerReceiptQuery(sql, account.identity.accountId, cutoff).pipe(
-        Effect.flatMap(decodeReceipts),
-      )
-      const durableReceipts = yield* Effect.forEach(receiptRows, (row) =>
-        decodeAccountingReceipt(accountingReceiptFromRow(row)),
-      )
-      yield* Effect.fromResult(
-        verifyRetainedAccountLedgerPrefix({
-          accountId: account.identity.accountId,
-          asOf: cut.asOf,
-          retainedTransactions: transactions,
-          durableTransactions,
-          durableReceipts,
-        }),
-      )
-    }
+      return transactions !== undefined &&
+        reconciledAt !== undefined &&
+        account.forward.ledgerExact &&
+        account.forward.accountingReceiptsExact
+        ? [{ account, reconciledAt, transactions }]
+        : []
+    })
+    if (accounts.length === 0) return
+    const sql = yield* PgClient.PgClient
+    yield* forwardPerformanceSnapshot(sql).withTransaction(
+      Effect.gen(function* () {
+        for (const { account, reconciledAt, transactions } of accounts) {
+          const cutoff = DateTime.toDateUtc(DateTime.makeUnsafe(reconciledAt))
+          const durableTransactions = (yield* ledgerTransactionQuery(sql, account.identity.accountId, cutoff).pipe(
+            Effect.flatMap(decodeTransactions),
+          )).map(accountingTransactionFromRow)
+          const receiptRows = yield* ledgerReceiptQuery(sql, account.identity.accountId, cutoff).pipe(
+            Effect.flatMap(decodeReceipts),
+          )
+          const durableReceipts = yield* Effect.forEach(receiptRows, (row) =>
+            decodeAccountingReceipt(accountingReceiptFromRow(row)),
+          )
+          const durableCashSettlements = yield* sql`
+        SELECT settlement_id,data,rounding_delta_micros::text AS rounding_delta_micros,
+          content_hash,ledger_plan_hash,tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+          tigerbeetle_ledger::integer AS tigerbeetle_ledger,
+          posted_at IS NOT NULL AND posted_at<=${cutoff}::timestamptz AS posted
+        FROM broker_cash_settlements
+        WHERE account_id=${account.identity.accountId}
+          AND (data->>'occurredAt')::timestamptz<=${cutoff}::timestamptz
+        ORDER BY transaction_id COLLATE "C"
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StoredCashSettlementSchema), strictParseOptions)))
+          yield* Effect.fromResult(
+            verifyRetainedAccountLedgerPrefix({
+              accountId: account.identity.accountId,
+              asOf: cut.asOf,
+              retainedTransactions: transactions,
+              durableTransactions,
+              durableReceipts,
+              retainedCashSettlements: account.forward.accountCashSettlements ?? [],
+              durableCashSettlements,
+            }),
+          )
+        }
+      }),
+    )
   })
 
 /** The reviewed history origin is write-once; source and candidate changes never create a fresh program. */
