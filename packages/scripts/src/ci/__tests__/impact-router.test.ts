@@ -86,14 +86,22 @@ test('queued service validation joins the required gate without duplicate or mut
   const gate = router.jobs['ci-pr']
   expect(gate.needs).toContain('queue-services')
 
-  const services = Object.values(yaml('queue-service-validation.yml').jobs)
-  expect(services.map(({ uses }) => uses)).toContain('./.github/workflows/agentctl-ci.yml')
+  const services = yaml('queue-service-validation.yml').jobs
+  expect(services.agentctl.uses).toBe('./.github/workflows/agentctl-ci.yml')
+  for (const name of ['facteur', 'miel']) {
+    const workflow = yaml(`${name}-ci.yml`)
+    expect(workflow.on).toHaveProperty('pull_request')
+    expect(workflow.on).toHaveProperty('push')
+    expect(workflow.on).not.toHaveProperty('workflow_call')
+    expect(services[name]).toEqual(workflow.jobs['build-and-test'])
+  }
   const concurrencyGroups = new Set<string>()
-  for (const service of services) {
+  for (const service of Object.values(services)) {
     expect(service.if).toBeUndefined()
     expect(service.needs).toBeUndefined()
     expect(service.secrets).toBeUndefined()
-    const filename = service.uses?.split('/').at(-1)
+    if (!service.uses) continue
+    const filename = service.uses.split('/').at(-1)
     if (!filename) throw new Error('Missing service workflow')
     const workflow = yaml(filename)
     expect(workflow.on).toHaveProperty('workflow_call')

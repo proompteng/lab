@@ -6,11 +6,12 @@ on:
     paths:
       - services/facteur/**
       - .github/workflows/facteur-ci.yml
+      - .github/actions/validate-go-service/**
   pull_request:
     paths:
       - services/facteur/**
       - .github/workflows/facteur-ci.yml
-  workflow_call:
+      - .github/actions/validate-go-service/**
 
 concurrency:
   group: facteur-${{ github.event.pull_request.number || github.ref }}
@@ -22,26 +23,7 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v5
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: ./.github/actions/validate-go-service
         with:
-          go-version: 1.25.5
-          cache: true
-      - name: Download dependencies
-        working-directory: services/facteur
-        run: go mod download
-      - name: Build
-        working-directory: services/facteur
-        run: go build ./...
-      - name: Vet
-        working-directory: services/facteur
-        run: go vet ./...
-      - name: Test (with coverage)
-        working-directory: services/facteur
-        run: go test ./... -coverprofile=coverage.out
-      - name: Publish coverage summary
-        working-directory: services/facteur
-        run: |
-          summary=$(go tool cover -func=coverage.out | grep '^total:')
-          echo '### Facteur Coverage' >> $GITHUB_STEP_SUMMARY
-          echo "- ${summary}" >> $GITHUB_STEP_SUMMARY
+          service: facteur
+          coverage-title: Facteur Coverage

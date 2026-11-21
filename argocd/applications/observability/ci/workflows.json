@@ -470,7 +470,7 @@
     },
     {
       "id": "facteur",
-      "pattern": "^facteur(?: \\(.*\\))?(?: /.*)?$"
+      "pattern": "^facteur(?: \\(.*\\))?$"
     },
     {
       "id": "feature-flags",
@@ -514,7 +514,7 @@
     },
     {
       "id": "miel",
-      "pattern": "^miel(?: \\(.*\\))?(?: /.*)?$"
+      "pattern": "^miel(?: \\(.*\\))?$"
     },
     {
       "id": "nuc-omni-serve",
