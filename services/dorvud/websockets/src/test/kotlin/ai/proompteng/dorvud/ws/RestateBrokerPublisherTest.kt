@@ -20,6 +20,9 @@ import kotlin.test.assertFailsWith
 class RestateBrokerPublisherTest {
   private val key = "a".repeat(64)
   private val eventId = "b".repeat(64)
+  private val sourceRevision = "d".repeat(40)
+  private val receipt =
+    """{"accepted":true,"eventId":"$eventId","sourceRevision":"$sourceRevision","projectionContract":"$BROKER_SOURCE_PROJECTION_CONTRACT"}"""
   private val notification =
     SignedBrokerNotification(
       message = """{"schemaVersion":"bayn.broker-notification.v1"}""",
@@ -43,14 +46,14 @@ class RestateBrokerPublisherTest {
             assertEquals(notification.message, body.getValue("message").jsonPrimitive.content)
             assertEquals(notification.signature, body.getValue("signature").jsonPrimitive.content)
             respond(
-              """{"accepted":true,"eventId":"$eventId"}""",
+              receipt,
               HttpStatusCode.OK,
               headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
           },
         )
       try {
-        RestateBrokerPublisher(client, "http://restate:8080/").publish(key, eventId, notification)
+        RestateBrokerPublisher(client, "http://restate:8080/", sourceRevision).publish(key, eventId, notification)
         assertEquals(1, requests)
       } finally {
         client.close()
@@ -68,12 +71,12 @@ class RestateBrokerPublisherTest {
             if (keys.size == 1) {
               respond("unavailable", HttpStatusCode.ServiceUnavailable)
             } else {
-              respond("""{"accepted":true,"eventId":"$eventId"}""")
+              respond(receipt)
             }
           },
         )
       try {
-        RestateBrokerPublisher(client, "http://restate:8080", retryDelaysMs = listOf(0))
+        RestateBrokerPublisher(client, "http://restate:8080", sourceRevision, retryDelaysMs = listOf(0))
           .publish(key, eventId, notification)
         assertEquals(listOf<String?>(eventId, eventId), keys)
       } finally {
@@ -94,10 +97,23 @@ class RestateBrokerPublisherTest {
         )
       try {
         assertFailsWith<IllegalStateException> {
-          RestateBrokerPublisher(client, "http://restate:8080", retryDelaysMs = listOf(0, 0))
+          RestateBrokerPublisher(client, "http://restate:8080", sourceRevision, retryDelaysMs = listOf(0, 0))
             .publish(key, eventId, notification)
         }
         assertEquals(1, requests)
+      } finally {
+        client.close()
+      }
+    }
+
+  @Test
+  fun `rejects an acceptance from the retired identity-only handler`() =
+    runBlocking {
+      val client = HttpClient(MockEngine { respond("""{"accepted":true,"eventId":"$eventId"}""") })
+      try {
+        assertFailsWith<IllegalStateException> {
+          RestateBrokerPublisher(client, "http://restate:8080", sourceRevision).publish(key, eventId, notification)
+        }
       } finally {
         client.close()
       }

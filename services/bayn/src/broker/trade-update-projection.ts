@@ -67,7 +67,6 @@ export const BrokerSourceProjectionReceiptSchema = Schema.TaggedUnion({
     observedAt: UtcInstantSchema,
     orderEventId: Sha256Schema,
     fillEventId: Schema.optionalKey(Sha256Schema),
-    accountingReceiptId: Schema.optionalKey(Sha256Schema),
   },
   ReconcileRequired: {
     eventId: Sha256Schema,

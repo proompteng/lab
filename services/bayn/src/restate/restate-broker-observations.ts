@@ -13,6 +13,7 @@ const budgetKey = 'next-poll-not-before-ms'
 const recoveryDelayMs = 1_000
 const coalescingDelayMs = 100
 const protectionSettlementDelayMs = 200
+export const brokerSourceProjectionContract = 'bayn.broker-source-projection.v1'
 // Explicit intervals override the finite handler retry policy. Accepted notifications must survive a database
 // outage without recording a terminal run result; leave attempt and duration limits unset for idempotent writes.
 const persistenceRunOptions = { initialRetryInterval: 50, maxRetryInterval: 1_000 }
@@ -218,7 +219,12 @@ export const makeBaynBrokerObservations = (
             inputSerde: brokerObservationJsonSerde,
             idempotencyKey: `broker-source-project:${notification.eventId}`,
           })
-          return { accepted: true, eventId: notification.eventId }
+          return {
+            accepted: true,
+            eventId: notification.eventId,
+            sourceRevision: config.sourceRevision,
+            projectionContract: brokerSourceProjectionContract,
+          }
         },
       ),
       reconcile: restate.handlers.object.exclusive(

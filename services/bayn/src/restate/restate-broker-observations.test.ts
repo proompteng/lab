@@ -9,6 +9,7 @@ import { type BrokerSourceProjectionReceipt, BrokerStreamReconciliationReason } 
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { settleCompletedBrokerObservationPoll } from '../composition/broker-observation-runtime'
 import {
+  brokerSourceProjectionContract,
   makeBaynBrokerObservations,
   makeBaynBrokerSourceProjector,
   type BrokerObservationPoll,
@@ -151,7 +152,10 @@ const harness = (
     object as unknown as {
       object: {
         activate: (ctx: ObjectContext, input: unknown) => Promise<State>
-        notify: (ctx: ObjectSharedContext, input: unknown) => Promise<{ accepted: boolean; eventId: string }>
+        notify: (
+          ctx: ObjectSharedContext,
+          input: unknown,
+        ) => Promise<{ accepted: boolean; eventId: string; sourceRevision: string; projectionContract: string }>
         reconcile: (ctx: ObjectContext, input: unknown) => Promise<void>
         refresh: (ctx: ObjectContext, input: unknown) => Promise<void>
         capture: (ctx: ObjectContext, input: unknown) => Promise<void>
@@ -274,7 +278,11 @@ describe('event-driven Restate broker observation owner', () => {
     const runResults = new Map<string, unknown>()
     const h = harness({ state: active(), runResults })
     const accepted = await h.handlers.notify(h.context, fixture.notification)
-    expect(accepted.accepted).toBe(true)
+    expect(accepted).toMatchObject({
+      accepted: true,
+      sourceRevision,
+      projectionContract: brokerSourceProjectionContract,
+    })
     expect(h.commands).toEqual(['verify broker notification', 'record verified broker notification'])
     expect(h.calls().polls).toBe(0)
     expect(h.projections()[0]).toMatchObject({
@@ -373,7 +381,6 @@ describe('event-driven Restate broker observation owner', () => {
           observedAt: new Date(initialNow).toISOString(),
           orderEventId: 'a'.repeat(64),
           fillEventId: 'b'.repeat(64),
-          accountingReceiptId: 'c'.repeat(64),
         }),
       },
     })

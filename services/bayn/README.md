@@ -529,9 +529,11 @@ Verified Dorvud broker notifications enter the account-keyed `BaynBrokerObservat
 Restate HTTP ingress. The stable source event ID is the transport idempotency key. Bayn verifies the exact signed payload
 against its loaded broker account and credentials in a journaled step, then commits the entire notification to
 `broker_source_events` before acknowledgement. The separate account-keyed `BaynBrokerSourceProjector` serializes the
-immutable source in economic order without sharing the slow snapshot owner's queue. It normalizes known order and fill
-events, runs the existing idempotent broker-event and TigerBeetle accounting stores, appends the first immutable
-projection receipt, and wakes execution without waiting for the canonical snapshot. Replays return that first receipt
+immutable source in delivery order without sharing the slow snapshot owner's queue. It normalizes known order and fill
+events, runs the existing idempotent broker-event store, appends the first immutable projection receipt, and wakes
+execution without waiting for the canonical snapshot. It does not post money because WebSocket delivery cannot prove
+that an unseen economic predecessor does not exist; complete-history reconciliation retains sole TigerBeetle
+authority until Activity SSE provides a durable ordered prefix. Replays return that first receipt
 instead of recomputing it against later intent bindings. A new broker session remains fail-closed until a canonical
 capture's durable notification fence covers its `SessionReady` source event; updates arriving before that proof retain
 `SESSION_BOUNDARY` and use reconciliation instead of guessing across a reconnect gap.
@@ -542,7 +544,9 @@ The first notification in a pending wave invalidates the older projection before
 grant trading authority; the complete, bracketed account/history capture remains authoritative for convergence, cash,
 fees, gaps and corrections. A published canonical cut sends the controller its compact snapshot hash and original
 observation time. Source-to-projection lag and bounded outcomes are exported under
-`bayn_broker_source_projection_lag_seconds` and `bayn_broker_source_projection_total`.
+`bayn_broker_source_projection_lag_seconds` and `bayn_broker_source_projection_total`. The worker also samples
+`bayn_broker_source_projection_pending` and `bayn_broker_source_projection_oldest_pending_seconds` from PostgreSQL so
+a stalled first projection remains visible across process restarts.
 
 An admitted event rechecks a retryable local `NO_ADMISSIBLE_CUT` preflight failure immediately through the same
 broker-observation and reconciliation fences. A cached failure cannot conceal a newly published cut until the

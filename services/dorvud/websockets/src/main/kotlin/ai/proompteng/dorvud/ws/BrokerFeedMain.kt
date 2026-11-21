@@ -69,7 +69,7 @@ internal suspend fun runVerifiedBrokerFeed(settings: BrokerFeedSettings) {
         requestTimeoutMillis = 10_000
       }
     }
-  val publisher = RestateBrokerPublisher(restateClient, settings.restateIngressUrl)
+  val publisher = RestateBrokerPublisher(restateClient, settings.restateIngressUrl, settings.connection.sourceRevision)
   try {
     val health =
       embeddedServer(CIO, port = 8080) {

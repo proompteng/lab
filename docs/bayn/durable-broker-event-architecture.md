@@ -67,9 +67,9 @@ sequenceDiagram
   participant S as PostgreSQL source ledger
   participant P as Ordered per-account projector
   participant E as Order/fill stores
-  participant T as TigerBeetle
   participant X as Execution controller
   participant C as Canonical reconciliation
+  participant T as TigerBeetle
 
   W->>D: SessionReady or TradeUpdate
   D->>R: Signed POST + event ID idempotency key
@@ -82,9 +82,10 @@ sequenceDiagram
     P->>S: Append CANONICALLY_COVERED receipt
   else Gap-free session under PostgreSQL writer fence
     P->>E: Skip superseded order or ingest current order/fill
-    P->>T: Deterministic fill accounting
     P->>S: Append PROJECTED receipt
     P->>X: BrokerEvent wake
+    P->>C: coalesced complete-history reconciliation
+    C->>T: Post fills in proven economic order
   else Session has an unresolved source gap
     P->>S: Append RECONCILE_REQUIRED receipt
     P->>C: coalesced reconcile(event ID)
@@ -99,6 +100,13 @@ The direct path has four independent replay boundaries:
 3. PostgreSQL retains the exact source and first projection receipt indefinitely.
 4. Broker-event and TigerBeetle identities make a lost response safe to retry.
 
+Dorvud becomes ready only when the receipt names the current source revision and
+`bayn.broker-source-projection.v1`. An acceptance from the retired identity-only handler fails the session and creates
+a new session boundary on reconnect, so an old cached acknowledgement cannot masquerade as the new persistence
+contract. Migration keeps an isolated append-only legacy receipt sink solely while Restate drains accepted old-worker
+invocations; no current code uses it. Post-cutover cleanup merges any late identities and deletes that sink together
+with the inert broker topic.
+
 Migration assigns every identity-only receipt from the retired Kafka path an immutable `LEGACY_RECEIPT`
 reconciliation decision. A redelivery can therefore request canonical recovery without entering the projector path
 that requires the newly retained raw notification.
@@ -106,8 +114,9 @@ that requires the newly retained raw notification.
 Unsupported frames, missing intent linkage and deterministic store conflicts never invent state. They append a
 `RECONCILE_REQUIRED` receipt and leave the canonical safety lane authoritative. Source-to-projection lag and outcome
 are exported without account or event IDs through `bayn_broker_source_projection_lag_seconds` and
-`bayn_broker_source_projection_total`. The projector is a separate exclusive Restate object keyed by account: fill
-accounting stays ordered, but a multi-second canonical capture cannot block this queue. After reconnect, the fast path
+`bayn_broker_source_projection_total`. A database-backed pending count and oldest age expose a stalled first projection,
+which completion histograms cannot see. The projector is a separate exclusive Restate object keyed by account: source
+delivery stays ordered, but a multi-second canonical capture cannot block this queue. After reconnect, the fast path
 remains closed until a published capture's immutable notification fence covers that session's `SessionReady` event.
 Canonical coverage is checked inside the same PostgreSQL writer fence as order/fill ingestion, so reconciliation and
 the stream cannot race to make a delayed order state newest. A stream order older than the latest durable broker
@@ -115,6 +124,11 @@ the stream cannot race to make a delayed order state newest. A stream order olde
 before the session proof, or any later invalid, unsupported, unbound or conflicting trade update, poisons only that
 session's fast lane; all subsequent updates in that session take canonical reconciliation. A new gap-free
 `SessionReady` session can re-enter the fast path after its own boundary is covered.
+
+The WebSocket projector never posts money. A valid later fill can arrive before an unseen valid predecessor, so
+serialized delivery alone cannot prove an economic prefix. The projector retains order/fill evidence and wakes the
+controller immediately, while complete-history reconciliation remains the only TigerBeetle writer. Activity SSE can
+move accounting onto the streaming path only after its replay cursor and correction chain establish that prefix.
 
 ## Target financial-state path
 

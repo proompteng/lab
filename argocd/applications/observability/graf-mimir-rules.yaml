@@ -3474,7 +3474,22 @@ data:
               notify: email
             annotations:
               summary: Bayn durable broker projection is slower than one second
-              description: Source-to-projection p95 exceeded one second with at least ten completed source events. Inspect the Restate projector queue, PostgreSQL writer fence and TigerBeetle posting spans before relying on the canonical snapshot fallback.
+              description: Source-to-projection p95 exceeded one second with at least ten completed source events. Inspect the Restate projector queue and PostgreSQL writer fence; financial posting remains on canonical reconciliation.
+              runbook_url: docs/bayn/durable-broker-event-architecture.md
+          - alert: BaynBrokerSourceProjectionStalled
+            expr: |
+              max(bayn_broker_source_projection_pending{namespace="bayn",service="bayn-execution-controller"}) > 0
+              and
+              max(bayn_broker_source_projection_oldest_pending_seconds{namespace="bayn",service="bayn-execution-controller"}) > 5
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn broker source projection is stalled
+              description: At least one durable broker source event has lacked a terminal projection receipt for more than five seconds. This alert also covers a stalled first event, which completion-only latency histograms cannot observe.
               runbook_url: docs/bayn/durable-broker-event-architecture.md
           # Count updated workers only, never the retained ReplicaSet pool.
           # Missing/stale or inconsistent generations are UNKNOWN, not zero.

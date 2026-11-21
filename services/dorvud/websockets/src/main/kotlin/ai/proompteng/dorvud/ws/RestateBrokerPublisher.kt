@@ -17,10 +17,12 @@ import java.io.IOException
 
 private val brokerIdentityPattern = Regex("[a-f0-9]{64}")
 internal const val RESTATE_IDEMPOTENCY_HEADER = "idempotency-key"
+internal const val BROKER_SOURCE_PROJECTION_CONTRACT = "bayn.broker-source-projection.v1"
 
 internal class RestateBrokerPublisher(
   private val client: HttpClient,
   ingressUrl: String,
+  private val sourceRevision: String,
   private val retryDelaysMs: List<Long> = listOf(50, 200),
 ) {
   private val ingressUrl = ingressUrl.trimEnd('/')
@@ -64,7 +66,12 @@ internal class RestateBrokerPublisher(
     val receipt =
       runCatching { Json.parseToJsonElement(responseBody).jsonObject }
         .getOrElse { throw IllegalStateException("Restate broker ingress returned an invalid receipt", it) }
-    check(receipt["accepted"]?.jsonPrimitive?.booleanOrNull == true && receipt["eventId"]?.jsonPrimitive?.content == eventId) {
+    check(
+      receipt["accepted"]?.jsonPrimitive?.booleanOrNull == true &&
+        receipt["eventId"]?.jsonPrimitive?.content == eventId &&
+        receipt["sourceRevision"]?.jsonPrimitive?.content == sourceRevision &&
+        receipt["projectionContract"]?.jsonPrimitive?.content == BROKER_SOURCE_PROJECTION_CONTRACT,
+    ) {
       "Restate broker ingress returned a mismatched receipt"
     }
   }

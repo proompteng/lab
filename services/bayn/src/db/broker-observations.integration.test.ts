@@ -347,6 +347,7 @@ describePostgres('Durable per-account broker observations', () => {
         const event = sourceEvent('6'.repeat(64), '2026-11-01T00:00:00.000Z')
         yield* store.recordNotification(event)
         expect(yield* store.readNotification(event.eventId)).toEqual(event)
+        expect(yield* store.readProjectionBacklog).toMatchObject({ pending: 1 })
 
         const first = {
           _tag: 'Projected',
@@ -354,11 +355,11 @@ describePostgres('Durable per-account broker observations', () => {
           observedAt: event.receivedAt,
           orderEventId: '3'.repeat(64),
           fillEventId: '4'.repeat(64),
-          accountingReceiptId: '5'.repeat(64),
         } as const
         const retained = yield* store.recordProjection(first)
         expect(retained).toEqual(first)
         expect(yield* store.readSourceProjection(event.eventId)).toEqual(retained)
+        expect(yield* store.readProjectionBacklog).toEqual({ pending: 0, oldestPendingSeconds: 0 })
 
         expect(
           yield* store.recordProjection({
@@ -390,10 +391,28 @@ describePostgres('Durable per-account broker observations', () => {
         const event = sourceEvent('5'.repeat(64), '2026-11-01T00:00:00.000Z')
         yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
           VALUES (${accountId},${event.eventId},${revision},${event.receivedAt}::timestamptz)`
+        const [{ receiptTableOid }] =
+          yield* sql`SELECT 'broker_notification_receipts'::regclass::oid::integer AS "receiptTableOid"`
 
         yield* postgresMigrations
 
         const store = makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache)
+        expect(yield* sql`SELECT 'broker_notification_receipts'::regclass::oid::integer AS "receiptTableOid"`).toEqual([
+          { receiptTableOid },
+        ])
+        const drainingEventId = '3'.repeat(64)
+        yield* sql`INSERT INTO broker_notification_receipts(account_id,event_id,source_revision,received_at)
+          VALUES (${accountId},${drainingEventId},${revision},${event.receivedAt}::timestamptz)`
+        expect(
+          yield* sql`SELECT event_id FROM broker_notification_receipts
+            WHERE account_id = ${accountId} AND event_id = ${drainingEventId}`,
+        ).toEqual([{ event_id: drainingEventId }])
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE broker_notification_receipts SET received_at = received_at
+              WHERE account_id = ${accountId} AND event_id = ${drainingEventId}`.pipe(Effect.result),
+          ),
+        ).toBe(true)
         expect(yield* store.recordNotification(event)).toEqual({ covered: false })
         expect(yield* store.readSourceProjection(event.eventId)).toEqual({
           _tag: 'ReconcileRequired',
@@ -402,6 +421,16 @@ describePostgres('Durable per-account broker observations', () => {
           reason: BrokerStreamReconciliationReason.LegacyReceipt,
         })
         expect(Result.isFailure(yield* store.readNotification(event.eventId).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(
+            yield* sql`INSERT INTO broker_source_events(
+              account_id,event_id,source_revision,received_at,event_kind,session_id,notification
+            ) VALUES (
+              ${accountId},${'4'.repeat(64)},${revision},${event.receivedAt}::timestamptz,
+              'TradeUpdate','invalid-null-payload',NULL
+            )`.pipe(Effect.result),
+          ),
+        ).toBe(true)
         expect(
           yield* sql`SELECT event_kind, notification, outcome, reason
             FROM broker_source_events JOIN broker_source_event_projections USING (account_id,event_id)

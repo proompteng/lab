@@ -35,12 +35,7 @@ import { canonicalHashV1Result } from '../hash'
 import { BrokerPollFailureReason, BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { ExecutionStoreLive } from '../db/execution-store'
-import {
-  BrokerEventStore,
-  ExecutionStoreError,
-  FillAccountingStore,
-  ReconciliationStore,
-} from '../db/execution-store/contract'
+import { BrokerEventStore, ExecutionStoreError, ReconciliationStore } from '../db/execution-store/contract'
 import {
   readProtectionReleaseBasis,
   readProtectionReleaseReference,
@@ -73,6 +68,8 @@ const brokerSourceProjectionTotal = Metric.counter('bayn_broker_source_projectio
 const brokerSourceProjectionLag = Metric.histogram('bayn_broker_source_projection_lag_seconds', {
   boundaries: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
 })
+const brokerSourceProjectionPending = Metric.gauge('bayn_broker_source_projection_pending')
+const brokerSourceProjectionOldestPending = Metric.gauge('bayn_broker_source_projection_oldest_pending_seconds')
 
 const observeBrokerSourceProjection = (receipt: BrokerSourceProjectionReceipt, replayed: boolean) =>
   Effect.gen(function* () {
@@ -281,6 +278,29 @@ export const acquireBrokerObservationRuntime = (
         cache,
       ),
     )
+    const observeProjectionBacklog = Effect.promise((signal) =>
+      managed.runPromise(
+        Effect.flatMap(store, (value) => value.readProjectionBacklog),
+        { signal },
+      ),
+    ).pipe(
+      Effect.flatMap(({ pending, oldestPendingSeconds }) =>
+        Effect.all(
+          [
+            Metric.update(brokerSourceProjectionPending.pipe(Metric.withAttributes({ namespace: 'bayn' })), pending),
+            Metric.update(
+              brokerSourceProjectionOldestPending.pipe(Metric.withAttributes({ namespace: 'bayn' })),
+              oldestPendingSeconds,
+            ),
+          ],
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) => Effect.logWarning('Broker source projection backlog observation failed', cause)),
+    )
+    yield* Effect.forever(observeProjectionBacklog.pipe(Effect.andThen(Effect.sleep('15 seconds')))).pipe(
+      Effect.forkScoped,
+    )
     return {
       maxAgeMs: config.maxAgeMs,
       freshnessLeadMs: captureTimeoutMs,
@@ -359,18 +379,16 @@ export const acquireBrokerObservationRuntime = (
                     )
                     const orderEventId = newerOrderEventId ?? (yield* events.ingest(decision.order)).eventId
                     const fill = decision.fill
-                    if (fill === undefined)
-                      return {
-                        _tag: 'Receipt' as const,
-                        receipt: yield* retain({
-                          _tag: 'Projected',
-                          eventId: decision.eventId,
-                          observedAt: decision.observedAt,
-                          orderEventId,
-                        }),
-                      }
-                    const fillEventId = (yield* events.ingest(fill)).eventId
-                    return { _tag: 'PreparedFill' as const, decision, fill, orderEventId, fillEventId }
+                    return {
+                      _tag: 'Receipt' as const,
+                      receipt: yield* retain({
+                        _tag: 'Projected',
+                        eventId: decision.eventId,
+                        observedAt: decision.observedAt,
+                        orderEventId,
+                        ...(fill === undefined ? {} : { fillEventId: (yield* events.ingest(fill)).eventId }),
+                      }),
+                    }
                   }),
                 )
                 .pipe(Effect.result)
@@ -390,33 +408,8 @@ export const acquireBrokerObservationRuntime = (
                 }
                 return yield* failure
               }
-              if (prepared.success._tag === 'Receipt') {
-                yield* observeBrokerSourceProjection(prepared.success.receipt, false)
-                return prepared.success.receipt
-              }
-              const accounting = yield* (yield* FillAccountingStore).account(prepared.success.fill).pipe(Effect.result)
-              if (Result.isFailure(accounting)) {
-                const failure = accounting.failure
-                if (
-                  failure instanceof ExecutionStoreError &&
-                  (failure.failure === 'conflict' || failure.failure === 'decode' || failure.failure === 'invariant')
-                )
-                  return yield* record({
-                    _tag: 'ReconcileRequired',
-                    eventId: prepared.success.decision.eventId,
-                    observedAt: prepared.success.decision.observedAt,
-                    reason: BrokerStreamReconciliationReason.ProjectionConflict,
-                  })
-                return yield* failure
-              }
-              return yield* record({
-                _tag: 'Projected',
-                eventId: prepared.success.decision.eventId,
-                observedAt: prepared.success.decision.observedAt,
-                orderEventId: prepared.success.orderEventId,
-                fillEventId: prepared.success.fillEventId,
-                accountingReceiptId: accounting.success.receiptId,
-              })
+              yield* observeBrokerSourceProjection(prepared.success.receipt, false)
+              return prepared.success.receipt
             }).pipe(
               withObservedStage('bayn.broker.source-event.project', {
                 dependency: 'postgresql',

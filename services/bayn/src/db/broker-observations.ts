@@ -252,8 +252,7 @@ export const makeBrokerObservationStore = (
             'eventId', event_id,
             'observedAt', to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
             'orderEventId', order_event_id,
-            'fillEventId', fill_event_id,
-            'accountingReceiptId', accounting_receipt_id
+            'fillEventId', fill_event_id
           ))
           WHEN outcome = 'CANONICALLY_COVERED' THEN jsonb_build_object(
             '_tag', 'CanonicallyCovered',
@@ -278,18 +277,38 @@ export const makeBrokerObservationStore = (
         Effect.map((rows) => rows[0]?.receipt),
       ),
     )
+  const readProjectionBacklog = run(
+    sql`SELECT COUNT(*)::integer AS pending,
+      COALESCE(EXTRACT(EPOCH FROM clock_timestamp() - MIN(event.recorded_at)),0)::double precision AS "oldestPendingSeconds"
+      FROM broker_source_events AS event
+      LEFT JOIN broker_source_event_projections AS projection USING (account_id,event_id)
+      WHERE event.account_id = ${accountId} AND event.source_revision = ${sourceRevision}
+        AND projection.event_id IS NULL`.pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.Tuple([
+            Schema.Struct({
+              pending: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+              oldestPendingSeconds: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+            }),
+          ]),
+          strictParseOptions,
+        ),
+      ),
+      Effect.map(([row]) => row),
+    ),
+  )
   const recordProjection = (projection: BrokerSourceProjectionReceipt) =>
     run(
       Effect.gen(function* () {
         yield* sql`INSERT INTO broker_source_event_projections(
-          account_id,event_id,source_revision,outcome,reason,order_event_id,fill_event_id,accounting_receipt_id,observed_at
+          account_id,event_id,source_revision,outcome,reason,order_event_id,fill_event_id,observed_at
         ) VALUES (
           ${accountId},${projection.eventId},${sourceRevision},
           ${projection._tag === 'Projected' ? 'PROJECTED' : projection._tag === 'CanonicallyCovered' ? 'CANONICALLY_COVERED' : 'RECONCILE_REQUIRED'},
           ${projection._tag === 'ReconcileRequired' ? projection.reason : null},
           ${projection._tag === 'Projected' ? projection.orderEventId : null},
           ${projection._tag === 'Projected' ? (projection.fillEventId ?? null) : null},
-          ${projection._tag === 'Projected' ? (projection.accountingReceiptId ?? null) : null},
           ${projection.observedAt}::timestamptz
         ) ON CONFLICT (account_id,event_id) DO NOTHING`
         const retained = yield* readSourceProjection(projection.eventId)
@@ -702,6 +721,7 @@ export const makeBrokerObservationStore = (
     isSessionBoundaryCovered,
     readNotification,
     readSourceProjection,
+    readProjectionBacklog,
     recordProjection,
     hasSessionProjectionGap,
     readNewerOrderEventId,

@@ -35,22 +35,31 @@ flowchart LR
   Notify --> Ledger[(Immutable broker_source_events)]
   Ledger --> Project[BaynBrokerSourceProjector, exclusive per account]
   Project --> Order[Canonical order and fill events]
-  Order --> Accounting[TigerBeetle fill accounting]
-  Accounting --> Wake[Durable execution wake]
+  Order --> Wake[Durable execution wake]
   Project --> Reconcile[Serialized safety reconciliation]
   Reconcile --> Snapshot[Canonical REST snapshot]
+  Snapshot --> Accounting[TigerBeetle fill accounting]
 ```
 
 The receiver independently checks the current account, credentials, HMAC, object identity and session timestamps before
 acknowledging ingress. The public `notify` receipt and private projector/reconciliation continuations retain seven-day
 Restate idempotency. PostgreSQL retains the exact verified notification and the first projection receipt indefinitely;
 a replay returns that receipt instead of recomputing against later intent bindings. Known order lifecycle events project
-immediately. Fill and partial-fill events use event-level quantity, price and execution identity, then run the existing
-idempotent broker-event and accounting stores. Projection has its own exclusive account-keyed owner, so fills retain
-economic order without waiting behind a slow snapshot capture. A reconnect closes the fast-path gate until a canonical
-capture covers that exact session boundary. Session boundaries, unsupported events, missing intent bindings and
-projection conflicts fail closed into reconciliation. The serialized canonical snapshot remains an independent safety
-lane for cash, fees, corrections, gaps and provider convergence; it is not on the immediate fill projection path.
+immediately. Fill and partial-fill events use event-level quantity, price and execution identity to retain broker-event
+evidence, but the projector never posts money: WebSocket delivery cannot prove that an unseen economic predecessor does
+not exist. Complete-history reconciliation retains sole TigerBeetle authority until Activity SSE supplies a durable
+ordered prefix and correction chain. Projection has its own exclusive account-keyed owner, so evidence and execution
+wakes do not wait behind a slow snapshot capture. A reconnect closes the fast-path gate until a canonical capture
+covers that exact session boundary. Session boundaries, unsupported events, missing intent bindings and projection
+conflicts fail closed into reconciliation. The serialized canonical snapshot remains the financial safety lane for
+accounting, cash, fees, corrections, gaps and provider convergence.
+
+Feed readiness also requires the acknowledgement to name the exact promoted source revision and
+`bayn.broker-source-projection.v1`. A response from the retired identity-only handler fails the socket session and the
+next attempt emits a new session boundary instead of trusting a cached old acknowledgement. Migration 206 retains a
+separate append-only `broker_notification_receipts` sink only while Restate drains already accepted old-worker
+invocations. Current code has no caller for it. After live acceptance, the cleanup migration merges any late identities
+into `broker_source_events` before dropping the sink.
 
 This hard migration removes the broker-only Kafka adapter, producer, consumer group, health script and Bayn Kafka
 credentials. It intentionally retains the now-inert topic during cutover: the Kafka application tracks `main`, while
@@ -120,9 +129,10 @@ account authority remain intact. Use the existing `RESTATE_AUTH_TOKEN` binding i
 The existing observability Alloy scrapes the feed every fifteen seconds and collects its logs. Check
 `job="bayn-broker-stream"` metrics and `job="bayn"` logs without exporting raw broker payloads. Feed readiness establishes
 process and acknowledged-session availability only; source-ledger, projection, accounting and execution evidence are
-required acceptance boundaries. `BaynBrokerFeedUnavailable`, `BaynBrokerSourceProjectionFallbackHigh` and
-`BaynBrokerSourceProjectionLatencyHigh` cover connection loss, excessive fail-closed projection and source-to-projection
-lag. No latency improvement is assumed from readiness.
+required acceptance boundaries. `BaynBrokerFeedUnavailable`, `BaynBrokerSourceProjectionFallbackHigh`,
+`BaynBrokerSourceProjectionLatencyHigh` and `BaynBrokerSourceProjectionStalled` cover connection loss, excessive
+fail-closed projection, completed latency and an oldest durable event that never completes. No latency improvement is
+assumed from readiness.
 
 If the new stream fails, deploy a reviewed streaming fix or restore a compatible, verified three-image Bayn Freight
 through Kargo and verify canonical reconciliation against the same PAPER account. Do not start an ordinary polling path,
@@ -503,8 +513,10 @@ GitOps does not guess or carry a predecessor source, and ticks cannot adopt anot
 source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
 
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
-Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
-`activate`, `rotate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+Only that handler accepts execution-activation ingress calls, authenticated with the existing activation credential.
+The signed broker `notify` handler is separately reachable through Restate for the network-restricted Dorvud owner;
+all other broker-observation handlers remain private. Controller `activate`, `rotate`, `deactivate`,
+`prepareActivation`, `tick` and `status` remain private. The activation
 result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
 `BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
 and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
