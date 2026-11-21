@@ -2,6 +2,12 @@
 
 This is the release evidence companion to the [profitability and reliability investigation](session-investigation-2026-11-20.md). All times below are UTC. It separates completed CI, published artifacts, observed deployed behavior and financial qualification.
 
+## Current source completion status
+
+[PR #16145](https://github.com/proompteng/lab/pull/16145) merged at **16:49:54 UTC** as `2311bf59f2276441cb85ed3133cfe3118eb5484f`, after exact reviewed head `c9c7463d` reached **40 successful checks, 31 skipped checks and no pending or failed checks**. Both native architecture jobs passed all **30 assertions**. The [final source acceptance](#c9-final-source-acceptance-and-squash-merge) and adjacent evidence bundle retain the exact-head approval, guarded merge and independent post-squash source proof.
+
+Normal OpenCode publication and live acceptance for `2311bf59` remain **pending**; the consolidated Bayn publisher has **not yet been exercised live**. Earlier pending, held and failed observations below remain dated historical cuts. Source acceptance does not establish a startup root-cause correction, measured performance gain or improved profitability.
+
 ## Financial result and decision boundary
 
 The original November 16–20 PAPER cohort contains 863 fills and 169 flat-to-flat episodes. After the later canonical settlement, gross realized trading was -$1,352.00 and posted broker fees were $64.03. The broker cash change was therefore **-$1,416.03**; subtracting the original-cut known inference estimate gives **-$1,417.717284228**. Unknown earlier usage and unallocated infrastructure, data and research expense remain unresolved. This is a known-cost result, not fully costed net profit.
@@ -161,6 +167,30 @@ The **13:54:14 UTC** source-overlap receipt found main still exactly `215cd89d92
 ### Later ARM scheduling snapshot
 
 A nearly hour-long c9 ARM queue delay justified a [single new scheduling snapshot](bayn-pr16145-followup-acceptance-20261121.json). At **16:06:18.446–16:06:21.606 UTC**, its non-atomic reads found **10 online-busy / 0 idle / 0 offline** GitHub workers and ten exactly name-matched actual EphemeralRunner Pods, all Running, Ready, Initialized and Scheduled. All init containers exited successfully; total restarts were zero, with **min 5 / max 10** unchanged. One AutoscalingListener was excluded. Membership used names, owners, Pod selectors and scale-set identity; empty GitHub labels were not architecture evidence. All ten Pods shared one hashed node identity, without retained raw node names or an independent node-architecture query; absent status counters remain null. This later cut is separate from the closed 13:57 snapshot. No current provisioning fault was observed, but the cut establishes neither FIFO order, earlier capacity, a specific dispatch-delay cause nor the native-startup cause. The read is closed, with no event, log, Pod-exec or follow-up capacity reads and no new CI check counts.
+
+### c9 final source acceptance and squash merge
+
+The ordinary [ARM job 136885975885](https://github.com/proompteng/lab/actions/runs/44917443114/job/136885975885), attempt 1 at exact `c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3`, started at **16:37:16 UTC** and completed successfully at **16:44:29**. Both native architecture jobs now have passing terminal evidence:
+
+| Native measurement               |        AMD64 |        ARM64 |
+| -------------------------------- | -----------: | -----------: |
+| Assertions passed / failed tests |       30 / 0 |       30 / 0 |
+| Initial readiness                |    23,286 ms |    15,672 ms |
+| Restart readiness                |     1,211 ms |     1,227 ms |
+| Native test duration             | 41,796.83 ms | 47,352.01 ms |
+| Job completed, UTC               |     15:19:52 |     16:44:29 |
+
+ARM's reported first and final shutdown intervals were **19,120 ms** and **3,834 ms**, with scope release at **47,349 ms**. These are differences between lifecycle events, not isolated CPU, I/O or child-exit timings. Root independently verified the complete **167,299-byte / 1,768-line** ARM log, all **322 retained block rows**, both startup events, all **13 lifecycle events** and the 30-assertion summary. Neither passing architecture emitted a failure diagnostic. These successes supply no wait-channel fingerprint or startup-cause correction; AMD's initial readiness remains close to the unchanged 25-second gate.
+
+The agent's **16:45:06 UTC** terminal observation and root's independent **16:46:20.895–16:46:21.877** read both bound the full PR rollup to exact c9: **40 SUCCESS / 31 SKIPPED / 0 pending / 0 failed**. [OpenCode CI 44917443114](https://github.com/proompteng/lab/actions/runs/44917443114), attempt 1, succeeded; its PR index-publication job was correctly skipped. Root retained OPEN / CLEAN / MERGEABLE, approval submitted against c9 at **16:44:42**, and zero unresolved review threads. These independently timed API reads do not form a single atomic observation.
+
+The final main review bound `cfdac7b26bf6941e15289000664879cc90e63db2` to **26 unchanged / four changed** objects in the 30-object inventory. All eight candidate publication-path bindings remained unchanged from 13ea to c9. The selected main changes had no overlap with the candidate's changed paths. Source review traced the new generic App cache option through its defaults and callers: Bayn selects its separate runtime root, while OpenCode imports the Bayn runtime root directly. The newer OCI test bytes were reviewed separately. The earlier **267 tests / 2,849 assertions** remain evidence only for the temporary **13ea + 215cd89** composition; no new temporary merge, Nix evaluation or test execution is claimed for c9 with cfdac.
+
+A direct remote-ref read at **16:48:11 UTC** confirmed actual `refs/heads/main` was cfdac; the PR's separately retained `baseRefOid` was not used as proof of the current branch tip. The **16:49:50–51** preconditions rechecked the exact approved c9 head, passing rollup and reviewed main. Root then used squash merge with `--match-head-commit` bound to c9. GitHub records the merge at **16:49:54**, producing `2311bf59f2276441cb85ed3133cfe3118eb5484f`.
+
+Post-squash Git verification independently bound parent cfdac and tree `f726e6f4dddbb78f4f6737940dc83f06e8e20516`, with exactly the ten intended changed paths. The diagnostic helper, tests and integration bytes match the approved candidate; the README diagnostic section is exact, with its other difference accounted for by previously reviewed main broker prose. Seven publication-path bindings match the earlier executed composition, while the eighth is the separately reviewed current-main OCI test blob `fc3a36682b58a28598095e00bc0c0f5ff1d6fb0d`. This is source-integrity proof, not post-squash execution.
+
+The [follow-up bundle](bayn-pr16145-followup-acceptance-20261121.json) preserves all 34 earlier embedded source records and their historical states, adds the complete selected ARM blocks and final source proofs, retains the initial c9 CI cut as `priorInitialCiC9`, and dates canonical `exactHeadCi` to terminal acceptance. Merge is recorded separately. Normal [OpenCode main run 44926703176](https://github.com/proompteng/lab/actions/runs/44926703176) belongs to merged `2311bf59`; its publication and live acceptance remain pending. The consolidated Bayn publisher still lacks a live exercise. No statistical reliability improvement, measured latency or dollar saving, or new financial qualification follows from this source completion.
 
 ## Bayn recovery publication
 
