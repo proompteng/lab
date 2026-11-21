@@ -17,7 +17,6 @@ on:
       - 'argocd/applications/observability/graf-mimir-rules.yaml'
       - 'argocd/applications/observability/kustomization.yaml'
       - 'argocd/applicationsets/product.yaml'
-      - '.github/workflows/symphony-ci.yml'
   workflow_dispatch:
 
 concurrency:
