@@ -445,6 +445,10 @@
       "pattern": "^agentctl(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "bumba",
+      "pattern": "^bumba(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "codex",
       "pattern": "^codex(?: \\(.*\\))?(?: /.*)?$"
     },
@@ -471,6 +475,10 @@
     {
       "id": "flamingo",
       "pattern": "^flamingo(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "froussard",
+      "pattern": "^froussard(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "galette",
@@ -507,6 +515,10 @@
     {
       "id": "nuc-omni-serve",
       "pattern": "^nuc-omni-serve(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "oirat",
+      "pattern": "^oirat(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "opencode",
