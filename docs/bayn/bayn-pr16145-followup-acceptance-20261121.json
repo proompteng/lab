@@ -12933,5 +12933,1218 @@
       "No new merge, tests, native execution, deployment/capacity reads or runtime performance/environment equivalence is claimed.",
       "The 267-test / 2,849-assertion result remains only the prior temporary 13ea59 plus 215cd89 composition. It is not a c9 plus current-main result or a substitute for remaining intended CI."
     ]
+  },
+  "runnerAssignmentC9Arm1606": {
+    "sourceCommit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+    "trigger": "A nearly hour-long c9 ARM queue delay justified one new, narrowly scoped scheduling snapshot.",
+    "observationWindow": {
+      "fromUtc": "2026-11-21T16:06:18.446Z",
+      "throughUtc": "2026-11-21T16:06:21.606Z",
+      "atomic": false
+    },
+    "inputs": [
+      {
+        "sourcePath": "/tmp/bayn-pr16145-c9-arm-capacity-20261121T160618Z.json",
+        "originalSha256": "19f62073a8df55bcf382d71ad692f054acbc82fd23b5093893b1adf52c8eb49d",
+        "originalBytes": 29831,
+        "evidence": {
+          "schema": "bayn.pr16145.c9.arm-scheduling-snapshot.v1",
+          "writtenAtUtc": "2026-11-21T16:07:52.325756+00:00",
+          "context": {
+            "pullRequest": 16145,
+            "sourceCommit": "c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3",
+            "runId": 44917443114,
+            "armJobId": 136885975885,
+            "reportedQueuedSince": "2026-11-21T15:07:22Z",
+            "jobStateSource": "Parent and existing runtime agent watcher; this snapshot did not query the specific job."
+          },
+          "scope": {
+            "namespace": "arc",
+            "podLabelSelector": "actions.github.com/scale-set-name=arc-arm64",
+            "runnerOwnerKind": "EphemeralRunner",
+            "githubRunnerNamePrefix": "arc-arm64-runner-",
+            "eventReads": 0,
+            "runtimeOrPodExec": 0,
+            "logsReads": 0,
+            "capacityChanges": 0,
+            "jobActions": 0,
+            "baseOrSourceFetches": 0
+          },
+          "observation": {
+            "pods": {
+              "clientBeforeUtc": "2026-11-21T16:06:18.446Z",
+              "clientAfterUtc": "2026-11-21T16:06:19.662Z"
+            },
+            "scaleSet": {
+              "clientBeforeUtc": "2026-11-21T16:06:18.447Z",
+              "clientAfterUtc": "2026-11-21T16:06:20.006Z"
+            },
+            "github": {
+              "clientBeforeUtc": "2026-11-21T16:06:18.447Z",
+              "clientAfterUtc": "2026-11-21T16:06:21.606Z"
+            }
+          },
+          "githubObservation": {
+            "startedAtUtc": "2026-11-21T16:06:20.975001+00:00",
+            "finishedAtUtc": "2026-11-21T16:06:21.452638+00:00",
+            "totalCount": 20,
+            "returnedCount": 20,
+            "completePage": true,
+            "responseParseLimitBytes": 2097152,
+            "responseBytes": 2470,
+            "rawResponseSha256": "01aa74a2160c8563223f5ed81d09e30fd7fe600996926a70da3719d188144273"
+          },
+          "scaleSet": {
+            "name": "arc-arm64",
+            "uid": "284082bf-1228-4e0f-9715-7685d5009a48",
+            "createdAt": "2026-11-19T23:12:58Z",
+            "runnerScaleSetName": "arc-arm64",
+            "minRunners": 5,
+            "maxRunners": 10,
+            "statusProjection": {
+              "currentRunners": null,
+              "pendingRunners": null,
+              "runningRunners": null,
+              "failedRunners": null,
+              "desiredRunners": null
+            }
+          },
+          "summary": {
+            "registered": 10,
+            "onlineBusy": 10,
+            "onlineIdle": 0,
+            "offline": 0,
+            "otherRegistrationState": 0,
+            "podsReturnedByARMLabel": 11,
+            "actualEphemeralRunnerPods": 10,
+            "readyRunnerPods": 10,
+            "unreadyRunnerPods": 0,
+            "initializedRunnerPods": 10,
+            "scheduledRunnerPods": 10,
+            "runningRunnerPods": 10,
+            "deletingRunnerPods": 0,
+            "runnerAndInitRestartCount": 0,
+            "initCompletedSuccessfully": 10,
+            "selectorMismatches": 0,
+            "githubRunnersWithoutMatchingPod": [],
+            "podsWithoutMatchingGithubRunner": [],
+            "distinctSelectedRunnerNodeIdentities": 1,
+            "githubRunnersWithNoReportedLabels": 10
+          },
+          "githubRunners": [
+            {
+              "name": "arc-arm64-runner-znkkv",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-trfl5",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-7h5hz",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-sgdwl",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-6lkc5",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-2sldn",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-xwndp",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-7p769",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-6pvrn",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            },
+            {
+              "name": "arc-arm64-runner-vj48f",
+              "status": "online",
+              "busy": true,
+              "labels": []
+            }
+          ],
+          "pods": [
+            {
+              "name": "arc-arm64-runner-2sldn",
+              "uid": "374df9d8-b928-42e7-b237-59209466e571",
+              "createdAt": "2026-11-21T15:27:50Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-2sldn",
+                  "uid": "8f623dcc-805d-4ee7-9235-4f81762f3f05"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:30:26Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:31:53Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:31:53Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:31:53Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:28:11Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T15:30:27Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T15:31:51Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T15:31:53Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 2309.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-6lkc5",
+              "uid": "d76e282d-5c67-469a-ad08-2976b21bcebf",
+              "createdAt": "2026-11-21T14:44:26Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-6lkc5",
+                  "uid": "366b5d07-5eca-476d-a42f-ef2ab659aeda"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:47:36Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:48:56Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:48:57Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:48:57Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:45:04Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T14:47:36Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T14:48:52Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T14:48:57Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 4913.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-6pvrn",
+              "uid": "f887bb4c-7cc0-4dc5-9de4-49bce40ed4ce",
+              "createdAt": "2026-11-21T15:56:56Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-6pvrn",
+                  "uid": "ec85b34f-9898-4926-ab3c-d0de1bc3fd61"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:01:22Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:02:29Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:02:30Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:02:30Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:57:41Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T16:01:23Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T16:02:29Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T16:02:30Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 563.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-7h5hz",
+              "uid": "6ea4bf6c-dc8d-4387-a8c9-7872b67d6a5d",
+              "createdAt": "2026-11-21T14:08:35Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-7h5hz",
+                  "uid": "1f2dfaac-a47a-498e-9791-8453928dee18"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:18:54Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:21:09Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:21:09Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:21:09Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:10:20Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T14:18:54Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T14:21:08Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T14:21:09Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 7064.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-7p769",
+              "uid": "7a10095a-68a8-44c1-8659-bcdaf77e049c",
+              "createdAt": "2026-11-21T15:55:16Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-7p769",
+                  "uid": "14dbebb4-8ba5-48c4-b879-49df67834127"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:56:15Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:57:10Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:57:11Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:57:11Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:55:53Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T15:56:15Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T15:57:10Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T15:57:11Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 663.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-sgdwl",
+              "uid": "3926be12-d0a1-4af8-9019-bc02d0ed85a1",
+              "createdAt": "2026-11-21T14:43:36Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-sgdwl",
+                  "uid": "23d532a5-3063-4ef9-b463-e9859e09af4f"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:48:12Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:50:05Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:50:06Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:50:06Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T14:44:44Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T14:48:13Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T14:50:04Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T14:50:06Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 4963.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-trfl5",
+              "uid": "6b749f76-0553-47c7-a786-7193ce3d6936",
+              "createdAt": "2026-11-21T12:24:18Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-trfl5",
+                  "uid": "5a57e861-0b45-4f63-9f89-92d5681afff5"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:28:30Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:31:05Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:31:06Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:31:06Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:25:05Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T12:28:30Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T12:31:04Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T12:31:06Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 13321.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-vj48f",
+              "uid": "e3de63db-2b19-4c7b-9e51-8c5c5a81d38f",
+              "createdAt": "2026-11-21T16:03:21Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-vj48f",
+                  "uid": "d0874c89-804e-44de-aae8-99bf06bd20d8"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:04:26Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:05:50Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:05:50Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:05:50Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T16:03:49Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T16:04:26Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T16:05:48Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T16:05:50Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 178.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-xwndp",
+              "uid": "850a4351-6a02-489b-87f8-4f9998b00955",
+              "createdAt": "2026-11-21T15:29:30Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-xwndp",
+                  "uid": "6b008677-19a5-4efe-8563-f5bf1b9b0e4a"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:33:32Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:34:34Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:34:34Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:34:34Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T15:30:28Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T15:33:32Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T15:34:33Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T15:34:34Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 2209.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            },
+            {
+              "name": "arc-arm64-runner-znkkv",
+              "uid": "cd26a727-52c1-4811-83a0-30a20d24d6d2",
+              "createdAt": "2026-11-21T12:17:05Z",
+              "deletionTimestamp": null,
+              "nodeAssigned": true,
+              "nodeIdentitySha256": "6648b0eca58217a720365dd815af1b2d997f0b2a0c76d8c0d9772a659b8b821c",
+              "nodeSelectorArchitecture": "arm64",
+              "phase": "Running",
+              "scaleSetLabel": "arc-arm64",
+              "owners": [
+                {
+                  "kind": "EphemeralRunner",
+                  "name": "arc-arm64-runner-znkkv",
+                  "uid": "879c586b-363d-461c-b134-497085659f42"
+                }
+              ],
+              "conditions": [
+                {
+                  "type": "PodReadyToStartContainers",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:24:22Z"
+                },
+                {
+                  "type": "Initialized",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:26:22Z"
+                },
+                {
+                  "type": "Ready",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:26:23Z"
+                },
+                {
+                  "type": "ContainersReady",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:26:23Z"
+                },
+                {
+                  "type": "PodScheduled",
+                  "status": "True",
+                  "reason": null,
+                  "lastTransitionTime": "2026-11-21T12:18:37Z"
+                }
+              ],
+              "init": [
+                {
+                  "name": "init-scratch",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "terminated",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T12:24:22Z",
+                  "terminatedReason": "Completed",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-21T12:26:22Z"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "runner",
+                  "ready": true,
+                  "restartCount": 0,
+                  "state": "running",
+                  "waitingReason": null,
+                  "startedAt": "2026-11-21T12:26:23Z",
+                  "terminatedReason": null,
+                  "exitCode": null,
+                  "finishedAt": null
+                }
+              ],
+              "selectorMatchesARM": true,
+              "ready": true,
+              "initialized": true,
+              "scheduled": true,
+              "ageSecondsAtClientWindowEnd": 13754.662,
+              "githubNameMatched": true,
+              "githubStatus": "online",
+              "githubBusy": true
+            }
+          ],
+          "excludedNonRunnerPods": [
+            {
+              "name": "arc-arm64-995c7d58-listener",
+              "uid": "e60611de-1590-4ba1-91a8-2725ba23a28d",
+              "ownerKinds": ["AutoscalingListener"],
+              "nodeSelectorArchitecture": "amd64",
+              "scaleSetLabel": "arc-arm64"
+            }
+          ],
+          "finding": "All ten selected registered ARM runners were online and busy, and all ten matching actual runner Pods were Ready, Running, scheduled and initialized successfully at this non-atomic cut. No current provisioning fault was observed.",
+          "decision": "Close this one snapshot without an events request or further capacity read. Continue only the separately owned normal CI watch.",
+          "limitations": [
+            "The API and Kubernetes reads are separately timestamped and non-atomic. Client brackets for synchronous kubectl are not invented server execution timestamps.",
+            "GitHub reported empty runner labels. ARM membership is bound by the exact accepted runner name prefix plus matching Pod names, EphemeralRunner ownership, scale-set label and ARM node selector; no missing GitHub label is inferred.",
+            "Node names were observed only to compute stable SHA-256 identities and same-node counts; raw node names and addresses are not persisted here. Node architecture was not queried independently.",
+            "Scale-set status projection fields are absent and remain null; live min/max settings are read directly from spec.",
+            "This cut does not establish prior pool occupancy, all queued jobs, FIFO, fairness, the specific job dispatch cause, or any native startup/resource cause.",
+            "No events were read because every selected actual runner Pod was Ready. This does not assert that no historical warning ever occurred.",
+            "The GitHub repository runner endpoint supplies one complete page; only ARM runner records were retained. Other registered runner counts appear solely in the pagination completeness proof.",
+            "The byte limit is a parser bound on the returned GitHub response, not a claim of a streaming transport cutoff."
+          ]
+        }
+      },
+      {
+        "sourcePath": "/tmp/bayn-pr16145-c9-arm-capacity-20261121T160618Z-provenance.json",
+        "originalSha256": "a59f9e1c9f08abe5c688e3bf690cb7dbb27b01b1496560ed03bc13a15f9e813d",
+        "originalBytes": 16967,
+        "evidence": {
+          "schema": "bayn.pr16145.c9.arm-scheduling-provenance.v1",
+          "priorApprovedProvenance": {
+            "path": "/tmp/bayn-pr16145-7a60-runner-capacity-20261121T135729Z-provenance.json",
+            "sha256": "ea4f861f8c9809e0c37ddb5fd134179ba935477cc43c9ab6e2f2d7e007d47c8c"
+          },
+          "scope": "One ARM Pod-label projection, one exact ARM scale-set spec projection, and one complete GitHub repository runner page filtered to ARM. No event read was necessary.",
+          "reads": [
+            {
+              "name": "pods",
+              "tool": "mcp__codex_apps__agents_shell_tunnel_kubectl",
+              "arguments": {
+                "args": [
+                  "get",
+                  "pods",
+                  "-n",
+                  "arc",
+                  "-l",
+                  "actions.github.com/scale-set-name=arc-arm64",
+                  "--request-timeout=20s",
+                  "-o",
+                  "jsonpath={range .items[*]}POD\t{.metadata.name}\t{.metadata.uid}\t{.metadata.creationTimestamp}\t{.metadata.deletionTimestamp}\t{.spec.nodeName}\t{.spec.nodeSelector.kubernetes\\.io/arch}\t{.status.phase}\t{.metadata.labels.actions\\.github\\.com/scale-set-name}\n{range .metadata.ownerReferences[*]}OWNER\t{.kind}\t{.name}\t{.uid}\n{end}{range .status.conditions[*]}CONDITION\t{.type}\t{.status}\t{.reason}\t{.lastTransitionTime}\n{end}{range .status.initContainerStatuses[*]}INIT\t{.name}\t{.ready}\t{.restartCount}\t{.state.waiting.reason}\t{.state.running.startedAt}\t{.state.terminated.reason}\t{.state.terminated.exitCode}\t{.state.terminated.startedAt}\t{.state.terminated.finishedAt}\n{end}{range .status.containerStatuses[*]}CONTAINER\t{.name}\t{.ready}\t{.restartCount}\t{.state.waiting.reason}\t{.state.running.startedAt}\t{.state.terminated.reason}\t{.state.terminated.exitCode}\t{.state.terminated.startedAt}\t{.state.terminated.finishedAt}\n{end}END\n{end}"
+                ],
+                "maxOutputBytes": 45000,
+                "timeoutSeconds": 25
+              },
+              "clientBeforeUtc": "2026-11-21T16:06:18.446Z",
+              "clientAfterUtc": "2026-11-21T16:06:19.662Z",
+              "toolReceipt": {
+                "ok": true,
+                "commandHash": "692b9856221c5e75e4ef6fd007659439d3517fe60e527a1a0bfd8725a1c19688",
+                "jobId": "e8fc3768-3beb-4253-bced-25c4014a99f5",
+                "sessionId": null,
+                "outputCaptureError": null,
+                "auditErrors": 0,
+                "taskId": "e8fc3768-3beb-4253-bced-25c4014a99f5",
+                "captureIncomplete": false,
+                "cwd": "/workspace",
+                "exitCode": 0,
+                "signal": null,
+                "timedOut": false,
+                "stdoutBytes": 6580,
+                "stderrBytes": 0,
+                "stdoutTruncated": false,
+                "stderrTruncated": false
+              },
+              "projectionSha256": "bd4f6f7ce26678dcd2d1e5e3b51eeee436cec7b680334d1bcae37f58ea0588db",
+              "projectionBytes": 6580
+            },
+            {
+              "name": "scaleSet",
+              "tool": "mcp__codex_apps__agents_shell_tunnel_kubectl",
+              "arguments": {
+                "args": [
+                  "get",
+                  "autoscalingrunnersets.actions.github.com",
+                  "arc-arm64",
+                  "-n",
+                  "arc",
+                  "--request-timeout=20s",
+                  "-o",
+                  "jsonpath=SET\t{.metadata.name}\t{.metadata.uid}\t{.metadata.creationTimestamp}\t{.spec.runnerScaleSetName}\t{.spec.minRunners}\t{.spec.maxRunners}\t{.status.currentRunners}\t{.status.pendingRunners}\t{.status.runningRunners}\t{.status.failedRunners}\t{.status.desiredRunners}\n"
+                ],
+                "maxOutputBytes": 6000,
+                "timeoutSeconds": 25
+              },
+              "clientBeforeUtc": "2026-11-21T16:06:18.447Z",
+              "clientAfterUtc": "2026-11-21T16:06:20.006Z",
+              "toolReceipt": {
+                "ok": true,
+                "commandHash": "97e2f719e917c73ea0b525c17267043af0d5f55e67278c90f3249a4bbce8d2f7",
+                "jobId": "966ff99d-db12-4868-a2bb-772999421e1c",
+                "sessionId": null,
+                "outputCaptureError": null,
+                "auditErrors": 0,
+                "taskId": "966ff99d-db12-4868-a2bb-772999421e1c",
+                "captureIncomplete": false,
+                "cwd": "/workspace",
+                "exitCode": 0,
+                "signal": null,
+                "timedOut": false,
+                "stdoutBytes": 92,
+                "stderrBytes": 0,
+                "stdoutTruncated": false,
+                "stderrTruncated": false
+              },
+              "projectionSha256": "556400310260c914024a5dbb24b4c93f10eca986c4031bbc56d9c22298330cbd",
+              "projectionBytes": 92
+            },
+            {
+              "name": "github",
+              "tool": "mcp__codex_apps__agents_shell_tunnel_exec",
+              "arguments": {
+                "sessionId": "repo-bayn-source-review-recovery-be35c587",
+                "requestKey": "source-review-arm-capacity-once-047",
+                "command": "python3 - <<'PY'\nimport json,subprocess,hashlib,datetime\nargs=['gh','api','repos/proompteng/lab/actions/runners?per_page=100']\nstarted=datetime.datetime.now(datetime.timezone.utc).isoformat()\nr=subprocess.run(args,capture_output=True,timeout=20)\nout={'startedAtUtc':started,'finishedAtUtc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'command':args,'exitCode':r.returncode,'rawSha256':hashlib.sha256(r.stdout).hexdigest(),'responseBytes':len(r.stdout),'responseParseLimitBytes':2097152}\nif r.returncode==0 and len(r.stdout)<=2097152:\n d=json.loads(r.stdout); rows=d.get('runners',[])\n out.update({'totalCount':d.get('total_count'),'returnedCount':len(rows),'completePage':d.get('total_count')==len(rows) and len(rows)<=100,'runners':[{'name':x['name'],'status':x.get('status'),'busy':x.get('busy'),'labels':[z.get('name') for z in x.get('labels',[]) if z.get('name') in ['self-hosted','Linux','X64','ARM64','arc-amd64','arc-arm64']]} for x in rows if x.get('name','').startswith('arc-arm64-runner-')]})\nelse: out['errorClass']='GITHUB_READ_FAILED' if r.returncode else 'RESPONSE_PARSE_LIMIT_EXCEEDED'\nprint(json.dumps(out))\nPY",
+                "cwd": "/workspace/worktrees/lab/bayn-source-review-recovery-be35c587",
+                "maxBytes": 16000,
+                "timeoutSeconds": 25,
+                "waitMs": 1000
+              },
+              "clientBeforeUtc": "2026-11-21T16:06:18.447Z",
+              "clientAfterUtc": "2026-11-21T16:06:21.606Z",
+              "toolReceipt": {
+                "jobId": "f75ea506-d102-489a-a086-b42482c87922",
+                "sessionId": "repo-bayn-source-review-recovery-be35c587",
+                "taskId": "repo-bayn-source-review-recovery-be35c587",
+                "agentId": null,
+                "requestKey": "source-review-arm-capacity-once-047",
+                "requestId": "35468e80-aa11-4e80-8934-5d470cb02592",
+                "toolCallId": "4d63239e-8c51-4bb5-afe8-bb35f817ddf6",
+                "commandHash": "816c63262597525dff37fdfb7e237d20f81632666fd22d72bbadd32d5fbf5bfc",
+                "cwd": "/workspace/worktrees/lab/bayn-source-review-recovery-be35c587",
+                "startedAt": "2026-11-21T16:06:20.946Z",
+                "stdoutBytes": 1254,
+                "stderrBytes": 0,
+                "stdoutRetentionStartByte": 0,
+                "stderrRetentionStartByte": 0,
+                "outputCaptureError": null,
+                "auditErrors": 0,
+                "captureIncomplete": false,
+                "state": "exited",
+                "ok": true,
+                "exitCode": 0,
+                "signal": null,
+                "finishedAt": "2026-11-21T16:06:21.459Z",
+                "expiresAt": "2026-11-21T17:06:21.459Z",
+                "stdoutStartOffset": 0,
+                "stderrStartOffset": 0,
+                "stdoutNextOffset": 1254,
+                "stderrNextOffset": 0,
+                "stdoutHasMore": false,
+                "stderrHasMore": false,
+                "stdoutTruncated": false,
+                "stderrTruncated": false,
+                "outputEncoding": "utf8",
+                "maxBytes": 16000
+              },
+              "projectionSha256": "950036dea0cd1cf1a660e2622c37ec43ebc6a3a16a8a10ae83e0fedf0cc47cd5",
+              "projectionBytes": 1254
+            }
+          ],
+          "parser": {
+            "language": "Python",
+            "source": "def make_snapshot(inputs):\n    def blank(value):\n        return value if value not in ('', 'null', None) else None\n    def integer(value):\n        return int(value) if blank(value) is not None else None\n    def instant(value):\n        return datetime.datetime.fromisoformat(value.replace('Z','+00:00'))\n    records=[]\n    for line in inputs['pods']['response']['stdout'].splitlines():\n        a=line.split('\\t')\n        if a[0]=='POD':\n            assert len(a)==9\n            node=blank(a[5])\n            row={'name':a[1],'uid':a[2],'createdAt':a[3],'deletionTimestamp':blank(a[4]),'nodeAssigned':node is not None,'nodeIdentitySha256':hashlib.sha256(node.encode()).hexdigest() if node else None,'nodeSelectorArchitecture':blank(a[6]),'phase':blank(a[7]),'scaleSetLabel':blank(a[8]),'owners':[],'conditions':[],'init':[],'containers':[]}\n            uuid.UUID(row['uid'])\n            records.append(row)\n        elif a[0]=='OWNER':\n            row['owners'].append({'kind':a[1],'name':a[2],'uid':a[3]})\n        elif a[0]=='CONDITION':\n            row['conditions'].append({'type':a[1],'status':a[2],'reason':blank(a[3]),'lastTransitionTime':blank(a[4])})\n        elif a[0] in ('INIT','CONTAINER'):\n            row['init' if a[0]=='INIT' else 'containers'].append({'name':a[1],'ready':a[2]=='true','restartCount':integer(a[3]),'state':'waiting' if a[4] else 'running' if a[5] else 'terminated' if a[6] or a[7] else 'unknown','waitingReason':blank(a[4]),'startedAt':blank(a[5]) or blank(a[8]),'terminatedReason':blank(a[6]),'exitCode':integer(a[7]),'finishedAt':blank(a[9])})\n        elif a[0]!='END':\n            raise ValueError('UNRECOGNIZED_PROJECTION_RECORD')\n    assert len(records)<=32\n    runners=[]; excluded=[]\n    for row in records:\n        if any(x['kind']=='EphemeralRunner' for x in row['owners']):\n            assert row['name'].startswith('arc-arm64-runner-')\n            row['selectorMatchesARM']=row['nodeSelectorArchitecture']=='arm64' and row['scaleSetLabel']=='arc-arm64'\n            row['ready']=any(x['type']=='Ready' and x['status']=='True' for x in row['conditions'])\n            row['initialized']=any(x['type']=='Initialized' and x['status']=='True' for x in row['conditions'])\n            row['scheduled']=any(x['type']=='PodScheduled' and x['status']=='True' for x in row['conditions'])\n            row['ageSecondsAtClientWindowEnd']=(instant(inputs['pods']['observedAfterUtc'])-instant(row['createdAt'])).total_seconds()\n            runners.append(row)\n        else:\n            excluded.append({'name':row['name'],'uid':row['uid'],'ownerKinds':[x['kind'] for x in row['owners']],'nodeSelectorArchitecture':row['nodeSelectorArchitecture'],'scaleSetLabel':row['scaleSetLabel']})\n    gh=json.loads(inputs['github']['response']['stdout'])\n    assert gh['completePage'] is True and gh['totalCount']==gh['returnedCount']<=100\n    byname={r['name']:r for r in gh['runners']}\n    assert len(byname)==len(gh['runners'])\n    for row in runners:\n        record=byname.get(row['name'])\n        row['githubNameMatched']=record is not None\n        row['githubStatus']=record.get('status') if record else None\n        row['githubBusy']=record.get('busy') if record else None\n    a=inputs['scaleSet']['response']['stdout'].rstrip('\\n').split('\\t')\n    assert a[0]=='SET' and a[1]=='arc-arm64' and a[4]=='arc-arm64'\n    scale={'name':a[1],'uid':a[2],'createdAt':a[3],'runnerScaleSetName':a[4],'minRunners':integer(a[5]),'maxRunners':integer(a[6]),'statusProjection':dict(zip(['currentRunners','pendingRunners','runningRunners','failedRunners','desiredRunners'],[integer(v) for v in a[7:12]]))}\n    summary={'registered':len(gh['runners']),'onlineBusy':sum(r['status']=='online' and r['busy'] is True for r in gh['runners']),'onlineIdle':sum(r['status']=='online' and r['busy'] is False for r in gh['runners']),'offline':sum(r['status']=='offline' for r in gh['runners']),'otherRegistrationState':sum(r['status'] not in ('online','offline') or (r['status']=='online' and r['busy'] not in (True,False)) for r in gh['runners']),'podsReturnedByARMLabel':len(records),'actualEphemeralRunnerPods':len(runners),'readyRunnerPods':sum(r['ready'] for r in runners),'unreadyRunnerPods':sum(not r['ready'] for r in runners),'initializedRunnerPods':sum(r['initialized'] for r in runners),'scheduledRunnerPods':sum(r['scheduled'] for r in runners),'runningRunnerPods':sum(r['phase']=='Running' for r in runners),'deletingRunnerPods':sum(r['deletionTimestamp'] is not None for r in runners),'runnerAndInitRestartCount':sum(c['restartCount'] or 0 for r in runners for c in r['init']+r['containers']),'initCompletedSuccessfully':sum(bool(r['init']) and all(c['state']=='terminated' and c['exitCode']==0 and c['terminatedReason']=='Completed' for c in r['init']) for r in runners),'selectorMismatches':sum(not r['selectorMatchesARM'] for r in runners),'githubRunnersWithoutMatchingPod':sorted(set(byname)-{r['name'] for r in runners}),'podsWithoutMatchingGithubRunner':[r['name'] for r in runners if not r['githubNameMatched']],'distinctSelectedRunnerNodeIdentities':len({r['nodeIdentitySha256'] for r in runners if r['nodeIdentitySha256']}),'githubRunnersWithNoReportedLabels':sum(not r['labels'] for r in gh['runners'])}\n    assert summary['unreadyRunnerPods']==0\n    assert summary['registered']==summary['onlineBusy']==summary['actualEphemeralRunnerPods']==10\n    assert summary['selectorMismatches']==0\n    evidence={'schema':'bayn.pr16145.c9.arm-scheduling-snapshot.v1','writtenAtUtc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'context':{'pullRequest':16145,'sourceCommit':'c9c7463d3bfcc385d6060f9e617e2b2e653ee1b3','runId':44917443114,'armJobId':136885975885,'reportedQueuedSince':'2026-11-21T15:07:22Z','jobStateSource':'Parent and existing runtime agent watcher; this snapshot did not query the specific job.'},'scope':{'namespace':'arc','podLabelSelector':'actions.github.com/scale-set-name=arc-arm64','runnerOwnerKind':'EphemeralRunner','githubRunnerNamePrefix':'arc-arm64-runner-','eventReads':0,'runtimeOrPodExec':0,'logsReads':0,'capacityChanges':0,'jobActions':0,'baseOrSourceFetches':0},'observation':{name:{'clientBeforeUtc':value['observedBeforeUtc'],'clientAfterUtc':value['observedAfterUtc']} for name,value in inputs.items()},'githubObservation':{'startedAtUtc':gh['startedAtUtc'],'finishedAtUtc':gh['finishedAtUtc'],'totalCount':gh['totalCount'],'returnedCount':gh['returnedCount'],'completePage':gh['completePage'],'responseParseLimitBytes':gh['responseParseLimitBytes'],'responseBytes':gh['responseBytes'],'rawResponseSha256':gh['rawSha256']},'scaleSet':scale,'summary':summary,'githubRunners':gh['runners'],'pods':runners,'excludedNonRunnerPods':excluded,'finding':'All ten selected registered ARM runners were online and busy, and all ten matching actual runner Pods were Ready, Running, scheduled and initialized successfully at this non-atomic cut. No current provisioning fault was observed.','decision':'Close this one snapshot without an events request or further capacity read. Continue only the separately owned normal CI watch.','limitations':['The API and Kubernetes reads are separately timestamped and non-atomic. Client brackets for synchronous kubectl are not invented server execution timestamps.','GitHub reported empty runner labels. ARM membership is bound by the exact accepted runner name prefix plus matching Pod names, EphemeralRunner ownership, scale-set label and ARM node selector; no missing GitHub label is inferred.','Node names were observed only to compute stable SHA-256 identities and same-node counts; raw node names and addresses are not persisted here. Node architecture was not queried independently.','Scale-set status projection fields are absent and remain null; live min/max settings are read directly from spec.','This cut does not establish prior pool occupancy, all queued jobs, FIFO, fairness, the specific job dispatch cause, or any native startup/resource cause.','No events were read because every selected actual runner Pod was Ready. This does not assert that no historical warning ever occurred.','The GitHub repository runner endpoint supplies one complete page; only ARM runner records were retained. Other registered runner counts appear solely in the pagination completeness proof.','The byte limit is a parser bound on the returned GitHub response, not a claim of a streaming transport cutoff.']}\n    provenance_reads=[]\n    for name,value in inputs.items():\n        response=value['response']\n        provenance_reads.append({'name':name,'tool':value['tool'],'arguments':value['arguments'],'clientBeforeUtc':value['observedBeforeUtc'],'clientAfterUtc':value['observedAfterUtc'],'toolReceipt':{k:v for k,v in response.items() if k not in ('stdout','stderr','cursor','commandPreview')},'projectionSha256':hashlib.sha256(response['stdout'].encode()).hexdigest(),'projectionBytes':len(response['stdout'].encode())})\n    return evidence,provenance_reads",
+            "sourceSha256": "96706dba619a61488366010e280b0efd823ba6737d0a76d8f67cbb1a400e0236"
+          },
+          "receiptPath": "/tmp/bayn-pr16145-c9-arm-capacity-20261121T160618Z.json",
+          "receiptSha256": "19f62073a8df55bcf382d71ad692f054acbc82fd23b5093893b1adf52c8eb49d",
+          "privacy": "Raw node names, raw GitHub JSON, Pod environments/images/annotations, network addresses, logs and event messages are not stored. Projected raw tool outputs are represented by hashes and structured whitelisted fields."
+        }
+      }
+    ],
+    "authoredSummaryFromRetainedReview": {
+      "githubWorkers": {
+        "onlineBusy": 10,
+        "onlineIdle": 0,
+        "offline": 0
+      },
+      "exactNameMatchedEphemeralRunnerPods": 10,
+      "allMatchedPodsRunningReadyInitializedScheduled": true,
+      "allMatchedInitExitCodes": 0,
+      "totalMatchedPodRestarts": 0,
+      "minRunners": 5,
+      "maxRunners": 10,
+      "autoscalingListenersExcluded": 1,
+      "distinctHashedNodeIdentities": 1,
+      "rawNodeNamesRetained": false,
+      "nodeArchitectureIndependentlyQueried": false,
+      "githubLabelsUsedAsArchitectureProof": false,
+      "membershipBasis": "Exact runner/Pod names, EphemeralRunner ownership, Pod selectors and scale-set identity.",
+      "absentStatusCounters": "Preserved as null in the immutable evidence; not converted to zero.",
+      "provisioningFaultObservedInSnapshot": false
+    },
+    "boundaries": [
+      "This is a new dated snapshot prompted by the c9 queue delay, separate from the closed 13:57 snapshot.",
+      "The reads are non-atomic and describe only their observation interval.",
+      "Empty GitHub label arrays are not independent architecture evidence.",
+      "The common hashed node identity does not establish independently measured node architecture or capacity.",
+      "No FIFO order, historical capacity, specific dispatch-delay cause or native-startup cause is established.",
+      "No event, log, Pod-exec or further capacity reads were made; the snapshot is closed.",
+      "No existing CI snapshot or count is changed and no new current-head CI rollup is inferred."
+    ],
+    "closed": true
   }
 }
