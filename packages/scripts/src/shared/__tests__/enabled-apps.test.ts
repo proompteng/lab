@@ -814,7 +814,7 @@ describe('enabled app inventory', () => {
       repoImages: [
         'registry.ide-newton.ts.net/lab/buzz@sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb',
       ],
-      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml'],
+      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml', '.github/workflows/buzz-relay-cache.yml'],
     })
     expect(entry('buzz').deferredReason).toContain('block/buzz')
   })
