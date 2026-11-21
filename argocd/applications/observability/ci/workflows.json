@@ -399,6 +399,14 @@
       "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "ofz",
+      "pattern": "^Ofz authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "relay",
+      "pattern": "^Relay platform(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ci-pr",
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }

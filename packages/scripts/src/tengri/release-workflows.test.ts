@@ -87,7 +87,8 @@ describe('Tengri image workflow', () => {
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
     const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
-    expect(ofz.on.merge_group.types).toEqual(['checks_requested'])
+    expect(ofz.on).toHaveProperty('workflow_call')
+    expect(ofz.on).not.toHaveProperty('merge_group')
     expect(ofz.jobs['build-ofz'].if).toBe(mainPublication)
     expect(ofz.jobs['build-ofz'].needs).toBe('validate')
     expect(ofz.jobs.validate.if).toBeUndefined()
