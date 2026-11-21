@@ -257,6 +257,36 @@ test.each([
   }
 })
 
+test('the full queue builds the same four native product images and verifies App dependencies in parallel', () => {
+  const publisher: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const jobs = property(queue, 'jobs')
+  const validation = property(jobs, 'product-image')
+  const imageBuilder = './.github/workflows/nix-oci-build-common.yml'
+  const releaseJobs = Object.values(property(publisher, 'jobs') as Record<string, unknown>).filter(
+    (job) => property(job, 'uses') === imageBuilder,
+  )
+  const images = releaseJobs.map((job) => text(property(property(job, 'with'), 'image_name')))
+  for (const [index, name] of images.entries()) {
+    expect(property(property(releaseJobs[index], 'with'), 'package_attr')).toBe(`${name}-image`)
+  }
+  expect(validation).toEqual({
+    strategy: { 'fail-fast': false, matrix: { image: images.sort() } },
+    uses: imageBuilder,
+    with: {
+      image_name: '${{ matrix.image }}',
+      package_attr: '${{ matrix.image }}-image',
+      tag: 'queue-${{ github.sha }}',
+      source_revision: '${{ github.sha }}',
+    },
+  })
+  const existingVerifier = property(property(publisher, 'jobs'), 'verify-app-dependency-closure')
+  expect(property(jobs, 'product-dependency-closure')).toEqual({
+    uses: property(existingVerifier, 'uses'),
+    with: property(existingVerifier, 'with'),
+  })
+})
+
 test('Signal Publisher validates the queued image revision without publication', () => {
   const path = './.github/workflows/signal-publisher-build-push.yml'
   const workflow: unknown = Bun.YAML.parse(readFileSync(path, 'utf8'))
