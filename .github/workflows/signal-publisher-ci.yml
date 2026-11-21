@@ -15,6 +15,9 @@ on:
       - '.github/workflows/signal-publisher-*.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -32,4 +35,3 @@ jobs:
       oxlint-type-command: bun run --cwd services/signal-publisher lint:oxlint:type
       test-command: bun run --cwd services/signal-publisher tsc && bun run --cwd services/signal-publisher test && bun test packages/scripts/src/signal
       build-command: bun run --cwd services/signal-publisher build
-    secrets: inherit
