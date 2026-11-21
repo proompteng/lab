@@ -18,6 +18,7 @@ on:
       - '.github/workflows/buzz-relay-build-push.yml'
       - 'argocd/applications/buzz/**'
       - 'argocd/bootstrap/buzz/**'
+  workflow_call:
   workflow_dispatch:
 
 env:
@@ -26,23 +27,25 @@ env:
   IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/buzz
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: buzz-relay-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     strategy:
       fail-fast: false
       matrix:
         include:
           - architecture: amd64
             runner: arc-amd64
+            hosted_runner: ubuntu-24.04
             upstream_image: ghcr.io/block/buzz@sha256:0c015d0942b2b302b7264362a103165093960aaacc87d3c0f7bbcf68116950f5
           - architecture: arm64
             runner: arc-arm64
+            hosted_runner: ubuntu-24.04-arm
             upstream_image: ghcr.io/block/buzz@sha256:5a091bb6b91572dbc34743cb36d6e56fd170408243b263c825ff764017c524f5
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.event_name == 'merge_group' && matrix.hosted_runner || matrix.runner }}
     steps:
       - name: Checkout deployment repository
         uses: actions/checkout@v5
@@ -79,10 +82,10 @@ jobs:
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
             UPSTREAM_IMAGE=${{ matrix.upstream_image }}
-          cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }}
+          cache-from: ${{ github.event_name != 'merge_group' && format('type=registry,ref={0}:cache-{1}', env.IMAGE_REPOSITORY, matrix.architecture) || '' }}
 
   build:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -134,7 +137,7 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }}
 
   publish-index:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: arc-amd64
     steps:

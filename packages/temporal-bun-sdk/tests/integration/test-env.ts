@@ -44,7 +44,7 @@ const isLoopbackTemporalAddress = (address: string): boolean => {
 }
 
 const truthy = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
-const isReleaseGate = (): boolean => {
+export const isReleaseGate = (): boolean => {
   const raw = process.env.TEMPORAL_BUN_RELEASE_GATE
   return Boolean(raw && truthy.has(raw.trim().toLowerCase()))
 }

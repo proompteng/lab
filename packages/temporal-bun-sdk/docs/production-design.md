@@ -250,7 +250,7 @@ can contribute independently without re-planning.
 - **Load/perf harness**
   - CPU-heavy + I/O-heavy workflows live under `tests/integration/load/**` alongside the JSONL metrics aggregator. The harness starts the Temporal CLI dev server, creates `.artifacts/worker-load` per run, and collects sticky cache, poll latency, and throughput metrics via the worker runtime's file exporter.
   - Local runs: `cd packages/temporal-bun-sdk && TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration/worker-load.test.ts` (Bun test runner) or `cd packages/temporal-bun-sdk && bun run test:load` (Bun CLI script).
-  - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `cd packages/temporal-bun-sdk && bun run test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
+  - CI runs `tests/integration/worker-load.test.ts` once in its own process and uploads the `.artifacts/worker-load/{metrics.jsonl,memory.jsonl,report.json,temporal-cli.log}` bundle for reviewers. The load test enforces the thresholds and writes the release evidence in the same run.
   - Default knobs submit 64 workflows with a 100s completion budget and workflow/activity concurrency of 10/14; completion evidence is verified through the SDK's own `DescribeWorkflowExecution` RPC path with bounded `TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY` instead of shelling out to `temporal workflow describe` for every workflow. This keeps release load evidence focused on worker/runtime behavior instead of CLI polling overhead.
 
 ### TBS-004 – Observability (Complete)

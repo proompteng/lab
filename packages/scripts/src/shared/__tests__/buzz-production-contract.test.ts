@@ -43,6 +43,7 @@ describe('Buzz production GitOps contract', () => {
 
   test('builds the Ceph compatibility relay from pinned upstream inputs for both cluster architectures', () => {
     const workflow = readRepoFile('.github/workflows/buzz-relay-build-push.yml')
+    const queue = readRepoFile('.github/workflows/queue-service-validation.yml')
     const dockerfile = readRepoFile('third_party/buzz/Dockerfile')
     const patch = readRepoFile('third_party/buzz/ceph-rgw.patch')
 
@@ -60,6 +61,19 @@ describe('Buzz production GitOps contract', () => {
       'upstream_image: ghcr.io/block/buzz@sha256:5a091bb6b91572dbc34743cb36d6e56fd170408243b263c825ff764017c524f5',
     )
     expect(workflow).toContain('UPSTREAM_IMAGE=${{ matrix.upstream_image }}')
+    expect(queue).toContain('buzz:\n    uses: ./.github/workflows/buzz-relay-build-push.yml')
+    expect(workflow).toContain('  workflow_call:\n')
+    expect(workflow).toContain(
+      "  verify:\n    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+    )
+    for (const job of ['build', 'publish-index']) {
+      expect(workflow).toContain(
+        `  ${job}:\n    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'`,
+      )
+    }
+    const validation = workflow.split('\n  build:\n')[0]
+    expect(validation).toContain('push: false')
+    expect(validation).not.toContain('push: true')
     expect(workflow.match(/uses: \.\/\.github\/actions\/setup-buildkit/g)).toHaveLength(2)
     expect(workflow).not.toContain('cache-to:')
     expect(workflow).toContain('git -C upstream apply --check')
@@ -79,7 +93,8 @@ describe('Buzz production GitOps contract', () => {
     )
     expect(workflow).toContain('[[ "${GITHUB_REF}" == "refs/heads/main" ]]')
     expect(workflow).not.toContain('${IMAGE_REPOSITORY}:latest')
-    expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib')
+    expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay --lib --no-run')
+    expect(dockerfile).toContain('RUN /compiled/buzz-relay-test api::git::store::tests::')
     expect(patch).toContain('BUZZ_GIT_S3_COMPATIBILITY')
     expect(patch).toContain('<Code>ConcurrentModification</Code>')
     expect(patch).toContain('<Code>ConditionalRequestConflict</Code>')

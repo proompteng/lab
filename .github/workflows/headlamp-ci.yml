@@ -4,6 +4,7 @@ permissions:
   contents: read
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - 'nix/verify-headlamp-image-assets.sh'
@@ -21,12 +22,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: headlamp-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   validate-manifests:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: arc-arm64
     steps:
       - name: Check out repository
@@ -50,7 +51,7 @@ jobs:
         run: sh services/headlamp/scripts/test-upstream.sh
 
   nix-image-pr:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: headlamp
