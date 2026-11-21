@@ -282,10 +282,18 @@ test('Bayn CI does not run trading qualification for orchestration and documenta
     'nix/ci-run-timed.sh',
     'nix/oci-push.sh',
     'nix/images/opencode-cli.nix',
+    'packages/scripts/src/bayn/market-data-replay-ci.test.ts',
   ])
     expect(matchesPaths(file, paths.map(text))).toBe(false)
   expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
   expect(matchesPaths('nix/images/bayn.nix', paths.map(text))).toBe(true)
+  expect(matchesPaths('packages/scripts/src/bayn/verify-research-commands.sh', paths.map(text))).toBe(true)
+  expect(matchesPaths('packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts', paths.map(text))).toBe(true)
+
+  const scripts: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
+  const scriptsPaths = property(property(property(scripts, 'on'), 'pull_request'), 'paths')
+  if (!Array.isArray(scriptsPaths)) throw new Error('Missing repository scripts validation inputs')
+  expect(matchesPaths('packages/scripts/src/bayn/market-data-replay-ci.test.ts', scriptsPaths.map(text))).toBe(true)
 })
 
 test('Bayn publication ignores Froussard-only dependencies and still selects Bayn runtime changes', () => {
