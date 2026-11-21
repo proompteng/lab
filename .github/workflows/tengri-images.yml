@@ -218,7 +218,7 @@ jobs:
   build:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
-    timeout-minutes: 240
+    timeout-minutes: ${{ matrix.image == 'nanoagent' && 360 || 240 }}
     strategy:
       fail-fast: false
       matrix:

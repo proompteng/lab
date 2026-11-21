@@ -163,6 +163,12 @@
       "pattern": "^publish-index(?: \\(.*\\))?$"
     }
   ],
+  "buzz-relay-cache.yml": [
+    {
+      "id": "seed",
+      "pattern": "^seed(?: \\(.*\\))?$"
+    }
+  ],
   "codex-devbox.yml": [
     {
       "id": "validate",
@@ -365,6 +371,36 @@
     {
       "id": "build-docs",
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "landing",
+      "pattern": "^PR validation \\(landing\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "agents-full",
+      "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bayn",
+      "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
     }
   ],
   "relay.yml": [

@@ -7,6 +7,7 @@ import YAML from 'yaml'
 
 interface WorkflowJob {
   readonly if?: string
+  readonly uses?: string
   readonly needs?: readonly string[] | string
   readonly 'timeout-minutes'?: number
   readonly strategy?: {
@@ -18,6 +19,7 @@ interface WorkflowJob {
 const workflow = YAML.parse(
   readFileSync(join(import.meta.dir, '../../../../.github/workflows/bayn-ci.yml'), 'utf8'),
 ) as {
+  readonly on: Record<string, unknown>
   readonly jobs: Record<string, WorkflowJob>
 }
 const required = workflow.jobs.required
@@ -26,6 +28,49 @@ if (required === undefined || replay === undefined) throw new Error('Missing mar
 const gate = required.steps.find((step) => step.name === 'Require every applicable Bayn release check')
 if (gate?.run === undefined) throw new Error('Missing executable release gate')
 const command = gate.run
+
+test('the root gate requires the complete Bayn workflow on queued revisions', () => {
+  const router = YAML.parse(
+    readFileSync(join(import.meta.dir, '../../../../.github/workflows/pull-request.yml'), 'utf8'),
+  ) as { readonly jobs: Record<string, WorkflowJob> }
+  const bayn = router.jobs.bayn
+  expect(bayn?.uses).toBe('./.github/workflows/bayn-ci.yml')
+  expect(bayn?.if).toBe("github.event_name == 'merge_group'")
+  expect(bayn?.needs).toBeUndefined()
+  expect(Object.keys(workflow.on)).toEqual(['pull_request', 'workflow_dispatch', 'workflow_call'])
+
+  const required = router.jobs['ci-pr']
+  expect(required?.needs).toContain('bayn')
+  const enforcement = required?.steps.find((step) => step.name === 'Enforce selected validation results')
+  expect(enforcement?.env?.BAYN_RESULT).toBe('${{ needs.bayn.result }}')
+  if (!enforcement?.run) throw new Error('Missing root validation command')
+  for (const [full, baynResult, exitCode] of [
+    ['false', 'skipped', 0],
+    ['true', 'success', 0],
+    ['true', 'skipped', 1],
+    ['true', 'cancelled', 1],
+    ['true', 'failure', 1],
+  ] as const) {
+    const result = Bun.spawnSync(['bash', '-c', enforcement.run], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        PLAN_RESULT: 'success',
+        VALIDATE_RESULT: 'success',
+        VALIDATE_EXPECTED: 'success',
+        LANDING_RESULT: 'success',
+        LANDING_EXPECTED: 'success',
+        AGENTS_RESULT: 'success',
+        BAYN_RESULT: baynResult,
+        FULL_VALIDATION: full,
+        DELEGATED: '[]',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode).toBe(exitCode)
+  }
+})
+
 const successful = {
   PATH: process.env.PATH ?? '',
   MERGE_GROUP: 'false',
