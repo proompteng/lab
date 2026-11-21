@@ -99,6 +99,13 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
 
 test('native PR validation preserves image publication and cache warming boundaries', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
+  const indexInput = property(property(property(workflow, 'on'), 'workflow_call'), 'inputs')
+  expect(property(indexInput, 'publish_index')).toEqual({
+    description: 'Publish the index here; disable only when the caller prepares a verified image cohort',
+    required: false,
+    type: 'boolean',
+    default: true,
+  })
   const jobs = property(workflow, 'jobs')
   const steps = property(property(jobs, 'build-platform'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing native build steps')
@@ -109,7 +116,7 @@ test('native PR validation preserves image publication and cache warming boundar
     )
   const conditions = [
     [stepCondition('Push platform image without Docker'), 'publish'],
-    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
+    [property(property(jobs, 'publish-index'), 'if'), 'index'],
     [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
   ] as const
   for (const [event, ref, publishOnDispatch, publish, warm] of [
@@ -121,14 +128,16 @@ test('native PR validation preserves image publication and cache warming boundar
     ['workflow_dispatch', 'refs/heads/feature', false, false, false],
     ['workflow_dispatch', 'refs/heads/feature', true, true, false],
   ] as const) {
-    for (const [condition, boundary] of conditions) {
-      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
-      expect(
-        runInNewContext(expression, {
-          github: { event_name: event, ref },
-          inputs: { publish_on_dispatch: publishOnDispatch },
-        }),
-      ).toBe(boundary === 'publish' ? publish : warm)
+    for (const publishIndex of [true, false]) {
+      for (const [condition, boundary] of conditions) {
+        const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+        expect(
+          runInNewContext(expression, {
+            github: { event_name: event, ref },
+            inputs: { publish_on_dispatch: publishOnDispatch, publish_index: publishIndex },
+          }),
+        ).toBe(boundary === 'warm' ? warm : publish && (boundary !== 'index' || publishIndex))
+      }
     }
   }
 })
