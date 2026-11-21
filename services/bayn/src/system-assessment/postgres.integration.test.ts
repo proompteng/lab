@@ -1877,19 +1877,21 @@ postgres('PostgreSQL prospective system qualification', () => {
         ]
         for (const [sequence, row] of observations.entries()) {
           const order = row.order
+          const providerUpdatedAt = Result.getOrThrow(sourceTimestamp(row.occurredAt))
+          const sourceEventId = `order:${order.brokerOrderId}:${providerUpdatedAt}`
           yield* sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
           source_event_id,source_sequence,occurred_at,observed_at)
           VALUES(${row.eventId},'bayn.paper-broker-event.v1',${row.eventId},'ORDER','ALPACA',${account},
-            ${row.eventId},${sequence},${row.occurredAt},${order.observedAt})`
+            ${sourceEventId},${sequence},${row.occurredAt},${order.observedAt})`
               yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
           symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,
           parent_broker_order_id,status,broker_updated_at)
           VALUES(${row.eventId},${account},${order.schemaVersion},${order.brokerOrderId},${order.clientOrderId},${intentId},
             ${order.symbol},${order.side},${order.orderType},${order.timeInForce},${order.quantityAtoms},${order.filledQuantityAtoms},
             ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status},
-            ${Result.getOrThrow(sourceTimestamp(row.occurredAt))})`
+            ${providerUpdatedAt})`
             }),
           )
         }
