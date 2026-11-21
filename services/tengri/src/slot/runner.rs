@@ -27,6 +27,7 @@ pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 pub(super) const FENCING_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const PACKAGED_GUEST_AGENT: &str = "/usr/share/tengri/nanoagent";
 const GUEST_AGENT: &str = "/usr/local/bin/nanoagent";
+const GUEST_COLD_REFRESH: &str = "/etc/tengri-agent-replaced";
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum CommandWithdrawn {
@@ -422,6 +423,8 @@ pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Res
             format!("rm {GUEST_AGENT}"),
             format!("write {} {GUEST_AGENT}", agent.display()),
             format!("set_inode_field {GUEST_AGENT} mode 0100755"),
+            format!("write /dev/null {GUEST_COLD_REFRESH}"),
+            format!("set_inode_field {GUEST_COLD_REFRESH} mode 0100444"),
         ] {
             let written = Command::new("debugfs")
                 .kill_on_drop(true)
@@ -445,20 +448,8 @@ pub(super) async fn update_guest_agent(root: &Path, agent: &Path) -> anyhow::Res
             read_guest_agent(&staged).await? == expected,
             "updated guest Nanoagent failed readback"
         );
-        let metadata = Command::new("debugfs")
-            .kill_on_drop(true)
-            .args(["-R", &format!("stat {GUEST_AGENT}")])
-            .arg(&staged)
-            .output()
-            .await?;
-        ensure!(
-            metadata.status.success()
-                && String::from_utf8_lossy(&metadata.stdout)
-                    .split_once("Mode:")
-                    .and_then(|(_, suffix)| suffix.split_whitespace().next())
-                    == Some("0755"),
-            "updated guest Nanoagent is not executable"
-        );
+        verify_guest_file_mode(&staged, GUEST_AGENT, "0755").await?;
+        verify_guest_file_mode(&staged, GUEST_COLD_REFRESH, "0444").await?;
         fs::File::open(&staged).await?.sync_all().await?;
         fs::rename(&staged, root).await?;
         fs::File::open(root.parent().context("guest root must have a parent")?)
@@ -485,6 +476,26 @@ async fn read_guest_agent(root: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+async fn verify_guest_file_mode(root: &Path, path: &str, mode: &str) -> anyhow::Result<()> {
+    let metadata = Command::new("debugfs")
+        .kill_on_drop(true)
+        .env("LC_ALL", "C")
+        .args(["-R", &format!("stat {path}")])
+        .arg(root)
+        .output()
+        .await?;
+    let stdout = String::from_utf8_lossy(&metadata.stdout);
+    ensure!(
+        metadata.status.success()
+            && stdout
+                .split_once("Mode:")
+                .and_then(|(_, suffix)| suffix.split_whitespace().next())
+                == Some(mode),
+        "invalid retained guest file mode for {path}"
+    );
+    Ok(())
+}
+
 #[cfg(all(test, target_os = "linux"))]
 #[tokio::test]
 async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_copy() {
@@ -496,6 +507,7 @@ async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_co
         .await
         .unwrap();
     let result: anyhow::Result<()> = async {
+        fs::create_dir_all(template.join("etc")).await?;
         fs::write(template.join("usr/local/bin/nanoagent"), b"old agent").await?;
         fs::write(template.join("retained"), b"keep this file").await?;
         fs::File::create(&root).await?.set_len(8 << 20).await?;
@@ -519,6 +531,7 @@ async fn retained_root_update_preserves_files_and_never_commits_an_incomplete_co
 
         fs::write(&packaged, b"updated agent").await?;
         update_guest_agent(&root, &packaged).await?;
+        verify_guest_file_mode(&root, GUEST_COLD_REFRESH, "0444").await?;
         ensure!(
             read_guest_agent(&root).await? == b"updated agent",
             "agent update missing"
