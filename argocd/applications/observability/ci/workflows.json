@@ -413,6 +413,10 @@
       "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "torghut",
+      "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "ci-pr",
       "pattern": "^ci-pr(?: \\(.*\\))?$"
     }

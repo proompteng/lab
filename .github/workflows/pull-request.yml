@@ -476,6 +476,15 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: ./.github/workflows/scripts-ci.yml
 
+  torghut:
+    name: Torghut CI
+    if: github.event_name == 'merge_group'
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/torghut-ci.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -491,6 +500,7 @@ jobs:
       - tengri
       - buf
       - scripts
+      - torghut
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -507,6 +517,7 @@ jobs:
           TENGRI_RESULT: ${{ needs.tengri.result }}
           BUF_RESULT: ${{ needs.buf.result }}
           SCRIPTS_RESULT: ${{ needs.scripts.result }}
+          TORGHUT_RESULT: ${{ needs.torghut.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -533,6 +544,10 @@ jobs:
           fi
           if [[ "${FULL_VALIDATION}" == true && ( "${BUF_RESULT}" != success || "${SCRIPTS_RESULT}" != success ) ]]; then
             echo "Tooling validation failed: buf=${BUF_RESULT}, scripts=${SCRIPTS_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && "${TORGHUT_RESULT}" != success ]]; then
+            echo "Torghut validation failed: torghut=${TORGHUT_RESULT}" >&2
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
