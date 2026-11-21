@@ -139,8 +139,8 @@ function runRecoveryError(cause: unknown, fallback: string): Error {
   return cause instanceof Error ? cause : new Error(fallback)
 }
 
-function codexRunActivity(state: TengriCodexRun['state']): string | null {
-  switch (state.phase) {
+function codexRunStatus(phase: TengriCodexRun['state']['phase']): string | null {
+  switch (phase) {
     case 'waiting_for_guest':
       return 'Connecting'
     case 'recovering':
@@ -148,9 +148,9 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
     case 'cancelling':
       return 'Stopping'
     case 'authorization_required':
-      return 'Recovery needs your current session.'
+      return 'Paused'
     case 'needs_reconciliation':
-      return "The agent's last action could not be confirmed. Check the conversation before continuing."
+      return 'Response unconfirmed'
     case 'accepted':
     case 'running':
     case 'waiting_for_approval':
@@ -301,8 +301,10 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       !(runTurnId && completedTurns.current.has(runTurnId))),
   )
   const showStopAction = Boolean(activeTurnId || canStopRun) && !prompt.trim() && images.length === 0
-  const runActivity = runPending && run ? codexRunActivity(run.state) : null
+  const runPhase = runPending ? run?.state.phase : undefined
+  const runStatus = runPhase ? codexRunStatus(runPhase) : null
   const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
+  const responseStarted = Boolean(activeTurnId || runPhase === 'running')
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
   useEffect(() => {
@@ -430,6 +432,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         },
       }
       observers.set(key, observer)
+      let phase = candidate.state.phase
       const current = () =>
         !controller.signal.aborted && observers.get(key) === observer && threadIdRef.current !== candidate.threadId
       async function refresh() {
@@ -443,19 +446,23 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             next?.agentId === candidate.agentId &&
             next.threadId === candidate.threadId &&
             next.runId === candidate.runId &&
-            codexRunIsTerminal(next)
+            next.state.phase !== phase
           ) {
+            phase = next.state.phase
             setWorkspaceRuns((runs) =>
               current()
-                ? runs.filter(
-                    (run) =>
-                      run.agentId !== candidate.agentId ||
-                      run.threadId !== candidate.threadId ||
-                      run.runId !== candidate.runId,
+                ? runs.flatMap((run) =>
+                    run.agentId === candidate.agentId &&
+                    run.threadId === candidate.threadId &&
+                    run.runId === candidate.runId
+                      ? codexRunIsTerminal(next)
+                        ? []
+                        : [next]
+                      : [run],
                   )
                 : runs,
             )
-            return
+            if (codexRunIsTerminal(next)) return
           }
         } catch {
           // Keep the last confirmed busy state. A background outage must never
@@ -1855,7 +1862,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
   const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
-  const showRecoveryStop = canStopRun && !showStopAction && Boolean(runActivity || runObservationUnavailable)
+  const showRecoveryStop = canStopRun && !showStopAction && Boolean(runStatus || runObservationUnavailable)
+  const threadPhases = new Map(
+    workspaceRuns
+      .filter((candidate) => !codexRunIsTerminal(candidate))
+      .map((candidate) => [candidate.threadId, candidate.state.phase]),
+  )
+  if (runPending && runPhase) threadPhases.set(threadId, runPhase)
+  else if (activeTurnId || submittingHere) threadPhases.set(threadId, 'running')
   const agentStatus = runObservationUnavailable
     ? 'Status unavailable'
     : connectionNotice
@@ -1866,11 +1880,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           ? 'Input requested'
           : approvalPending
             ? 'Approval needed'
-            : responsePending
-              ? 'Working'
-              : eventStreamState !== 'connected'
-                ? 'Connecting'
-                : 'Ready'
+            : (runStatus ??
+              (responsePending
+                ? responseStarted
+                  ? 'Working'
+                  : 'Sending'
+                : eventStreamState !== 'connected'
+                  ? 'Connecting'
+                  : 'Ready'))
   return (
     <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
@@ -1938,12 +1955,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           enabled={account.authenticated}
           selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
-          busyThreadIds={
-            new Set([
-              ...workspaceRuns.filter((run) => !codexRunIsTerminal(run)).map((run) => run.threadId),
-              ...(activeTurnId || submittingHere ? [threadId] : []),
-            ])
-          }
+          threadPhases={threadPhases}
           canSelect={canChangeConversation}
           revision={sessionRevision}
           onSelect={switchConversation}
@@ -1965,9 +1977,34 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             <PanelLeft className="size-3.5" aria-hidden="true" />
           </button>
           <span className="text-heading-14 text-zinc-200">Codex</span>
-          <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status">
+          <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status" role="status">
             {agentStatus}
           </span>
+          {runPhase === 'authorization_required' ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 px-2"
+              disabled={interrupting}
+              onClick={() => void recoverRun()}
+            >
+              Reconnect
+            </Button>
+          ) : null}
+          {showRecoveryStop ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7 shrink-0"
+              aria-label="Stop response"
+              disabled={interrupting}
+              onClick={() => void interruptTurn()}
+            >
+              <Square className="size-3 fill-current" aria-hidden="true" />
+            </Button>
+          ) : null}
           {!sidebarOpen ? (
             <button
               type="button"
@@ -2051,36 +2088,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     group.items[0].card
                   ),
                 )}
-                {runActivity || showRecoveryStop ? (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400">
-                    <span role="status" aria-label="Agent activity">
-                      {runActivity ?? 'Status unavailable'}
-                    </span>
-                    {run?.state.phase === 'authorization_required' || run?.state.phase === 'needs_reconciliation' ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={interrupting}
-                        onClick={() => void recoverRun()}
-                      >
-                        {run.state.phase === 'authorization_required' ? 'Resume recovery' : 'Check again'}
-                      </Button>
-                    ) : null}
-                    {showRecoveryStop ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={interrupting}
-                        onClick={() => void interruptTurn()}
-                      >
-                        Stop response
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {responsePending && !approvalPending && !runActivity && !showRecoveryStop ? (
+                {agentStatus === 'Working' ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>

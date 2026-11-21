@@ -4375,13 +4375,21 @@ test('uses the current session to recover the accepted run without another send'
   }
   const mock = await mockTengri(page, {
     durableRun: run,
+    threadStore: {
+      threads: [{ id: run.threadId, title: 'Paused conversation', updatedAt: 1, archived: false }],
+    },
     resumeThreadRawJson: JSON.stringify({
       thread: { turns: [{ id: 'turn-recovery', status: 'inProgress', items: [] }] },
     }),
   })
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
-  await chat.getByRole('button', { name: 'Resume recovery', exact: true }).click()
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Paused')
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+  const row = chat.getByRole('button', { name: 'Paused conversation', exact: true })
+  await expect(row).toHaveAttribute('aria-description', 'Needs you')
+  await expect(row.locator('..').locator('.animate-spin')).toHaveCount(0)
+  await chat.getByRole('button', { name: 'Reconnect', exact: true }).click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'recover-run').length).toBe(1)
   const recovery = mock.actions.find((action) => action.action === 'recover-run')
   expect(recovery).toMatchObject({ runId: run.runId, agentId: run.agentId })
@@ -4416,16 +4424,12 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
     })
     await page.goto('/')
     const chat = page.getByRole('region', { name: 'Tengri window' })
-    const activity = chat.getByRole('status', { name: 'Agent activity' })
-    await expect(activity).toHaveText(
-      phase === 'cancelling'
-        ? 'Stopping'
-        : "The agent's last action could not be confirmed. Check the conversation before continuing.",
-    )
-    if (phase === 'needs_reconciliation')
-      await expect(chat.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+    const status = chat.getByLabel('Agent status', { exact: true })
+    await expect(status).toHaveText(phase === 'cancelling' ? 'Stopping' : 'Response unconfirmed')
+    await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+    await expect(chat.getByRole('button', { name: 'Check again', exact: true })).toHaveCount(0)
     run.state = { phase: 'cancelled', turnId: 'turn-cleanup' }
-    await expect(activity).toHaveCount(0)
+    await expect(status).toHaveText('Ready')
   })
 }
 
@@ -10609,20 +10613,19 @@ test('shows concise response activity and keeps detailed waiting reasons collaps
   const mock = await mockTengri(page, { durableRun: run })
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Thinking')
-  await expect(chat.getByText('Starting', { exact: true })).toHaveCount(0)
-  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Working')
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Sending')
   await expect(chat.getByText('Ask Codex to explore, change, or run something in this workspace.')).toHaveCount(0)
   await chat.screenshot({ path: test.info().outputPath('accepted-response.png') })
   await expect(chat.getByText('Run accepted. Waiting for the agent.', { exact: true })).toHaveCount(0)
   run.state = { phase: 'waiting_for_guest', reason: 'waiting to protect the active run from automatic sleep' }
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Connecting')
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Connecting')
   await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
   run.state = { phase: 'recovering', turnId: 'turn-current', reason: 'waiting for the authorized guest' }
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Reconnecting')
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Reconnecting')
   await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
   run.state = { phase: 'cancelling', turnId: 'turn-current', reason: 'waiting for command cleanup receipt' }
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Stopping')
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Stopping')
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
@@ -12230,7 +12233,7 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   expect(mock.actions.find((action) => action.action === 'interrupt-turn')?.runId).toBe(run.runId)
   unavailable = false
   run.state = { phase: 'cancelling', turnId: 'turn-recovered', reason: 'waiting for command cleanup receipt' }
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Stopping', { timeout: 10_000 })
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Stopping', { timeout: 10_000 })
   await expect(stop).toBeEnabled()
   await stop.click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(2)

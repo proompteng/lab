@@ -501,7 +501,7 @@ func (supervisor *codexSupervisor) request(
 ) (codexCallResult, error) {
 	params, err := codexGuestThreadParams(method, params)
 	if err != nil {
-		return codexCallResult{}, err
+		return codexCallResult{}, &codexUnsentRequestError{err}
 	}
 	if waitReady {
 		if generation == nil {
@@ -510,7 +510,7 @@ func (supervisor *codexSupervisor) request(
 			supervisor.mu.Unlock()
 		}
 		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
-			return codexCallResult{}, err
+			return codexCallResult{}, &codexUnsentRequestError{err}
 		}
 	}
 	id := supervisor.requestID.Add(1)
@@ -522,7 +522,7 @@ func (supervisor *codexSupervisor) request(
 	}
 	if waitReady && (supervisor.generation != generation || generation.failure != nil) {
 		supervisor.mu.Unlock()
-		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
+		return codexCallResult{}, &codexUnsentRequestError{errors.New("Codex app-server restarted before the request could be sent")}
 	}
 	if method == "turn/start" || method == "turn/steer" {
 		supervisor.workRequests[key] = struct{}{}
@@ -533,12 +533,12 @@ func (supervisor *codexSupervisor) request(
 	supervisor.mu.Unlock()
 	if stdin == nil {
 		supervisor.removeUnsentRequest(key)
-		return codexCallResult{}, errors.New("Codex app-server is unavailable")
+		return codexCallResult{}, &codexUnsentRequestError{errors.New("Codex app-server is unavailable")}
 	}
 	message, err := json.Marshal(map[string]any{"id": id, "method": method, "params": json.RawMessage(params)})
 	if err != nil {
 		supervisor.removeUnsentRequest(key)
-		return codexCallResult{}, err
+		return codexCallResult{}, &codexUnsentRequestError{err}
 	}
 	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 	if err != nil {
@@ -1298,6 +1298,10 @@ func (supervisor *codexSupervisor) writeToProcess(
 	case <-supervisor.shutdown:
 		return &codexUnsentRequestError{errors.New("Codex app-server is shutting down")}
 	case <-supervisor.writePermit:
+	}
+	if err := ctx.Err(); err != nil {
+		supervisor.writePermit <- struct{}{}
+		return &codexUnsentRequestError{err}
 	}
 
 	written := make(chan error, 1)

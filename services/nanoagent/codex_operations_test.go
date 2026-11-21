@@ -133,6 +133,62 @@ func TestCodexOperationRetrySurvivesSupervisorReplacement(t *testing.T) {
 	}
 }
 
+func TestCodexUnsentOperationReconcilesAndUnblocksConversation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	<-supervisor.writePermit
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(operationParams))
+		done <- err
+	}()
+	path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", "11111111-1111-4111-8111-111111111111.json")
+	deadline := time.After(5 * time.Second)
+	for {
+		supervisor.mu.Lock()
+		pending := len(supervisor.workRequests) == 1
+		supervisor.mu.Unlock()
+		if pending {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("operation never reached the native write gate")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, errCodexOperationRejected) {
+		t.Fatalf("unsent operation remained uncertain: %v", err)
+	}
+	supervisor.writePermit <- struct{}{}
+	if receipt, err := readCodexOperation(path); err != nil || receipt.State != "completed" || len(receipt.Error) == 0 {
+		t.Fatalf("definite rejection was not persisted: %+v, %v", receipt, err)
+	}
+	if _, err := supervisor.call(context.Background(), "tengri/reconcileOperation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`)); !errors.Is(err, errCodexOperationRejected) {
+		t.Fatalf("reconciliation did not report the recorded rejection: %v", err)
+	}
+	select {
+	case request := <-writer.messages:
+		t.Fatalf("cancelled operation reached Codex: %s", request)
+	default:
+	}
+	other := strings.ReplaceAll(operationParams, "11111111", "22222222")
+	go func() {
+		_, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(other))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	if request.Method != "turn/start" || !strings.Contains(string(request.Params), "22222222") {
+		t.Fatalf("next request did not dispatch: %+v", request)
+	}
+	supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"turn":{"id":"turn-2"}}`)})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCodexOperationLostResponseBlocksResendAndNewIdentity(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	ctx, cancel := context.WithCancel(context.Background())

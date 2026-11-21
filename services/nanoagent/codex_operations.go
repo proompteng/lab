@@ -103,8 +103,9 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	if !errors.Is(err, os.ErrNotExist) {
 		return codexCallResult{}, fmt.Errorf("read Codex operation journal: %w", err)
 	}
-	activePath := filepath.Join(directory, fmt.Sprintf(".pending-%x.json", sha256.Sum256([]byte(input.Thread))))
+	activePath := ""
 	if method == "turn/start" || method == "turn/steer" {
+		activePath = filepath.Join(directory, fmt.Sprintf(".pending-%x.json", sha256.Sum256([]byte(input.Thread))))
 		active, err := readCodexOperation(activePath)
 		if err == nil {
 			committed, err := readCodexOperation(filepath.Join(directory, active.ID+".json"))
@@ -115,13 +116,8 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 			return codexCallResult{}, fmt.Errorf("read pending Codex operation: %w", err)
 		}
 	}
-	if err := writeCodexOperation(path, op); err != nil {
+	if err := writeCodexReceiptWithGate(path, activePath, op); err != nil {
 		return codexCallResult{}, err
-	}
-	if method == "turn/start" || method == "turn/steer" {
-		if err := writeCodexOperation(activePath, op); err != nil {
-			return codexCallResult{}, err
-		}
 	}
 	result, requestErr := supervisor.dispatchOperation(ctx, method, params)
 	if result.generation != nil {
@@ -129,10 +125,15 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	}
 	if requestErr != nil {
 		var rpcError *codexRPCError
-		if !errors.As(requestErr, &rpcError) || (rpcError.code != -32600 && rpcError.code != -32601 && rpcError.code != -32602) {
+		var unsent *codexUnsentRequestError
+		switch {
+		case errors.As(requestErr, &unsent):
+			op.Error = json.RawMessage(`{"code":-32603,"message":"Codex did not receive this request"}`)
+		case errors.As(requestErr, &rpcError) && (rpcError.code == -32600 || rpcError.code == -32601 || rpcError.code == -32602):
+			op.Error = rpcError.raw
+		default:
 			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationUnknown, requestErr)
 		}
-		op.Error = rpcError.raw
 		requestErr = fmt.Errorf("%w: %v", errCodexOperationRejected, requestErr)
 	} else {
 		op.Result = result.result
@@ -217,7 +218,7 @@ func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method
 		}
 		resume, _ := json.Marshal(map[string]any{"threadId": input.Thread, "historyMode": "paginated", "excludeTurns": true})
 		if _, err := supervisor.request(ctx, "thread/resume", resume, true, result.generation); err != nil {
-			return result, err
+			return result, &codexUnsentRequestError{err}
 		}
 		return supervisor.request(ctx, method, params, true, result.generation)
 	}
@@ -281,6 +282,10 @@ func writeCodexOperation(path string, op codexOperation) error {
 }
 
 func writeCodexReceipt(path string, value any) error {
+	return writeCodexReceiptWithGate(path, "", value)
+}
+
+func writeCodexReceiptWithGate(path, gate string, value any) error {
 	content, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -300,6 +305,17 @@ func writeCodexReceipt(path string, value any) error {
 	}
 	if err := os.Rename(file.Name(), path); err != nil {
 		return err
+	}
+	if gate != "" {
+		// The gate only identifies the operation. A later receipt replaces the canonical path.
+		link := file.Name() + ".gate"
+		if err := os.Link(path, link); err != nil {
+			return err
+		}
+		defer os.Remove(link)
+		if err := os.Rename(link, gate); err != nil {
+			return err
+		}
 	}
 	directory, err := os.Open(filepath.Dir(path))
 	if err != nil {
