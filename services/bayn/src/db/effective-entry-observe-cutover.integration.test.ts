@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import v38ObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
 import v39ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
 import v40ObserveCutover from '../../migrations/0199_equity_short_observe_cutover'
+import v41ObserveCutover from '../../migrations/0207_support_recovery_observe_cutover'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -23,6 +24,7 @@ for (const {
   parameterHash,
   protocolHash,
   rejectionMessage,
+  requiresDurableBrokerCoverage,
 } of [
   {
     schemaVersion: 'bayn.jev.protocol.v38',
@@ -51,16 +53,29 @@ for (const {
     rejectionMessage:
       'native equity short OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims',
   },
+  {
+    schemaVersion: 'bayn.jev.protocol.v41',
+    migrationId: 207,
+    effectiveEntryObserveCutover: v41ObserveCutover,
+    parameterHash: '004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696',
+    protocolHash: 'b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9',
+    rejectionMessage:
+      'support-recovery OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete posted accounting, durable broker coverage and no unexpired inference claims',
+    requiresDurableBrokerCoverage: true,
+  },
 ]) {
   const behaviorHash = '76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
+  const currentHash = 'c'.repeat(64)
   const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
 
-  const postgres = PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(
+  const postgres = PgClient.layer({ url: Redacted.make(url), maxConnections: 2 }).pipe(
     Layer.provideMerge(NodeServices.layer),
   )
 
   const guardFixture = Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    if (requiresDurableBrokerCoverage === true)
+      yield* sql`DROP TABLE IF EXISTS public.research_capital_activation_retirements CASCADE`
     // Transaction-local tables isolate the guard predicates while executing every real migration statement.
     yield* sql.unsafe(`DO $fixture$ BEGIN
     CREATE TEMP TABLE intents(intent_id text,state text,account_id text) ON COMMIT DROP;
@@ -69,10 +84,25 @@ for (const {
     CREATE TEMP TABLE broker_inventory_debits(account_id text,symbol text,quantity_atoms bigint,cost_basis_micros bigint,posted boolean) ON COMMIT DROP;
     CREATE TEMP TABLE position_snapshots(account_id text,position_count integer,observed_at timestamptz,snapshot_id text) ON COMMIT DROP;
     CREATE TEMP TABLE accounting_receipts(broker_event_id text,receipt_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE broker_cash_settlements(account_id text,posted_at timestamptz) ON COMMIT DROP;
+    CREATE TEMP TABLE broker_fee_match_corrections(account_id text,posted_at timestamptz) ON COMMIT DROP;
+    CREATE TEMP TABLE broker_fee_accruals(account_id text,accrual_id text,ledger_plan_hash text,posted_at timestamptz)
+      ON COMMIT DROP;
+    CREATE TEMP TABLE broker_fee_accounting(account_id text,activity_id text,ledger_plan_hash text,posted_at timestamptz)
+      ON COMMIT DROP;
+    CREATE TEMP TABLE broker_fee_posting_acknowledgements(account_id text,source_kind text,source_id text,
+      ledger_plan_hash text) ON COMMIT DROP;
     CREATE TEMP TABLE fills(event_id text) ON COMMIT DROP;
-    CREATE TEMP TABLE orders(account_id text,broker_order_id text,status text,event_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE orders(account_id text,broker_order_id text,status text,event_id text,
+      broker_updated_at text DEFAULT '2026-01-01T00:00:00.000000000Z') ON COMMIT DROP;
     CREATE TEMP TABLE broker_events(event_id text,source_sequence bigint) ON COMMIT DROP;
-    CREATE TEMP TABLE authority_generations(generation_hash text,account_id text,strategy_name text,strategy_parameter_schema_version text,strategy_behavior_hash text,strategy_parameter_hash text,strategy_protocol_hash text) ON COMMIT DROP;
+    CREATE TEMP TABLE broker_observations(account_id text,available boolean,notification_fence_at timestamptz,
+      financial_reconciliation_fence_at timestamptz) ON COMMIT DROP;
+    CREATE TEMP TABLE broker_notification_receipts(account_id text,event_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE broker_source_events(account_id text,event_id text,recorded_at timestamptz,event_kind text)
+      ON COMMIT DROP;
+    CREATE TEMP TABLE broker_source_event_projections(account_id text,event_id text) ON COMMIT DROP;
+    CREATE TEMP TABLE authority_generations(generation_hash text,account_id text,maximum text,strategy_name text,strategy_parameter_schema_version text,strategy_behavior_hash text,strategy_parameter_hash text,strategy_protocol_hash text,previous_generation_hash text) ON COMMIT DROP;
     CREATE TEMP TABLE authority_state(generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz) ON COMMIT DROP;
     CREATE TEMP TABLE reconciliations(account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP;
     CREATE TEMP TABLE mutation_events(intent_id text,occurred_at timestamptz) ON COMMIT DROP;
@@ -86,11 +116,21 @@ for (const {
     CREATE TEMP TABLE jev_staged_dispatch_claims(unused integer) ON COMMIT DROP;
     CREATE TEMP TABLE jev_staged_terminal_receipts(unused integer) ON COMMIT DROP;
     CREATE TEMP TABLE jev_staged_skip_receipts(unused integer) ON COMMIT DROP;
-    INSERT INTO authority_state VALUES ('current','PAPER','PAPER','CLEAR',NULL,17,clock_timestamp()-interval '1 second');
+    INSERT INTO authority_state VALUES ('${currentHash}','PAPER','PAPER','CLEAR',NULL,17,clock_timestamp()-interval '1 second');
     INSERT INTO reconciliations VALUES ('account','EXACT',clock_timestamp(),'fresh');
   END $fixture$`)
-    yield* sql`INSERT INTO authority_generations VALUES
-    ('current','account','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
+    yield* sql`INSERT INTO authority_generations(
+      generation_hash,account_id,maximum,strategy_name,strategy_parameter_schema_version,
+      strategy_behavior_hash,strategy_parameter_hash,strategy_protocol_hash
+    ) VALUES(${currentHash},'account','PAPER','jev',${schemaVersion},${behaviorHash},${parameterHash},${protocolHash})`
+    if (requiresDurableBrokerCoverage === true)
+      yield* sql.unsafe(`DO $fixture$ BEGIN
+        INSERT INTO position_snapshots VALUES ('account',0,clock_timestamp()-interval '2 seconds','flat');
+        INSERT INTO broker_source_events VALUES
+          ('account','session',clock_timestamp()-interval '1 second','SessionReady');
+        INSERT INTO broker_source_event_projections VALUES ('account','session');
+        INSERT INTO broker_observations VALUES ('account',true,clock_timestamp(),clock_timestamp());
+      END $fixture$`)
   })
 
   const withGuardFixture = <A, E, R>(seed: string, body: Effect.Effect<A, E, R>) =>
@@ -132,11 +172,21 @@ for (const {
     'cycles',(SELECT jsonb_agg(to_jsonb(c) ORDER BY state) FROM autonomous_cycles c),
     'transactions',(SELECT jsonb_agg(to_jsonb(t) ORDER BY broker_event_id) FROM accounting_transactions t),
     'receipts',(SELECT jsonb_agg(to_jsonb(r) ORDER BY broker_event_id) FROM accounting_receipts r),
+    'cashSettlements',(SELECT jsonb_agg(to_jsonb(s) ORDER BY account_id) FROM broker_cash_settlements s),
+    'feeCorrections',(SELECT jsonb_agg(to_jsonb(c) ORDER BY account_id) FROM broker_fee_match_corrections c),
+    'feeAccruals',(SELECT jsonb_agg(to_jsonb(a) ORDER BY account_id,accrual_id) FROM broker_fee_accruals a),
+    'feeAccounting',(SELECT jsonb_agg(to_jsonb(f) ORDER BY account_id,activity_id) FROM broker_fee_accounting f),
+    'feePostings',(SELECT jsonb_agg(to_jsonb(p) ORDER BY account_id,source_kind,source_id)
+      FROM broker_fee_posting_acknowledgements p),
     'debits',(SELECT jsonb_agg(to_jsonb(d) ORDER BY account_id,symbol) FROM broker_inventory_debits d),
     'fills',(SELECT jsonb_agg(to_jsonb(f) ORDER BY event_id) FROM fills f),
     'orders',(SELECT jsonb_agg(to_jsonb(o) ORDER BY event_id) FROM orders o),
     'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY event_id) FROM broker_events e),
     'positions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY snapshot_id) FROM position_snapshots p),
+    'observations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY account_id) FROM broker_observations o),
+    'notificationReceipts',(SELECT jsonb_agg(to_jsonb(r) ORDER BY account_id,event_id) FROM broker_notification_receipts r),
+    'sourceEvents',(SELECT jsonb_agg(to_jsonb(e) ORDER BY account_id,event_id) FROM broker_source_events e),
+    'sourceProjections',(SELECT jsonb_agg(to_jsonb(p) ORDER BY account_id,event_id) FROM broker_source_event_projections p),
     'reconciliations',(SELECT jsonb_agg(to_jsonb(r) ORDER BY reconciliation_id) FROM reconciliations r),
     'mutations',(SELECT jsonb_agg(to_jsonb(m) ORDER BY intent_id,occurred_at) FROM mutation_events m),
     'requests',(SELECT jsonb_agg(to_jsonb(q) ORDER BY request_id) FROM jev_evaluation_requests q),
@@ -201,7 +251,67 @@ for (const {
     },
   ]
 
-  const preservedStates = [
+  const durableBrokerBlockers =
+    requiresDurableBrokerCoverage === true
+      ? [
+          {
+            name: 'missing direct stream session boundary',
+            seed: "UPDATE broker_source_events SET event_kind='TradeUpdate'",
+          },
+          {
+            name: 'unprojected durable source event',
+            seed: "INSERT INTO broker_source_events VALUES ('account','unprojected',clock_timestamp(),'TradeUpdate')",
+          },
+          {
+            name: 'unavailable canonical observation',
+            seed: 'UPDATE broker_observations SET available=false',
+          },
+          {
+            name: 'notification fence behind durable source',
+            seed: 'UPDATE broker_observations SET notification_fence_at=NULL',
+          },
+          {
+            name: 'financial reconciliation fence behind durable source',
+            seed: 'UPDATE broker_observations SET financial_reconciliation_fence_at=NULL',
+          },
+          {
+            name: 'late predecessor receipt outside the durable ledger',
+            seed: "INSERT INTO broker_notification_receipts VALUES ('account','late')",
+          },
+        ]
+      : []
+
+  const financialPostingBlockers =
+    requiresDurableBrokerCoverage === true
+      ? [
+          {
+            name: 'unposted cash settlement',
+            seed: "INSERT INTO broker_cash_settlements VALUES ('account',NULL)",
+          },
+          {
+            name: 'unposted fee match correction',
+            seed: "INSERT INTO broker_fee_match_corrections VALUES ('account',NULL)",
+          },
+          {
+            name: 'unposted fee accrual',
+            seed: "INSERT INTO broker_fee_accruals VALUES ('account','accrual','plan',NULL)",
+          },
+          {
+            name: 'posted fee accrual without acknowledgement',
+            seed: "INSERT INTO broker_fee_accruals VALUES ('account','accrual','plan',clock_timestamp())",
+          },
+          {
+            name: 'unposted broker fee activity',
+            seed: "INSERT INTO broker_fee_accounting VALUES ('account','activity','plan',NULL)",
+          },
+          {
+            name: 'posted broker fee activity without acknowledgement',
+            seed: "INSERT INTO broker_fee_accounting VALUES ('account','activity','plan',clock_timestamp())",
+          },
+        ]
+      : []
+
+  const targetLineageRecoveryStates = [
     {
       name: 'operator hold',
       seed: "UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',reason='OPERATOR_HOLD'",
@@ -215,6 +325,19 @@ for (const {
       seed: "UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',reason='BLOCKED_STRATEGY_PROTOCOL_CUTOVER'",
     },
     { name: 'clear OBSERVE authority', seed: "UPDATE authority_state SET maximum='OBSERVE',effective='OBSERVE'" },
+    {
+      name: 'clear OBSERVE recovery successor',
+      seed: `INSERT INTO authority_generations(
+        generation_hash,account_id,maximum,strategy_name,strategy_parameter_schema_version,
+        strategy_behavior_hash,strategy_parameter_hash,strategy_protocol_hash,previous_generation_hash
+      ) SELECT 'observe-successor',account_id,'OBSERVE',NULL,NULL,NULL,NULL,NULL,generation_hash
+        FROM authority_generations WHERE generation_hash='${currentHash}';
+        UPDATE authority_state SET generation_hash='observe-successor',maximum='OBSERVE',effective='OBSERVE',
+          kill_state='CLEAR',reason=NULL`,
+    },
+  ]
+
+  const unrelatedStates = [
     { name: 'another strategy name', seed: "UPDATE authority_generations SET strategy_name='other-strategy'" },
     {
       name: 'another protocol version',
@@ -232,6 +355,15 @@ for (const {
       name: 'another protocol hash',
       seed: `UPDATE authority_generations SET strategy_protocol_hash='${'0'.repeat(64)}'`,
     },
+  ]
+
+  const preservedStates = [...targetLineageRecoveryStates, ...unrelatedStates]
+  const targetLineageRecoveryScenarios = [
+    ...targetLineageRecoveryStates,
+    ...reconciliationBlockers.map(({ name, seed }) => ({
+      name: `clear OBSERVE: ${name}`,
+      seed: `UPDATE authority_state SET maximum='OBSERVE',effective='OBSERVE'; ${seed}`,
+    })),
   ]
 
   const unsettledHistory = `
@@ -257,7 +389,11 @@ for (const {
     test('restricts only current authority, preserves retained evidence and is idempotent', async () => {
       await runtime.runPromise(
         withGuardFixture(
-          `INSERT INTO authority_generations SELECT 'historical',account_id,strategy_name,'bayn.jev.protocol.v37',strategy_behavior_hash,strategy_parameter_hash,strategy_protocol_hash FROM authority_generations;
+          `INSERT INTO authority_generations(
+             generation_hash,account_id,maximum,strategy_name,strategy_parameter_schema_version,
+             strategy_behavior_hash,strategy_parameter_hash,strategy_protocol_hash,previous_generation_hash
+           ) SELECT 'historical',account_id,maximum,strategy_name,'bayn.jev.protocol.v37',
+             strategy_behavior_hash,strategy_parameter_hash,strategy_protocol_hash,NULL FROM authority_generations;
          INSERT INTO intents VALUES ('intent','TERMINAL','account');
          INSERT INTO autonomous_cycles VALUES ('BLOCKED');
          INSERT INTO accounting_transactions VALUES ('account','SPY',10,100,'event');
@@ -291,44 +427,59 @@ for (const {
             expect(yield* sql`SELECT count(*)::integer AS generations FROM authority_generations`).toEqual([
               { generations: 2 },
             ])
+            if (requiresDurableBrokerCoverage === true)
+              expect(
+                yield* sql`SELECT account_id,retired_generation_hash,reason
+                  FROM public.research_capital_activation_retirements WHERE account_id='account'`,
+              ).toEqual([
+                {
+                  account_id: 'account',
+                  retired_generation_hash: currentHash,
+                  reason: 'SUPPORT_RECOVERY_V41_RETIRED',
+                },
+              ])
           }),
         ),
       )
     })
 
-    test.each([...blockers, ...reconciliationBlockers.map(({ name, seed }) => ({ name: `PAPER: ${name}`, seed }))])(
-      '$name rejects before changing authority or retained evidence',
-      async ({ seed }) => {
-        await runtime.runPromise(
-          withGuardFixture(
-            seed,
-            Effect.gen(function* () {
-              const sql = yield* PgClient.PgClient
-              const before = yield* readState
-              const retained = yield* readRetainedRows
-              const result = yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.result)
-              expect(Result.isFailure(result)).toBe(true)
-              if (Result.isFailure(result))
-                expect(result.failure).toMatchObject({
-                  reason: { cause: { code: '55000', message: rejectionMessage } },
-                })
-              expect(yield* readState).toEqual(before)
-              expect(yield* readRetainedRows).toEqual(retained)
-            }),
-          ),
-        )
-      },
-    )
+    test.each([
+      ...blockers,
+      ...reconciliationBlockers.map(({ name, seed }) => ({ name: `PAPER: ${name}`, seed })),
+      ...durableBrokerBlockers,
+      ...financialPostingBlockers,
+    ])('$name rejects before changing authority or retained evidence', async ({ seed }) => {
+      await runtime.runPromise(
+        withGuardFixture(
+          seed,
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const before = yield* readState
+            const retained = yield* readRetainedRows
+            const result = yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.result)
+            expect(Result.isFailure(result)).toBe(true)
+            if (Result.isFailure(result))
+              expect(result.failure).toMatchObject({
+                reason: { cause: { code: '55000', message: rejectionMessage } },
+              })
+            expect(yield* readState).toEqual(before)
+            expect(yield* readRetainedRows).toEqual(retained)
+          }),
+        ),
+      )
+    })
 
     test.each([
-      ...preservedStates.map(({ name, seed }) => ({
+      ...(requiresDurableBrokerCoverage === true ? unrelatedStates : preservedStates).map(({ name, seed }) => ({
         name: `${name} with unsettled history`,
         seed: `${seed}; ${unsettledHistory}`,
       })),
-      ...reconciliationBlockers.map(({ name, seed }) => ({
-        name: `clear OBSERVE: ${name}`,
-        seed: `UPDATE authority_state SET maximum='OBSERVE',effective='OBSERVE'; ${seed}`,
-      })),
+      ...(requiresDurableBrokerCoverage === true
+        ? []
+        : reconciliationBlockers.map(({ name, seed }) => ({
+            name: `clear OBSERVE: ${name}`,
+            seed: `UPDATE authority_state SET maximum='OBSERVE',effective='OBSERVE'; ${seed}`,
+          }))),
     ])('$name remains unchanged without applying a PAPER-only guard', async ({ seed }) => {
       await runtime.runPromise(
         withGuardFixture(
@@ -343,6 +494,38 @@ for (const {
         ),
       )
     })
+
+    if (requiresDurableBrokerCoverage === true) {
+      test.each(targetLineageRecoveryScenarios)(
+        '$name fails transactionally until the matching v41 generation is retired',
+        async ({ seed }) => {
+          await runtime.runPromise(
+            withGuardFixture(
+              `${seed}; ${unsettledHistory}`,
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                const before = yield* readState
+                const retained = yield* readRetainedRows
+                const result = yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.result)
+                expect(Result.isFailure(result)).toBe(true)
+                if (Result.isFailure(result))
+                  expect(result.failure).toMatchObject({
+                    reason: {
+                      cause: {
+                        code: '55000',
+                        message:
+                          'support-recovery OBSERVE cutover requires durable v41 retirement before recovery can leave PAPER',
+                      },
+                    },
+                  })
+                expect(yield* readState).toEqual(before)
+                expect(yield* readRetainedRows).toEqual(retained)
+              }),
+            ),
+          )
+        },
+      )
+    }
 
     test.each([
       {
@@ -394,6 +577,107 @@ for (const {
       )
     })
 
+    if (requiresDurableBrokerCoverage === true) {
+      test('does not record migration 207 after recovery commits a clear OBSERVE successor', async () => {
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* sql`DROP SCHEMA public CASCADE`
+            yield* sql`CREATE SCHEMA public`
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < migrationId))),
+              table: 'schema_migrations',
+            })
+            const broker = Result.getOrThrow(
+              makeBrokerIdentity({
+                schemaVersion: 'bayn.broker-identity.v2',
+                provider: BrokerProvider.Alpaca,
+                environment: BrokerEnvironment.Sandbox,
+                accountId: 'effective-entry-overlap-test',
+              }),
+            )
+            const original = hash('effective-entry-overlap-root')
+            const paper = hash('effective-entry-overlap-paper')
+            const successor = hash('effective-entry-overlap-successor')
+            const authority = makeAuthorityPostgres(sql)
+            const { ensureAuthorityGeneration: ensure } = makeObserveAuthorityInterpreter(sql, authority, broker)
+            yield* ensure({ generationHash: original, maximum: Authority.Observe })
+            const reconciliationId = hash('effective-entry-overlap-reconciliation')
+            yield* sql`INSERT INTO position_snapshots(
+              snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at
+            ) VALUES(
+              ${hash('effective-entry-overlap-positions')},'bayn.paper-position-snapshot.v1',${broker.accountId},
+              ${hash('effective-entry-overlap-source')},${hash('effective-entry-overlap-content')},0,
+              clock_timestamp()
+            )`
+            yield* sql`INSERT INTO reconciliations(
+              reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,
+              discrepancies,reconciled_at
+            ) VALUES(
+              ${reconciliationId},'bayn.paper-reconciliation.v1',${broker.accountId},${hash('overlap-expected')},
+              ${hash('overlap-expected')},${hash('overlap-content')},'EXACT','[]'::jsonb,clock_timestamp()
+            )`
+            yield* sql`INSERT INTO authority_generations(
+              generation_hash,schema_version,activation_schema_version,previous_generation_hash,maximum,
+              authority_version,broker_identity_schema_version,broker_identity_hash,broker_provider,
+              broker_environment,activation_source_revision,activation_image_repository,activation_image_digest,
+              strategy_name,strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,
+              account_id,risk_policy_hash,proof_plan_hash,reconciliation_id,reconciliation_content_hash,
+              research_plan_hash,strategy_protocol_hash,activated_at
+            ) VALUES(
+              ${paper},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',${original},
+              'PAPER',2,${broker.schemaVersion},${broker.identityHash},${broker.provider},${broker.environment},
+              ${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',${behaviorHash},
+              ${parameterHash},${schemaVersion},${broker.accountId},${hash('overlap-risk')},${hash('overlap-plan')},
+              ${reconciliationId},${hash('overlap-content')},${hash('overlap-research')},${protocolHash},
+              clock_timestamp()
+            )`
+            yield* sql`UPDATE authority_state SET generation_hash=${paper},maximum='PAPER',effective='PAPER',
+              kill_state='CLEAR',reason=NULL,version=2,
+              updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${paper})
+              WHERE singleton`
+            const recoveryReconciliationId = hash('effective-entry-overlap-recovery-reconciliation')
+            yield* sql`INSERT INTO reconciliations(
+              reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,
+              discrepancies,reconciled_at
+            ) VALUES(
+              ${recoveryReconciliationId},'bayn.paper-reconciliation.v1',${broker.accountId},
+              ${hash('overlap-recovery-expected')},${hash('overlap-recovery-expected')},
+              ${hash('overlap-recovery-content')},'EXACT','[]'::jsonb,clock_timestamp()
+            )`
+            const recovered = yield* ensure({ generationHash: successor, maximum: Authority.Observe })
+            expect(recovered).toMatchObject({
+              generationHash: successor,
+              maximum: Authority.Observe,
+              effective: Authority.Observe,
+              kill: 'CLEAR',
+            })
+
+            const rejected = yield* PgMigrator.run({
+              loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= migrationId))),
+              table: 'schema_migrations',
+            }).pipe(Effect.exit)
+            expect(Exit.isFailure(rejected)).toBe(true)
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id=${migrationId}`).toEqual([])
+            expect(
+              yield* sql`SELECT to_regclass('public.research_capital_activation_retirements') AS relation`,
+            ).toEqual([{ relation: null }])
+            expect(yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason FROM authority_state`).toEqual(
+              [
+                {
+                  generation_hash: successor,
+                  maximum: 'OBSERVE',
+                  effective: 'OBSERVE',
+                  kill_state: 'CLEAR',
+                  reason: null,
+                },
+              ],
+            )
+          }).pipe(Effect.provide(postgres)),
+        )
+      }, 30_000)
+    }
+
     test('migrated authority recovers through native OBSERVE only after fresh reconciliation', async () => {
       // Guard queries are prepared against temporary tables. Recovery uses a fresh connection to the real tables.
       await Effect.runPromise(
@@ -420,6 +704,28 @@ for (const {
           const authority = makeAuthorityPostgres(sql)
           const { ensureAuthorityGeneration: ensure } = makeObserveAuthorityInterpreter(sql, authority, broker)
           yield* ensure({ generationHash: original, maximum: Authority.Observe })
+          if (requiresDurableBrokerCoverage === true) {
+            const sourceRevision = '1'.repeat(40)
+            const sourceEventId = hash('support-recovery-cutover-session')
+            yield* sql`INSERT INTO broker_source_events(
+              account_id,event_id,source_revision,received_at,event_kind,session_id,notification
+            ) VALUES(
+              ${broker.accountId},${sourceEventId},${sourceRevision},clock_timestamp(),
+              'SessionReady','cutover-session','{}'::jsonb
+            )`
+            yield* sql`INSERT INTO broker_source_event_projections(
+              account_id,event_id,source_revision,outcome,observed_at
+            ) VALUES(${broker.accountId},${sourceEventId},${sourceRevision},'CANONICALLY_COVERED',clock_timestamp())`
+            yield* sql`INSERT INTO broker_observations(
+              account_id,source_revision,available,poll_started_at,observed_at,completed_at,
+              snapshot_hash,state_hash,notification_fence_at,financial_reconciliation_fence_at
+            ) VALUES(
+              ${broker.accountId},${sourceRevision},true,clock_timestamp(),clock_timestamp(),clock_timestamp(),
+              ${hash('support-recovery-snapshot')},${hash('support-recovery-state')},
+              (SELECT max(recorded_at) FROM broker_source_events WHERE account_id=${broker.accountId}),
+              (SELECT max(recorded_at) FROM broker_source_events WHERE account_id=${broker.accountId})
+            )`
+          }
           const reconcile = (label: string) =>
             Effect.gen(function* () {
               yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
@@ -443,7 +749,39 @@ for (const {
           reason=NULL,version=2,updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${paper}) WHERE singleton`
           const retained =
             yield* sql`SELECT to_jsonb(g)::text AS generation FROM authority_generations g ORDER BY generation_hash`
-          yield* sql.withTransaction(effectiveEntryObserveCutover)
+          if (requiresDurableBrokerCoverage === true) {
+            const before = yield* readState
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const blocker = yield* sql.reserve
+                yield* blocker.executeUnprepared('BEGIN', [], undefined)
+                yield* Effect.addFinalizer(() =>
+                  blocker.executeUnprepared('ROLLBACK', [], undefined).pipe(Effect.ignore),
+                )
+                yield* blocker.executeUnprepared('LOCK TABLE intents IN ROW EXCLUSIVE MODE', [], undefined)
+                const contended = yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.result)
+                expect(Result.isFailure(contended)).toBe(true)
+                if (Result.isFailure(contended))
+                  expect(contended.failure).toMatchObject({ reason: { cause: { code: '55P03' } } })
+                expect(yield* readState).toEqual(before)
+                yield* blocker.executeUnprepared('ROLLBACK', [], undefined)
+              }),
+            )
+            // ACCESS SHARE is the lock held by an ordinary SELECT. The cutover must not wait behind it while
+            // holding the mutation fence.
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const reader = yield* sql.reserve
+                yield* reader.executeUnprepared('BEGIN READ ONLY', [], undefined)
+                yield* Effect.addFinalizer(() =>
+                  reader.executeUnprepared('ROLLBACK', [], undefined).pipe(Effect.ignore),
+                )
+                yield* reader.executeUnprepared('SELECT count(*) FROM intents', [], undefined)
+                yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.timeout('2 seconds'))
+                yield* reader.executeUnprepared('ROLLBACK', [], undefined)
+              }),
+            )
+          } else yield* sql.withTransaction(effectiveEntryObserveCutover)
           const restricted = yield* readState
           expect(restricted).toMatchObject({
             generationHash: paper,
@@ -471,6 +809,7 @@ for (const {
             version: 4,
           })
           expect(yield* ensure({ generationHash: successor, maximum: Authority.Observe })).toEqual(recovered)
+          const recoveredRow = yield* readState
           expect(
             yield* sql`SELECT to_jsonb(g)::text AS generation FROM authority_generations g WHERE generation_hash IN (${original},${paper}) ORDER BY generation_hash`,
           ).toEqual(retained)
@@ -483,6 +822,84 @@ for (const {
               broker_identity_hash: broker.identityHash,
             },
           ])
+          if (requiresDurableBrokerCoverage === true) {
+            expect(
+              yield* sql`SELECT account_id,retired_generation_hash,reason
+                FROM public.research_capital_activation_retirements`,
+            ).toEqual([
+              {
+                account_id: broker.accountId,
+                retired_generation_hash: paper,
+                reason: 'SUPPORT_RECOVERY_V41_RETIRED',
+              },
+            ])
+            // Model the delayed retained request after settlement and after a process restart. Even an old binary that
+            // reaches the historical INSERT directly cannot reopen PAPER; the immutable DB admission boundary wins.
+            const replayedPaper = hash('effective-entry-retired-mandate-replay')
+            const replay = yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,
+              activation_schema_version,previous_generation_hash,maximum,authority_version,
+              broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,
+              activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
+              strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,account_id,
+              risk_policy_hash,proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash,
+              strategy_protocol_hash,activated_at)
+            VALUES(${replayedPaper},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',
+              ${successor},'PAPER',5,${broker.schemaVersion},${broker.identityHash},${broker.provider},
+              ${broker.environment},${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',
+              ${behaviorHash},${parameterHash},${schemaVersion},${broker.accountId},${hash('risk')},${hash('plan')},
+              ${hash('effective-entry-after')},${hash('effective-entry-after')},${hash('research')},${protocolHash},
+              clock_timestamp())`.pipe(Effect.result)
+            expect(Result.isFailure(replay)).toBe(true)
+            if (Result.isFailure(replay))
+              expect(replay.failure).toMatchObject({
+                reason: {
+                  cause: {
+                    code: '55000',
+                    message: `research capital activation is retired for account ${broker.accountId}`,
+                  },
+                },
+              })
+            expect(
+              yield* sql`SELECT count(*)::integer AS generations FROM authority_generations
+                WHERE generation_hash=${replayedPaper}`,
+            ).toEqual([{ generations: 0 }])
+            expect(yield* readState).toEqual(recoveredRow)
+
+            // Model immutable PAPER history that committed before the retirement fence existed. The history INSERT
+            // trigger is the normal guard; the state trigger must independently prevent an old binary from activating
+            // a dormant row after the account has recovered to clear OBSERVE.
+            const dormantPaper = hash('effective-entry-retired-dormant-paper')
+            yield* sql`ALTER TABLE authority_generations DISABLE TRIGGER authority_generations_research_capital_retirement`
+            yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,
+              activation_schema_version,previous_generation_hash,maximum,authority_version,
+              broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,
+              activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
+              strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,account_id,
+              risk_policy_hash,proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash,
+              strategy_protocol_hash,activated_at)
+            VALUES(${dormantPaper},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',
+              ${successor},'PAPER',5,${broker.schemaVersion},${broker.identityHash},${broker.provider},
+              ${broker.environment},${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',
+              ${behaviorHash},${parameterHash},${schemaVersion},${broker.accountId},${hash('risk')},${hash('plan')},
+              ${hash('effective-entry-after')},${hash('effective-entry-after')},${hash('research')},${protocolHash},
+              greatest(clock_timestamp(),(SELECT updated_at FROM authority_state)+interval '1 millisecond'))`
+            yield* sql`ALTER TABLE authority_generations ENABLE TRIGGER authority_generations_research_capital_retirement`
+            const stateBypass = yield* sql`UPDATE authority_state SET generation_hash=${dormantPaper},
+              maximum='PAPER',effective='PAPER',kill_state='CLEAR',reason=NULL,version=5,
+              updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${dormantPaper})
+              WHERE singleton`.pipe(Effect.result)
+            expect(Result.isFailure(stateBypass)).toBe(true)
+            if (Result.isFailure(stateBypass))
+              expect(stateBypass.failure).toMatchObject({
+                reason: {
+                  cause: {
+                    code: '55000',
+                    message: `research capital state activation is retired for account ${broker.accountId}`,
+                  },
+                },
+              })
+            expect(yield* readState).toEqual(recoveredRow)
+          }
         }).pipe(Effect.provide(postgres)),
       )
     }, 30_000)
