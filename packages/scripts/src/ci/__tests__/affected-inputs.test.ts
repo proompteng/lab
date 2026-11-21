@@ -566,6 +566,48 @@ test('Ofz publication helpers use script CI without waking service qualification
   }
 })
 
+test('Ofz PR validation selects its identity fixture dependency changes', () => {
+  const filename = '.github/workflows/ofz.yaml'
+  const workflow: unknown = Bun.YAML.parse(readFileSync(filename, 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'validate'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing Ofz validation steps')
+  const planning = steps.find((step) => property(step, 'id') === 'inputs')
+  expect(property(planning, 'uses')).toBe('./.github/actions/affected-inputs')
+  expect(property(planning, 'if')).toBe("github.event_name == 'pull_request'")
+  const inputs = property(planning, 'with')
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    '{}',
+    text(property(inputs, 'workflow')),
+    'pull_request',
+  )
+  const base = {
+    ...before,
+    workspaces: {
+      ...before.workspaces,
+      'packages/backend': { name: '@proompteng/backend' },
+      'packages/design': { name: '@proompteng/design' },
+      'services/golink': { name: '@proompteng/golink', dependencies: { dayjs: '^1.0.0' } },
+    },
+  }
+  const unrelated = {
+    ...base,
+    workspaces: { ...base.workspaces, 'services/golink': { name: '@proompteng/golink', dependencies: {} } },
+  }
+  const identity = {
+    ...base,
+    workspaces: { ...base.workspaces, 'apps/landing': after.workspaces['apps/landing'] },
+    packages: after.packages,
+  }
+  expect(selectAffectedInputs(['bun.lock'], configured, base, unrelated)).toEqual({ ofz: false })
+  expect(selectAffectedInputs(['bun.lock'], configured, base, identity)).toEqual({ ofz: true })
+  expect(selectAffectedInputs(['services/ofz/src/main.rs'], configured, base, base)).toEqual({ ofz: true })
+  const identityStep = steps.find(
+    (step) => property(step, 'name') === 'Verify real browser identity and shared sessions',
+  )
+  expect(property(identityStep, 'if')).toBe("steps.selection.outputs.run != 'false'")
+})
+
 test('a changed transitive dependency still runs its consumers', () => {
   const upgraded = { ...before, packages: { ...before.packages, dayjs: after.packages.dayjs } }
   expect(selectAffectedInputs(['bun.lock'], targets, before, upgraded)).toEqual({ bayn: true, landing: false })
