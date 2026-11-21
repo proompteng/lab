@@ -412,25 +412,19 @@ pub async fn converge(
                 .context("claimed slot has no runner")?;
             // The fenced runner has reaped Firecracker. Upgrade only that runner,
             // leaving its already attached home, private root, and slot identity in place.
-            if runner.image.as_deref() != Some(runtime_image.as_ref()) {
+            let image_configured = runner.image.as_deref() == Some(runtime_image.as_ref());
+            if !image_configured {
                 update_slot_image(client, namespace, &pod, "runner", runtime_image, leadership)
                     .await?;
             }
-            let runner_updated = pod
+            let kubelet_observed = pod
                 .status
                 .as_ref()
-                .and_then(|status| status.container_statuses.as_ref())
-                .is_some_and(|containers| {
-                    containers.iter().any(|container| {
-                        container.name == "runner"
-                            && container.image_id == runtime_image.as_ref()
-                            && container
-                                .state
-                                .as_ref()
-                                .is_some_and(|state| state.running.is_some())
-                    })
-                });
-            if runner_updated {
+                .and_then(|status| status.observed_generation)
+                .zip(pod.metadata.generation)
+                .is_none_or(|(observed, desired)| observed >= desired);
+            if image_configured && kubelet_observed {
+                // An old runner still shutting down rejects restore from Failed.
                 supervisor
                     .restore(&microvm, authorization, leadership)
                     .await?
