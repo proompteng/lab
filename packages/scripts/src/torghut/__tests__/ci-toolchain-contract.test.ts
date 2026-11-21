@@ -36,11 +36,17 @@ describe('Torghut CI toolchain contract', () => {
 
     const plan = torghut.jobs.changes.steps?.find((step) => step.name === 'Check changed Torghut paths')?.run
     if (!plan) throw new Error('Missing Torghut plan command')
-    const result = Bun.spawnSync(['bash', '-c', plan], {
-      env: { EVENT_NAME: 'merge_group', GITHUB_OUTPUT: '/dev/stdout', PATH: process.env.PATH ?? '' },
-    })
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout.toString()).toBe('service=true\nmanifests=true\n')
+    const directory = mkdtempSync(join(tmpdir(), 'torghut-queue-plan-'))
+    try {
+      const output = join(directory, 'output')
+      const result = Bun.spawnSync(['bash', '-c', plan], {
+        env: { EVENT_NAME: 'merge_group', GITHUB_OUTPUT: output, PATH: process.env.PATH ?? '' },
+      })
+      if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+      expect(readFileSync(output, 'utf8')).toBe('service=true\nmanifests=true\n')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('requires the existing schema and notebook validators to succeed on the queued revision', () => {
@@ -113,19 +119,20 @@ describe('Torghut CI toolchain contract', () => {
         )
       }
       const base = git('rev-parse', 'HEAD~2')
+      const environment = join(directory, 'environment')
       const run = (sha: string) =>
         Bun.spawnSync(['bash', '-c', step.run ?? ''], {
           cwd: directory,
           env: {
             EVENT_NAME: 'merge_group',
-            GITHUB_ENV: '/dev/stdout',
+            GITHUB_ENV: environment,
             QUEUE_BASE_SHA: sha,
             PATH: process.env.PATH ?? '',
           },
         })
       const result = run(base)
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout.toString()).toContain(`TORGHUT_DIFF_BASE=${base}\n`)
+      if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+      expect(readFileSync(environment, 'utf8')).toBe(`TORGHUT_DIFF_BASE=${base}\n`)
       expect(run('').exitCode).not.toBe(0)
     } finally {
       rmSync(directory, { recursive: true, force: true })
