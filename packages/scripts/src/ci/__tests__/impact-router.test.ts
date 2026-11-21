@@ -8,7 +8,7 @@ const rootScriptMap = loadImpactMap('.github/ci/root-script-map.yml')
 const yaml = (filename: string) =>
   Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8')) as {
     on: Record<string, unknown>
-    concurrency: { group: string }
+    concurrency?: { group: string }
     jobs: Record<
       string,
       {
@@ -34,7 +34,7 @@ test('queued revisions require scripts and protobuf validation without sharing a
     const workflow = yaml(file)
     expect(workflow.on).toHaveProperty('workflow_call')
     expect(workflow.on).not.toHaveProperty('merge_group')
-    expect(workflow.concurrency.group).toStartWith(group)
+    expect(workflow.concurrency?.group).toStartWith(group)
     expect(router.jobs[job]).toMatchObject({
       if: "github.event_name == 'merge_group'",
       uses: `./.github/workflows/${file}`,
@@ -98,7 +98,18 @@ test('queued service validation joins the required gate without duplicate or mut
     const workflow = yaml(filename)
     expect(workflow.on).toHaveProperty('workflow_call')
     expect(workflow.on).not.toHaveProperty('merge_group')
-    const prefix = workflow.concurrency.group.split('${{')[0].toLowerCase()
+    const group = workflow.concurrency?.group
+    if (filename === 'nix-bun-dependency-closure.yml') {
+      expect(group).toBeUndefined()
+      continue
+    }
+    if (group === undefined) throw new Error(`Missing concurrency group for ${filename}`)
+    if (filename === 'nix-oci-build-common.yml') {
+      expect(group).toBe(
+        "${{ inputs.pr_number != '' && format('ci-pr-{0}-{1}', inputs.pr_number, inputs.image_name) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}",
+      )
+    }
+    const prefix = filename === 'nix-oci-build-common.yml' ? filename : group.split('${{')[0].toLowerCase()
     expect(prefix).not.toBe('')
     expect(concurrencyGroups.has(prefix)).toBe(false)
     concurrencyGroups.add(prefix)

@@ -55,6 +55,23 @@ jobs:
   otel:
     uses: ./.github/workflows/otel-ci.yml
 
+  product-dependency-closure:
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: app
+
+  product-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [app, docs, proompteng, synthesis]
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: ${{ matrix.image }}
+      package_attr: ${{ matrix.image }}-image
+      tag: queue-${{ github.sha }}
+      source_revision: ${{ github.sha }}
+
   reestr:
     uses: ./.github/workflows/reestr-ci.yml
 

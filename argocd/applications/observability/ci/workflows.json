@@ -505,6 +505,14 @@
       "pattern": "^otel(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "product-dependency-closure",
+      "pattern": "^product-dependency-closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "product-image",
+      "pattern": "^product-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "reestr",
       "pattern": "^reestr(?: \\(.*\\))?(?: /.*)?$"
     },
