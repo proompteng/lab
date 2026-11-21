@@ -594,7 +594,8 @@ describePostgres('PostgreSQL intraday observability projection', () => {
             source_event_id, source_sequence, occurred_at, observed_at
           ) VALUES
             (${'e'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'e'.repeat(64)}, 'ORDER', 'ALPACA', ${accountId},
-              'latency-order-observed', 1, '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
+              'order:latency-order:2026-08-28T14:32:00.350000000Z', 1,
+              '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
             (${'f'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'f'.repeat(64)}, 'FILL', 'ALPACA', ${accountId},
               'latency-fill-observed', 2, '2026-08-28T14:32:00.800Z', '2026-08-28T14:32:02.000Z')`
               yield* sql`
