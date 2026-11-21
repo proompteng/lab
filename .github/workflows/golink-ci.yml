@@ -19,6 +19,9 @@ on:
     types: [checks_requested]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -33,4 +36,3 @@ jobs:
       oxlint-type-command: bun run --cwd services/golink lint:oxlint:type
       test-command: bun run test:golink
       build-command: bun run build:golink
-    secrets: inherit
