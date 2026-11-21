@@ -163,6 +163,12 @@
       "pattern": "^publish-index(?: \\(.*\\))?$"
     }
   ],
+  "buzz-relay-cache.yml": [
+    {
+      "id": "seed",
+      "pattern": "^seed(?: \\(.*\\))?$"
+    }
+  ],
   "codex-devbox.yml": [
     {
       "id": "validate",
@@ -367,6 +373,60 @@
       "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "pull-request.yml": [
+    {
+      "id": "plan",
+      "pattern": "^Plan changed-area validation(?: \\(.*\\))?$"
+    },
+    {
+      "id": "landing",
+      "pattern": "^PR validation \\(landing\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate",
+      "pattern": "^PR validation \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "agents",
+      "pattern": "^Agents CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "agents-full",
+      "pattern": "^Agents full CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "bayn",
+      "pattern": "^Bayn CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ofz",
+      "pattern": "^Ofz authorization(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "relay",
+      "pattern": "^Relay platform(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "tengri",
+      "pattern": "^Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "buf",
+      "pattern": "^Protobuf validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "scripts",
+      "pattern": "^Repository scripts(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "torghut",
+      "pattern": "^Torghut CI(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "ci-pr",
+      "pattern": "^ci-pr(?: \\(.*\\))?$"
+    }
+  ],
   "relay.yml": [
     {
       "id": "validate",
@@ -433,12 +493,8 @@
   ],
   "tengri-images.yml": [
     {
-      "id": "validate-tengri",
-      "pattern": "^Validate Tengri(?: \\(.*\\))?$"
-    },
-    {
-      "id": "validate-nanoagent",
-      "pattern": "^Validate Nanoagent(?: \\(.*\\))?$"
+      "id": "validate",
+      "pattern": "^Validate Tengri and Nanoagent(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "build",

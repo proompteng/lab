@@ -1,6 +1,6 @@
 import { unusedEntryExpiresAt } from '../entry-admission'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -35,6 +35,11 @@ import { canonicalHashV1Result } from '../../hash'
 import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
+import {
+  prepareClonedPostgres,
+  type PostgresTestDatabase,
+  type PostgresTestTemplate,
+} from '../../testing/postgres-template.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore } from './model'
 import { CycleStoreLive, withWriterFenceCycleStore } from './postgres'
@@ -59,12 +64,6 @@ const sessionDate = '2026-08-28' as const
 const acquiredAt = '2026-08-28T13:00:00.000Z'
 const activatedAt = '2026-08-28T14:31:00.000Z'
 const blockedAt = '2026-08-28T15:00:00.000Z'
-const config = {
-  ...fixtureConfig,
-  operationTimeoutMs: 5_000,
-  postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-}
-
 const value = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
@@ -104,17 +103,19 @@ const draft = (
   return candidate satisfies CycleDraft
 }
 
-const makeRuntime = () =>
+const makeRuntime = (url: string) =>
   ManagedRuntime.make(
-    CycleStoreLive.pipe(Layer.provideMerge(PostgresClientLive(config)), Layer.provideMerge(NodeServices.layer)),
+    CycleStoreLive.pipe(
+      Layer.provideMerge(
+        PostgresClientLive({
+          ...fixtureConfig,
+          operationTimeoutMs: 5_000,
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    ),
   )
-
-const resetDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* postgresMigrations
-})
 
 const sourceTargetsFixture = () => {
   const source = nativeJevFixture()
@@ -151,25 +152,37 @@ const sourceTargetsFixture = () => {
 }
 
 describePostgres('PostgreSQL intraday cycle store', () => {
+  let template: PostgresTestTemplate
+  let database: PostgresTestDatabase
   let runtime: ReturnType<typeof makeRuntime>
   let sourceTargets: ReturnType<typeof sourceTargetsFixture>
 
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
+  beforeAll(async () => {
     sourceTargets = sourceTargetsFixture()
-    runtime = makeRuntime()
+    template = await prepareClonedPostgres(testUrl, async (url) => {
+      const initializer = makeRuntime(url)
+      try {
+        await initializer.runPromise(postgresMigrations)
+      } finally {
+        await initializer.dispose()
+      }
+    })
   }, 30_000)
 
   beforeEach(async () => {
-    await runtime.runPromise(resetDatabase)
+    database = await template.clone()
+    runtime = makeRuntime(database.url)
   })
 
-  afterAll(async () => {
-    await runtime?.dispose()
+  afterEach(async () => {
+    try {
+      await runtime?.dispose()
+    } finally {
+      await database?.dispose()
+    }
   })
+
+  afterAll(async () => template?.dispose())
 
   test('unused entry expiry is persisted after its lease and rejected early by PostgreSQL', async () => {
     await runtime.runPromise(

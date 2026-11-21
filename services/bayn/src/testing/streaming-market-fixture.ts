@@ -87,12 +87,11 @@ const rawPricingRequest: IntradaySnapshotRequest & { readonly calendar: MarketCa
     })),
 }
 
-export const streamingFixture = (
-  returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
+export const streamingFixtureRequest = (
   includeBenchmark = true,
-) => {
+): IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } => {
   const { purpose: _purpose, ...baseRequest } = rawPricingRequest
-  const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
+  return {
     ...baseRequest,
     rangeStartAt: '2026-09-04T14:00:00.000Z',
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
@@ -101,6 +100,13 @@ export const streamingFixture = (
     candidateSymbols: protocol.candidateSymbols,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   }
+}
+
+export const streamingFixture = (
+  returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
+  includeBenchmark = true,
+) => {
+  const request = streamingFixtureRequest(includeBenchmark)
   const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
   const { cut, query, snapshot, rows } = streamingFixtureFromRaw(raw, request)
   const archive = Result.getOrThrow(

@@ -75,6 +75,7 @@ jobs:
           ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: false
+          no-cache-filters: verify
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
             UPSTREAM_IMAGE=${{ matrix.upstream_image }}
@@ -125,6 +126,7 @@ jobs:
           ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: true
+          no-cache-filters: verify
           tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}

@@ -72,6 +72,8 @@ If the operation records a kernel boot ID and the retained guest now has a diffe
 settle an unconfirmed outcome after reading native history and receipts. The original operation remains in the
 journal and cannot be resent. The conversation and sleep pins can be released so the user can continue in the same
 chat. The runner records the same proof for older receipts when it replaces the guest binary after reaping the VMM.
+When item history is unavailable, Nanoagent checks the exact thread for a missing native rollout. A temporary history
+failure leaves the original run protected.
 Run-worker probes use HTTP `/healthz` on 8080; the Restate HTTP/2 listener remains on 9080.
 
 The `TengriRunStatusFailures` alert counts reads that exhausted their recovery budget. `TengriRunRecoveryBlocked`

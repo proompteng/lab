@@ -8,7 +8,7 @@ import {
   type StableBrokerSnapshot,
 } from '../broker/alpaca/model'
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
-import type { IntentBinding } from '../db/reconciliation'
+import type { IntentBinding } from '../db/intent-bindings'
 
 export const normalizationFixture = (size: number) => {
   const at = '2026-10-25T00:00:00.000Z'
