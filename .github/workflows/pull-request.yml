@@ -451,6 +451,16 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: ./.github/workflows/bayn-ci.yml
 
+  ofz:
+    name: Ofz authorization
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/ofz.yaml
+
+  relay:
+    name: Relay platform
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/relay.yml
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
@@ -461,6 +471,8 @@ jobs:
       - agents
       - agents-full
       - bayn
+      - ofz
+      - relay
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
@@ -472,6 +484,8 @@ jobs:
           LANDING_EXPECTED: ${{ (github.event_name == 'merge_group' || contains(fromJSON(needs.plan.outputs.targets || '[]'), 'landing')) && 'success' || 'skipped' }}
           AGENTS_RESULT: ${{ github.event_name == 'merge_group' && needs.agents-full.result || needs.agents.result }}
           BAYN_RESULT: ${{ needs.bayn.result }}
+          OFZ_RESULT: ${{ needs.ofz.result }}
+          RELAY_RESULT: ${{ needs.relay.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
           FULL_VALIDATION: ${{ github.event_name == 'merge_group' }}
         run: |
@@ -490,6 +504,10 @@ jobs:
           fi
           if [[ "${FULL_VALIDATION}" == true && "${BAYN_RESULT}" != success ]]; then
             echo "Bayn validation failed: bayn=${BAYN_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${FULL_VALIDATION}" == true && ( "${OFZ_RESULT}" != success || "${RELAY_RESULT}" != success ) ]]; then
+            echo "Platform validation failed: ofz=${OFZ_RESULT}, relay=${RELAY_RESULT}" >&2
             exit 1
           fi
           echo "Router validation passed: agents=${AGENTS_RESULT}, bayn=${BAYN_RESULT}. Delegated workflows: ${DELEGATED}"
