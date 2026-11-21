@@ -69,6 +69,7 @@ test('the root gate requires the complete Bayn workflow on queued revisions', ()
         TORGHUT_RESULT: 'success',
         TORGHUT_SCHEMA_RESULT: 'success',
         TORGHUT_NOTEBOOKS_RESULT: 'success',
+        QUEUE_SERVICES_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },

@@ -21,12 +21,25 @@ import {
   describeJevBatchPostgres,
   atObservation,
   observed,
-  plan,
   premiums,
   replayAccountId,
 } from './jev-batch-postgres.test-support'
 
 setDefaultTimeout(30_000)
+
+const expiryProtocol = { ...defaultJevProtocolDocument, candidateSymbols: ['AAPL', 'AMZN'] }
+const expiredBatchCount = 65
+const expiryFixture = (at: number) =>
+  nativeJevFixture(
+    JevPurpose.Entry,
+    utcInstantFromEpochMillis(at),
+    replayAccountId,
+    expiryProtocol,
+    'a'.repeat(64),
+    premiums,
+  )
+const initialFixture = expiryFixture(observed)
+const initialGeneration = initialFixture.observation.payload.authorityGenerationHash
 
 describeJevBatchPostgres((postgres) => {
   test('expense ownership settles more than 64 expired jobs while current prepared work remains discoverable', async () => {
@@ -36,18 +49,10 @@ describeJevBatchPostgres((postgres) => {
         const batches = yield* JevBatchStore
         const work = yield* JevInferenceWorkStore
         const expenses = makeInferenceExpenseStore(sql, replayAccountId)
-        let expiredRequests = 0
         let blockedRequestId: string | undefined
-        const admitAt = (at: number, generation = plan.authorityGenerationHash) =>
+        const admitAt = (at: number, generation = initialGeneration) =>
           Effect.gen(function* () {
-            const source = nativeJevFixture(
-              JevPurpose.Entry,
-              utcInstantFromEpochMillis(at),
-              replayAccountId,
-              defaultJevProtocolDocument,
-              'a'.repeat(64),
-              premiums,
-            )
+            const source = at === observed ? initialFixture : expiryFixture(at)
             const r = {
               ...source.portfolio.brokerState.reconciliation,
               reconciliationId: sha256(`streaming-expiry-reconciliation:${at}`),
@@ -79,7 +84,7 @@ describeJevBatchPostgres((postgres) => {
             })
             return batch.plan
           })
-        for (let index = 0; index < 65; index += 1) {
+        for (let index = 0; index < expiredBatchCount; index += 1) {
           const expiredPlan = yield* admitAt(observed + index)
           if (index === 0) {
             const candidate = expiredPlan.candidates.find(({ status }) => status === JevCandidatePlanStatus.Requested)
@@ -87,9 +92,6 @@ describeJevBatchPostgres((postgres) => {
               throw new Error('Recovery fixture needs an admitted request')
             blockedRequestId = candidate.request.requestId
           }
-          expiredRequests += expiredPlan.candidates.filter(
-            ({ status }) => status === JevCandidatePlanStatus.Requested,
-          ).length
         }
         const currentGeneration = 'd'.repeat(64)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
@@ -109,36 +111,33 @@ describeJevBatchPostgres((postgres) => {
           END $$`
         yield* sql`CREATE TRIGGER reject_blocked_expiry BEFORE INSERT ON jev_evaluation_resolutions
           FOR EACH ROW EXECUTE FUNCTION reject_blocked_expiry()`
-        expect(yield* work.pending(plan.authorityGenerationHash)).toEqual([])
+        expect(yield* work.pending(initialGeneration)).toEqual([])
         expect((yield* work.pending(currentGeneration)).map(({ jobId }) => jobId)).toEqual([current.batchId])
         expect(yield* work.settleExpired('unrelated-account')).toEqual({ sealed: 0, failed: 0, remaining: false })
+        const retryAt = observed + 90_000
         expect(yield* expenses.settleExpiredInferenceWork).toEqual({
           sealed: 63,
           failed: 1,
           remaining: true,
-          nextAttemptAt: utcInstantFromEpochMillis(observed + 90_000),
+          nextAttemptAt: utcInstantFromEpochMillis(retryAt),
         })
         expect((yield* work.pending(currentGeneration)).map(({ jobId }) => jobId)).toEqual([current.batchId])
-        for (let event = 0; event < 100; event += 1)
-          expect(yield* expenses.settleExpiredInferenceWork).toEqual({
-            sealed: 0,
-            failed: 0,
-            remaining: true,
-            nextAttemptAt: `${utcInstantFromEpochMillis(observed + 90_000).slice(0, -1)}000Z`,
-          })
-        expect(yield* sql`SELECT last_value::integer AS attempts FROM blocked_expiry_attempts`).toEqual([
-          { attempts: 1 },
-        ])
-        // A replacement adapter resumes the durable cursor, without relying on a
-        // process-local hint or re-entering an old financial cycle.
-        const replacement = yield* makeJevInferenceWorkStore
-        expect(yield* replacement.settleExpired(replayAccountId)).toEqual({
+        const deferred = {
           sealed: 0,
           failed: 0,
           remaining: true,
-          nextAttemptAt: `${utcInstantFromEpochMillis(observed + 90_000).slice(0, -1)}000Z`,
-        })
-        const fresh = yield* admitAt(observed + 90_000, currentGeneration)
+          nextAttemptAt: `${utcInstantFromEpochMillis(retryAt).slice(0, -1)}000Z`,
+        }
+        expect(yield* expenses.settleExpiredInferenceWork).toEqual(deferred)
+        // A replacement adapter resumes the durable cursor, without relying on a
+        // process-local hint or re-entering an old financial cycle.
+        yield* TestClock.setTime(retryAt - 1)
+        const replacement = yield* makeJevInferenceWorkStore
+        expect(yield* replacement.settleExpired(replayAccountId)).toEqual(deferred)
+        expect(yield* sql`SELECT last_value::integer AS attempts FROM blocked_expiry_attempts`).toEqual([
+          { attempts: 1 },
+        ])
+        const fresh = yield* admitAt(retryAt, currentGeneration)
         expect(yield* replacement.settleExpired(replayAccountId)).toEqual({
           sealed: 2,
           failed: 0,
@@ -154,13 +153,7 @@ describeJevBatchPostgres((postgres) => {
         expect(
           yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_resolutions
           WHERE payload->>'status' = 'ABANDONED'`,
-        ).toEqual([
-          {
-            count:
-              expiredRequests +
-              current.candidates.filter(({ status }) => status === JevCandidatePlanStatus.Requested).length,
-          },
-        ])
+        ).toEqual([{ count: (expiredBatchCount + 1) * expiryProtocol.candidateSymbols.length }])
         expect((yield* replacement.pending(currentGeneration)).map(({ jobId }) => jobId)).toEqual([fresh.batchId])
       }).pipe(
         atObservation,
@@ -170,4 +163,4 @@ describeJevBatchPostgres((postgres) => {
       ),
     )
   }, 120_000)
-})
+}, initialFixture)

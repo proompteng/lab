@@ -45,6 +45,7 @@ export type HistoryEventRow = typeof HistoryEventRow.Type
 
 export const CurrentOrderVersionRow = Schema.Struct({
   event_id: Sha256,
+  content_hash: Sha256,
   broker_order_id: NonEmptyString,
   source_event_id: NonEmptyString,
   source_sequence: Schema.String,
