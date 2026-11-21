@@ -445,6 +445,10 @@
       "pattern": "^agentctl(?: \\(.*\\))?(?: /.*)?$"
     },
     {
+      "id": "attic-image",
+      "pattern": "^attic-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "bumba",
       "pattern": "^bumba(?: \\(.*\\))?(?: /.*)?$"
     },
