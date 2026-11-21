@@ -210,7 +210,9 @@ Loss of an active runner, Pod, or node retains the owner and home for explicit f
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
 unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
 If a lifecycle command was withdrawn or the guest timed out, the workspace can cold boot from its retained disks
-after the runner confirms termination and authorization returns. While authority is paused, the desktop waits to
+after the runner confirms termination and authorization returns. During a runner upgrade, the controller waits for
+the running container's image ID to match the desired immutable image before dispatching the cold boot.
+While authority is paused, the desktop waits to
 reconnect automatically. An intentional sleep keeps the same disks and presents Resume.
 
 On cold boot the runner installs the Nanoagent binary packaged in its current image. It updates and validates a copy
