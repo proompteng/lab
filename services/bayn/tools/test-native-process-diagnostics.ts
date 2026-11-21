@@ -5,7 +5,7 @@ export const nativeProcessCaptureLimits = {
   captureBudgetMs: 200,
   observationBudgetMs: 250,
   maximumFileBytes: 4096,
-  maximumFileReads: 5,
+  maximumFileReads: 7,
 } as const
 
 export enum UnavailableReason {
@@ -14,8 +14,12 @@ export enum UnavailableReason {
   ChildNotRunning = 'CHILD_NOT_RUNNING',
   IdentityChanged = 'IDENTITY_CHANGED',
   ReadFailed = 'READ_FAILED',
+  ReadDenied = 'READ_DENIED',
+  ReadMissing = 'READ_MISSING',
   ReadLimit = 'READ_LIMIT',
   InvalidContent = 'INVALID_CONTENT',
+  ZeroWaitChannel = 'ZERO_WAIT_CHANNEL',
+  UnrecognizedWaitChannel = 'UNRECOGNIZED_WAIT_CHANNEL',
   CaptureTimeout = 'CAPTURE_TIMEOUT',
   CaptureFailed = 'CAPTURE_FAILED',
 }
@@ -35,7 +39,32 @@ export enum MainTaskState {
   Idle = 'I',
 }
 
+export enum MainTaskWaitChannel {
+  IoSchedule = 'io_schedule',
+  IoScheduleTimeout = 'io_schedule_timeout',
+  FolioWaitBit = 'folio_wait_bit_common',
+  PageWaitBit = 'wait_on_page_bit_common',
+  BufferWait = '__wait_on_buffer',
+  JournalCommit = 'jbd2_log_wait_commit',
+  RequestQueue = 'rq_qos_wait',
+  CompletionIo = 'wait_for_completion_io',
+  FutexWait = 'futex_wait_queue',
+  FutexWaitLegacy = 'futex_wait_queue_me',
+}
+
+export enum MainTaskSyscallState {
+  Running = 'RUNNING',
+  NotInSyscall = 'NOT_IN_SYSCALL',
+  InSyscall = 'IN_SYSCALL',
+}
+
+export type MainTaskSyscall =
+  | { readonly state: MainTaskSyscallState.Running | MainTaskSyscallState.NotInSyscall }
+  | { readonly state: MainTaskSyscallState.InSyscall; readonly number: number }
+
 const count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const syscallNumberSchema = count.check(Schema.isLessThanOrEqualTo(2147483647))
+const waitChannelSchema = Schema.Enum(MainTaskWaitChannel)
 const processStatSchema = Schema.Struct({
   pid: count,
   parentPid: count,
@@ -138,6 +167,27 @@ export const parseNativeProcessScheduler = (text: string) => {
   }).pipe(Result.mapError(invalid))
 }
 
+export const parseNativeProcessWaitChannel = (text: string) => {
+  const symbol = text.trim()
+  if (symbol === '0') return Result.fail(UnavailableReason.ZeroWaitChannel)
+  return Schema.decodeUnknownResult(waitChannelSchema)(symbol).pipe(
+    Result.mapError(() => UnavailableReason.UnrecognizedWaitChannel),
+  )
+}
+
+export const parseNativeProcessSyscall = (text: string): Result.Result<MainTaskSyscall, UnavailableReason> => {
+  const fields = text.trim().split(/\s+/)
+  if (fields.length === 1 && fields[0] === 'running') return Result.succeed({ state: MainTaskSyscallState.Running })
+  // Validate the kernel's hexadecimal register format without retaining any argument, SP or PC value.
+  if (fields.slice(1).some((field) => !/^0x[0-9a-f]{1,16}$/.test(field))) return Result.fail(invalid())
+  if (fields.length === 3 && fields[0] === '-1') return Result.succeed({ state: MainTaskSyscallState.NotInSyscall })
+  if (fields.length !== 9) return Result.fail(invalid())
+  return Schema.decodeUnknownResult(syscallNumberSchema)(integer(fields[0])).pipe(
+    Result.map((number) => ({ state: MainTaskSyscallState.InSyscall, number })),
+    Result.mapError(invalid),
+  )
+}
+
 type OwnedChild = Pick<ChildProcessSpawner.ChildProcessHandle, 'pid' | 'isRunning'>
 
 const capture = (child: OwnedChild | undefined) =>
@@ -149,7 +199,7 @@ const capture = (child: OwnedChild | undefined) =>
     if (!(yield* child.isRunning)) return unavailable(UnavailableReason.ChildNotRunning)
     const fs = yield* FileSystem.FileSystem
     const read = <A>(
-      file: 'stat' | 'io' | 'status' | 'schedstat',
+      file: 'stat' | 'io' | 'status' | 'schedstat' | 'wchan' | 'syscall',
       parse: (text: string) => Result.Result<A, UnavailableReason>,
     ) =>
       fs
@@ -173,7 +223,16 @@ const capture = (child: OwnedChild | undefined) =>
               onFailure: unavailable,
             })
           }),
-          Effect.orElseSucceed(() => unavailable(UnavailableReason.ReadFailed)),
+          Effect.orElseSucceed((error) => {
+            switch (error.reason._tag) {
+              case 'PermissionDenied':
+                return unavailable(UnavailableReason.ReadDenied)
+              case 'NotFound':
+                return unavailable(UnavailableReason.ReadMissing)
+              default:
+                return unavailable(UnavailableReason.ReadFailed)
+            }
+          }),
         )
     const before = yield* read('stat', parseNativeProcessStat)
     if (before.availability === 'UNAVAILABLE') return before
@@ -185,12 +244,21 @@ const capture = (child: OwnedChild | undefined) =>
     const io = yield* read('io', parseNativeProcessIo)
     const status = yield* read('status', parseNativeProcessStatus)
     const scheduler = yield* read('schedstat', parseNativeProcessScheduler)
+    const waitChannel = yield* read('wchan', parseNativeProcessWaitChannel)
+    const syscall = yield* read('syscall', parseNativeProcessSyscall)
     const after = yield* read('stat', parseNativeProcessStat)
     if (after.availability === 'UNAVAILABLE') return after
     if (!(yield* child.isRunning)) return unavailable(UnavailableReason.ChildNotRunning)
     if (!owns(after.value) || before.value.startTimeTicks !== after.value.startTimeTicks)
       return unavailable(UnavailableReason.IdentityChanged)
-    return available({ process: after.value, processAndWaitedChildrenIo: io, status, mainTaskScheduler: scheduler })
+    return available({
+      process: after.value,
+      processAndWaitedChildrenIo: io,
+      status,
+      mainTaskScheduler: scheduler,
+      mainTaskWaitChannel: waitChannel,
+      mainTaskSyscall: syscall,
+    })
   })
 
 export const observeNativeStartupFailure = (

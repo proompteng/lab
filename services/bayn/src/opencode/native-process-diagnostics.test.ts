@@ -1,12 +1,14 @@
 import { expect, spyOn, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
-import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Logger, Result, Stream } from 'effect'
+import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Logger, PlatformError, Result, Stream } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
 
 import {
   MainTaskState,
+  MainTaskSyscallState,
+  MainTaskWaitChannel,
   UnavailableReason,
   nativeProcessCaptureLimits,
   observeNativeStartupFailure,
@@ -14,6 +16,8 @@ import {
   parseNativeProcessScheduler,
   parseNativeProcessStat,
   parseNativeProcessStatus,
+  parseNativeProcessSyscall,
+  parseNativeProcessWaitChannel,
 } from '../../tools/test-native-process-diagnostics'
 
 const pid = ChildProcessSpawner.ProcessId(process.pid + 10000)
@@ -36,7 +40,9 @@ const io = 'rchar: 101\nwchar: 102\nsyscr: 3\nsyscw: 4\nread_bytes: 0\nwrite_byt
 const status =
   'Name: private-command\nEnv: credential-value\nPath: /private/file\nVmRSS: 120 kB\nVmHWM: 140 kB\nThreads: 4\nvoluntary_ctxt_switches: 8\nnonvoluntary_ctxt_switches: 9\n'
 const scheduler = '30000000 12000000 8\n'
-const contents = { stat: stat(), io, status, schedstat: scheduler }
+const waitChannel = 'io_schedule\n'
+const syscall = '0 0x0 0xfeedface 0x0 0x0 0x0 0x0 0xdeadbeef 0xcafebabe\n'
+const contents = { stat: stat(), io, status, schedstat: scheduler, wchan: waitChannel, syscall }
 const originalCause = Cause.fail(new Error('original native readiness failure'))
 const original = Exit.failCause(originalCause)
 const observe = (handle = child) =>
@@ -61,7 +67,15 @@ const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
     stream: (path, options) => {
       reads.push({ path, bytesToRead: options?.bytesToRead, chunkSize: options?.chunkSize })
       const file = path.split('/').at(-1)
-      const text = file === 'stat' || file === 'io' || file === 'status' || file === 'schedstat' ? contents[file] : ''
+      const text =
+        file === 'stat' ||
+        file === 'io' ||
+        file === 'status' ||
+        file === 'schedstat' ||
+        file === 'wchan' ||
+        file === 'syscall'
+          ? contents[file]
+          : ''
       return Stream.make(new TextEncoder().encode(text))
     },
     ...replacement,
@@ -77,7 +91,13 @@ const fixture = (replacement: Partial<FileSystem.FileSystem> = {}) => {
 test.each(['available', 'unavailable'] as const)(
   'default logger and Bun console preserve every allowlisted diagnostic leaf: %s',
   async (mode) => {
-    const files = { ...contents, stat: stat({ pid: 0, parent: 0 }), schedstat: mode === 'available' ? scheduler : '' }
+    const files = {
+      ...contents,
+      stat: stat({ pid: 0, parent: 0 }),
+      schedstat: mode === 'available' ? scheduler : '',
+      wchan: mode === 'available' ? waitChannel : 'private_wait_channel\n',
+      syscall: mode === 'available' ? syscall : 'running 0xfeedface\n',
+    }
     const program = `
       import { Effect, Exit, FileSystem, Stream } from 'effect'
       import { ChildProcessSpawner } from 'effect/process'
@@ -119,7 +139,7 @@ test.each(['available', 'unavailable'] as const)(
     expect(output.exitCode).toBe(ChildProcessSpawner.ExitCode(0))
     expect(output.stderr).toBe('')
     expect(output.stdout).not.toContain('[Object')
-    expect(output.stdout).not.toMatch(/private|credential-value|\/proc\//)
+    expect(output.stdout).not.toMatch(/private|credential-value|\/proc\/|0x|feedface|deadbeef|cafebabe/)
     const lines = output.stdout.trim().split('\n')
     expect(lines).toHaveLength(1)
     const line = lines[0] ?? ''
@@ -143,6 +163,14 @@ test.each(['available', 'unavailable'] as const)(
           mainTaskScheduler:
             mode === 'available'
               ? { availability: 'AVAILABLE', value: Result.getOrThrow(parseNativeProcessScheduler(scheduler)) }
+              : { availability: 'UNAVAILABLE', reason: 'INVALID_CONTENT' },
+          mainTaskWaitChannel:
+            mode === 'available'
+              ? { availability: 'AVAILABLE', value: MainTaskWaitChannel.IoSchedule }
+              : { availability: 'UNAVAILABLE', reason: 'UNRECOGNIZED_WAIT_CHANNEL' },
+          mainTaskSyscall:
+            mode === 'available'
+              ? { availability: 'AVAILABLE', value: { state: MainTaskSyscallState.InSyscall, number: 0 } }
               : { availability: 'UNAVAILABLE', reason: 'INVALID_CONTENT' },
         },
       },
@@ -222,11 +250,59 @@ test.each([
   expect(parse()).toEqual(Result.fail(UnavailableReason.InvalidContent))
 })
 
-test('stable owned child emits five bounded allowlisted reads and preserves the original failure', async () => {
+test('wait-channel parser exposes only fixed symbols and leaves zero explicitly ambiguous', () => {
+  for (const symbol of Object.values(MainTaskWaitChannel))
+    expect(parseNativeProcessWaitChannel(`${symbol}\n`)).toEqual(Result.succeed(symbol))
+  expect(parseNativeProcessWaitChannel('0\n')).toEqual(Result.fail(UnavailableReason.ZeroWaitChannel))
+})
+
+test.each(['', ' ', 'private_wait_channel', '0xfeedface', 'io_schedule private', 'io_schedule\0'])(
+  'unrecognized wait-channel content never escapes the fixed result: case %#',
+  (text) => {
+    expect(parseNativeProcessWaitChannel(text)).toEqual(Result.fail(UnavailableReason.UnrecognizedWaitChannel))
+  },
+)
+
+test('syscall parser distinguishes running and blocked outside a syscall without retaining registers', () => {
+  expect(parseNativeProcessSyscall('running\n')).toEqual(Result.succeed({ state: MainTaskSyscallState.Running }))
+  expect(parseNativeProcessSyscall('-1 0xdeadbeef 0xcafebabe\n')).toEqual(
+    Result.succeed({ state: MainTaskSyscallState.NotInSyscall }),
+  )
+})
+
+test.each(['0', '202', '2147483647'])(
+  'syscall parser retains valid signed-int syscall number %s and discards every register',
+  (number) => {
+    expect(
+      parseNativeProcessSyscall(`${number} 0x0 0xfeedface 0x0 0x0 0x0 0x0 0xffffffffffffffff 0xcafebabe\n`),
+    ).toEqual(Result.succeed({ state: MainTaskSyscallState.InSyscall, number: Number(number) }))
+  },
+)
+
+test.each([
+  '',
+  'running 0xfeedface',
+  '-1',
+  '-1 0x0 0x0 0x0',
+  syscall.trim().split(' ').slice(0, -1).join(' '),
+  `${syscall.trim()} 0x0`,
+  ...['-2', '0x0', '1.5', '+1', '2147483648', String(2 ** 53)].map((number) => syscall.replace(/^0 /, `${number} `)),
+  ...['private-register', '0', '0x', '0x10000000000000000'].map((register) => syscall.replace('0xfeedface', register)),
+])('malformed syscall input fails closed without leaking arguments or registers: case %#', (text) => {
+  expect(parseNativeProcessSyscall(text)).toEqual(Result.fail(UnavailableReason.InvalidContent))
+})
+
+test('stable owned child emits seven bounded allowlisted reads and preserves the original failure', async () => {
   const f = fixture()
   expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+  expect(nativeProcessCaptureLimits).toEqual({
+    captureBudgetMs: 200,
+    observationBudgetMs: 250,
+    maximumFileBytes: 4096,
+    maximumFileReads: 7,
+  })
   expect(f.reads).toEqual(
-    ['stat', 'io', 'status', 'schedstat', 'stat'].map((file) => ({
+    ['stat', 'io', 'status', 'schedstat', 'wchan', 'syscall', 'stat'].map((file) => ({
       path: `/proc/${pid}/${file}`,
       bytesToRead: 4097,
       chunkSize: 1024,
@@ -245,11 +321,20 @@ test('stable owned child emits five bounded allowlisted reads and preserves the 
           processAndWaitedChildrenIo: expect.objectContaining({ availability: 'AVAILABLE' }),
           status: expect.objectContaining({ availability: 'AVAILABLE' }),
           mainTaskScheduler: expect.objectContaining({ availability: 'AVAILABLE' }),
+          mainTaskWaitChannel: { availability: 'AVAILABLE', value: MainTaskWaitChannel.IoSchedule },
+          mainTaskSyscall: { availability: 'AVAILABLE', value: { state: MainTaskSyscallState.InSyscall, number: 0 } },
         }),
       },
     }),
   ])
-  for (const secret of ['private', 'credential-value', '/proc/', '/private/', 'original native readiness failure'])
+  for (const secret of [
+    'private',
+    'credential-value',
+    '/proc/',
+    '/private/',
+    'original native readiness failure',
+    '0x',
+  ])
     expect(JSON.stringify(f.events)).not.toContain(secret)
 })
 
@@ -325,7 +410,15 @@ test('bounded streams reject oversized input before parsing and retain optional 
   const f = fixture({
     stream: (path, options) => {
       if (path.endsWith('/io')) return Stream.make(new Uint8Array(4097).fill(65))
-      if (path.endsWith('/status')) return FileSystem.makeNoop({}).stream('/private/denied')
+      if (path.endsWith('/status'))
+        return Stream.fail(
+          PlatformError.systemError({
+            _tag: 'Unknown',
+            module: 'FileSystem',
+            method: 'stream',
+            pathOrDescriptor: '/private/denied',
+          }),
+        )
       return base.fileSystem.stream(path, options)
     },
   })
@@ -344,39 +437,109 @@ test('bounded streams reject oversized input before parsing and retain optional 
   expect(JSON.stringify(f.events)).not.toContain('/private/denied')
 })
 
-test('a never-completing proc reader is interrupted and finalized once inside the uninterruptible onExit hook', async () => {
-  let finalized = 0
-  const events: unknown[] = []
-  const program = Effect.gen(function* () {
-    const entered = yield* Deferred.make<void>()
-    const fs = FileSystem.makeNoop({
-      stream: () =>
-        Stream.fromEffect(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))).pipe(
-          Stream.ensuring(
-            Effect.sync(() => {
-              finalized += 1
+test.each(['PermissionDenied', 'NotFound'] as const)(
+  'optional wait/syscall %s reads remain unavailable without losing the owned-process snapshot',
+  async (tag) => {
+    const base = fixture()
+    const f = fixture({
+      stream: (path, options) => {
+        if (path.endsWith('/wchan') || path.endsWith('/syscall'))
+          return Stream.fail(
+            PlatformError.systemError({
+              _tag: tag,
+              module: 'FileSystem',
+              method: 'stream',
+              pathOrDescriptor: '/private/credential-value',
+              description: 'private error text',
             }),
-          ),
-        ),
+          )
+        return base.fileSystem.stream(path, options)
+      },
     })
-    const fiber = yield* observe().pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.forkScoped)
-    yield* Deferred.await(entered)
-    yield* TestClock.adjust(nativeProcessCaptureLimits.captureBudgetMs)
-    expect(yield* Fiber.join(fiber)).toEqual(original)
-    expect(finalized).toBe(1)
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(TestClock.layer()),
-    Effect.provide(Logger.layer([Logger.make(({ message }) => collectEvents(events, message))])),
-  )
-  await Effect.runPromise(program)
-  expect(events).toEqual([
+    expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+    const missing = { availability: 'UNAVAILABLE', reason: tag === 'PermissionDenied' ? 'READ_DENIED' : 'READ_MISSING' }
+    expect(f.events).toEqual([
+      expect.objectContaining({
+        snapshot: {
+          availability: 'AVAILABLE',
+          value: expect.objectContaining({
+            process: expect.objectContaining({ pid, parentPid: process.pid, startTimeTicks: 123456 }),
+            mainTaskScheduler: expect.objectContaining({ availability: 'AVAILABLE' }),
+            mainTaskWaitChannel: missing,
+            mainTaskSyscall: missing,
+          }),
+        },
+      }),
+    ])
+    expect(base.reads.map((read) => read.path.split('/').at(-1))).toEqual(['stat', 'io', 'status', 'schedstat', 'stat'])
+    expect(JSON.stringify(f.events)).not.toMatch(/private|credential-value|\/proc\//)
+  },
+)
+
+test.each([
+  ['wchan', 'mainTaskWaitChannel'],
+  ['syscall', 'mainTaskSyscall'],
+] as const)('oversized %s input is rejected before its parser runs', async (file, field) => {
+  const base = fixture()
+  const f = fixture({
+    stream: (path, options) =>
+      path.endsWith(`/${file}`) ? Stream.make(new Uint8Array(4097).fill(65)) : base.fileSystem.stream(path, options),
+  })
+  expect(await Effect.runPromise(f.provide(observe()))).toEqual(original)
+  expect(f.events).toEqual([
     expect.objectContaining({
-      captureElapsedMs: 200,
-      snapshot: { availability: 'UNAVAILABLE', reason: 'CAPTURE_TIMEOUT' },
+      snapshot: {
+        availability: 'AVAILABLE',
+        value: expect.objectContaining({ [field]: { availability: 'UNAVAILABLE', reason: 'READ_LIMIT' } }),
+      },
     }),
   ])
 })
+
+test.each(['stat', 'wchan', 'syscall'] as const)(
+  'a never-completing %s reader is interrupted and finalized once inside the uninterruptible onExit hook',
+  async (blockedFile) => {
+    let finalized = 0
+    const events: unknown[] = []
+    const reads: string[] = []
+    const base = fixture()
+    const program = Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const fs = FileSystem.makeNoop({
+        stream: (path, options) => {
+          const file = path.split('/').at(-1) ?? ''
+          reads.push(file)
+          if (file !== blockedFile) return base.fileSystem.stream(path, options)
+          return Stream.fromEffect(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))).pipe(
+            Stream.ensuring(
+              Effect.sync(() => {
+                finalized += 1
+              }),
+            ),
+          )
+        },
+      })
+      const fiber = yield* observe().pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.forkScoped)
+      yield* Deferred.await(entered)
+      yield* TestClock.adjust(nativeProcessCaptureLimits.captureBudgetMs)
+      expect(yield* Fiber.join(fiber)).toEqual(original)
+      expect(finalized).toBe(1)
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Logger.layer([Logger.make(({ message }) => collectEvents(events, message))])),
+    )
+    await Effect.runPromise(program)
+    const sequence = ['stat', 'io', 'status', 'schedstat', 'wchan', 'syscall']
+    expect(reads).toEqual(sequence.slice(0, sequence.indexOf(blockedFile) + 1))
+    expect(events).toEqual([
+      expect.objectContaining({
+        captureElapsedMs: 200,
+        snapshot: { availability: 'UNAVAILABLE', reason: 'CAPTURE_TIMEOUT' },
+      }),
+    ])
+  },
+)
 
 test.each(['reader', 'logger'])('a throwing %s cannot replace or append to the original failure', async (kind) => {
   const f = fixture(

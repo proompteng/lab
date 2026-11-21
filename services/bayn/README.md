@@ -2575,12 +2575,22 @@ shutdown allows 25 seconds for SIGTERM, including the native server's 20-second 
 to SIGKILL for a child that has not exited.
 
 The native integration test records one failure-only process snapshot before outer test-scope cleanup. It checks that its owned
-child is still running before and after five bounded reads, and requires the PID, parent and kernel start time to agree.
+child is still running before and after seven bounded reads, and requires the PID, parent and kernel start time to agree.
 The capture has a 200 ms budget inside a 250 ms observation budget; each read stops at 4,097 bytes and rejects content
 above 4,096 bytes. Missing, malformed, oversized, changed-identity and timed-out observations remain explicitly
 unavailable. The allowlisted record is emitted as one JSON message so the default console formatter preserves nested
 counters and unavailable reasons. Diagnostic read, parser, serialization and logger failures preserve the original test
 failure. Successful starts perform no additional reads; all readiness, probe, outer-test and shutdown deadlines remain unchanged.
+
+The main-task [wait channel](https://man7.org/linux/man-pages/man5/proc_pid_wchan.5.html) emits only a fixed allowlist of
+kernel symbols. Zero remains ambiguous (including hidden or unavailable symbols), and unknown symbols are unavailable.
+The main-task [syscall observation](https://man7.org/linux/man-pages/man5/proc_pid_syscall.5.html) retains only a validated
+nonnegative syscall number, `RUNNING`, or `NOT_IN_SYSCALL`; arguments, stack pointers and program counters are discarded.
+Numbers are not mapped to syscall names without an observed ABI. Missing and permission-denied reads remain explicit;
+these two proc files have different ptrace access checks, and neither diagnostic changes permissions. The register format
+is checked against [Linux v6.18 source](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/fs/proc/base.c),
+which is format provenance, not a claim about the CI host's kernel version. Reads are sequential within the identity
+bracket, not an atomic stack snapshot; a wait symbol and syscall number cannot establish a particular file, device or cause.
 
 The allowlisted [process counters](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) retain raw CPU clock ticks,
 fault counts, thread count, virtual bytes and resident pages without assuming a tick frequency or page size.
