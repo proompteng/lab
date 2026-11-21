@@ -7483,6 +7483,30 @@ test('reconciles a lost archive response by reading the native index without res
 test('stops idle chat polling while retaining minute-level connection checks', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page)
+  const incoming: TengriCodexRun = {
+    runId: '77777777-7777-4777-8777-777777777777',
+    agentId: 'microvm-ada',
+    threadId: 'thread-background',
+    state: {
+      phase: 'waiting_for_approval',
+      turnId: 'turn-background',
+      approvals: [{ approvalId: 'background:1', raw: {} }],
+    },
+  }
+  let approvalPending = false
+  let discoveryReads = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (approvalPending && route.request().method() === 'POST') {
+      const action = route.request().postDataJSON()
+      if (action.action === 'active-codex-runs' && !action.threadId) {
+        discoveryReads += 1
+        return route.fulfill({ json: { result: [incoming] } })
+      }
+      if (action.action === 'codex-run' && action.runId === incoming.runId)
+        return route.fulfill({ json: { result: incoming } })
+    }
+    return route.fallback()
+  })
   await page.goto('/')
   await page.getByRole('textbox', { name: 'Message your agent' }).fill('An unsent draft')
   // Wait for the initial chat recovery before advancing its timers.
@@ -7495,6 +7519,24 @@ test('stops idle chat polling while retaining minute-level connection checks', a
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(2)
   await page.clock.runFor(60_000)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(3)
+
+  approvalPending = true
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    threadId: incoming.threadId,
+    turnId: 'turn-background',
+    itemId: 'command-background',
+    text: '',
+    approvalId: 'background:1',
+    rawJson: '{}',
+  })
+  const row = page.locator('[data-conversation-id="thread-background"]')
+  await expect(row).toHaveAttribute('aria-description', 'Approval needed')
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toHaveValue('An unsent draft')
+  await page.clock.runFor(20_000)
+  expect(discoveryReads).toBe(1)
 })
 
 test('runs another conversation while keeping each active response unarchivable', async ({ page }) => {

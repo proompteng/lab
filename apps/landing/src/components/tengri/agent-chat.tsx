@@ -203,6 +203,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   workspaceRunsRef.current = workspaceRuns
   const backgroundRunObservers = useRef(new Map<string, { stop: () => void }>())
   const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
+  const [backgroundDiscoveryRevision, setBackgroundDiscoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
   const recoveredRunRef = useRef<TengriCodexRun | undefined>(undefined)
   const activeRunsRecoveryFailure = useRef<Error | undefined>(undefined)
@@ -407,7 +408,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
 
   useEffect(() => {
-    if (!account?.authenticated || !active) return
+    if (!account?.authenticated || !active || (!threadId && !backgroundDiscoveryRevision)) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let discovering = false
@@ -448,14 +449,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         retry = true
       } finally {
         discovering = false
-        if (!controller.signal.aborted && !document.hidden) {
+        if (!controller.signal.aborted && !document.hidden && (retry || threadId)) {
           timer = setTimeout(() => void discoverBackgroundRuns(), retry ? 3000 : 10_000)
         }
       }
     }
-    // Initial recovery already reads workspace runs when there is no stored chat.
-    if (threadIdRef.current) void discoverBackgroundRuns()
-    else timer = setTimeout(() => void discoverBackgroundRuns(), 10_000)
+    void discoverBackgroundRuns()
     window.addEventListener('focus', discoverBackgroundRuns)
     document.addEventListener('visibilitychange', discoverBackgroundRuns)
     return () => {
@@ -464,7 +463,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       window.removeEventListener('focus', discoverBackgroundRuns)
       document.removeEventListener('visibilitychange', discoverBackgroundRuns)
     }
-  }, [account?.authenticated, active, agentId])
+  }, [account?.authenticated, active, agentId, backgroundDiscoveryRevision, threadId])
 
   useEffect(() => {
     const observers = backgroundRunObservers.current
@@ -1015,6 +1014,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       const resolvedApprovalId = codexResolvedApprovalId(event)
       if (resolvedApprovalId) retireApproval(resolvedApprovalId)
       if (event.kind === 'approval' && resolvedApprovals.current.has(event.approvalId)) return
+      if (
+        !currentThread &&
+        ((event.kind === 'approval' && event.threadId) || event.method === 'tengri/replayWarning')
+      ) {
+        setBackgroundDiscoveryRevision((current) => current + 1)
+      }
       if (
         codexEventIsIndependentOfThreadSnapshot(event) ||
         codexResolvedApprovalId(event) ||
