@@ -24,7 +24,9 @@ The retained account is PAPER. No orders, risk settings, credentials, source rec
 
 The SQL checks matched all **863** accounting transactions to **863** stored accounting receipts and **863**
 broker fills. Quantity, price, fee, symbol and side agree for all 863. This is a stored-source comparison;
-it is not a fresh independent reread of every native TigerBeetle transfer. The latest retained reconciliation is
+the fixed cut contains exactly one account across transactions, intents and fills, matching the configured
+PAPER account. Reusing the queries for a multi-account dataset requires an explicit account predicate.
+These stored-source checks do not independently reread every native TigerBeetle transfer. The latest retained reconciliation is
 `EXACT` at `2026-11-21T01:07:09.786Z`, with zero discrepancies.
 
 ## Economic result
@@ -241,7 +243,10 @@ it does not establish a pipeline outage, and an absent or NaN lag series must ne
 The repair adds separate metrics Services for the TA and archive TaskManagers, using the existing named
 `metrics` port and Alloy endpoint discovery. Existing JobManager targets remain independent. Both affected
 Kustomize subtrees render successfully, and live selectors match four TA and eight archive TaskManagers.
-A complete Torghut render also requires Helm 3; it remains a distinct release validation step.
+The complete Torghut root subsequently rendered successfully with checksum-verified official Helm 3.19.1
+and `kubectl kustomize --enable-helm --helm-command <verified-helm3>`. The rendered 67 resources contain
+exactly four independent JobManager/TaskManager metrics Services and exclude the retired trading workloads.
+This verifies rendered configuration, not deployment or live metric coverage.
 Deployment must follow the existing `torghut-release:torghut` cohort through Kargo and Argo, including its normal
 checkpoint/savepoint lifecycle. It must not reactivate the retired Torghut API or trading scheduler.
 

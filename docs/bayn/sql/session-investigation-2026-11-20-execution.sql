@@ -4,6 +4,10 @@
 -- Run with: psql -X -v ON_ERROR_STOP=1 -U postgres -d bayn -f <this-file>
 -- Use the authorized read-only diagnostic route and a verified read replica.
 -- No credentials, account identifiers, DDL or write statements are included.
+-- The fixed cut was verified to contain exactly one account across transactions,
+-- intents and fills, matching the configured PAPER account. These queries rely
+-- on that verified single-account scope. Add an explicit account predicate before
+-- reusing them with a multi-account dataset.
 --
 -- Positive signed shortfall means a worse fill price than the named benchmark;
 -- negative means a favorable price. USD and bps use exact PostgreSQL numeric
