@@ -201,6 +201,39 @@ test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
   },
 )
 
+test('Devbox requires native validation in the queue with publication confined to main', () => {
+  const caller: unknown = Bun.YAML.parse(readFileSync('.github/workflows/codex-devbox.yml', 'utf8'))
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  const validationPath = './.github/workflows/codex-devbox-validate.yml'
+  const validation: unknown = Bun.YAML.parse(readFileSync(validationPath, 'utf8'))
+  const jobs = property(caller, 'jobs')
+  const build = property(jobs, 'validate')
+  const release = property(jobs, 'publish')
+  const inputs = property(property(property(validation, 'on'), 'workflow_call'), 'inputs')
+  expect(property(property(inputs, 'publish'), 'default')).toBe(false)
+  expect(property(validation, 'permissions')).toEqual({ contents: 'read' })
+  expect(property(property(queue, 'jobs'), 'codex-devbox')).toEqual({ uses: validationPath })
+  expect(property(build, 'uses')).toBe(validationPath)
+  expect(property(release, 'needs')).toBe('validate')
+  expect(property(release, 'permissions')).toEqual({ contents: 'read', 'id-token': 'write' })
+
+  const publishesImage = text(property(property(build, 'with'), 'publish')).replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  const signsRelease = text(property(release, 'if'))
+  for (const [event, ref, publishes] of [
+    ['pull_request', 'refs/pull/42/merge', false],
+    ['merge_group', 'refs/heads/gh-readonly-queue/main/pr-42', false],
+    ['merge_group', 'refs/heads/main', false],
+    ['push', 'refs/heads/main', true],
+    ['push', 'refs/heads/feature', false],
+    ['workflow_dispatch', 'refs/heads/main', true],
+    ['workflow_dispatch', 'refs/heads/feature', false],
+  ] as const) {
+    const context = { github: { event_name: event, ref } }
+    expect(runInNewContext(publishesImage, context)).toBe(publishes)
+    expect(runInNewContext(signsRelease, context)).toBe(publishes)
+  }
+})
+
 test('Headlamp validates queued manifests and images without a publication token', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/headlamp-ci.yml', 'utf8'))
   const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))

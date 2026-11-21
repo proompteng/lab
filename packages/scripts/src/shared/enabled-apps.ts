@@ -121,7 +121,10 @@ const appToWorkflowPaths = new Map<string, string[]>([
   ['torghut-webull-feed', ['.github/workflows/torghut-webull-feed-build-push.yaml', 'argocd/applications/kargo']],
   ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
   ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
-  ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
+  [
+    'devbox',
+    ['.github/workflows/codex-devbox.yml', '.github/workflows/codex-devbox-validate.yml', 'argocd/applications/kargo'],
+  ],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
   ['opencode', ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo']],
   ['relay', ['.github/workflows/relay.yml', 'argocd/applications/kargo']],
@@ -195,7 +198,11 @@ const kargoImageApps = new Map<string, KargoImageContract>([
       bootstrapReferences: ['registry.ide-newton.ts.net/lab/codex-devbox:unpublished'],
       reason: 'The Dragonball development image is built and signed in CI, then promoted by Kargo',
       repositories: ['registry.ide-newton.ts.net/lab/codex-devbox'],
-      workflowPaths: ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo'],
+      workflowPaths: [
+        '.github/workflows/codex-devbox.yml',
+        '.github/workflows/codex-devbox-validate.yml',
+        'argocd/applications/kargo',
+      ],
     },
   ],
   [

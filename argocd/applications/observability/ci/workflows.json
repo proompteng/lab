@@ -163,7 +163,7 @@
       "pattern": "^publish-index(?: \\(.*\\))?$"
     }
   ],
-  "codex-devbox.yml": [
+  "codex-devbox-validate.yml": [
     {
       "id": "validate",
       "pattern": "^validate(?: \\(.*\\))?$"
@@ -171,6 +171,12 @@
     {
       "id": "build",
       "pattern": "^build(?: \\(.*\\))?$"
+    }
+  ],
+  "codex-devbox.yml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "publish",
@@ -441,6 +447,10 @@
     {
       "id": "codex",
       "pattern": "^codex(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "codex-devbox",
+      "pattern": "^codex-devbox(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "dernier",
