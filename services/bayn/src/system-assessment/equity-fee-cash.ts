@@ -4,7 +4,7 @@ import { brokerFeeCashDeltaMicros, StoredFeeSchema } from '../accounting/broker-
 import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
 import { verifyAccountingTransactionContent } from '../accounting/domain'
 import { AccountingTransactionSchema } from '../accounting/schema'
-import { NonTradeActivityStatementSchema } from '../broker/alpaca/model'
+import { NonTradeActivityStatementSchema, type verifyNonTradeActivityStatement } from '../broker/alpaca/model'
 import { decimalToMicrosResult } from '../broker/alpaca/normalizers'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
@@ -78,7 +78,7 @@ export const confirmEquityFeeCash = (
     readonly asOf: string
     readonly accountIdentityHash: string
     readonly anchors: typeof FeeSettlementAnchorsSchema.Type
-    readonly statement: typeof NonTradeActivityStatementSchema.Type
+    readonly statement: Result.Result.Success<ReturnType<typeof verifyNonTradeActivityStatement>>
   },
 ) =>
   Result.gen(function* () {

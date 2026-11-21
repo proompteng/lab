@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { verifyNonTradeActivityStatement } from '../broker/alpaca/model'
 import { OrderSide } from '../execution/contracts'
 import { coinActivity } from '../forward-performance/coin-fee-episodes.test-support'
 import type { confirmEquityFeeCash } from './equity-fee-cash'
@@ -92,19 +93,30 @@ export const equityFeeCashFixture = (
   const openingAt = shift(session.openAt, -10_000)
   const recoveryAt = shift(session.recoveryCloseAt, -10_000)
   const scanEvidence = { ...read, observedAt: statementAt }
-  const pass = (activityIds: string[]) =>
-    [
-      { pageToken: null, evidence: scanEvidence, activityIds },
-      { pageToken: activityIds.at(-1) ?? null, evidence: scanEvidence, activityIds: [] },
-    ] as const
   const activities = receipts.map((receipt) => ({
-    activityId: receipt.data.activityId,
-    activityType: 'FEE',
+    id: receipt.data.activityId,
+    activity_type: 'FEE',
     date: receipt.data.date,
-    netAmount: '-0.01',
-    createdAt: null,
+    net_amount: '-0.01',
   }))
-  const ids = activities.map((row) => row.activityId)
+  const pass = (body: typeof activities) =>
+    [
+      { pageToken: null, evidence: { ...scanEvidence, contentHash: testHash(body) }, body },
+      {
+        pageToken: body.at(-1)?.id ?? null,
+        evidence: { ...scanEvidence, contentHash: testHash([]) },
+        body: [],
+      },
+    ] as const
+  const statement = {
+    schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v1' as const,
+    accountIdentityHash: identity.identityHash,
+    observedAt: statementAt,
+    window: { after: shift(openingAt, -1_000), until: shift(statementAt, -1_000) },
+    accountRead: scanEvidence,
+    firstPass: pass(activities),
+    secondPass: pass(activities.toReversed()),
+  }
   const evidence: Parameters<typeof confirmEquityFeeCash>[4] = {
     asOf: statementAt,
     accountIdentityHash: identity.identityHash,
@@ -139,16 +151,7 @@ export const equityFeeCashFixture = (
         })),
       },
     ],
-    statement: {
-      schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v1',
-      accountIdentityHash: identity.identityHash,
-      observedAt: statementAt,
-      window: { after: shift(openingAt, -1_000), until: shift(statementAt, -1_000) },
-      accountRead: scanEvidence,
-      firstPass: pass(ids),
-      secondPass: pass(ids.toReversed()),
-      activities,
-    },
+    statement: Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)),
   }
-  return { identity, accountHash, forward, evidence, receipts, openFill, closeFill, statementAt }
+  return { identity, accountHash, forward, evidence, receipts, openFill, closeFill, statementAt, statement }
 }

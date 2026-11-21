@@ -1,9 +1,9 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Context, Effect, Layer, Redacted, Result, type Schema, Scope } from 'effect'
+import { Cause, Context, Effect, Layer, Redacted, Result, Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
-import { canonicalHashV1Result, canonicalJsonEqualV1, renderCanonicalJsonFailure } from '../../hash'
+import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { type BrokerConnection } from '../connection'
@@ -32,7 +32,7 @@ import {
   decodeFillActivities,
   decodeFeeActivities,
   decodeFeeActivitiesQuery,
-  decodeNonTradeActivities,
+  decodeNonTradeActivityPage,
   decodeNonTradeActivityWindow,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
@@ -43,6 +43,9 @@ import {
   decodeOrdersQuery,
   decodePositions,
   redactedHeaders,
+  NonTradeActivityStatementSchema,
+  nonTradeActivityInScope,
+  verifyNonTradeActivityStatement,
   responseParseOptions,
   SortDirection,
   type BrokerReadShape,
@@ -527,16 +530,7 @@ export const make = (connection: BrokerConnection) =>
       const readDirection = (direction: SortDirection) =>
         Effect.gen(function* () {
           const pages = []
-          const items = new Map<
-            string,
-            {
-              readonly activityId: string
-              readonly activityType: string
-              readonly date: string | null
-              readonly createdAt: string | null
-              readonly netAmount: string | null
-            }
-          >()
+          const seen = new Set<string>()
           let pageToken: string | undefined
           for (let index = 0; index < 100; index++) {
             const request = fillActivitiesRequest(connection, {
@@ -546,38 +540,20 @@ export const make = (connection: BrokerConnection) =>
             })
             request.url.pathname = '/v2/account/activities'
             request.url.searchParams.set('category', 'non_trade_activity')
-            const { value, evidence } = yield* readResponse(operation, request.url, decodeNonTradeActivities)
-            for (const row of value) {
-              if (
-                row.activity_type === 'FILL' ||
-                items.has(row.id) ||
-                (row.account_id !== undefined && row.account_id !== verifiedAccount.value.id) ||
-                (row.created_at !== undefined &&
-                  (Date.parse(row.created_at) < Date.parse(bounds.after) ||
-                    Date.parse(row.created_at) >= Date.parse(bounds.until)))
-              ) {
+            const { value, evidence } = yield* readResponse(operation, request.url, decodeNonTradeActivityPage)
+            for (const row of value.rows) {
+              if (seen.has(row.id) || !nonTradeActivityInScope(row, verifiedAccount.value.id, bounds)) {
                 return yield* invalidResponse({
                   operation,
                   message: 'Alpaca returned an out-of-scope or repeated activity',
                   evidence,
                 })
               }
-              items.set(row.id, {
-                activityId: row.id,
-                activityType: row.activity_type,
-                date: row.date ?? null,
-                createdAt: row.created_at ?? null,
-                netAmount: row.net_amount ?? null,
-              })
+              seen.add(row.id)
             }
-            pages.push({ pageToken: pageToken ?? null, evidence, activityIds: value.map((row) => row.id) })
-            const lastItem = value.at(-1)
-            if (lastItem === undefined) {
-              return {
-                items: [...items.values()].sort((left, right) => left.activityId.localeCompare(right.activityId)),
-                pages,
-              }
-            }
+            pages.push({ pageToken: pageToken ?? null, evidence, body: value.body })
+            const lastItem = value.rows.at(-1)
+            if (lastItem === undefined) return pages
             pageToken = lastItem.id
           }
           return yield* invalidResponse({
@@ -585,24 +561,25 @@ export const make = (connection: BrokerConnection) =>
             message: 'Alpaca non-trade activity pagination exceeded its bound',
           })
         })
-      const ascending = yield* readDirection(SortDirection.Ascending)
-      const descending = yield* readDirection(SortDirection.Descending)
-      if (!canonicalJsonEqualV1(ascending.items, descending.items)) {
-        return yield* invalidResponse({
-          operation,
-          message: 'Alpaca activity history changed between pagination passes',
-        })
-      }
-      return {
+      const firstPass = yield* readDirection(SortDirection.Ascending)
+      const secondPass = yield* readDirection(SortDirection.Descending)
+      const statement = yield* Schema.decodeUnknownEffect(NonTradeActivityStatementSchema)({
         schemaVersion: 'bayn.alpaca-non-trade-activity-statement.v1' as const,
         accountIdentityHash: connection.identity.identityHash,
         window: bounds,
         accountRead: verifiedAccount.evidence,
-        firstPass: ascending.pages,
-        secondPass: descending.pages,
-        activities: ascending.items,
+        firstPass,
+        secondPass,
         observedAt: yield* currentUtcInstant,
-      }
+      }).pipe(
+        Effect.mapError(() =>
+          invalidResponse({ operation, message: 'Alpaca activity statement has invalid structure' }),
+        ),
+      )
+      yield* Effect.fromResult(verifyNonTradeActivityStatement(statement, verifiedAccount.value.id)).pipe(
+        Effect.mapError((message) => invalidResponse({ operation, message })),
+      )
+      return statement
     })
 
     return {

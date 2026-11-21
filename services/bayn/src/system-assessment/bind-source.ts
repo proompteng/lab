@@ -5,6 +5,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { BrokerEnvironment } from '../broker/identity'
+import { verifyNonTradeActivityStatement } from '../broker/alpaca/model'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { SystemAssessmentInputSchema } from './assessment'
@@ -122,6 +123,14 @@ export const bindSystemSourceCut = (
           })) !== definition.accountBindingHash)
       )
         return yield* fail('Native cash witnesses belong to a different registered account')
+      const retainedStatement = retainedCash?.brokerNonTradeActivity
+      const statement =
+        retainedStatement !== undefined && retainedStatement.accountIdentityHash === cashAccount?.identity.identityHash
+          ? yield* Result.mapError(
+              verifyNonTradeActivityStatement(retainedStatement, cashAccount.identity.accountId),
+              (message) => new SystemAssessmentError({ message }),
+            )
+          : undefined
       const sessions = []
       let openingQualificationEquity: bigint | null = BigInt(registeredAllocationMicros(data.registration))
       for (const session of policy.sessions) {
@@ -134,7 +143,6 @@ export const bindSystemSourceCut = (
         const calendar = data.registration.calendar.sessions.find((s) => s.sessionDate === session.sessionDate)
         const observation = account?.sessions.find((s) => s.sessionDate === session.sessionDate)
         const providerSession = nativeCalendar?.providerSessions.find((entry) => entry.date === session.sessionDate)
-        const statement = retainedCash?.brokerNonTradeActivity
         const facts = observation?.facts
         const proof =
           calendar !== undefined &&

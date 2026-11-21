@@ -1,5 +1,5 @@
 import type Undici from '@effect/platform-node/Undici'
-import { Context, DateTime, Effect, Option, Schema, SchemaTransformation, type Result } from 'effect'
+import { Context, DateTime, Effect, Option, Result, Schema, SchemaTransformation } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
 import {
@@ -11,6 +11,7 @@ import {
 } from '../../schemas'
 import type { BrokerProvider } from '../connection'
 import type { EquityProviderSession } from '../../equity-hours'
+import { canonicalHashV1Result, canonicalJsonEqualV1 } from '../../hash'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
 
@@ -673,7 +674,7 @@ export const decodeFeeActivities = Schema.decodeUnknownResult(
 )
 
 // Preserve unfamiliar non-trade activity types so a financial proof can reject unsupported movements.
-export const decodeNonTradeActivities = Schema.decodeUnknownResult(
+const decodeNonTradeActivities = Schema.decodeUnknownResult(
   Schema.Array(
     Schema.Struct({
       id: ActivityId,
@@ -686,6 +687,15 @@ export const decodeNonTradeActivities = Schema.decodeUnknownResult(
   ).check(Schema.isMaxLength(defaultFillActivitiesPageSize)),
   responseParseOptions,
 )
+
+const ActivityPageBody = Schema.Array(Schema.Unknown).check(Schema.isMaxLength(defaultFillActivitiesPageSize))
+const decodeActivityPageBody = Schema.decodeUnknownResult(ActivityPageBody)
+export const decodeNonTradeActivityPage = (input: unknown) =>
+  Result.gen(function* () {
+    const body = yield* decodeActivityPageBody(input)
+    const rows = yield* decodeNonTradeActivities(body)
+    return { body, rows }
+  })
 
 const NonTradeActivityWindow = Schema.Struct({ after: UtcInstantSchema, until: UtcInstantSchema }).check(
   Schema.makeFilter((window) => window.after < window.until || 'must be an ordered creation-time window'),
@@ -711,7 +721,7 @@ const ActivityPass = Schema.NonEmptyArray(
   Schema.Struct({
     pageToken: Schema.NullOr(ActivityId),
     evidence: ActivityRead,
-    activityIds: Schema.Array(ActivityId).check(Schema.isMaxLength(defaultFillActivitiesPageSize)),
+    body: ActivityPageBody,
   }),
 ).check(Schema.isMaxLength(100))
 
@@ -722,46 +732,80 @@ export const NonTradeActivityStatementSchema = Schema.Struct({
   accountRead: ActivityRead,
   firstPass: ActivityPass,
   secondPass: ActivityPass,
-  activities: Schema.Array(
-    Schema.Struct({
-      activityId: ActivityId,
-      activityType: Schema.String.check(Schema.isPattern(/^[A-Z][A-Z_0-9]{0,31}$/)),
-      date: Schema.NullOr(Schema.Union([IsoDate, Timestamp])),
-      createdAt: Schema.NullOr(Timestamp),
-      netAmount: Schema.NullOr(Decimal),
-    }),
-  ),
   observedAt: UtcInstantSchema,
-}).check(
-  Schema.makeFilter((statement) => {
-    if (statement.accountRead.observedAt < statement.window.until) return 'account read predates the statement window'
-    const expected = new Set(statement.activities.map((activity) => activity.activityId))
-    if (expected.size !== statement.activities.length) return 'statement repeats an activity'
+})
+
+export const nonTradeActivityInScope = (
+  row: Result.Result.Success<ReturnType<typeof decodeNonTradeActivities>>[number],
+  accountId: string,
+  window: typeof NonTradeActivityWindow.Type,
+) => {
+  const createdAt = row.created_at === undefined ? null : Date.parse(row.created_at)
+  return (
+    row.activity_type !== 'FILL' &&
+    (row.account_id === undefined || row.account_id === accountId) &&
+    (createdAt === null || (createdAt >= Date.parse(window.after) && createdAt < Date.parse(window.until)))
+  )
+}
+
+export const verifyNonTradeActivityStatement = (
+  statement: typeof NonTradeActivityStatementSchema.Type,
+  accountId: string,
+) =>
+  Result.gen(function* () {
+    if (statement.accountRead.observedAt < statement.window.until)
+      return yield* Result.fail('Alpaca account read predates the activity window')
     let observedAt = statement.accountRead.observedAt
-    for (const pass of [statement.firstPass, statement.secondPass]) {
+    const scan = (pass: typeof ActivityPass.Type) => {
       const seen = new Set<string>()
+      const activities = []
       let token: string | null = null
       for (const [index, page] of pass.entries()) {
-        const last = page.activityIds.at(-1)
+        const hash = canonicalHashV1Result(page.body)
+        const rows = decodeNonTradeActivities(page.body)
+        if (Result.isFailure(hash) || hash.success !== page.evidence.contentHash || Result.isFailure(rows))
+          return Result.fail('Alpaca activity page body differs from its recorded response')
+        const last = rows.success.at(-1)
         if (
           page.pageToken !== token ||
           page.evidence.observedAt < observedAt ||
           page.evidence.observedAt > statement.observedAt ||
           (last === undefined) !== (index === pass.length - 1)
         )
-          return 'statement page chain or terminal page differs'
+          return Result.fail('Alpaca activity page cursors, clocks or terminal page differ')
         observedAt = page.evidence.observedAt
-        token = last ?? null
-        for (const id of page.activityIds) {
-          if (!expected.has(id) || seen.has(id)) return 'statement page has a foreign or repeated activity'
-          seen.add(id)
+        token = last?.id ?? null
+        for (const row of rows.success) {
+          if (seen.has(row.id) || !nonTradeActivityInScope(row, accountId, statement.window))
+            return Result.fail('Alpaca activity page contains an out-of-scope or repeated activity')
+          seen.add(row.id)
+          activities.push({
+            activityId: row.id,
+            activityType: row.activity_type,
+            date: row.date ?? null,
+            netAmount: row.net_amount ?? null,
+            createdAt: row.created_at ?? null,
+          })
         }
       }
-      if (seen.size !== expected.size) return 'statement page chain omits an activity'
+      return Result.succeed(activities.sort((left, right) => left.activityId.localeCompare(right.activityId)))
     }
-    return true
-  }),
-)
+    const activities = yield* scan(statement.firstPass)
+    const descending = yield* scan(statement.secondPass)
+    if (!canonicalJsonEqualV1(activities, descending))
+      return yield* Result.fail('Alpaca activity history changed between pagination passes')
+    const sourceHash = yield* Result.mapError(
+      canonicalHashV1Result(statement),
+      () => 'Alpaca activity statement cannot be canonically hashed',
+    )
+    return {
+      accountIdentityHash: statement.accountIdentityHash,
+      window: statement.window,
+      observedAt: statement.observedAt,
+      sourceHash,
+      activities,
+    }
+  })
 
 export const FillActivityResponseSchema = Schema.Struct({
   activity_type: Schema.Literal('FILL'),

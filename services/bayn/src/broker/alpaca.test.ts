@@ -14,6 +14,7 @@ import {
   AssetStatus,
   BrokerRead,
   NonTradeActivityStatementSchema,
+  verifyNonTradeActivityStatement,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -1522,8 +1523,8 @@ describe('Alpaca paper reads', () => {
     ])
     expect(result.accountIdentityHash).toBe(options.identity.identityHash)
     expect(result.window).toEqual(bounds)
-    expect(Result.isSuccess(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))).toBe(true)
-    expect(result.activities).toEqual([
+    const statement = Result.getOrThrow(Schema.decodeUnknownResult(NonTradeActivityStatementSchema)(result))
+    expect(Result.getOrThrow(verifyNonTradeActivityStatement(statement, accountId)).activities).toEqual([
       {
         activityId: deposit.id,
         activityType: 'CSD',
@@ -1533,8 +1534,8 @@ describe('Alpaca paper reads', () => {
       },
       { activityId: fee.id, activityType: 'FEE', date: fee.date, createdAt: null, netAmount: '-0.21' },
     ])
-    expect(result.firstPass.at(-1)?.activityIds).toEqual([])
-    expect(result.secondPass.at(-1)?.activityIds).toEqual([])
+    expect(result.firstPass.at(-1)?.body).toEqual([])
+    expect(result.secondPass.at(-1)?.body).toEqual([])
     expect(result.firstPass[1]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee])))
   })
 

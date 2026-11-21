@@ -47,7 +47,7 @@ describe('immutable source binding', () => {
     const provider = registration.calendar.marketCalendar.providerSessions[0]!
     const definition = registration.policies.find((p) => p.policy === 'JEV')!
     const captured = cut.financial.find((a) => a.policy === 'JEV')!
-    const { identity, forward, evidence, accountHash, openFill, closeFill } = equityFeeCashFixture(
+    const { identity, forward, evidence, accountHash, openFill, closeFill, statement } = equityFeeCashFixture(
       { ...session, recoveryCloseAt: provider.sessionCloseAt },
       definition.riskPolicy.accountId,
     )
@@ -73,7 +73,7 @@ describe('immutable source binding', () => {
       valuation: { inventorySourceHash: testHash('positions'), positions },
     }))
     const retained = {
-      brokerNonTradeActivity: evidence.statement,
+      brokerNonTradeActivity: statement,
       accounts: [{ policy: definition.policy, identity, forward, settlementAnchors: evidence.anchors }],
     }
     const bound = (sourceMaterial: unknown) => {
@@ -146,10 +146,46 @@ describe('immutable source binding', () => {
       Result.isFailure(
         bound({
           ...retained,
-          brokerNonTradeActivity: { ...evidence.statement, secondPass: evidence.statement.secondPass.slice(0, 1) },
+          brokerNonTradeActivity: { ...statement, secondPass: statement.secondPass.slice(0, 1) },
         }),
       ),
     ).toBe(true)
+
+    const movements = [
+      {
+        id: `${session.sessionDate}::d7a201b7-679b-44d8-b76b-d352a25de736`,
+        activity_type: 'CSD',
+        date: session.sessionDate,
+        net_amount: '25.00',
+      },
+      {
+        id: `${session.sessionDate}::d7a201b7-679b-44d8-b76b-d352a25de737`,
+        activity_type: 'CSW',
+        date: session.sessionDate,
+        net_amount: '-25.00',
+      },
+    ]
+    const withMovements = (pass: typeof statement.firstPass, descending: boolean) => {
+      const body = descending ? [...movements.toReversed(), ...pass[0].body] : [...pass[0].body, ...movements]
+      return [
+        { ...pass[0], body, evidence: { ...pass[0].evidence, contentHash: testHash(body) } },
+        { ...pass[1], pageToken: descending ? pass[1].pageToken : movements[1]!.id },
+      ] as const
+    }
+    const original = {
+      ...statement,
+      firstPass: withMovements(statement.firstPass, false),
+      secondPass: withMovements(statement.secondPass, true),
+    }
+    expect(firstSession(bound({ ...retained, brokerNonTradeActivity: original }))?.financial).toBeNull()
+    const withoutMovements = {
+      ...statement,
+      firstPass: [{ ...statement.firstPass[0], evidence: original.firstPass[0].evidence }, statement.firstPass[1]],
+      secondPass: [{ ...statement.secondPass[0], evidence: original.secondPass[0].evidence }, statement.secondPass[1]],
+    }
+    const omitted = bound({ ...retained, brokerNonTradeActivity: withoutMovements })
+    if (Result.isSuccess(omitted)) throw new Error('Expected omitted activity to fail source verification')
+    expect(omitted.failure).toMatchObject({ message: 'Alpaca activity page body differs from its recorded response' })
   })
 
   test('packet financial claims cannot supply an uncaptured control account', () => {

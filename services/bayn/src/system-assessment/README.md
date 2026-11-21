@@ -152,9 +152,11 @@ financial evidence. The registered rate supplies the comparison amount. Posted r
 Terminal inventory, unresolved orders, the independent cash bridge, and operating costs retain their evidence requirements.
 Native financial capture also retains the configured PAPER account's observed Alpaca non-trade statement after broker
 recovery. The account read verifies the credential identity. The activity read scans all non-trade types, follows
-provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The source cut
-retains the requested creation-time interval, page evidence and actual observation time. This statement covers the
-provider's reported activity during that interval. Capture also retains actual before-open, broker recovery, and later
+provider cursors to an empty terminal page in both directions, and requires the same normalized rows. The private
+source cut retains the original JSON response bodies, recorded response digests, requested creation-time interval,
+and actual observation time. Assessment checks each digest and derives the activity rows and cursors from those
+bodies. This statement covers the provider's reported activity during that interval. Capture also retains actual
+before-open, broker recovery, and later
 exact reconciliation cash observations with their inventory witnesses and fee posting timestamps. The reconciliation
 transaction retains the exact account event and position snapshot it compared. Settlement capture uses that pair.
 Historical reconciliations without the durable pair provide no settlement witness. For independent opening and recovery
