@@ -29,7 +29,14 @@ jobs:
     uses: ./.github/workflows/dorvud.yml
 
   facteur:
-    uses: ./.github/workflows/facteur-ci.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/validate-go-service
+        with:
+          service: facteur
+          coverage-title: Facteur Coverage
 
   feature-flags:
     uses: ./.github/workflows/feature-flags-ci.yml
@@ -62,7 +69,13 @@ jobs:
     uses: ./.github/workflows/khoshut-ci.yml
 
   miel:
-    uses: ./.github/workflows/miel-ci.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/validate-go-service
+        with:
+          service: miel
 
   nuc-omni-serve:
     uses: ./.github/workflows/nuc-omni-serve.yaml
