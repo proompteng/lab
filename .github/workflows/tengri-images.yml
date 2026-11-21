@@ -1,6 +1,8 @@
 name: Tengri images
 
 on:
+  merge_group:
+    types: [checks_requested]
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
@@ -80,6 +82,10 @@ on:
       - tsconfig.base.json
       - nix/images/relativize-bun-cache.sh
       - nix/images/prune-bun-dependency-metadata.sh
+      - '!apps/landing/README.md'
+      - '!services/ofz/README.md'
+      - '!services/tengri/README.md'
+      - '!services/nanoagent/README.md'
   workflow_dispatch:
 
 concurrency:
@@ -210,9 +216,9 @@ jobs:
           GOWORK=off go vet ./...
 
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     name: Build native (${{ format('{0}, {1}', matrix.image, matrix.architecture) }})
-    timeout-minutes: 120
+    timeout-minutes: ${{ matrix.image == 'nanoagent' && 360 || 240 }}
     strategy:
       fail-fast: false
       matrix:
@@ -254,8 +260,9 @@ jobs:
             org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
-          # Intermediate cache export can outlast publication of the image itself.
-          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=min,ignore-error=true
+          # The release images copy build artifacts out of their package and compiler stages.
+          # Keep those stages reusable across releases, including when the final artifact changes.
+          cache-to: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
 
@@ -273,7 +280,7 @@ jobs:
           (cd "$directory" && sha256sum --check SHA256SUMS)
 
   publish:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:
       - build
       - validate-tengri

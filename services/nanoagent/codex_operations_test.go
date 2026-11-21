@@ -99,10 +99,13 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 	const originalBoot = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	const replacementBoot = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	const reconcile = `{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`
+	unsupportedHistory := json.RawMessage(`{"code":-32601,"message":"thread/items/list is not supported yet"}`)
 	for _, test := range []struct {
 		name, boot, currentBoot string
 		retainedBoot            bool
 		historyError            json.RawMessage
+		resumeError             json.RawMessage
+		retainedHistory         json.RawMessage
 		wantReleased            bool
 	}{
 		{name: "record predates boot evidence", currentBoot: replacementBoot},
@@ -112,6 +115,30 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 		{
 			name: "legacy operation with no native rollout", currentBoot: replacementBoot, retainedBoot: true, wantReleased: true,
 			historyError: json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
+		},
+		{
+			name: "history methods unavailable for missing rollout", currentBoot: replacementBoot, retainedBoot: true, wantReleased: true,
+			historyError: unsupportedHistory,
+			resumeError:  json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
+		},
+		{
+			name: "missing rollout error for another thread", currentBoot: replacementBoot, retainedBoot: true,
+			historyError: unsupportedHistory,
+			resumeError:  json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id another-thread"}`),
+		},
+		{
+			name: "rollout lookup unavailable", currentBoot: replacementBoot, retainedBoot: true,
+			historyError: unsupportedHistory,
+			resumeError:  json.RawMessage(`{"code":-32603,"message":"history store unavailable"}`),
+		},
+		{
+			name: "retained rollout contains the accepted turn", currentBoot: replacementBoot, retainedBoot: true,
+			historyError:    unsupportedHistory,
+			retainedHistory: json.RawMessage(`{"data":[{"turnId":"turn-1","item":{"type":"userMessage","clientId":"11111111-1111-4111-8111-111111111111"}}]}`),
+		},
+		{
+			name: "unsupported history from the same boot", boot: originalBoot, currentBoot: originalBoot,
+			historyError: unsupportedHistory,
 		},
 		{
 			name: "native history read failure", currentBoot: replacementBoot, retainedBoot: true,
@@ -142,9 +169,13 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			result := make(chan error, 1)
+			expected := `{"outcome":"unconfirmed"}`
+			if test.retainedHistory != nil {
+				expected = `{"turn":{"id":"turn-1","status":"inProgress"}}`
+			}
 			go func() {
 				recovered, err := replacement.call(ctx, "tengri/reconcileOperation", json.RawMessage(reconcile))
-				if err == nil && string(recovered.result) != `{"outcome":"unconfirmed"}` {
+				if err == nil && string(recovered.result) != expected {
 					err = fmt.Errorf("unexpected recovery result %s", recovered.result)
 				}
 				result <- err
@@ -158,8 +189,34 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 			} else {
 				replacement.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"data":[]}`)})
 			}
+			if test.resumeError != nil || test.retainedHistory != nil {
+				select {
+				case err := <-result:
+					t.Fatalf("recovery did not check for the exact rollout: %v", err)
+				case message := <-writer.messages:
+					if err := json.Unmarshal(message, &request); err != nil || request.Method != "thread/resume" {
+						t.Fatalf("recovery must only resume the retained thread: %s", message)
+					}
+					thread, valid := codexThreadID(request.Params)
+					if !valid || thread != "thread-1" {
+						t.Fatalf("recovery did not check the original conversation: %s", message)
+					}
+				case <-ctx.Done():
+					t.Fatal("timed out waiting for the native rollout check")
+				}
+				if test.resumeError != nil {
+					replacement.resolveResponse(codexRPCMessage{ID: request.ID, Error: test.resumeError})
+				} else {
+					replacement.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"thread":{"id":"thread-1"}}`)})
+					request = readCodexWireRequest(t, writer)
+					if request.Method != "thread/items/list" {
+						t.Fatalf("opening a retained thread must only retry its history: %s", request.Method)
+					}
+					replacement.resolveResponse(codexRPCMessage{ID: request.ID, Result: test.retainedHistory})
+				}
+			}
 			err := <-result
-			if !test.wantReleased {
+			if !test.wantReleased && test.retainedHistory == nil {
 				if !errors.Is(err, errCodexOperationUnknown) {
 					t.Fatalf("operation with no cold-boot proof was released: %v", err)
 				}
@@ -169,8 +226,8 @@ func TestCodexReconciliationReleasesOnlyAnOperationFencedByAColdBoot(t *testing.
 				t.Fatal(err)
 			}
 			repeated, err := replacement.call(ctx, "turn/start", json.RawMessage(operationParams))
-			if err != nil || string(repeated.result) != `{"outcome":"unconfirmed"}` {
-				t.Fatalf("the same operation must remain unconfirmed: %s %v", repeated.result, err)
+			if err != nil || string(repeated.result) != expected {
+				t.Fatalf("the same operation must return its recovered outcome: %s %v", repeated.result, err)
 			}
 			go func() {
 				_, err := replacement.call(ctx, "turn/start", json.RawMessage(strings.ReplaceAll(operationParams, "11111111", "22222222")))

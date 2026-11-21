@@ -25,6 +25,10 @@ env:
   UPSTREAM_IMAGE: ghcr.io/block/buzz@sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428
   IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/buzz
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     if: github.event_name == 'pull_request'
@@ -71,6 +75,7 @@ jobs:
           ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: false
+          no-cache-filters: verify
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
             UPSTREAM_IMAGE=${{ matrix.upstream_image }}
@@ -121,6 +126,7 @@ jobs:
           ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: true
+          no-cache-filters: verify
           tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}

@@ -718,7 +718,7 @@ describe('final broker mutation authority', () => {
       ...fresh,
       projection: {
         fresh,
-        snapshot: unusedRead,
+        reconciliationSnapshot: unusedRead,
         invalidate: Effect.void,
         withMutation: (effect) => effect,
         submissionSnapshot: (id) =>

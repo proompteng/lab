@@ -27,23 +27,24 @@ parser accepts Alpaca's text and binary JSON frames; the original update JSON re
 flowchart LR
   A[Verify Bayn account] --> B[Authenticate and acknowledge subscription]
   B --> C[Signed SessionReady and TradeUpdate]
-  C --> K[Kafka: bayn.broker-notifications.v1]
-  K --> R[Standalone Restate Kafka ingress]
-  R --> O[Bayn canonical broker observation]
+  C -->|direct HTTP plus stable idempotency key| R[Restate durable ingress]
+  R --> S[Immutable source ledger]
+  S --> O[Immediate order, fill and accounting projection]
+  R --> G[Serialized canonical gap reconciliation]
   O --> D[Serialized account decision and execution]
 ```
 
 Notifications carry a session ID, account identity hash, credential fingerprint, source revision and original receipt
-time. HMAC-SHA256 over the exact message bytes uses the existing broker secret; the Kafka adapter receives only Kafka
-credentials. The Kotlin/TypeScript contract is checked against `fixtures/bayn-broker-notification-v1.json`, which
-contains synthetic credentials. These notifications request canonical account reconciliation; they never post fills,
-fees or ledger transfers directly.
+time. HMAC-SHA256 over the exact message bytes uses the existing broker secret. The Kotlin/TypeScript contract is
+checked against `fixtures/bayn-broker-notification-v1.json`, which contains synthetic credentials. Bayn verifies and
+persists the source before projection; Dorvud cannot grant account, risk or capital authority.
 
-The producer awaits Kafka acknowledgement before reading the next update. A failed acknowledgement closes the session
-and reconnects with a new verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than
-once. Stable update IDs deduplicate transport retries; the financial stores retain their independent idempotency rules.
-`/readyz` becomes ready only after the verified session notification has been acknowledged by Kafka, and resets on
-disconnect. `/metrics` exposes `dorvud_broker_feed_ready`, publications and session failures without account labels.
+The producer awaits a successful Restate receipt before reading the next update. It retries transient HTTP failures
+with the same idempotency key; a terminal response or exhausted connection ends the session and reconnects with a new
+verified `SessionReady`, allowing canonical gap repair. Updates can be delivered more than once. Stable update IDs,
+Restate receipts, the immutable source ledger and the financial stores retain independent idempotency boundaries.
+`/readyz` becomes ready only after the verified session notification has been durably acknowledged, and resets on
+disconnect. `/metrics` exposes readiness, publications and session failures without account labels.
 
 Market-data and trade-update sessions allow up to five seconds for a graceful WebSocket close, then cancel that
 session and close both channels. This bounds Ktor's otherwise unbounded close/flush path after a network failure,
@@ -53,8 +54,8 @@ propagates immediately; readiness, establishment deadlines, publication acknowle
 Configuration requires `BAYN_ALPACA_ACCOUNT_ID`, `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`,
 `BAYN_ALPACA_BASE_URL=https://paper-api.alpaca.markets`,
 `BAYN_ALPACA_PROXY_URL=http://bayn-egress-proxy:3128`, the 40-character `DORVUD_SOURCE_REVISION`,
-`BAYN_BROKER_NOTIFICATIONS_TOPIC=bayn.broker-notifications.v1`, and authenticated `KAFKA_BOOTSTRAP`,
-`KAFKA_SECURITY_PROTOCOL`, `KAFKA_SASL_USER` and `KAFKA_SASL_PASSWORD`. Live broker destinations are rejected.
+and `RESTATE_INGRESS_URL=http://restate.restate.svc.cluster.local:8080`. Live broker and non-cluster Restate
+destinations are rejected.
 The existing Torghut collector retains its own account, topics and release path.
 
 Run `./gradlew :websockets:ktlintCheck :websockets:test` for real local HTTP/WebSocket contract tests, including

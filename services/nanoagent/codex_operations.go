@@ -245,12 +245,25 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 	for page := 0; page < 256; page++ {
 		params, _ := json.Marshal(map[string]any{"threadId": op.Thread, "cursor": cursor, "limit": 100, "sortDirection": "desc"})
 		result, err := supervisor.request(ctx, "thread/items/list", params, true, nil)
-		if err != nil {
-			var rpcError *codexRPCError
-			if page == 0 && errors.As(err, &rpcError) && rpcError.code == -32600 &&
-				rpcError.message == "no rollout found for thread id "+op.Thread {
+		var rpcError *codexRPCError
+		if page == 0 && op.Method == "turn/start" && supervisor.operationBootEnded(op) && errors.As(err, &rpcError) {
+			if rpcError.code == -32600 && rpcError.message == codexMissingRolloutMessagePrefix+op.Thread {
 				return supervisor.settleUnconfirmedStart(op)
 			}
+			if rpcError.code == -32601 && rpcError.message == "thread/items/list is not supported yet" {
+				// Codex can report unsupported item paging when there is no rollout.
+				// Resume the exact thread to distinguish a missing rollout from unread history.
+				resume := codexResumeParams(op.Thread)
+				_, resumeErr := supervisor.request(ctx, "thread/resume", resume, true, result.generation)
+				if isMissingCodexConversation("thread/resume", resume, resumeErr) {
+					return supervisor.settleUnconfirmedStart(op)
+				}
+				if resumeErr == nil {
+					result, err = supervisor.request(ctx, "thread/items/list", params, true, result.generation)
+				}
+			}
+		}
+		if err != nil {
 			return op, errCodexOperationUnknown
 		}
 		bytes += len(result.result)
@@ -299,6 +312,11 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 	return op, errCodexOperationUnknown
 }
 
+func codexResumeParams(thread string) json.RawMessage {
+	params, _ := json.Marshal(map[string]any{"threadId": thread, "historyMode": "paginated", "excludeTurns": true})
+	return params
+}
+
 func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method string, params json.RawMessage, generation *codexProcessGeneration, lateReply func(codexCallResult, error)) (codexCallResult, error) {
 	if method != "tengri/resolveApproval" {
 		result, err := supervisor.requestWithLateReply(ctx, method, params, true, generation, lateReply)
@@ -310,8 +328,7 @@ func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method
 			!errors.As(err, &rpcError) || rpcError.code != -32600 || rpcError.message != "thread not found: "+input.Thread {
 			return result, err
 		}
-		resume, _ := json.Marshal(map[string]any{"threadId": input.Thread, "historyMode": "paginated", "excludeTurns": true})
-		if _, err := supervisor.request(ctx, "thread/resume", resume, true, result.generation); err != nil {
+		if _, err := supervisor.request(ctx, "thread/resume", codexResumeParams(input.Thread), true, result.generation); err != nil {
 			return result, &codexUnsentRequestError{err}
 		}
 		return supervisor.requestWithLateReply(ctx, method, params, true, result.generation, lateReply)
