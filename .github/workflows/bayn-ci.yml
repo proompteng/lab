@@ -42,6 +42,7 @@ jobs:
               - '!services/bayn/formal/**'
               - 'services/dorvud/**'
               - 'packages/scripts/src/bayn/**'
+              - '!packages/scripts/src/bayn/**/*.test.ts'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
               - 'argocd/applications/bayn/**'
               - '!argocd/applications/bayn/README.md'
