@@ -99,13 +99,6 @@ test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs',
 
 test('native PR validation preserves image publication and cache warming boundaries', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/nix-oci-build-common.yml', 'utf8'))
-  const indexInput = property(property(property(workflow, 'on'), 'workflow_call'), 'inputs')
-  expect(property(indexInput, 'publish_index')).toEqual({
-    description: 'Publish the index here; disable only when the caller prepares a verified image cohort',
-    required: false,
-    type: 'boolean',
-    default: true,
-  })
   const jobs = property(workflow, 'jobs')
   const steps = property(property(jobs, 'build-platform'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing native build steps')
@@ -116,7 +109,7 @@ test('native PR validation preserves image publication and cache warming boundar
     )
   const conditions = [
     [stepCondition('Push platform image without Docker'), 'publish'],
-    [property(property(jobs, 'publish-index'), 'if'), 'index'],
+    [property(property(jobs, 'publish-index'), 'if'), 'publish'],
     [stepCondition('Warm Nix build outputs in Attic'), 'warm'],
   ] as const
   for (const [event, ref, publishOnDispatch, publish, warm] of [
@@ -130,16 +123,14 @@ test('native PR validation preserves image publication and cache warming boundar
     ['workflow_dispatch', 'refs/heads/feature', false, false, false],
     ['workflow_dispatch', 'refs/heads/feature', true, true, false],
   ] as const) {
-    for (const publishIndex of [true, false]) {
-      for (const [condition, boundary] of conditions) {
-        const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
-        expect(
-          runInNewContext(expression, {
-            github: { event_name: event, ref },
-            inputs: { publish_on_dispatch: publishOnDispatch, publish_index: publishIndex },
-          }),
-        ).toBe(boundary === 'warm' ? warm : publish && (boundary !== 'index' || publishIndex))
-      }
+    for (const [condition, boundary] of conditions) {
+      const expression = text(condition).replace(/^\s*\$\{\{|\}\}\s*$/g, '')
+      expect(
+        runInNewContext(expression, {
+          github: { event_name: event, ref },
+          inputs: { publish_on_dispatch: publishOnDispatch },
+        }),
+      ).toBe(boundary === 'publish' ? publish : warm)
     }
   }
 })
@@ -431,7 +422,15 @@ test('Devbox requires native validation in the queue with publication confined t
   expect(property(release, 'needs')).toBe('validate')
   expect(property(release, 'permissions')).toEqual({ contents: 'read', 'id-token': 'write' })
   const validationJobs = property(validation, 'jobs')
-  expect(property(property(validationJobs, 'validate'), 'runs-on')).toBe('ubuntu-24.04')
+  const bootstrap = property(validationJobs, 'validate')
+  expect(property(bootstrap, 'runs-on')).toBe('ubuntu-24.04')
+  const bootstrapSteps = property(bootstrap, 'steps') as unknown[]
+  const bootstrapCheck = bootstrapSteps.find(
+    (step) => property(step, 'name') === 'Validate bootstrap and GitOps configuration',
+  )
+  const bootstrapCommand = text(property(bootstrapCheck, 'run'))
+  expect(bootstrapCommand).toContain('test "$(cat /proc/1/comm)" = systemd')
+  expect(bootstrapCommand).toContain('sudo env')
   const nativeBuild = property(validationJobs, 'build')
   expect(property(nativeBuild, 'needs')).toBeUndefined()
   const runners = property(property(property(nativeBuild, 'strategy'), 'matrix'), 'include') as Record<string, string>[]
