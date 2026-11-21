@@ -98,6 +98,8 @@ test('queued revisions require the platform suites', () => {
         OFZ_RESULT: ofz,
         RELAY_RESULT: relay,
         TENGRI_RESULT: tengri,
+        BUF_RESULT: 'success',
+        SCRIPTS_RESULT: 'success',
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
