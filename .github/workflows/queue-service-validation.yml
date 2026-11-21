@@ -49,6 +49,9 @@ jobs:
   nuc-omni-serve:
     uses: ./.github/workflows/nuc-omni-serve.yaml
 
+  opencode:
+    uses: ./.github/workflows/opencode-ci.yml
+
   orbit-salvage:
     uses: ./.github/workflows/orbit-salvage-ci.yml
 

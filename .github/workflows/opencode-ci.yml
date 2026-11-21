@@ -2,6 +2,7 @@ name: opencode
 permissions:
   contents: read
 on:
+  workflow_call:
   pull_request:
     paths:
       - '.github/workflows/opencode-ci.yml'
@@ -21,7 +22,7 @@ on:
       - 'flake.lock'
       - 'argocd/applications/opencode/**'
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: opencode-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -39,6 +40,6 @@ jobs:
     with:
       image_name: opencode
       package_attr: opencode-image
-      tag: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-      source_revision: ${{ github.event.pull_request.head.sha }}
+      tag: ${{ github.event_name == 'merge_group' && format('queue-{0}', github.sha) || format('pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      source_revision: ${{ github.event_name == 'merge_group' && github.sha || github.event.pull_request.head.sha }}
       pr_number: '${{ github.event.pull_request.number }}'

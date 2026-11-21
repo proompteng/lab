@@ -201,10 +201,13 @@ test.each(['bayn-build-push.yml', 'opencode-build-push.yml'])(
   },
 )
 
-test('OpenCode PR validation selects the PR head without publication secrets', () => {
+test('OpenCode validation selects the PR or queue commit without publication secrets', () => {
   const validation: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-ci.yml', 'utf8'))
   const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/opencode-build-push.yml', 'utf8'))
   const image = property(property(validation, 'jobs'), 'image')
+  const queue: unknown = Bun.YAML.parse(readFileSync('.github/workflows/queue-service-validation.yml', 'utf8'))
+  expect(property(property(validation, 'on'), 'workflow_call')).toBeNull()
+  expect(property(property(queue, 'jobs'), 'opencode')).toEqual({ uses: './.github/workflows/opencode-ci.yml' })
   expect(property(image, 'secrets')).toBeUndefined()
   expect(property(image, 'if')).toBeUndefined()
   expect(property(property(property(publication, 'jobs'), 'image'), 'if')).toBeUndefined()
@@ -215,6 +218,9 @@ test('OpenCode PR validation selects the PR head without publication secrets', (
       github: { sha: 'merge-commit', event: { pull_request: { head: { sha: 'reviewed-pr-head' } } } },
     }),
   ).toBe('reviewed-pr-head')
+  expect(runInNewContext(source, { github: { event_name: 'merge_group', sha: 'queued-revision', event: {} } })).toBe(
+    'queued-revision',
+  )
 
   const selected = (workflow: unknown, event: string, ref: string, file: string) => {
     const trigger = property(property(workflow, 'on'), event)
