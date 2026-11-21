@@ -6,7 +6,10 @@ runs:
     - name: Run Temporal Bun SDK integration tests
       shell: bash
       working-directory: packages/temporal-bun-sdk
-      run: bun test tests/integration --timeout=30000 --max-concurrency=1
+      run: |
+        mapfile -d '' integration_files < <(find tests/integration -type f -name '*.test.ts' ! -path 'tests/integration/worker-load.test.ts' -print0)
+        test "${#integration_files[@]}" -gt 0
+        bun test "${integration_files[@]}" --timeout=30000 --max-concurrency=1
 
     - name: Verify Temporal Bun SDK integration cleanup
       shell: bash
@@ -14,7 +17,10 @@ runs:
 
     - name: Run worker load suite
       shell: bash
-      run: TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
+      working-directory: packages/temporal-bun-sdk
+      run: |
+        test -f tests/integration/worker-load.test.ts
+        bun test tests/integration/worker-load.test.ts --timeout=30000 --max-concurrency=1
 
     - name: Verify Temporal Bun SDK load cleanup
       shell: bash

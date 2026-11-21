@@ -899,9 +899,9 @@ const requiredCiWorkflowFragments = [
   },
   { id: 'lint', fragment: 'bun run --cwd packages/temporal-bun-sdk lint:oxlint' },
   { id: 'non-integration-tests', fragment: 'bun test "${test_files[@]}" --timeout=30000' },
-  { id: 'integration-tests', fragment: 'bun test tests/integration --timeout=30000 --max-concurrency=1' },
+  { id: 'integration-tests', fragment: 'bun test "${integration_files[@]}" --timeout=30000 --max-concurrency=1' },
   { id: 'replay-corpus', fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus' },
-  { id: 'worker-load', fragment: 'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load' },
+  { id: 'worker-load', fragment: 'bun test tests/integration/worker-load.test.ts --timeout=30000 --max-concurrency=1' },
   { id: 'evidence-purpose', fragment: 'TEMPORAL_BUN_EVIDENCE_PURPOSE' },
   { id: 'production-verification', fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:production' },
   {
