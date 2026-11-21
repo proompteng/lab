@@ -112,28 +112,65 @@ export default Effect.gen(function* () {
       current_effective text;
       current_kill_state text;
       current_reason text;
+      invalid_ancestry boolean;
     BEGIN
-      SELECT target.generation_hash, target.account_id, state.generation_hash, state.maximum,
-        state.effective, state.kill_state, state.reason
-        INTO target_generation_hash, target_account_id, current_generation_hash, current_maximum,
-          current_effective, current_kill_state, current_reason
-      FROM authority_state state
-      JOIN authority_generations current_generation ON current_generation.generation_hash=state.generation_hash
-      JOIN authority_generations target ON (
-        target.generation_hash=state.generation_hash
-        OR (
-          current_generation.maximum='OBSERVE'
-          AND current_generation.previous_generation_hash=target.generation_hash
-        )
+      WITH RECURSIVE current_authority AS (
+        SELECT state.generation_hash AS current_generation_hash, state.maximum AS current_maximum,
+          state.effective AS current_effective, state.kill_state AS current_kill_state,
+          state.reason AS current_reason, generation.generation_hash,
+          generation.previous_generation_hash, generation.maximum AS generation_maximum,
+          generation.authority_version, generation.account_id, generation.broker_identity_hash,
+          generation.broker_provider, generation.broker_environment
+        FROM authority_state state
+        JOIN authority_generations generation ON generation.generation_hash=state.generation_hash
+      ), lineage AS (
+        SELECT generation_hash,previous_generation_hash,generation_maximum,authority_version,account_id,
+          broker_identity_hash,broker_provider,broker_environment,0 AS depth,
+          ARRAY[generation_hash]::text[] AS path,false AS invalid
+        FROM current_authority
+        UNION ALL
+        SELECT parent.generation_hash,parent.previous_generation_hash,parent.maximum,parent.authority_version,
+          parent.account_id,parent.broker_identity_hash,parent.broker_provider,parent.broker_environment,
+          child.depth+1,array_append(child.path,parent.generation_hash),
+          parent.generation_hash IS NULL
+            OR parent.generation_hash=ANY(child.path)
+            OR parent.account_id IS DISTINCT FROM child.account_id
+            OR parent.broker_identity_hash IS DISTINCT FROM child.broker_identity_hash
+            OR parent.broker_provider IS DISTINCT FROM child.broker_provider
+            OR parent.broker_environment IS DISTINCT FROM child.broker_environment
+            OR parent.authority_version>=child.authority_version
+        FROM lineage child
+        LEFT JOIN authority_generations parent ON parent.generation_hash=child.previous_generation_hash
+        WHERE child.generation_maximum='OBSERVE'
+          AND child.previous_generation_hash IS NOT NULL
+          AND NOT child.invalid
       )
-      WHERE target.strategy_name='jev'
-        AND target.strategy_parameter_schema_version='bayn.jev.protocol.v41'
-        AND target.strategy_behavior_hash='76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
-        AND target.strategy_parameter_hash='004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696'
-        AND target.strategy_protocol_hash='b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9'
-        AND current_generation.account_id=target.account_id
-      ORDER BY (target.generation_hash=state.generation_hash) DESC
-      LIMIT 1;
+      SELECT target.generation_hash,target.account_id,current.current_generation_hash,current.current_maximum,
+        current.current_effective,current.current_kill_state,current.current_reason,validation.invalid
+        INTO target_generation_hash, target_account_id, current_generation_hash, current_maximum,
+          current_effective,current_kill_state,current_reason,invalid_ancestry
+      FROM current_authority current
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(bool_or(invalid),false) AS invalid FROM lineage
+      ) validation
+      LEFT JOIN LATERAL (
+        SELECT generation.generation_hash,generation.account_id
+        FROM lineage ancestor
+        JOIN authority_generations generation USING (generation_hash)
+        WHERE ancestor.generation_maximum='PAPER'
+          AND generation.strategy_name='jev'
+          AND generation.strategy_parameter_schema_version='bayn.jev.protocol.v41'
+          AND generation.strategy_behavior_hash='76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
+          AND generation.strategy_parameter_hash='004604dcc48754ff553976d366a4d7643a6a3a1157acac4b89acc879b56c4696'
+          AND generation.strategy_protocol_hash='b97dc08473946b82b89f9e4bfae09d18c4bae4ebd8b854f5a6b2b805e35a19c9'
+        ORDER BY ancestor.depth
+        LIMIT 1
+      ) target ON true;
+
+      IF invalid_ancestry THEN
+        RAISE EXCEPTION 'support-recovery OBSERVE cutover found invalid authority lineage'
+          USING ERRCODE='55000';
+      END IF;
       -- Empty installations, unrelated lineages and successor PAPER protocols remain untouched.
       IF target_generation_hash IS NULL THEN RETURN; END IF;
 

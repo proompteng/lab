@@ -48,9 +48,12 @@ the active generation again immediately before every side effect, so predecessor
 
 ### 1. Deploy a recovery-capable v41 and settle its mandate
 
-Migration 207 recognizes only the exact clear v41 PAPER identity above. It fails immediately when the shared mutation
-fence is busy and bounds write-lock acquisition to 250 ms. Its write locks follow source-ingress order and do not block
-ordinary readers. Under those fences it requires:
+Migration 207 recognizes only the exact clear v41 PAPER identity above. If recovery has already produced one or more
+OBSERVE successors, it follows only their contiguous ancestry to the nearest PAPER generation. Every hop must preserve
+the account and broker identity and strictly decrease the authority version; missing, cyclic or identity-changing
+ancestry fails closed. An intervening unrelated PAPER generation stops traversal and remains untouched. The migration
+fails immediately when the shared mutation fence is busy and bounds write-lock acquisition to 250 ms. Its write locks
+follow source-ingress order and do not block ordinary readers. Under those fences it requires:
 
 - terminal current-account intents and no pending or active cycle;
 - zero broker and accounting inventory, a latest zero-position snapshot and no open current broker order;
