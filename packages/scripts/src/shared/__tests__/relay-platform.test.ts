@@ -65,12 +65,13 @@ test('the platform release validates both clients before publishing its immutabl
   expect(onboarding.metadata.annotations['argocd.argoproj.io/hook']).toBe('PostSync')
 })
 
-test('queued revisions require both platform suites', () => {
+test('queued revisions require the platform suites', () => {
   const workflow = YAML.parse(source('.github/workflows/pull-request.yml'))
   const gate = workflow.jobs['ci-pr']
   for (const [job, file] of [
     ['ofz', 'ofz.yaml'],
     ['relay', 'relay.yml'],
+    ['tengri', 'tengri-validation.yml'],
   ]) {
     expect(workflow.jobs[job]).toMatchObject({
       if: "github.event_name == 'merge_group'",
@@ -82,7 +83,8 @@ test('queued revisions require both platform suites', () => {
   const step = gate.steps.find((entry: { name: string }) => entry.name === 'Enforce selected validation results')
   expect(step.env.OFZ_RESULT).toBe('${{ needs.ofz.result }}')
   expect(step.env.RELAY_RESULT).toBe('${{ needs.relay.result }}')
-  const run = (full: string, ofz: string, relay: string) =>
+  expect(step.env.TENGRI_RESULT).toBe('${{ needs.tengri.result }}')
+  const run = (full: string, ofz: string, relay: string, tengri: string) =>
     Bun.spawnSync(['bash', '-c', step.run], {
       env: {
         PATH: process.env.PATH ?? '',
@@ -95,15 +97,17 @@ test('queued revisions require both platform suites', () => {
         BAYN_RESULT: 'success',
         OFZ_RESULT: ofz,
         RELAY_RESULT: relay,
+        TENGRI_RESULT: tengri,
         FULL_VALIDATION: full,
         DELEGATED: '[]',
       },
     }).exitCode
 
-  expect(run('false', 'skipped', 'skipped')).toBe(0)
-  expect(run('true', 'success', 'success')).toBe(0)
+  expect(run('false', 'skipped', 'skipped', 'skipped')).toBe(0)
+  expect(run('true', 'success', 'success', 'success')).toBe(0)
   for (const result of ['failure', 'cancelled', 'skipped']) {
-    expect(run('true', result, 'success')).toBe(1)
-    expect(run('true', 'success', result)).toBe(1)
+    expect(run('true', result, 'success', 'success')).toBe(1)
+    expect(run('true', 'success', result, 'success')).toBe(1)
+    expect(run('true', 'success', 'success', result)).toBe(1)
   }
 })
